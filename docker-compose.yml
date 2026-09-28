@@ -1,0 +1,152 @@
+# =============================================================================
+# Hamro Pasal: local development infrastructure
+#
+#   pnpm infra:up      start everything, wait until healthy, then provision Kafka topics
+#   pnpm infra:down    stop containers, keep data volumes
+#   pnpm infra:reset   destroy containers AND volumes, then start fresh
+#
+# Values come from the repo-root `.env` (see `.env.example`). POSTGRES_PASSWORD is
+# required. Every other variable falls back to the defaults shown below.
+#
+# All ports bind to 127.0.0.1 only, so nothing is exposed to the local network.
+# The applications (apps/api, apps/worker) run on the host via `pnpm dev` and reach
+# these services through the published ports.
+# =============================================================================
+
+name: hamro-pasal
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 + PostGIS
+  #   Host:      localhost:${POSTGRES_PORT:-5432}
+  #   App URL:   DATABASE_URL=postgresql://<user>:<password>@localhost:5432/hamro_pasal
+  #   Init:      ./infra/postgres/init/*.sql runs once, on an empty volume only.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgis/postgis:16-3.5-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hamro_pasal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-hamro_pasal}
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # -h 127.0.0.1 forces TCP: during first-run init the server only listens on the
+      # Unix socket, so this stays unhealthy until init scripts have finished.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Redis 7: inventory locks (600s TTL), rate limiting, BullMQ queues
+  #   Host:      localhost:6379 (REDIS_URL=redis://localhost:6379)
+  #   AOF persistence (fsync every second) so locks and queued jobs survive restarts.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes', '--appendfsync', 'everysec']
+    ports:
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Apache Kafka (KRaft, single combined broker + controller, no ZooKeeper)
+  #   Host apps:  localhost:9092 (KAFKA_BROKERS=localhost:9092)
+  #   Containers: kafka:29092
+  #   Topics are created explicitly by `kafka-init`, and auto-creation is disabled
+  #   so a typo in a topic name fails loudly instead of silently creating a new topic.
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:4.3.1
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${KAFKA_PORT:-9092}:9092'
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:29092,EXTERNAL://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:${KAFKA_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      # Single-node cluster: internal topics cannot be replicated.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          '/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 > /dev/null 2>&1',
+        ]
+      interval: 10s
+      timeout: 15s
+      retries: 12
+      start_period: 30s
+
+  # One-shot job: creates or expands topics, then exits. See infra/kafka/create-topics.sh.
+  # Behind the `init` profile so `docker compose up` never starts it on its own.
+  # `pnpm infra:up` runs it with `docker compose run --rm kafka-init` *after* the stack
+  # is healthy, which blocks until topics exist and fails the command if provisioning fails.
+  # (`up --wait` does not wait for one-shot containers to finish.)
+  kafka-init:
+    image: apache/kafka:4.3.1
+    profiles: ['init']
+    restart: 'no'
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVER: kafka:29092
+    volumes:
+      - ./infra/kafka/create-topics.sh:/scripts/create-topics.sh:ro
+    entrypoint: ['bash', '/scripts/create-topics.sh']
+
+  # ---------------------------------------------------------------------------
+  # Prometheus: scrapes http://api:4000/metrics every 15s
+  #   UI:        http://localhost:9090  (Status -> Targets)
+  #   `api` resolves to the Docker host, where `pnpm dev` runs apps/api.
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${PROMETHEUS_PORT:-9090}:9090'
+    extra_hosts:
+      - 'api:host-gateway'
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:9090/-/healthy']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+volumes:
+  postgres-data:
+  redis-data:
+  kafka-data:
+  prometheus-data:

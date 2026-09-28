@@ -1,0 +1,15 @@
+# Prometheus scrape configuration for local development.
+# The API runs on the host via `pnpm dev`. docker-compose maps the hostname `api`
+# to the host gateway, so `api:4000` reaches it from inside the container.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: api
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ['api:4000']
+        labels:
+          service: api

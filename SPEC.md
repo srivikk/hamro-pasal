@@ -10,6 +10,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 **Database:** PostgreSQL with the **PostGIS** extension for geospatial calculations.
 **In-Memory Cache:** Redis (mandatory for inventory locking and rate-limiting).
 **Message Queue:** BullMQ on Redis for delayed timers, Kafka for domain event streaming.
+**Node.js Kafka Client:** Use @confluentinc/kafka-javascript instead of the deprecated kafkajs library.
 </tech_stack>
 
 <infrastructure_and_devops>

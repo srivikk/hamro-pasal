@@ -24,6 +24,21 @@
     },
     "clean": {
       "cache": false
+    },
+    "test:integration": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
+    "db:generate": {
+      "cache": false
+    },
+    "db:migrate": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
+    "db:seed": {
+      "dependsOn": ["^build", "db:migrate"],
+      "cache": false
     }
   }
 }

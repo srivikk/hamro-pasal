@@ -10,7 +10,6 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 **Database:** PostgreSQL with the **PostGIS** extension for geospatial calculations.
 **In-Memory Cache:** Redis (mandatory for inventory locking and rate-limiting).
 **Message Queue:** BullMQ on Redis for delayed timers, Kafka for domain event streaming.
-**Node.js Kafka Client:** Use @confluentinc/kafka-javascript instead of the deprecated kafkajs library.
 </tech_stack>
 
 <infrastructure_and_devops>
@@ -26,6 +25,8 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
   * 8-minute Ghost Customer countdown verification.
   * Midnight cron execution for scheduled vendor subscription-to-commission downgrades.
   * Push notification and third-party SMS fan-outs.
+- Event Streaming: Apache Kafka for domain event streaming.
+  * Node.js Kafka Client: Use `@confluentinc/kafka-javascript` instead of the deprecated `kafkajs` library.
 - Real-Time Protocol Configuration:
   * Socket.io structured with discrete namespaces: `/orders` and `/chat`.
   * Horizontal clustering facilitated via `@socket.io/redis-adapter`.

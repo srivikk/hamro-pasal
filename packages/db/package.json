@@ -1,0 +1,45 @@
+{
+  "name": "@hamro-pasal/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Hamro Pasal PostgreSQL + PostGIS schema, migrations and database client (Drizzle ORM).",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "drizzle"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "jest --passWithNoTests",
+    "test:integration": "jest --config jest.integration.config.js --runInBand",
+    "db:generate": "drizzle-kit generate",
+    "db:generate:custom": "drizzle-kit generate --custom",
+    "db:migrate": "tsx --env-file-if-exists=../../.env src/scripts/migrate.ts",
+    "db:seed": "tsx --env-file-if-exists=../../.env src/scripts/seed.ts",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@hamro-pasal/shared-types": "workspace:*",
+    "drizzle-orm": "^0.45.3",
+    "pg": "^8.23.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
+    "jest": "~29.7.0",
+    "ts-jest": "^29.4.14",
+    "tsx": "^4.23.15"
+  }
+}

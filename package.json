@@ -12,12 +12,16 @@
     "lint:fix": "turbo run lint -- --fix",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "clean": "turbo run clean",
     "infra:up": "docker compose up --detach --wait && docker compose run --rm kafka-init",
     "infra:down": "docker compose down --remove-orphans",
     "infra:reset": "docker compose --profile init down --volumes --remove-orphans && pnpm infra:up",
+    "db:generate": "turbo run db:generate",
+    "db:migrate": "turbo run db:migrate",
+    "db:seed": "turbo run db:seed",
     "prepare": "husky"
   },
   "devDependencies": {

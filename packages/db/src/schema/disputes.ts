@@ -1,0 +1,73 @@
+import { sql } from 'drizzle-orm';
+import {
+  boolean,
+  check,
+  index,
+  pgTable,
+  smallint,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
+
+import { createdAt, primaryId, updatedAt } from './columns';
+import { disputeStatusEnum, reviewDirectionEnum } from './enums';
+import { orders } from './orders';
+import { users } from './users';
+
+export const disputes = pgTable(
+  'disputes',
+  {
+    id: primaryId(),
+    order_id: uuid()
+      .notNull()
+      .unique()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    opened_by_user_id: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    reason: text().notNull(),
+    status: disputeStatusEnum().notNull().default('OPEN'),
+    resolved_by_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
+    resolved_at: timestamp({ withTimezone: true, mode: 'date' }),
+    created_at: createdAt(),
+    updated_at: updatedAt(),
+  },
+  (t) => [
+    index('disputes_status_idx').on(t.status),
+    check('disputes_reason_check', sql`btrim(${t.reason}) <> ''`),
+    // An OPEN dispute has no resolution, and a resolved one records who resolved it and when.
+    check(
+      'disputes_resolution_check',
+      sql`(${t.status} = 'OPEN') = (${t.resolved_at} IS NULL AND ${t.resolved_by_user_id} IS NULL)`,
+    ),
+  ],
+);
+
+/** Double-blind reviews (SPEC §6): quarantined until both sides submit or 48 hours elapse. */
+export const reviews = pgTable(
+  'reviews',
+  {
+    id: primaryId(),
+    order_id: uuid()
+      .notNull()
+      .references(() => orders.id, { onDelete: 'restrict' }),
+    direction: reviewDirectionEnum().notNull(),
+    rating: smallint().notNull(),
+    comment: text(),
+    is_published: boolean().notNull().default(false),
+    published_at: timestamp({ withTimezone: true, mode: 'date' }),
+    created_at: createdAt(),
+  },
+  (t) => [
+    unique('reviews_order_id_direction_key').on(t.order_id, t.direction),
+    // Serves the 48h publisher sweep over quarantined reviews.
+    index('reviews_unpublished_created_at_idx')
+      .on(t.created_at)
+      .where(sql`${t.is_published} = false`),
+    check('reviews_rating_check', sql`${t.rating} BETWEEN 1 AND 5`),
+    check('reviews_comment_check', sql`${t.comment} IS NULL OR btrim(${t.comment}) <> ''`),
+    check('reviews_published_at_check', sql`${t.is_published} = (${t.published_at} IS NOT NULL)`),
+  ],
+);

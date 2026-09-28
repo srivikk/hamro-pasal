@@ -1,0 +1,33 @@
+{
+  "name": "@hamro-pasal/shared-types",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared TypeScript types, enums and Zod validation schemas for Hamro Pasal.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "jest",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "jest": "~29.7.0",
+    "ts-jest": "^29.4.14"
+  }
+}

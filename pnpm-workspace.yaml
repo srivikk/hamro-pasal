@@ -1,0 +1,28 @@
+packages:
+  - apps/*
+  - packages/*
+
+# React Native / Metro resolve modules from a flat node_modules tree.
+nodeLinker: hoisted
+
+# Dependencies permitted to run install scripts (pnpm blocks all others).
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  msgpackr-extract: true
+  unrs-resolver: true
+
+# Pin auto-installed peers to the versions Expo SDK 57 / React Native 0.86 ship with.
+overrides:
+  '@react-native/metro-config': 0.86.3
+  react-dom: 19.2.3
+  react-native-worklets: 0.10.1
+
+minimumReleaseAgeExclude:
+  - '@turbo/darwin-64@2.11.5'
+  - '@turbo/darwin-arm64@2.11.5'
+  - '@turbo/linux-64@2.11.5'
+  - '@turbo/linux-arm64@2.11.5'
+  - '@turbo/windows-64@2.11.5'
+  - '@turbo/windows-arm64@2.11.5'
+  - turbo@2.11.5

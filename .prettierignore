@@ -1,0 +1,12 @@
+node_modules
+dist
+coverage
+.turbo
+.expo
+pnpm-lock.yaml
+apps/mobile/android
+apps/mobile/ios
+
+# Authored docs: never auto-reformat the source of truth
+SPEC.md
+CLAUDE.md

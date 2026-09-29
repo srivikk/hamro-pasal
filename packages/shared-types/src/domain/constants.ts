@@ -23,3 +23,15 @@ export const COD_MIN_CUSTOMER_RATING = 3.0;
 
 /** WGS 84, the SRID of every stored geometry. */
 export const GEO_SRID = 4326;
+
+/**
+ * SPEC §2: a RADIUS_BOUND vendor serves a customer at distance D when D <= radius_km x 1.1.
+ * The extra 10% is the strict GPS-drift grace buffer.
+ */
+export const DELIVERY_RADIUS_GPS_DRIFT_MULTIPLIER = 1.1;
+
+/**
+ * Customer journey 8: an order can be canceled for 60 s after it is placed. The server measures
+ * it on its own clock as NOW() - orders.placed_at.
+ */
+export const ORDER_CANCELLATION_WINDOW_SECONDS = 60;

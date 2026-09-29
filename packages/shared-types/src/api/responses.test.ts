@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  cancelOrderResponseSchema,
   errorBodySchema,
   checkoutResponseSchema,
+  feedResponseSchema,
   lockStatusResponseSchema,
+  orderDetailResponseSchema,
   paymentStatusResponseSchema,
+  vendorMenuSchema,
 } from './responses';
 
 const order = {
@@ -88,5 +92,109 @@ describe('API response schemas', () => {
         },
       }).payment?.order_state,
     ).toBe('PLACED');
+  });
+});
+
+describe('feed and menu schemas', () => {
+  const vendor = {
+    id: randomUUID(),
+    business_name: 'Thamel Kirana Pasal',
+    delivery_scope: 'RADIUS_BOUND',
+    radius_km: 5,
+    municipality_palika_string: 'Kathmandu Metropolitan City',
+    min_order_value: 500,
+    base_delivery_fee_npr: 50,
+    fulfillment_mode: 'SELF_DELIVERY',
+    location: { x: 85.3123, y: 27.7154 },
+  };
+
+  it('accept a partitioned feed', () => {
+    const body = {
+      serviceable: [{ vendor, distance_km: 0.18, serviceable: true }],
+      explore_further: [
+        { vendor: { ...vendor, id: randomUUID() }, distance_km: 7.2, serviceable: false },
+      ],
+    };
+
+    expect(feedResponseSchema.parse(body)).toEqual(body);
+  });
+
+  it('reject vendor fields the feed must not expose', () => {
+    const leaky = { ...vendor, wallet_balance_npr: -150, phone: '+9779800000011' };
+
+    expect(
+      feedResponseSchema.safeParse({
+        serviceable: [{ vendor: leaky, distance_km: 1, serviceable: true }],
+        explore_further: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accept a menu with real product uuids only', () => {
+    const product = { id: randomUUID(), name: 'Ilam Tea 500g', price_npr: 450, in_stock: true };
+
+    expect(
+      vendorMenuSchema.parse({ vendor, serviceable: true, products: [product] }),
+    ).toBeDefined();
+    expect(
+      vendorMenuSchema.safeParse({
+        vendor,
+        serviceable: true,
+        products: [{ ...product, id: 'p-1' }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('order detail and cancellation schemas', () => {
+  const snapshot = {
+    ...order,
+    state: 'DELIVERED',
+    payment_status: 'PAID',
+    customer_id: randomUUID(),
+    refund_required: false,
+    placed_at: '2026-09-29T10:00:20.000Z',
+    delivered_at: '2026-09-29T11:00:00.000Z',
+    delivery_address: {
+      province_id: 3,
+      district_string: 'Kathmandu',
+      municipality_palika_string: 'Kathmandu Metropolitan City',
+      ward_number: 26,
+      tole_locality: 'Thamel',
+      landmark: 'Near Kathmandu Guest House',
+      exact_lat: 27.7149,
+      exact_lng: 85.3106,
+    },
+    items: [
+      { product_id: randomUUID(), product_name: 'Ilam Tea 500g', unit_price_npr: 500, quantity: 2 },
+    ],
+  };
+
+  it('accept an order snapshot with delivered_at and the address', () => {
+    expect(orderDetailResponseSchema.parse({ order: snapshot })).toEqual({ order: snapshot });
+    expect(
+      orderDetailResponseSchema.parse({
+        order: { ...snapshot, placed_at: null, delivered_at: null, delivery_address: null },
+      }).order.delivered_at,
+    ).toBeNull();
+  });
+
+  it('require delivered_at as an ISO datetime and never expose the OTP hash', () => {
+    expect(
+      orderDetailResponseSchema.safeParse({ order: { ...snapshot, delivered_at: 'yesterday' } })
+        .success,
+    ).toBe(false);
+    expect(
+      orderDetailResponseSchema.safeParse({
+        order: { ...snapshot, delivery_otp: '$2b$10$abc' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accept only a CANCELED cancellation result', () => {
+    const body = { order_id: randomUUID(), state: 'CANCELED', refund_required: true };
+
+    expect(cancelOrderResponseSchema.parse(body)).toEqual(body);
+    expect(cancelOrderResponseSchema.safeParse({ ...body, state: 'PLACED' }).success).toBe(false);
   });
 });

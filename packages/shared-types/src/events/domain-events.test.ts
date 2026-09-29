@@ -72,3 +72,38 @@ describe('domainEventSchema', () => {
     expect(DOMAIN_EVENT_TOPICS['ledger.mutated']).toBe('ledger.mutations');
   });
 });
+
+describe('order.canceled_refund_due', () => {
+  const payload = {
+    order_id: randomUUID(),
+    vendor_id: randomUUID(),
+    customer_id: randomUUID(),
+    payment_method: 'KHALTI',
+    payment_gateway_ref: 'HT6o6PEZRWFJ5ygavzHWd5',
+    refund_amount_npr: 1050,
+    canceled_at: '2026-09-29T10:00:59.000Z',
+  };
+
+  it('is a valid domain event routed to payment reconciliation', () => {
+    const event = domainEventSchema.parse({
+      ...base,
+      event_type: 'order.canceled_refund_due',
+      payload,
+    });
+
+    expect(event.event_type).toBe('order.canceled_refund_due');
+    expect(DOMAIN_EVENT_TOPICS['order.canceled_refund_due']).toBe('payment.reconciliation');
+  });
+
+  it('cannot describe a refund for a COD order or a zero amount', () => {
+    const parse = (overrides: Record<string, unknown>) =>
+      domainEventSchema.safeParse({
+        ...base,
+        event_type: 'order.canceled_refund_due',
+        payload: { ...payload, ...overrides },
+      }).success;
+
+    expect(parse({ payment_method: 'COD' })).toBe(false);
+    expect(parse({ refund_amount_npr: 0 })).toBe(false);
+  });
+});

@@ -9,7 +9,11 @@ import { useDeliveryOtpStore } from '../../store/useDeliveryOtpStore';
 import { useOrderStore } from '../../store/useOrderStore';
 import { useToastStore } from '../../store/useToastStore';
 import { cancellationRemainingMs } from './cancellation-window';
-import { cancelOrder, type CancelOrderResult } from './mock-cancel-api';
+import {
+  CANCELLATION_WINDOW_EXPIRED,
+  cancelOrder,
+  type CancelOrderResult,
+} from './mock-cancel-api';
 import { isTerminalOrderState } from './order-tracker';
 
 /**
@@ -57,7 +61,7 @@ export function useCancelOrder() {
     },
     onError: (error) => {
       toast(
-        error.code === 'CANCELLATION_WINDOW_CLOSED'
+        error.code === CANCELLATION_WINDOW_EXPIRED
           ? t('order.cancel.windowClosed')
           : t('order.cancel.failed'),
         'error',

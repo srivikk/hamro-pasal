@@ -1,6 +1,22 @@
-import type { LockView, Order, OrderView, PaymentView } from '@hamro-pasal/shared-types';
+import type {
+  FeedEntry,
+  FeedResponse,
+  FeedVendor,
+  LockView,
+  Order,
+  OrderSnapshotView,
+  OrderView,
+  PaymentView,
+  VendorMenu,
+} from '@hamro-pasal/shared-types';
 
+import type {
+  CatalogVendor,
+  VendorFeed,
+  VendorMenu as CatalogMenu,
+} from '../catalog/catalog-service';
 import type { LockStatusView } from '../checkout/checkout-service';
+import type { OrderDetail } from '../orders/order-service';
 import type { ConfirmedPayment } from '../payments/payment-confirmation';
 
 /*
@@ -39,4 +55,81 @@ export function paymentView(payment: ConfirmedPayment | null): PaymentView | nul
         payment_status: payment.paymentStatus,
         duplicate: !payment.newlyCaptured,
       };
+}
+
+/** Metres to kilometres, rounded to the metre. */
+function toKm(metres: number): number {
+  return Math.round(metres) / 1000;
+}
+
+export function feedVendorView(vendor: CatalogVendor): FeedVendor {
+  return {
+    id: vendor.id,
+    business_name: vendor.businessName,
+    delivery_scope: vendor.deliveryScope,
+    radius_km: vendor.radiusKm,
+    municipality_palika_string: vendor.municipalityPalika,
+    min_order_value: vendor.minOrderValue,
+    base_delivery_fee_npr: vendor.baseDeliveryFee,
+    fulfillment_mode: vendor.fulfillmentMode,
+    location: vendor.location,
+  };
+}
+
+export function feedEntryView(vendor: CatalogVendor): FeedEntry {
+  return {
+    vendor: feedVendorView(vendor),
+    distance_km: toKm(vendor.distanceM),
+    serviceable: vendor.serviceable,
+  };
+}
+
+export function feedView(feed: VendorFeed): FeedResponse {
+  return {
+    serviceable: feed.serviceable.map(feedEntryView),
+    explore_further: feed.unserviceable.map(feedEntryView),
+  };
+}
+
+export function menuView(menu: CatalogMenu): VendorMenu {
+  return {
+    vendor: feedVendorView(menu.vendor),
+    serviceable: menu.vendor.serviceable,
+    products: menu.products.map((p) => ({
+      id: p.id,
+      name: p.name,
+      price_npr: p.priceNpr,
+      in_stock: p.inStock,
+    })),
+  };
+}
+
+/** SPEC OrderSnapshot for the customer. Still never exposes the OTP hash, refs or commission. */
+export function orderSnapshotView({ order, items, address }: OrderDetail): OrderSnapshotView {
+  return {
+    ...orderView(order),
+    customer_id: order.customer_id,
+    refund_required: order.refund_required,
+    placed_at: order.placed_at?.toISOString() ?? null,
+    delivered_at: order.delivered_at?.toISOString() ?? null,
+    delivery_address:
+      address === null
+        ? null
+        : {
+            province_id: address.province_id,
+            district_string: address.district_string,
+            municipality_palika_string: address.municipality_palika_string,
+            ward_number: address.ward_number,
+            tole_locality: address.tole_locality,
+            landmark: address.landmark,
+            exact_lat: address.exact_lat,
+            exact_lng: address.exact_lng,
+          },
+    items: items.map((item) => ({
+      product_id: item.product_id,
+      product_name: item.product_name,
+      unit_price_npr: item.unit_price_npr,
+      quantity: item.quantity,
+    })),
+  };
 }

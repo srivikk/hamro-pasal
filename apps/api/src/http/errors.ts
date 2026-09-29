@@ -1,6 +1,7 @@
 import type { ErrorBody } from '@hamro-pasal/shared-types';
 import type { ErrorRequestHandler } from 'express';
 
+import { VendorNotFoundError } from '../catalog/catalog-service';
 import { OrderNotFoundError, OrderNotPlaceableError } from '../checkout/checkout-service';
 import { CheckoutRejectedError } from '../checkout/pricing';
 import {
@@ -13,6 +14,7 @@ import {
 import { MutexTimeoutError } from '../infra/redis-mutex';
 import { toNpr } from '../ledger/money';
 import { SettlementNotAllowedError } from '../ledger/settlement-service';
+import { CancellationWindowExpiredError, OrderNotCancelableError } from '../orders/order-service';
 import { InvalidGatewayCallbackError } from '../payments/esewa/esewa-service';
 import { PaymentGatewayError } from '../payments/gateway-http';
 import {
@@ -46,6 +48,15 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof OrderNotFoundError) {
     return new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found');
+  }
+  if (error instanceof VendorNotFoundError) {
+    return new HttpError(404, 'VENDOR_NOT_FOUND', 'Vendor not found');
+  }
+  if (error instanceof CancellationWindowExpiredError) {
+    return new HttpError(422, 'CANCELLATION_WINDOW_EXPIRED', error.message);
+  }
+  if (error instanceof OrderNotCancelableError) {
+    return new HttpError(409, 'ORDER_STATE_CONFLICT', error.message, { state: error.state });
   }
   if (error instanceof PaymentNotFoundError) {
     return new HttpError(404, 'PAYMENT_NOT_FOUND', 'Payment not found');

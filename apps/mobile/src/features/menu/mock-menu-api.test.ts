@@ -1,5 +1,6 @@
 import { checkoutRequestSchema } from '@hamro-pasal/shared-types';
 
+import { THAMEL_ADDRESS } from '../../test/api-fixtures';
 import { MOCK_CUSTOMER_LOCATION, MOCK_VENDORS } from '../feed/mock-feed-api';
 import {
   buildVendorMenu,
@@ -54,6 +55,7 @@ describe('mock menu API', () => {
         vendor_id: vendor.id,
         payment_method: 'COD',
         items: products.map((product) => ({ product_id: product.id, quantity: 1 })),
+        delivery_address: THAMEL_ADDRESS,
       };
       if (products.length > 0) expect(checkoutRequestSchema.safeParse(request).success).toBe(true);
     }

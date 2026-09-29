@@ -1,0 +1,98 @@
+import { randomUUID } from 'node:crypto';
+
+import { NEPAL_BOUNDING_BOX } from '../nepal/geo';
+import { checkoutRequestSchema, idParamSchema, vendorFeedQuerySchema } from './requests';
+
+const address = {
+  province_id: 3,
+  district_string: 'kathmandu',
+  municipality_palika_string: 'Kathmandu Metropolitan City',
+  ward_number: 26,
+  tole_locality: 'Thamel',
+  landmark: 'Near Kathmandu Guest House',
+  exact_lat: 27.7149,
+  exact_lng: 85.3106,
+};
+
+const cart = {
+  idempotency_key: randomUUID(),
+  vendor_id: randomUUID(),
+  payment_method: 'COD',
+  items: [{ product_id: randomUUID(), quantity: 2 }],
+};
+
+describe('checkoutRequestSchema', () => {
+  it('requires a delivery address', () => {
+    const result = checkoutRequestSchema.safeParse(cart);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((i) => i.path.join('.'))).toEqual(['delivery_address']);
+    expect(checkoutRequestSchema.safeParse({ ...cart, delivery_address: null }).success).toBe(
+      false,
+    );
+  });
+
+  it('validates and normalises the Nepal delivery address', () => {
+    const parsed = checkoutRequestSchema.parse({ ...cart, delivery_address: address });
+
+    expect(parsed.delivery_address).toEqual({ ...address, district_string: 'Kathmandu' });
+  });
+
+  it('rejects Western-style or incomplete addresses', () => {
+    const issues = (deliveryAddress: unknown) => {
+      const result = checkoutRequestSchema.safeParse({
+        ...cart,
+        delivery_address: deliveryAddress,
+      });
+      return result.success ? [] : result.error.issues.map((i) => i.path.join('.'));
+    };
+
+    expect(issues({ ...address, zip_code: '10001' })).toEqual(['delivery_address']);
+    expect(issues({ ...address, ward_number: 0 })).toEqual(['delivery_address.ward_number']);
+    expect(issues({ ...address, province_id: 1 })).toEqual(['delivery_address.district_string']);
+    expect(issues({ ...address, exact_lat: 51.5, exact_lng: -0.12 })).toEqual([
+      'delivery_address.exact_lat',
+      'delivery_address.exact_lng',
+    ]);
+  });
+});
+
+describe('vendorFeedQuerySchema', () => {
+  it('parses query-string coordinates and the optional Palika', () => {
+    expect(
+      vendorFeedQuerySchema.parse({
+        lat: '27.7149',
+        lng: '85.3106',
+        municipality_palika_string: ' Kathmandu Metropolitan City ',
+      }),
+    ).toEqual({
+      lat: 27.7149,
+      lng: 85.3106,
+      municipality_palika_string: 'Kathmandu Metropolitan City',
+    });
+    expect(vendorFeedQuerySchema.parse({ lat: '27.7', lng: '85.3' })).toEqual({
+      lat: 27.7,
+      lng: 85.3,
+    });
+  });
+
+  it('rejects missing, non-numeric, repeated and out-of-Nepal coordinates', () => {
+    const fails = (query: Record<string, unknown>) =>
+      !vendorFeedQuerySchema.safeParse(query).success;
+
+    expect(fails({ lng: '85.3' })).toBe(true);
+    expect(fails({ lat: '', lng: '85.3' })).toBe(true);
+    expect(fails({ lat: 'north', lng: '85.3' })).toBe(true);
+    expect(fails({ lat: ['27.7', '27.8'], lng: '85.3' })).toBe(true);
+    expect(fails({ lat: String(NEPAL_BOUNDING_BOX.maxLat + 0.01), lng: '85.3' })).toBe(true);
+    expect(fails({ lat: '51.5', lng: '-0.12' })).toBe(true);
+    expect(fails({ lat: '27.7', lng: '85.3', radius: '50' })).toBe(true);
+  });
+});
+
+describe('idParamSchema', () => {
+  it('requires a uuid', () => {
+    expect(idParamSchema.safeParse({ id: 'not-a-uuid' }).success).toBe(false);
+    expect(idParamSchema.safeParse({ id: randomUUID() }).success).toBe(true);
+  });
+});

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { orderItems, orders, reviews } from '@hamro-pasal/db';
+import { orderAddresses, orderItems, orders, reviews } from '@hamro-pasal/db';
 import { compare } from 'bcryptjs';
 import { checkoutResponseSchema, lockStatusResponseSchema } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
@@ -11,6 +11,7 @@ import {
   createProduct,
   createUser,
   createVendor,
+  DELIVERY_ADDRESS,
   markDelivered,
   outboxFor,
   stockOf,
@@ -56,6 +57,7 @@ describe('cart API', () => {
     vendor_id: vendorId,
     payment_method: paymentMethod,
     items: [{ product_id: productId, quantity }],
+    delivery_address: DELIVERY_ADDRESS,
   });
 
   describe('POST /api/cart/checkout', () => {
@@ -83,8 +85,72 @@ describe('cart API', () => {
       expect(error.code).toBe('VALIDATION_FAILED');
       const { issues } = error.details as { issues: { path: string }[] };
       expect(issues.map((i) => i.path)).toEqual(
-        expect.arrayContaining(['idempotency_key', 'vendor_id', 'payment_method', 'items']),
+        expect.arrayContaining([
+          'idempotency_key',
+          'vendor_id',
+          'payment_method',
+          'items',
+          'delivery_address',
+        ]),
       );
+    });
+
+    it('stores the validated Nepal delivery address with the order', async () => {
+      const { customerId, vendorId, productId } = await setup();
+      const address = {
+        province_id: 3,
+        district_string: '  kathmandu ',
+        municipality_palika_string: 'Kathmandu Metropolitan City',
+        ward_number: 26,
+        tole_locality: 'Thamel',
+        landmark: 'Near Kathmandu Guest House',
+        exact_lat: 27.7149,
+        exact_lng: 85.3106,
+      };
+
+      const res = await checkout(customerId, {
+        ...cart(vendorId, productId, 'COD'),
+        delivery_address: address,
+      });
+
+      expect(res.status).toBe(201);
+      const orderId = bodyOf(checkoutResponseSchema, res).order.id;
+      const [stored] = await db()
+        .select()
+        .from(orderAddresses)
+        .where(eq(orderAddresses.order_id, orderId));
+      expect(stored).toMatchObject({
+        ...address,
+        district_string: 'Kathmandu',
+        location: { x: 85.3106, y: 27.7149 },
+      });
+    });
+
+    it('rejects an invalid delivery address before locking anything', async () => {
+      const { customerId, vendorId, productId } = await setup({ stock: 1 });
+      const body = cart(vendorId, productId, 'COD');
+
+      const res = await checkout(customerId, {
+        ...body,
+        delivery_address: {
+          province_id: 1,
+          district_string: 'Kathmandu',
+          municipality_palika_string: 'Kathmandu Metropolitan City',
+          ward_number: 26,
+          tole_locality: 'Thamel',
+          landmark: 'Chowk',
+          exact_lat: 27.7149,
+          exact_lng: 85.3106,
+          zip_code: '44600',
+        },
+      });
+
+      expect(res.status).toBe(400);
+      expect(errorOf(res).code).toBe('VALIDATION_FAILED');
+      expect(
+        await db().select().from(orders).where(eq(orders.idempotency_key, body.idempotency_key)),
+      ).toEqual([]);
+      expect(await stockOf(db(), productId)).toBe(1);
     });
 
     it('locks the cart and creates a server-priced PENDING_PAYMENT order for prepaid checkout', async () => {

@@ -44,6 +44,22 @@ export const orderPlacedPayloadSchema = z.strictObject({
   items: z.array(lineItemSchema).min(1),
 });
 
+/**
+ * ORDER_CANCELED_REFUND_DUE: a prepaid (PAID) order was canceled inside the 60 s window. Its
+ * payment sits in SYSTEM_ESCROW and must be refunded through the gateway it came from.
+ */
+export const orderCanceledRefundDuePayloadSchema = z.strictObject({
+  order_id: z.uuid(),
+  vendor_id: z.uuid(),
+  customer_id: z.uuid(),
+  payment_method: z.enum(['ESEWA', 'KHALTI']),
+  /** eSewa transaction_uuid or Khalti pidx of the captured payment. */
+  payment_gateway_ref: z.string().min(1),
+  /** subtotal + delivery fee: everything the customer paid. */
+  refund_amount_npr: z.number().positive(),
+  canceled_at: z.iso.datetime(),
+});
+
 /** A balanced journal transaction was posted. One posting per affected account line. */
 export const ledgerMutatedPayloadSchema = z.strictObject({
   transaction_id: z.uuid(),
@@ -82,16 +98,22 @@ function envelope<TType extends string, TPayload extends z.ZodType>(
 
 export const orderLockedEventSchema = envelope('order.locked', orderLockedPayloadSchema);
 export const orderPlacedEventSchema = envelope('order.placed', orderPlacedPayloadSchema);
+export const orderCanceledRefundDueEventSchema = envelope(
+  'order.canceled_refund_due',
+  orderCanceledRefundDuePayloadSchema,
+);
 export const ledgerMutatedEventSchema = envelope('ledger.mutated', ledgerMutatedPayloadSchema);
 
 export const domainEventSchema = z.discriminatedUnion('event_type', [
   orderLockedEventSchema,
   orderPlacedEventSchema,
+  orderCanceledRefundDueEventSchema,
   ledgerMutatedEventSchema,
 ]);
 
 export type OrderLockedEvent = z.infer<typeof orderLockedEventSchema>;
 export type OrderPlacedEvent = z.infer<typeof orderPlacedEventSchema>;
+export type OrderCanceledRefundDueEvent = z.infer<typeof orderCanceledRefundDueEventSchema>;
 export type LedgerMutatedEvent = z.infer<typeof ledgerMutatedEventSchema>;
 export type DomainEvent = z.infer<typeof domainEventSchema>;
 export type DomainEventType = DomainEvent['event_type'];
@@ -103,5 +125,6 @@ export type DomainEventPayload<T extends DomainEventType> = Extract<
 export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> = {
   'order.locked': KAFKA_TOPICS.ORDER_LIFECYCLE,
   'order.placed': KAFKA_TOPICS.ORDER_LIFECYCLE,
+  'order.canceled_refund_due': KAFKA_TOPICS.PAYMENT_RECONCILIATION,
   'ledger.mutated': KAFKA_TOPICS.LEDGER_MUTATIONS,
 };

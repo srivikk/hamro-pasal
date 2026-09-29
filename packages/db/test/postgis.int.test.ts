@@ -47,7 +47,7 @@ describe('PostGIS', () => {
     return createVendor(pool, { radiusKm, lng, lat });
   }
 
-  it('declares vendor and address locations as geometry(Point, 4326)', async () => {
+  it('declares vendor, address and order-address locations as geometry(Point, 4326)', async () => {
     const { rows } = await pool.query<{ f_table_name: string; type: string; srid: number }>(
       `SELECT f_table_name, type, srid FROM geometry_columns
        WHERE f_geometry_column = 'location' ORDER BY f_table_name`,
@@ -55,6 +55,7 @@ describe('PostGIS', () => {
 
     expect(rows).toEqual([
       { f_table_name: 'customer_addresses', type: 'POINT', srid: 4326 },
+      { f_table_name: 'order_addresses', type: 'POINT', srid: 4326 },
       { f_table_name: 'vendors', type: 'POINT', srid: 4326 },
     ]);
   });

@@ -1,12 +1,8 @@
 import { z } from 'zod';
 
 import { NEPAL_PROVINCE_ID_MAX, NEPAL_PROVINCE_ID_MIN } from '../domain/constants';
-import {
-  lookupNepalDistrict,
-  NEPAL_BOUNDING_BOX,
-  NEPAL_MAX_WARD_NUMBER,
-  NEPAL_PROVINCES,
-} from './nepal-geography';
+import { NEPAL_BOUNDING_BOX } from '../nepal/geo';
+import { lookupNepalDistrict, NEPAL_MAX_WARD_NUMBER, NEPAL_PROVINCES } from './nepal-geography';
 
 const text = (field: string) =>
   z

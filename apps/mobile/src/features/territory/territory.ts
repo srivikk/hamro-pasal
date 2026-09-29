@@ -1,3 +1,5 @@
+import { NEPAL_BOUNDING_BOX } from '@hamro-pasal/shared-types';
+
 /*
  * Tenant isolation (SPEC §1): the platform serves country_code 'NP' only. Pure decision logic,
  * separate from the device APIs, so every branch is unit-tested.
@@ -8,13 +10,11 @@ export const TERRITORY_BLOCKED_MESSAGE = 'Service Unvailable in your territory';
 
 export const SERVICE_COUNTRY_CODE = 'NP';
 
-/** Nepal's extreme points. A rectangle, so it also covers slices of India and China (see below). */
-export const NEPAL_TERRITORY_BOX = {
-  minLat: 26.347,
-  maxLat: 30.447,
-  minLng: 80.058,
-  maxLng: 88.201,
-} as const;
+/**
+ * Nepal's extreme points, shared with address validation and the API. A rectangle, so it also
+ * covers slices of India and China (see below).
+ */
+export const NEPAL_TERRITORY_BOX = NEPAL_BOUNDING_BOX;
 
 export interface Coordinates {
   latitude: number;

@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 import { paymentMethodSchema } from '../domain/enums';
+import { nepalAddressInputSchema } from '../localization/address';
+import { NEPAL_BOUNDING_BOX } from '../nepal/geo';
 
 /*
  * HTTP request contracts for apps/api, shared with the mobile client so both sides validate
@@ -25,8 +27,43 @@ export const checkoutRequestSchema = z.strictObject({
     )
     .min(1)
     .max(MAX_CART_LINES),
+  /** Where to deliver (Nepal hierarchy + dropped pin), stored with the order. */
+  delivery_address: nepalAddressInputSchema,
 });
 export type CheckoutRequest = z.infer<typeof checkoutRequestSchema>;
+export type CheckoutRequestInput = z.input<typeof checkoutRequestSchema>;
+
+/** Query-string coordinate: parsed from text and limited to Nepal's bounding box (SPEC §1). */
+const queryCoordinate = (field: string, min: number, max: number) =>
+  z
+    .string({ error: `${field} is required` })
+    .trim()
+    .min(1, `${field} is required`)
+    .pipe(z.coerce.number({ error: `${field} must be a number` }))
+    .pipe(z.number().min(min, `${field} is outside Nepal`).max(max, `${field} is outside Nepal`));
+
+const customerLocationQueryShape = {
+  lat: queryCoordinate('lat', NEPAL_BOUNDING_BOX.minLat, NEPAL_BOUNDING_BOX.maxLat),
+  lng: queryCoordinate('lng', NEPAL_BOUNDING_BOX.minLng, NEPAL_BOUNDING_BOX.maxLng),
+  /**
+   * The customer's Palika (as in their address). CITY_WIDE vendors are serviceable only when it
+   * matches theirs (SPEC §2). Without it no CITY_WIDE vendor can be shown as serviceable.
+   */
+  municipality_palika_string: z.string().trim().min(1).max(120).optional(),
+};
+
+/** GET /api/vendors?lat=&lng=[&municipality_palika_string=] (SPEC customer journey 3). */
+export const vendorFeedQuerySchema = z.strictObject(customerLocationQueryShape);
+export type VendorFeedQuery = z.output<typeof vendorFeedQuerySchema>;
+
+/** GET /api/vendors/:id/products?lat=&lng=[&municipality_palika_string=] */
+export const vendorMenuQuerySchema = z.strictObject(customerLocationQueryShape);
+export type VendorMenuQuery = z.output<typeof vendorMenuQuerySchema>;
+
+/** Route parameter `:id` of /api/vendors/:id/... and /api/orders/:id/... */
+export const idParamSchema = z.strictObject({
+  id: z.uuid(),
+});
 
 /** GET /api/cart/lock-status?order_id=... (SPEC edge case 1: resume or purge after reconnect). */
 export const lockStatusQuerySchema = z.strictObject({

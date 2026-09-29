@@ -1,5 +1,6 @@
 import {
   enqueueDomainEvent,
+  orderAddresses,
   orderItems,
   orders,
   products,
@@ -187,6 +188,10 @@ export class CheckoutService {
             quantity: line.quantity,
           })),
         );
+        // Already validated and normalised (canonical district) by nepalAddressInputSchema.
+        await tx
+          .insert(orderAddresses)
+          .values({ order_id: created.id, ...request.delivery_address });
         await enqueueDomainEvent(tx, {
           type: 'order.locked',
           aggregateId: reservation.id,
@@ -402,7 +407,7 @@ export class CheckoutService {
 
       const [updated] = await tx
         .update(orders)
-        .set({ state: 'PLACED' })
+        .set({ state: 'PLACED', placed_at: sql`now()` })
         .where(eq(orders.id, order.id))
         .returning();
       if (updated === undefined) {

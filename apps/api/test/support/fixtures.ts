@@ -11,14 +11,17 @@ import {
   type Database,
 } from '@hamro-pasal/db';
 import type {
+  DeliveryScope,
   FulfillmentMode,
+  GeoPoint,
   Order,
   PaymentMethod,
   PricingModel,
   UserRole,
   VendorFulfillmentMode,
+  VendorStatus,
 } from '@hamro-pasal/shared-types';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { Redis } from 'ioredis';
 
 import { RedisConnectionPool } from '../../src/infra/redis-pool';
@@ -61,6 +64,12 @@ export interface VendorFixture {
   fulfillmentMode?: VendorFulfillmentMode;
   minOrderValue?: number;
   baseDeliveryFee?: number;
+  status?: VendorStatus;
+  businessName?: string;
+  deliveryScope?: DeliveryScope;
+  radiusKm?: number;
+  palika?: string;
+  location?: GeoPoint;
 }
 
 export async function createVendor(db: Database, options: VendorFixture = {}): Promise<string> {
@@ -71,21 +80,57 @@ export async function createVendor(db: Database, options: VendorFixture = {}): P
       .insert(vendors)
       .values({
         user_id: userId,
-        business_name: 'Test Pasal',
+        business_name: options.businessName ?? 'Test Pasal',
         phone: '+9779800000000',
-        status: 'LIVE',
+        status: options.status ?? 'LIVE',
         pricing_model: pricingModel,
         commission_rate: options.commissionRate ?? (pricingModel === 'SUBSCRIPTION' ? 0 : 0.1),
-        delivery_scope: 'RADIUS_BOUND',
+        delivery_scope: options.deliveryScope ?? 'RADIUS_BOUND',
         fulfillment_mode: options.fulfillmentMode ?? 'SELF_DELIVERY',
-        radius_km: 5,
-        municipality_palika_string: 'Kathmandu Metropolitan City',
+        radius_km: options.radiusKm ?? 5,
+        municipality_palika_string: options.palika ?? 'Kathmandu Metropolitan City',
         min_order_value: options.minOrderValue ?? 0,
         base_delivery_fee_npr: options.baseDeliveryFee ?? 50,
-        location: { x: 85.3123, y: 27.7154 },
+        location: options.location ?? { x: 85.3123, y: 27.7154 },
       })
       .returning({ id: vendors.id }),
   ).id;
+}
+
+/**
+ * The point exactly `distanceM` metres (geodesic, WGS 84 spheroid) from `origin` along
+ * `azimuthDeg`, computed by PostGIS ST_Project, the same geometry model ST_DWithin uses.
+ */
+export async function pointAtDistance(
+  db: Database,
+  origin: GeoPoint,
+  distanceM: number,
+  azimuthDeg = 90,
+): Promise<GeoPoint> {
+  const { rows } = await db.execute<{ x: number; y: number }>(sql`
+    SELECT ST_X(p::geometry) AS x, ST_Y(p::geometry) AS y
+    FROM ST_Project(
+      ST_SetSRID(ST_MakePoint(${origin.x}::float8, ${origin.y}::float8), 4326)::geography,
+      ${distanceM}::float8,
+      radians(${azimuthDeg}::float8)
+    ) AS p`);
+  return one(rows);
+}
+
+/** Moves an order's placement `seconds` into the past (the cancellation window's anchor). */
+export async function backdatePlacement(db: Database, orderId: string, seconds: number) {
+  await db
+    .update(orders)
+    .set({ placed_at: sql`now() - make_interval(secs => ${seconds}::float8)` })
+    .where(eq(orders.id, orderId));
+}
+
+/** Moves an order's checkout (creation) time `seconds` into the past. */
+export async function backdateCheckout(db: Database, orderId: string, seconds: number) {
+  await db
+    .update(orders)
+    .set({ created_at: sql`now() - make_interval(secs => ${seconds}::float8)` })
+    .where(eq(orders.id, orderId));
 }
 
 export async function createProduct(
@@ -147,7 +192,12 @@ export async function markDelivered(
 ) {
   await db
     .update(orders)
-    .set({ state: 'DELIVERED', delivered_at: new Date(), driver_user_id: driverUserId })
+    .set({
+      state: 'DELIVERED',
+      placed_at: sql`coalesce(${orders.placed_at}, now())`,
+      delivered_at: new Date(),
+      driver_user_id: driverUserId,
+    })
     .where(eq(orders.id, orderId));
 }
 
@@ -177,3 +227,15 @@ export async function balanceOf(
   const [account] = await db.select().from(ledgerAccounts).where(condition);
   return account?.balance_npr ?? null;
 }
+
+/** A valid Nepal delivery address (Thamel, Kathmandu), required by every checkout. */
+export const DELIVERY_ADDRESS = {
+  province_id: 3,
+  district_string: 'Kathmandu',
+  municipality_palika_string: 'Kathmandu Metropolitan City',
+  ward_number: 26,
+  tole_locality: 'Thamel',
+  landmark: 'Near Kathmandu Guest House',
+  exact_lat: 27.7149,
+  exact_lng: 85.3106,
+} as const;

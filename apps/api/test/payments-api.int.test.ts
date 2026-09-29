@@ -16,6 +16,7 @@ import {
   createProduct,
   createUser,
   createVendor,
+  DELIVERY_ADDRESS,
   outboxFor,
   stockOf,
 } from './support/fixtures';
@@ -59,6 +60,7 @@ describe('payments API', () => {
         vendor_id: vendorId,
         payment_method: paymentMethod,
         items: [{ product_id: productId, quantity: 2 }],
+        delivery_address: DELIVERY_ADDRESS,
       });
     expect(res.status).toBe(201);
     return {

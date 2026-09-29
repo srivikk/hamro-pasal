@@ -4,6 +4,7 @@ import {
   lockStatusResponse,
   ORDER_ID,
   RESERVATION_ID,
+  THAMEL_ADDRESS,
 } from '../test/api-fixtures';
 import { InMemoryMmkv } from '../test/in-memory-mmkv';
 import {
@@ -43,6 +44,7 @@ describe('checkout store', () => {
         { product_id: 'a', quantity: 1 },
         { product_id: 'b', quantity: 2 },
       ],
+      deliveryAddress: THAMEL_ADDRESS,
     });
 
     it('reuses the key for retries of the same cart', () => {
@@ -58,12 +60,13 @@ describe('checkout store', () => {
         vendorId: 'v1',
         paymentMethod: 'ESEWA',
         items: [{ product_id: 'a', quantity: 3 }],
+        deliveryAddress: THAMEL_ADDRESS,
       });
 
       expect(store.getState().idempotencyKeyFor(changed)).not.toBe(first);
     });
 
-    it('fingerprints ignore line order but not payment method or vendor', () => {
+    it('fingerprints ignore line order but not payment method, vendor or address', () => {
       const base = {
         vendorId: 'v1',
         paymentMethod: 'ESEWA',
@@ -71,6 +74,7 @@ describe('checkout store', () => {
           { product_id: 'a', quantity: 1 },
           { product_id: 'b', quantity: 2 },
         ],
+        deliveryAddress: THAMEL_ADDRESS,
       };
 
       expect(checkoutFingerprint({ ...base, items: [...base.items].reverse() })).toBe(
@@ -80,6 +84,18 @@ describe('checkout store', () => {
         checkoutFingerprint(base),
       );
       expect(checkoutFingerprint({ ...base, vendorId: 'v2' })).not.toBe(checkoutFingerprint(base));
+      expect(
+        checkoutFingerprint({
+          ...base,
+          deliveryAddress: { ...THAMEL_ADDRESS, ward_number: 27 },
+        }),
+      ).not.toBe(checkoutFingerprint(base));
+      expect(
+        checkoutFingerprint({
+          ...base,
+          deliveryAddress: { ...THAMEL_ADDRESS, exact_lat: 27.7155 },
+        }),
+      ).not.toBe(checkoutFingerprint(base));
     });
 
     it('survives a relaunch, so a retry after the app was killed replays the same attempt', () => {

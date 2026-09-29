@@ -108,7 +108,10 @@ describe('double-entry settlement', () => {
       await expect(settlement.settleOrder(order.id)).rejects.toBeInstanceOf(
         SettlementNotAllowedError,
       );
-      await db.update(orders).set({ state: 'DISPUTED' }).where(eq(orders.id, order.id));
+      await db
+        .update(orders)
+        .set({ state: 'DISPUTED', placed_at: new Date() })
+        .where(eq(orders.id, order.id));
       await expect(settlement.settleOrder(order.id)).rejects.toThrow(
         'cannot settle in state DISPUTED',
       );

@@ -146,14 +146,3 @@ export function lookupNepalDistrict(
  * the full local-level dataset (753 Palikas), which is not bundled yet.
  */
 export const NEPAL_MAX_WARD_NUMBER = 33;
-
-/**
- * Coarse bounding box of Nepal. Pins outside it are certainly invalid. The authoritative
- * tenant check (SPEC §1) is the PostGIS polygon lookup, which this does not replace.
- */
-export const NEPAL_BOUNDING_BOX = {
-  minLat: 26.3,
-  maxLat: 30.5,
-  minLng: 80.0,
-  maxLng: 88.25,
-} as const;

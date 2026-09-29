@@ -57,6 +57,20 @@
       "when": 1790652091329,
       "tag": "0007_checkout_order_links",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790704309097,
+      "tag": "0008_order_addresses_and_refunds",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790705280769,
+      "tag": "0009_orders_placed_at",
+      "breakpoints": true
     }
   ]
 }

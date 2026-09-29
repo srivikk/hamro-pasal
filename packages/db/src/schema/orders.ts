@@ -1,7 +1,20 @@
+import { GEO_SRID, NEPAL_PROVINCE_ID_MAX, NEPAL_PROVINCE_ID_MIN } from '@hamro-pasal/shared-types';
 import { sql } from 'drizzle-orm';
-import { check, index, integer, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  check,
+  doublePrecision,
+  index,
+  integer,
+  pgTable,
+  smallint,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
-import { createdAt, npr, primaryId, updatedAt } from './columns';
+import { createdAt, geoPoint, npr, primaryId, updatedAt } from './columns';
 import { fulfillmentModeEnum, orderStateEnum, paymentMethodEnum, paymentStatusEnum } from './enums';
 import { users } from './users';
 import { products, vendors } from './vendors';
@@ -29,7 +42,10 @@ export const orders = pgTable(
     payment_status: paymentStatusEnum().notNull().default('PENDING'),
     payment_gateway_ref: text(),
     delivery_otp: text().notNull(),
+    /** When the order became PLACED (COD accepted or payment confirmed). Starts the 60 s window. */
+    placed_at: timestamp({ withTimezone: true, mode: 'date' }),
     delivered_at: timestamp({ withTimezone: true, mode: 'date' }),
+    refund_required: boolean().notNull().default(false),
     created_at: createdAt(),
     updated_at: updatedAt(),
   },
@@ -59,6 +75,55 @@ export const orders = pgTable(
     ),
     // SPEC: delivery_otp is stored as a bcrypt hash only, never the raw 4-digit code.
     check('orders_delivery_otp_bcrypt_check', sql`${t.delivery_otp} ~ '^\\$2[aby]\\$'`),
+    // placed_at is stamped exactly when the order leaves PENDING_PAYMENT for PLACED. Only an
+    // order still paying, or one that FAILED before it was ever placed, can lack it.
+    check(
+      'orders_placed_at_check',
+      sql`CASE ${t.state} WHEN 'PENDING_PAYMENT' THEN ${t.placed_at} IS NULL WHEN 'FAILED' THEN true ELSE ${t.placed_at} IS NOT NULL END`,
+    ),
+    // Only money that was actually captured can be owed back.
+    check(
+      'orders_refund_required_paid_check',
+      sql`NOT ${t.refund_required} OR ${t.payment_status} = 'PAID'`,
+    ),
+  ],
+);
+
+/**
+ * The delivery address captured at checkout (Nepal hierarchy + dropped pin). A copy, not a
+ * reference to customer_addresses, so editing a saved address never rewrites an order.
+ */
+export const orderAddresses = pgTable(
+  'order_addresses',
+  {
+    order_id: uuid()
+      .primaryKey()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    province_id: smallint().notNull(),
+    district_string: text().notNull(),
+    municipality_palika_string: text().notNull(),
+    ward_number: integer().notNull(),
+    tole_locality: text().notNull(),
+    landmark: text().notNull(),
+    exact_lat: doublePrecision().notNull(),
+    exact_lng: doublePrecision().notNull(),
+    // Derived from the pin so the geometry can never disagree with exact_lat/exact_lng.
+    location: geoPoint()
+      .notNull()
+      .generatedAlwaysAs(
+        sql`ST_SetSRID(ST_MakePoint("exact_lng", "exact_lat"), ${sql.raw(String(GEO_SRID))})`,
+      ),
+    created_at: createdAt(),
+  },
+  (t) => [
+    index('order_addresses_location_gist').using('gist', t.location),
+    check(
+      'order_addresses_province_check',
+      sql`${t.province_id} BETWEEN ${sql.raw(String(NEPAL_PROVINCE_ID_MIN))} AND ${sql.raw(String(NEPAL_PROVINCE_ID_MAX))}`,
+    ),
+    check('order_addresses_ward_check', sql`${t.ward_number} >= 1`),
+    check('order_addresses_lat_check', sql`${t.exact_lat} BETWEEN -90 AND 90`),
+    check('order_addresses_lng_check', sql`${t.exact_lng} BETWEEN -180 AND 180`),
   ],
 );
 

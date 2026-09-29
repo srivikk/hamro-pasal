@@ -2,6 +2,7 @@ import { checkoutRequestSchema } from '@hamro-pasal/shared-types';
 import { act, waitFor } from '@testing-library/react-native';
 import { http, HttpResponse } from 'msw';
 
+import { useAddressStore } from '../store/useAddressStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useCartStore } from '../store/useCartStore';
 import { useCheckoutStore } from '../store/useCheckoutStore';
@@ -13,6 +14,7 @@ import {
   ORDER_ID,
   RESERVATION_ID,
   RICE,
+  THAMEL_ADDRESS,
   THAMEL_VENDOR,
 } from '../test/api-fixtures';
 import {
@@ -25,7 +27,7 @@ import {
 } from '../test/msw';
 import { renderHookWithProviders } from '../test/render';
 import { CLIENT_ERROR_CODES } from './http';
-import { CHECKOUT_PATH, useCheckout } from './mutations';
+import { CHECKOUT_PATH, NO_DELIVERY_ADDRESS, useCheckout } from './mutations';
 
 setupApiTestEnvironment();
 
@@ -92,7 +94,47 @@ describe('useCheckout → POST /api/cart/checkout', () => {
         { product_id: NOODLES.id, quantity: 2 },
         { product_id: RICE.id, quantity: 1 },
       ],
+      delivery_address: {
+        province_id: THAMEL_ADDRESS.province_id,
+        district_string: THAMEL_ADDRESS.district_string,
+        municipality_palika_string: THAMEL_ADDRESS.municipality_palika_string,
+        ward_number: THAMEL_ADDRESS.ward_number,
+        tole_locality: THAMEL_ADDRESS.tole_locality,
+        landmark: THAMEL_ADDRESS.landmark,
+        exact_lat: THAMEL_ADDRESS.exact_lat,
+        exact_lng: THAMEL_ADDRESS.exact_lng,
+      },
     });
+  });
+
+  it('does not send anything without a saved delivery address', async () => {
+    const received = checkoutEndpoint(() => HttpResponse.json(checkoutResponse(), { status: 201 }));
+    fillCart();
+    useAddressStore.getState().clearAddress();
+
+    const result = await checkoutWith('COD');
+
+    expect(received).toHaveLength(0);
+    expect(result.current.error?.code).toBe(NO_DELIVERY_ADDRESS);
+    expect(useCartStore.getState().lines).toHaveLength(2);
+  });
+
+  it('starts a new attempt when the delivery address changes', async () => {
+    const received = checkoutEndpoint(() =>
+      HttpResponse.json(errorBody('CHECKOUT_BUSY'), { status: 503 }),
+    );
+    fillCart();
+
+    await checkoutWith('ESEWA');
+    useAddressStore.getState().setAddress({ ...THAMEL_ADDRESS, ward_number: 16 });
+    await checkoutWith('ESEWA');
+
+    const bodies = received.map(
+      (request) =>
+        request.body as { idempotency_key: string; delivery_address: { ward_number: number } },
+    );
+    expect(bodies.map((b) => b.delivery_address.ward_number)).toEqual([26, 16]);
+    expect(bodies[1]?.idempotency_key).not.toBe(bodies[0]?.idempotency_key);
   });
 
   it('reads the access token at call time, so a refreshed token is used immediately', async () => {

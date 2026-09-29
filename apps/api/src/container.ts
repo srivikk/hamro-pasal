@@ -3,6 +3,7 @@ import type { ServerEnv } from '@hamro-pasal/shared-types';
 import { Redis } from 'ioredis';
 
 import type { ApiServices } from './app';
+import { CatalogService } from './catalog/catalog-service';
 import { CheckoutService } from './checkout/checkout-service';
 import { RedisKeyedMutex } from './infra/redis-mutex';
 import { RedisConnectionPool } from './infra/redis-pool';
@@ -13,6 +14,7 @@ import {
 import { DrizzleStockReader } from './inventory/stock-reader';
 import { LedgerService } from './ledger/ledger-service';
 import { SettlementService } from './ledger/settlement-service';
+import { OrderService } from './orders/order-service';
 import { EsewaService, type EsewaConfig } from './payments/esewa/esewa-service';
 import type { FetchLike } from './payments/gateway-http';
 import { KhaltiClient, type KhaltiConfig } from './payments/khalti/khalti-client';
@@ -76,7 +78,9 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     db: infra.db,
     redisPool: infra.redisPool,
     settlement,
+    catalog: new CatalogService(infra.db),
     checkout,
+    orders: new OrderService(infra.db, locks),
     esewa: new EsewaService(infra.db, checkout, confirmation, config.esewa),
     khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),
     async close() {

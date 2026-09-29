@@ -6,6 +6,7 @@ import {
   ledgerAccountSchema,
   ledgerEntrySchema,
   ledgerTransactionSchema,
+  orderAddressSchema,
   orderItemSchema,
   orderSchema,
   platformSettingsSchema,
@@ -23,6 +24,7 @@ import {
   ledgerAccounts,
   ledgerEntries,
   ledgerTransactions,
+  orderAddresses,
   orderItems,
   orders,
   platformSettings,
@@ -206,8 +208,25 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
         .price_npr,
     ).toBe(450.5);
     expect(
-      orderSchema.parse(await read(db.select().from(orders).where(eq(orders.id, order.id)))),
-    ).toBeDefined();
+      orderSchema.parse(await read(db.select().from(orders).where(eq(orders.id, order.id))))
+        .refund_required,
+    ).toBe(false);
+    await db.insert(orderAddresses).values({
+      order_id: order.id,
+      province_id: 3,
+      district_string: 'Kathmandu',
+      municipality_palika_string: 'Kathmandu Metropolitan City',
+      ward_number: 26,
+      tole_locality: 'Thamel',
+      landmark: 'Near Kathmandu Guest House',
+      exact_lat: 27.7149,
+      exact_lng: 85.3106,
+    });
+    expect(
+      orderAddressSchema.parse(
+        await read(db.select().from(orderAddresses).where(eq(orderAddresses.order_id, order.id))),
+      ).location,
+    ).toEqual({ x: 85.3106, y: 27.7149 });
     expect(
       orderItemSchema.parse(
         await read(db.select().from(orderItems).where(eq(orderItems.id, item.id))),

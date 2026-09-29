@@ -1,10 +1,13 @@
 import { z } from 'zod';
 
+import { geoPointSchema } from '../domain/entities';
 import {
+  deliveryScopeSchema,
   fulfillmentModeSchema,
   orderStateSchema,
   paymentMethodSchema,
   paymentStatusSchema,
+  vendorFulfillmentModeSchema,
 } from '../domain/enums';
 
 /*
@@ -119,3 +122,118 @@ export const paymentStatusResponseSchema = z.strictObject({
   payment: paymentViewSchema.nullable(),
 });
 export type PaymentStatusResponseBody = z.infer<typeof paymentStatusResponseSchema>;
+
+/*
+ * Customer feed and vendor menus (SPEC §2, customer journey 3). The shapes match the drafts the
+ * mobile app was built against (apps/mobile/src/features/{feed,menu}/*-contract.ts).
+ */
+
+/** The public profile of a LIVE vendor, enough to evaluate and display serviceability. */
+export const feedVendorSchema = z.strictObject({
+  id: z.uuid(),
+  business_name: z.string().min(1),
+  delivery_scope: deliveryScopeSchema,
+  radius_km: z.number().positive(),
+  municipality_palika_string: z.string().min(1),
+  min_order_value: z.number().nonnegative(),
+  base_delivery_fee_npr: z.number().nonnegative(),
+  fulfillment_mode: vendorFulfillmentModeSchema,
+  location: geoPointSchema,
+});
+export type FeedVendor = z.infer<typeof feedVendorSchema>;
+
+export const feedEntrySchema = z.strictObject({
+  vendor: feedVendorSchema,
+  /** Geodesic (WGS 84 spheroid) distance from the customer's position. */
+  distance_km: z.number().nonnegative(),
+  serviceable: z.boolean(),
+});
+export type FeedEntry = z.infer<typeof feedEntrySchema>;
+
+/** GET /api/vendors */
+export const feedResponseSchema = z.strictObject({
+  /** Vendors that deliver to the customer, nearest first. */
+  serviceable: z.array(feedEntrySchema),
+  /**
+   * LIVE vendors that do not deliver to the customer, nearest first. SPEC customer journey 3
+   * shows them desaturated under "Explore Further" with carts disabled.
+   */
+  explore_further: z.array(feedEntrySchema),
+});
+export type FeedResponse = z.infer<typeof feedResponseSchema>;
+
+export const menuProductSchema = z.strictObject({
+  /** The products.id to send as `product_id` at checkout. */
+  id: z.uuid(),
+  name: z.string().min(1),
+  price_npr: z.number().positive(),
+  in_stock: z.boolean(),
+});
+export type MenuProduct = z.infer<typeof menuProductSchema>;
+
+/** GET /api/vendors/:id/products */
+export const vendorMenuSchema = z.strictObject({
+  vendor: feedVendorSchema,
+  /** Whether the vendor delivers to the customer. False: browsing only, carts disabled. */
+  serviceable: z.boolean(),
+  products: z.array(menuProductSchema),
+});
+export type VendorMenu = z.infer<typeof vendorMenuSchema>;
+
+/*
+ * Order detail and cancellation (customer journeys 8 and 9).
+ */
+
+/** The delivery address stored with an order (Nepal hierarchy, SPEC Nepal §3). */
+export const orderAddressViewSchema = z.strictObject({
+  province_id: z.number().int(),
+  district_string: z.string().min(1),
+  municipality_palika_string: z.string().min(1),
+  ward_number: z.number().int().positive(),
+  tole_locality: z.string().min(1),
+  landmark: z.string().min(1),
+  exact_lat: z.number(),
+  exact_lng: z.number(),
+});
+export type OrderAddressView = z.infer<typeof orderAddressViewSchema>;
+
+export const orderItemViewSchema = z.strictObject({
+  product_id: z.uuid(),
+  /** Name and price as they were at checkout. */
+  product_name: z.string().min(1),
+  unit_price_npr: z.number().positive(),
+  quantity: z.number().int().positive(),
+});
+export type OrderItemView = z.infer<typeof orderItemViewSchema>;
+
+/**
+ * The customer's full view of an order (SPEC OrderSnapshot). Like OrderView, it never exposes
+ * the OTP hash, gateway refs or the vendor's commission.
+ */
+export const orderSnapshotSchema = orderViewSchema.extend({
+  customer_id: z.uuid(),
+  /** A PAID order was canceled and its payment is due back to the customer. */
+  refund_required: z.boolean(),
+  /** When the order became PLACED; the 60 s cancellation window runs from here. */
+  placed_at: z.iso.datetime().nullable(),
+  delivered_at: z.iso.datetime().nullable(),
+  /** Null only for orders created before checkout required an address. */
+  delivery_address: orderAddressViewSchema.nullable(),
+  items: z.array(orderItemViewSchema).min(1),
+});
+export type OrderSnapshotView = z.infer<typeof orderSnapshotSchema>;
+
+/** GET /api/orders/:id */
+export const orderDetailResponseSchema = z.strictObject({
+  order: orderSnapshotSchema,
+});
+export type OrderDetailResponseBody = z.infer<typeof orderDetailResponseSchema>;
+
+/** POST /api/orders/:id/cancel. Repeating a successful cancel returns the same body. */
+export const cancelOrderResponseSchema = z.strictObject({
+  order_id: z.uuid(),
+  state: z.literal('CANCELED'),
+  /** true for prepaid (PAID) orders: the refund is issued asynchronously. */
+  refund_required: z.boolean(),
+});
+export type CancelOrderResponseBody = z.infer<typeof cancelOrderResponseSchema>;

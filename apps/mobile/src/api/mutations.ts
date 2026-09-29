@@ -7,6 +7,7 @@ import {
 } from '@hamro-pasal/shared-types';
 import { useMutation } from '@tanstack/react-query';
 
+import { useAddressStore } from '../store/useAddressStore';
 import { useCartStore } from '../store/useCartStore';
 import { useDeliveryOtpStore } from '../store/useDeliveryOtpStore';
 import { checkoutFingerprint, useCheckoutStore } from '../store/useCheckoutStore';
@@ -14,25 +15,36 @@ import { ApiError, apiRequest } from './http';
 
 export const CHECKOUT_PATH = '/api/cart/checkout';
 
+/** Client-side code: checkout was attempted without a saved delivery address. */
+export const NO_DELIVERY_ADDRESS = 'NO_DELIVERY_ADDRESS';
+
 /**
- * Maps the cart store to the shared-types checkout contract. Only product IDs and quantities are
- * sent: the server prices every line from its own database and never trusts client prices.
+ * Maps the cart store and the saved delivery address to the shared-types checkout contract. Only
+ * product IDs and quantities are sent: the server prices every line from its own database and
+ * never trusts client prices.
  */
 export function buildCheckoutRequest(paymentMethod: PaymentMethod): CheckoutRequest {
   const { vendor, lines } = useCartStore.getState();
   if (vendor === null || lines.length === 0) {
     throw new ApiError(400, 'INVALID_CART', 'The cart is empty');
   }
+  const deliveryAddress = useAddressStore.getState().address;
+  if (deliveryAddress === null) {
+    throw new ApiError(400, NO_DELIVERY_ADDRESS, 'Add a delivery address before checkout');
+  }
   const items = lines.map((line) => ({ product_id: line.productId, quantity: line.quantity }));
   const idempotency_key = useCheckoutStore
     .getState()
-    .idempotencyKeyFor(checkoutFingerprint({ vendorId: vendor.id, paymentMethod, items }));
+    .idempotencyKeyFor(
+      checkoutFingerprint({ vendorId: vendor.id, paymentMethod, items, deliveryAddress }),
+    );
 
   const parsed = checkoutRequestSchema.safeParse({
     idempotency_key,
     vendor_id: vendor.id,
     payment_method: paymentMethod,
     items,
+    delivery_address: deliveryAddress,
   });
   if (!parsed.success) {
     throw new ApiError(

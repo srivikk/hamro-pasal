@@ -3,6 +3,7 @@ import {
   paymentMethodSchema,
   type CheckoutResponseBody,
   type LockStatusResponseBody,
+  type NepalAddress,
   type OrderState,
   type PaymentView,
 } from '@hamro-pasal/shared-types';
@@ -102,16 +103,32 @@ export function selectShouldPollLock(state: Pick<CheckoutState, 'session'>): boo
 /** While a reservation is pending payment, the cart must not change underneath it. */
 export const selectIsCheckoutPending = selectShouldPollLock;
 
-/** Canonical description of a checkout payload, independent of line order. */
+/**
+ * Canonical description of a checkout payload, independent of line order. The delivery address
+ * is part of it: a retry after the address changed must be a new attempt, or the server would
+ * replay the earlier order to the old address.
+ */
 export function checkoutFingerprint(input: {
   vendorId: string;
   paymentMethod: string;
   items: readonly { product_id: string; quantity: number }[];
+  deliveryAddress: NepalAddress;
 }): string {
   const items = [...input.items]
     .sort((a, b) => a.product_id.localeCompare(b.product_id))
     .map((item) => `${item.product_id}x${String(item.quantity)}`);
-  return JSON.stringify([input.vendorId, input.paymentMethod, items]);
+  const a = input.deliveryAddress;
+  const address = [
+    a.province_id,
+    a.district_string,
+    a.municipality_palika_string,
+    a.ward_number,
+    a.tole_locality,
+    a.landmark,
+    a.exact_lat,
+    a.exact_lng,
+  ];
+  return JSON.stringify([input.vendorId, input.paymentMethod, items, address]);
 }
 
 export function createCheckoutStore(

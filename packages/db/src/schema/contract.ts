@@ -5,6 +5,7 @@ import type {
   LedgerTransaction,
   Dispute,
   Order,
+  OrderAddress,
   OrderItem,
   PlatformSettings,
   Product,
@@ -15,7 +16,7 @@ import type {
 
 import type { disputes, reviews } from './disputes';
 import type { ledgerAccounts, ledgerEntries, ledgerTransactions } from './ledger';
-import type { orderItems, orders } from './orders';
+import type { orderAddresses, orderItems, orders } from './orders';
 import type { customerAddresses, users } from './users';
 import type { products, vendors } from './vendors';
 import type { platformSettings } from './wallet';
@@ -39,6 +40,7 @@ export type SchemaContract = [
   Assert<Equals<typeof vendors.$inferSelect, Vendor>>,
   Assert<Equals<typeof products.$inferSelect, Product>>,
   Assert<Equals<typeof orders.$inferSelect, Order>>,
+  Assert<Equals<typeof orderAddresses.$inferSelect, OrderAddress>>,
   Assert<Equals<typeof orderItems.$inferSelect, OrderItem>>,
   Assert<Equals<typeof ledgerAccounts.$inferSelect, LedgerAccount>>,
   Assert<Equals<typeof ledgerTransactions.$inferSelect, LedgerTransaction>>,

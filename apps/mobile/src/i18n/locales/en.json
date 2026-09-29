@@ -2,7 +2,8 @@
   "common": {
     "appName": "Hamro Pasal",
     "price": "Rs. {{amount, localizedNumber}}",
-    "retry": "Try again"
+    "retry": "Try again",
+    "back": "Back"
   },
   "tabs": {
     "feed": "Shops",
@@ -40,12 +41,69 @@
     "subtotal": "Subtotal",
     "clear": "Clear cart",
     "increase": "Add one {{name}}",
-    "decrease": "Remove one {{name}}"
+    "decrease": "Remove one {{name}}",
+    "deliveryFee": "Delivery fee",
+    "platformFee": "Platform fee",
+    "total": "Total",
+    "belowMinimum": "Add Rs. {{amount, localizedNumber}} more to reach this shop's minimum order.",
+    "paymentMethod": "Payment method",
+    "proceed": "Proceed to Checkout",
+    "locked": "Your items are reserved. The cart can't be changed until checkout finishes."
   },
   "cartConflict": {
     "title": "Start a new cart?",
     "message": "Your cart has items from {{current}}. Adding items from {{next}} will clear it.",
     "cancel": "Keep current cart",
     "confirm": "Clear and add"
+  },
+  "payment": {
+    "ESEWA": "eSewa",
+    "KHALTI": "Khalti",
+    "COD": "Cash on delivery"
+  },
+  "menu": {
+    "add": "Add",
+    "inCart": "{{count, localizedNumber}} in cart",
+    "outOfStock": "Out of stock",
+    "notServiceable": "This shop doesn't deliver to your location. You can browse, but not order.",
+    "notFound": "This shop isn't available.",
+    "loadError": "Couldn't load this shop's products. Check your connection.",
+    "empty": "This shop has no products yet.",
+    "quantityLimit": "You can add at most {{max, localizedNumber}} of one item.",
+    "cartFull": "Your cart can hold at most {{max, localizedNumber}} different items.",
+    "checkoutPending": "Finish your current checkout before adding more items."
+  },
+  "checkout": {
+    "reservedTitle": "Items reserved",
+    "reservedCountdown": "Complete payment within {{time}}",
+    "awaitingConfirmation": "Checking your reservation…",
+    "placedTitle": "Order placed!",
+    "deliveryCode": "Your delivery code: {{otp}}",
+    "deliveryCodeHint": "Show this code to the rider when your order arrives.",
+    "failedTitle": "This order could not be completed.",
+    "dismiss": "Done",
+    "sessionExpiredTitle": "Session Expired",
+    "sessionExpiredMessage": "Your 10-minute reservation ran out, so your cart was cleared.",
+    "errors": {
+      "NOT_SIGNED_IN": "Sign in to check out.",
+      "UNAUTHENTICATED": "Your session has ended. Sign in again to check out.",
+      "NETWORK_ERROR": "No connection. Check your internet and try again.",
+      "INSUFFICIENT_STOCK": "Some items no longer have enough stock. Reduce the quantity and try again.",
+      "BELOW_MINIMUM_ORDER_VALUE": "Your order is below this shop's minimum order value.",
+      "COD_NOT_AVAILABLE": "Cash on delivery isn't available for your account. Choose eSewa or Khalti.",
+      "VENDOR_UNAVAILABLE": "This shop isn't taking orders right now.",
+      "PRODUCT_UNAVAILABLE": "Some items are no longer available. Remove them and try again.",
+      "CHECKOUT_IN_PROGRESS": "Your checkout is still being processed. Try again in a moment.",
+      "CHECKOUT_BUSY": "Checkout is busy right now. Try again in a moment.",
+      "generic": "Checkout failed. Please try again."
+    }
+  },
+  "devAuth": {
+    "title": "Developer sign-in",
+    "hint": "Paste an access token from `pnpm --filter @hamro-pasal/api token:dev`. It is kept in memory only.",
+    "placeholder": "Access token",
+    "use": "Use token",
+    "signedIn": "Signed in with a developer token.",
+    "signOut": "Sign out"
   }
 }

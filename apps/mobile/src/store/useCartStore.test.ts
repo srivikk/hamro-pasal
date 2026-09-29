@@ -12,8 +12,18 @@ import {
   type CartStore,
 } from './useCartStore';
 
-const THAMEL = { id: 'vendor-thamel', name: 'Thamel Kirana Pasal' };
-const PATAN = { id: 'vendor-patan', name: 'Patan Organic Store' };
+const THAMEL = {
+  id: 'vendor-thamel',
+  name: 'Thamel Kirana Pasal',
+  deliveryFeeNpr: 50,
+  minOrderValueNpr: 500,
+};
+const PATAN = {
+  id: 'vendor-patan',
+  name: 'Patan Organic Store',
+  deliveryFeeNpr: 80,
+  minOrderValueNpr: 400,
+};
 
 const RICE = { id: 'p-rice', name: 'Jeera Masino Rice 5kg', unitPriceNpr: 120.5 };
 const OIL = { id: 'p-oil', name: 'Mustard Oil 1L', unitPriceNpr: 99.99 };
@@ -262,6 +272,23 @@ describe('cart store', () => {
       expect(relaunched.getState().vendor).toEqual(THAMEL);
       expect(selectCartTotal(relaunched.getState())).toBe(561.48);
       expect(relaunched.getState().pendingAddition).toBeNull();
+    });
+
+    it('starts empty from a v1 cart, whose vendor snapshot has no delivery fee or MOV', () => {
+      engine.set(
+        CART_STORE_KEY,
+        JSON.stringify({
+          state: {
+            vendor: { id: 'vendor-thamel', name: 'Thamel Kirana Pasal' },
+            lines: [{ productId: RICE.id, name: RICE.name, unitPriceNpr: 120.5, quantity: 2 }],
+          },
+          version: 1,
+        }),
+      );
+
+      const upgraded = createCartStore(mmkvStateStorage(engine));
+
+      expect(upgraded.getState()).toMatchObject({ vendor: null, lines: [] });
     });
 
     it.each([

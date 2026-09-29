@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { ActivityIndicator, SectionList, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -57,7 +58,14 @@ export default function FeedScreen() {
           </View>
         )
       }
-      renderItem={({ item }) => <VendorCard entry={item} />}
+      renderItem={({ item }) => (
+        <VendorCard
+          entry={item}
+          onPress={(vendorId) => {
+            router.push({ pathname: '/vendor/[id]', params: { id: vendorId } });
+          }}
+        />
+      )}
     />
   );
 }

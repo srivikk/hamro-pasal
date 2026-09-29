@@ -1,3 +1,4 @@
+import { MAX_CART_LINES, MAX_LINE_QUANTITY } from '@hamro-pasal/shared-types';
 import { z } from 'zod';
 import { create, type Mutate, type StoreApi, type UseBoundStore } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
@@ -7,15 +8,22 @@ import { getAppStorage } from '../storage/app-mmkv';
 import { mmkvStateStorage } from '../storage/mmkv-state-storage';
 
 export const CART_STORE_KEY = 'hamro-pasal.cart';
-export const CART_STORE_VERSION = 1;
+/**
+ * v2 added the vendor's delivery fee and MOV to the snapshot. A v1 cart cannot be upgraded (the
+ * fee is unknown), so it fails the strict schema below and starts empty.
+ */
+export const CART_STORE_VERSION = 2;
 
-/** The checkout API accepts 1-99 of each product and at most 50 distinct products per order. */
-export const MAX_LINE_QUANTITY = 99;
-export const MAX_CART_LINES = 50;
+/** The checkout API's limits (shared-types): 1-99 of each product, at most 50 products per order. */
+export { MAX_CART_LINES, MAX_LINE_QUANTITY };
 
 const cartVendorSchema = z.strictObject({
   id: z.string().min(1),
   name: z.string().min(1),
+  /** The vendor's base delivery fee; the server charges the same value at checkout. */
+  deliveryFeeNpr: z.number().nonnegative(),
+  /** SPEC customer flow step 5: the subtotal must reach this before checkout (else HTTP 422). */
+  minOrderValueNpr: z.number().nonnegative(),
 });
 
 const cartLineSchema = z.strictObject({

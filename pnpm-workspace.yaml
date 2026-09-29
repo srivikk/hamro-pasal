@@ -11,6 +11,8 @@ allowBuilds:
   '@parcel/watcher': true
   esbuild: true
   msgpackr-extract: true
+  # Only copies the browser service worker; Jest uses msw/node, which needs no build step.
+  msw: false
   unrs-resolver: true
 
 # Pin auto-installed peers to the versions Expo SDK 57 / React Native 0.86 ship with.

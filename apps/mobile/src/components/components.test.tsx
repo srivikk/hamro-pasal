@@ -104,8 +104,18 @@ describe('VendorCard', () => {
 });
 
 describe('ReplaceCartModal', () => {
-  const thamel = { id: 'v-thamel', name: 'Thamel Kirana Pasal' };
-  const patan = { id: 'v-patan', name: 'Patan Organic Store' };
+  const thamel = {
+    id: 'v-thamel',
+    name: 'Thamel Kirana Pasal',
+    deliveryFeeNpr: 50,
+    minOrderValueNpr: 0,
+  };
+  const patan = {
+    id: 'v-patan',
+    name: 'Patan Organic Store',
+    deliveryFeeNpr: 80,
+    minOrderValueNpr: 0,
+  };
   const rice = { id: 'p-rice', name: 'Rice', unitPriceNpr: 120 };
   const honey = { id: 'p-honey', name: 'Honey', unitPriceNpr: 650 };
 

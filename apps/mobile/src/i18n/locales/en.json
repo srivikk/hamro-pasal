@@ -213,5 +213,45 @@
       "landmark": "Enter a nearby landmark.",
       "pin": "Drop a pin inside Nepal."
     }
+  },
+  "review": {
+    "title": "How was your order?",
+    "star_one": "{{count, localizedNumber}} star",
+    "star_other": "{{count, localizedNumber}} stars",
+    "comment": "Feedback (optional)",
+    "commentPlaceholder": "Tell us about the products and the delivery",
+    "submit": "Submit review",
+    "submitting": "Submitting…",
+    "notNow": "Not now",
+    "quarantine": "Reviews remain hidden until both customer and vendor rate, or 48 hours elapse.",
+    "thanks": "Thanks! Your review stays hidden until the vendor rates too, or 48 hours pass.",
+    "failed": "Couldn't submit your review. Please try again."
+  },
+  "dispute": {
+    "open": "Report an Issue / Dispute",
+    "title": "Dispute",
+    "closed": "The 48-hour dispute window for this order has ended.",
+    "empty": "Tell us what went wrong. A Hamro Pasal team member will reply here.",
+    "privacy": "Only first names are shown in this chat. Phone numbers are never shared.",
+    "placeholder": "Describe the problem…",
+    "send": "Send",
+    "attach": "Attach photo",
+    "removeAttachment": "Remove photo",
+    "attachFailed": "Couldn't attach this photo. Use an image under 10 MB.",
+    "you": "You",
+    "roles": {
+      "CUSTOMER": "Customer",
+      "VENDOR": "Vendor",
+      "DRIVER": "Rider",
+      "SUPER_ADMIN": "Hamro Pasal Support"
+    },
+    "status": {
+      "sending": "Sending…",
+      "failed": "Not sent. Tap to retry."
+    },
+    "connection": {
+      "connecting": "Connecting to support…",
+      "reconnecting": "Reconnecting… your messages will send when you're back online."
+    }
   }
 }

@@ -1,5 +1,6 @@
 import type { OrderState } from '@hamro-pasal/shared-types';
 import { act, fireEvent, screen } from '@testing-library/react-native';
+import { router } from 'expo-router';
 
 import OrderTrackingScreen from '../../../app/order/[id]';
 import { fetchOrder } from '../../api/orders';
@@ -17,6 +18,7 @@ jest.mock('expo-router', () => ({
 }));
 
 jest.mock('../../api/orders', () => ({ fetchOrder: jest.fn() }));
+const mockRouterPush = jest.mocked(router.push);
 const mockFetchOrder = jest.mocked(fetchOrder);
 
 const NOW = Date.parse('2026-09-29T10:00:00.000Z');
@@ -32,10 +34,21 @@ function serverState(state: OrderState): void {
   mockFetchOrder.mockResolvedValue(orderView({ state, payment_method: 'COD', total_npr: 1250 }));
 }
 
-function placeOrder(placedAt: number | null, state: OrderState = 'PLACED'): void {
+function placeOrder(
+  placedAt: number | null,
+  state: OrderState = 'PLACED',
+  deliveredAt: number | null = null,
+): void {
   useOrderStore.setState({
     orders: {
-      [ORDER_ID]: { orderId: ORDER_ID, placedAt, state, paymentMethod: 'COD', totalNpr: 1250 },
+      [ORDER_ID]: {
+        orderId: ORDER_ID,
+        placedAt,
+        deliveredAt,
+        state,
+        paymentMethod: 'COD',
+        totalNpr: 1250,
+      },
     },
   });
 }
@@ -241,6 +254,68 @@ describe('discrete state tracker', () => {
     expect(stepLabel('अर्डर गरियो: पूरा भयो')).toBeOnTheScreen();
     expect(stepLabel('डेलिभरीका लागि निस्कियो: हुँदैछ')).toBeOnTheScreen();
     expect(stepLabel('डेलिभर भयो: बाँकी')).toBeOnTheScreen();
+  });
+});
+
+describe('dispute button (48 h after delivery)', () => {
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const disputeButton = () => screen.queryByRole('button', { name: 'Report an Issue / Dispute' });
+
+  function delivered(ago: number): void {
+    placeOrder(NOW - ago - HOUR, 'DELIVERED', NOW - ago);
+    serverState('DELIVERED');
+  }
+
+  it('is shown at 47 h 59 min after delivery', async () => {
+    delivered(47 * HOUR + 59 * MINUTE);
+    await renderScreen();
+
+    expect(disputeButton()).toBeOnTheScreen();
+  });
+
+  it('is hidden at 48 h 1 min after delivery', async () => {
+    delivered(48 * HOUR + MINUTE);
+    await renderScreen();
+
+    expect(disputeButton()).toBeNull();
+  });
+
+  it('disappears on its own when the 48 h window closes while the screen is open', async () => {
+    delivered(47 * HOUR + 59 * MINUTE);
+    await renderScreen();
+    expect(disputeButton()).toBeOnTheScreen();
+
+    await advance(MINUTE - 1);
+    expect(disputeButton()).toBeOnTheScreen();
+    await advance(1);
+    expect(disputeButton()).toBeNull();
+  });
+
+  it('opens the dispute chat for this order', async () => {
+    delivered(HOUR);
+    await renderScreen();
+
+    fireEvent.press(screen.getByRole('button', { name: 'Report an Issue / Dispute' }));
+
+    expect(mockRouterPush).toHaveBeenCalledWith({
+      pathname: '/order/[id]/dispute',
+      params: { id: ORDER_ID },
+    });
+  });
+
+  it('is not offered before delivery, or when the delivery time is unknown', async () => {
+    placeOrder(NOW - HOUR, 'OUT_FOR_DELIVERY');
+    serverState('OUT_FOR_DELIVERY');
+    await renderScreen();
+    expect(disputeButton()).toBeNull();
+  });
+
+  it('is not offered when this device never saw the delivery time', async () => {
+    placeOrder(NOW - HOUR, 'DELIVERED', null);
+    serverState('DELIVERED');
+    await renderScreen();
+    expect(disputeButton()).toBeNull();
   });
 });
 

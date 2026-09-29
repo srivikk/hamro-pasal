@@ -14,6 +14,14 @@
         {
           "locationWhenInUsePermission": "Hamro Pasal uses your location to confirm that service is available in Nepal and to pin your delivery address."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Hamro Pasal needs access to your photos so you can attach evidence to a dispute.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
       ]
     ],
     "experiments": {

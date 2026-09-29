@@ -128,6 +128,7 @@ describe('navigation to order tracking once an order is placed', () => {
     expect(useOrderStore.getState().orders[ORDER_ID]).toEqual({
       orderId: ORDER_ID,
       placedAt,
+      deliveredAt: null,
       state: 'PLACED',
       paymentMethod: 'KHALTI',
       totalNpr: 1250,

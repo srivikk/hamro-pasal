@@ -1,3 +1,6 @@
+import type * as ReactModule from 'react';
+import type * as ReactNativeModule from 'react-native';
+
 import type * as InMemoryMmkvModule from './src/test/in-memory-mmkv';
 
 // react-native-mmkv v4 loads its native NitroModules at import time, which do not exist under
@@ -23,6 +26,17 @@ jest.mock('react-native-reanimated', () =>
 jest.mock('react-native-webview', () =>
   jest.requireActual<Record<string, unknown>>('./src/test/mock-webview'),
 );
+
+// Icon fonts load asynchronously and re-render the icon when ready, outside any test's act().
+// A plain view keeps renders deterministic; no test depends on the glyph.
+jest.mock('@expo/vector-icons/Ionicons', () => {
+  const { createElement } = jest.requireActual<typeof ReactModule>('react');
+  const { View } = jest.requireActual<typeof ReactNativeModule>('react-native');
+  return {
+    __esModule: true,
+    default: ({ name }: { name: string }) => createElement(View, { testID: `icon-${name}` }),
+  };
+});
 
 // Native keychain and CSPRNG stand-ins with the same synchronous API, backed by Node.
 jest.mock('expo-secure-store', () => {

@@ -1,21 +1,23 @@
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { Button } from '../../src/components/Button';
-import { CancellationPanel } from '../../src/features/order/CancellationPanel';
-import { displayedOrderState } from '../../src/features/order/cancellation-window';
-import { DeliveryOtpBadge } from '../../src/features/order/DeliveryOtpBadge';
+import { Button } from '../../../src/components/Button';
+import { CancellationPanel } from '../../../src/features/order/CancellationPanel';
+import { displayedOrderState } from '../../../src/features/order/cancellation-window';
+import { postDeliveryDeadline } from '../../../src/features/dispute/dispute-window';
+import { DeliveryOtpBadge } from '../../../src/features/order/DeliveryOtpBadge';
 import {
   useCancellationCountdown,
   useCancelOrder,
   useOrderQuery,
-} from '../../src/features/order/order-hooks';
-import { isTerminalOrderState } from '../../src/features/order/order-tracker';
-import { OrderTracker } from '../../src/features/order/OrderTracker';
-import { useAuthStore } from '../../src/store/useAuthStore';
-import { useDeliveryOtpStore } from '../../src/store/useDeliveryOtpStore';
-import { useOrderStore } from '../../src/store/useOrderStore';
+} from '../../../src/features/order/order-hooks';
+import { isTerminalOrderState } from '../../../src/features/order/order-tracker';
+import { OrderTracker } from '../../../src/features/order/OrderTracker';
+import { useBeforeDeadline } from '../../../src/lib/useBeforeDeadline';
+import { useAuthStore } from '../../../src/store/useAuthStore';
+import { useDeliveryOtpStore } from '../../../src/store/useDeliveryOtpStore';
+import { useOrderStore } from '../../../src/store/useOrderStore';
 
 /** Short, human-readable order reference: the last 6 characters of the id. */
 function orderCode(orderId: string): string {
@@ -32,6 +34,8 @@ export default function OrderTrackingScreen() {
   const query = useOrderQuery(id);
   const cancel = useCancelOrder();
   const remainingMs = useCancellationCountdown(order?.placedAt ?? null);
+  // SPEC journey step 11: disputes may be opened for 48 h after delivery.
+  const disputeWindowOpen = useBeforeDeadline(postDeliveryDeadline(order?.deliveredAt ?? null));
 
   const header = (
     <Stack.Screen
@@ -101,6 +105,16 @@ export default function OrderTrackingScreen() {
       {terminal ? null : <DeliveryOtpBadge otp={otp} locale={locale} />}
 
       <OrderTracker state={shownState} />
+
+      {order.state === 'DELIVERED' && disputeWindowOpen ? (
+        <Button
+          label={t('dispute.open')}
+          variant="secondary"
+          onPress={() => {
+            router.push({ pathname: '/order/[id]/dispute', params: { id: order.orderId } });
+          }}
+        />
+      ) : null}
     </ScrollView>
   );
 }

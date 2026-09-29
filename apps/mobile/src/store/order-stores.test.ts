@@ -22,6 +22,7 @@ describe('order store', () => {
     expect(store.getState().orders[ORDER_ID]).toEqual({
       ...placed,
       placedAt: PLACED_AT,
+      deliveredAt: null,
       state: 'PLACED',
     });
   });

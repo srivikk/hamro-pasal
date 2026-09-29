@@ -12,6 +12,7 @@ import { createQueryClient } from '../src/api/query-client';
 import { ReplaceCartModal } from '../src/components/ReplaceCartModal';
 import { ToastHost } from '../src/components/Toast';
 import { CheckoutSessionWatcher } from '../src/features/checkout/CheckoutSessionWatcher';
+import { ReviewPrompt } from '../src/features/review/ReviewPrompt';
 import { TerritoryGate } from '../src/features/territory/TerritoryGate';
 import { bindLocale, createI18n } from '../src/i18n/i18n';
 import { useAuthStore } from '../src/store/useAuthStore';
@@ -30,6 +31,7 @@ export default function RootLayout() {
         {/* Mounted above every route: tabs and the vendor menu both add to the cart. */}
         <ReplaceCartModal />
         <CheckoutSessionWatcher />
+        <ReviewPrompt />
         <ToastHost />
         {/* SPEC §1 tenant isolation: last, so it sits above every route and modal. */}
         <TerritoryGate />

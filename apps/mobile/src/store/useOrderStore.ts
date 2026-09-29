@@ -13,7 +13,8 @@ import { getAppStorage } from '../storage/app-mmkv';
 import { mmkvStateStorage } from '../storage/mmkv-state-storage';
 
 export const ORDER_STORE_KEY = 'hamro-pasal.orders';
-export const ORDER_STORE_VERSION = 1;
+/** v2 added deliveredAt; v1 entries are migrated with deliveredAt: null. */
+export const ORDER_STORE_VERSION = 2;
 /** Oldest orders are dropped beyond this, so the store cannot grow without bound. */
 export const MAX_TRACKED_ORDERS = 20;
 
@@ -25,6 +26,13 @@ const trackedOrderSchema = z.strictObject({
    * order was never seen being placed on this device (window treated as closed).
    */
   placedAt: z.number().int().nonnegative().nullable(),
+  /**
+   * When the app first saw the order DELIVERED (epoch ms): the start of the 48 h dispute and
+   * review window. The API's OrderView does not expose the server's delivered_at yet, so this is
+   * when this device first saw the order DELIVERED: never earlier than the real delivery, but later
+   * if the app was closed at the time (the window then closes late). The server must enforce 48 h.
+   */
+  deliveredAt: z.number().int().nonnegative().nullable(),
   state: orderStateSchema,
   paymentMethod: paymentMethodSchema,
   totalNpr: z.number().nonnegative(),
@@ -44,7 +52,7 @@ export interface OrderStoreState {
     placedAtMs: number,
   ) => void;
   /** Records the latest server view of an order (creating the entry if it is new here). */
-  applyOrderView: (view: OrderView) => void;
+  applyOrderView: (view: OrderView, nowMs?: number) => void;
   setState: (orderId: string, state: OrderState) => void;
 }
 
@@ -53,6 +61,21 @@ export type PersistedOrderState = Pick<OrderStoreState, 'orders'>;
 export type OrderStore = UseBoundStore<
   Mutate<StoreApi<OrderStoreState>, [['zustand/persist', PersistedOrderState]]>
 >;
+
+/** v1 entries had no deliveredAt: add it as unknown rather than dropping the orders. */
+function migrateOrders(value: unknown, version: number): unknown {
+  if (version !== 1 || typeof value !== 'object' || value === null) return value;
+  const orders: unknown = Reflect.get(value, 'orders');
+  if (typeof orders !== 'object' || orders === null) return value;
+  return {
+    orders: Object.fromEntries(
+      Object.entries(orders).map(([id, order]) => [
+        id,
+        typeof order === 'object' && order !== null ? { ...order, deliveredAt: null } : order,
+      ]),
+    ),
+  };
+}
 
 function toPersistedOrders(value: unknown): PersistedOrderState {
   const parsed = persistedOrdersSchema.safeParse(value);
@@ -83,6 +106,7 @@ export function createOrderStore(storage: StateStorage<void>): OrderStore {
               [orderId]: {
                 orderId,
                 placedAt: existing?.placedAt ?? placedAtMs,
+                deliveredAt: existing?.deliveredAt ?? null,
                 state: existing?.state ?? 'PLACED',
                 paymentMethod,
                 totalNpr,
@@ -91,14 +115,16 @@ export function createOrderStore(storage: StateStorage<void>): OrderStore {
           });
         },
 
-        applyOrderView: (view) => {
+        applyOrderView: (view, nowMs = Date.now()) => {
           const existing = get().orders[view.id];
+          const deliveredAt = existing?.deliveredAt ?? (view.state === 'DELIVERED' ? nowMs : null);
           set({
             orders: capped({
               ...get().orders,
               [view.id]: {
                 orderId: view.id,
                 placedAt: existing?.placedAt ?? null,
+                deliveredAt,
                 state: view.state,
                 paymentMethod: view.payment_method,
                 totalNpr: view.total_npr,
@@ -118,7 +144,7 @@ export function createOrderStore(storage: StateStorage<void>): OrderStore {
         version: ORDER_STORE_VERSION,
         storage: createJSONStorage<PersistedOrderState>(() => storage),
         partialize: ({ orders }): PersistedOrderState => ({ orders }),
-        migrate: (persisted) => toPersistedOrders(persisted),
+        migrate: (persisted, version) => toPersistedOrders(migrateOrders(persisted, version)),
         merge: (persisted, current) => ({ ...current, ...toPersistedOrders(persisted) }),
       },
     ),

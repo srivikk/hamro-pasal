@@ -255,10 +255,10 @@ describe('double-entry ledger', () => {
       const userId = await createUser(pool, 'VENDOR');
       const error = await pgError(
         pool.query(
-          `INSERT INTO vendors (user_id, business_name, phone, commission_rate, delivery_scope, radius_km,
+          `INSERT INTO vendors (user_id, business_name, phone, commission_rate, delivery_scope, fulfillment_mode, radius_km,
                                 municipality_palika_string, min_order_value, base_delivery_fee_npr,
                                 location, wallet_balance_npr)
-           VALUES ($1, 'X', '+9779811111111', 0.1, 'RADIUS_BOUND', 5, 'Kathmandu Metropolitan City', 0, 0,
+           VALUES ($1, 'X', '+9779811111111', 0.1, 'RADIUS_BOUND', 'SELF_DELIVERY', 5, 'Kathmandu Metropolitan City', 0, 0,
                    ST_SetSRID(ST_MakePoint(85.3, 27.7), 4326), -10)`,
           [userId],
         ),

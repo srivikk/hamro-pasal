@@ -31,23 +31,30 @@ export class SettlementService {
 
   /** Gateway payment verified: GATEWAY_CLEARING -> SYSTEM_ESCROW, and the order is marked PAID. */
   capturePayment(orderId: string): Promise<PostResult> {
-    return this.db.transaction(async (tx) => {
-      const order = await lockOrder(tx, orderId);
-      if (order.payment_status === 'FAILED') {
-        throw new SettlementNotAllowedError(orderId, 'payment has FAILED');
-      }
-      const result = await this.ledger.post(tx, {
-        kind: 'PAYMENT_CAPTURE',
-        idempotencyKey: `payment-capture:${orderId}`,
-        orderId,
-        description: `${order.payment_method} payment captured into escrow`,
-        postings: planPaymentCapture(order),
-      });
-      if (order.payment_status !== 'PAID') {
-        await tx.update(orders).set({ payment_status: 'PAID' }).where(eq(orders.id, orderId));
-      }
-      return result;
+    return this.db.transaction(async (tx) =>
+      this.capturePaymentInTransaction(tx, await lockOrder(tx, orderId)),
+    );
+  }
+
+  /**
+   * Capture inside the caller's transaction. The caller must already hold the order row lock
+   * (SELECT ... FOR UPDATE), e.g. a gateway webhook that verified the amount under that lock.
+   */
+  async capturePaymentInTransaction(tx: Transaction, order: Order): Promise<PostResult> {
+    if (order.payment_status === 'FAILED') {
+      throw new SettlementNotAllowedError(order.id, 'payment has FAILED');
+    }
+    const result = await this.ledger.post(tx, {
+      kind: 'PAYMENT_CAPTURE',
+      idempotencyKey: `payment-capture:${order.id}`,
+      orderId: order.id,
+      description: `${order.payment_method} payment captured into escrow`,
+      postings: planPaymentCapture(order),
     });
+    if (order.payment_status !== 'PAID') {
+      await tx.update(orders).set({ payment_status: 'PAID' }).where(eq(orders.id, order.id));
+    }
+    return result;
   }
 
   /**

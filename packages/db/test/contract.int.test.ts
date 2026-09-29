@@ -100,6 +100,7 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
           pricing_model: 'COMMISSION',
           commission_rate: 0.1,
           delivery_scope: 'RADIUS_BOUND',
+          fulfillment_mode: 'SELF_DELIVERY',
           radius_km: 5,
           municipality_palika_string: 'Kathmandu Metropolitan City',
           min_order_value: 500,

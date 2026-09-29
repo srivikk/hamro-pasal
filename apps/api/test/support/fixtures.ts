@@ -16,6 +16,7 @@ import type {
   PaymentMethod,
   PricingModel,
   UserRole,
+  VendorFulfillmentMode,
 } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 import { Redis } from 'ioredis';
@@ -57,6 +58,9 @@ export async function createUser(db: Database, role: UserRole = 'CUSTOMER'): Pro
 export interface VendorFixture {
   pricingModel?: PricingModel;
   commissionRate?: number;
+  fulfillmentMode?: VendorFulfillmentMode;
+  minOrderValue?: number;
+  baseDeliveryFee?: number;
 }
 
 export async function createVendor(db: Database, options: VendorFixture = {}): Promise<string> {
@@ -73,10 +77,11 @@ export async function createVendor(db: Database, options: VendorFixture = {}): P
         pricing_model: pricingModel,
         commission_rate: options.commissionRate ?? (pricingModel === 'SUBSCRIPTION' ? 0 : 0.1),
         delivery_scope: 'RADIUS_BOUND',
+        fulfillment_mode: options.fulfillmentMode ?? 'SELF_DELIVERY',
         radius_km: 5,
         municipality_palika_string: 'Kathmandu Metropolitan City',
-        min_order_value: 0,
-        base_delivery_fee_npr: 50,
+        min_order_value: options.minOrderValue ?? 0,
+        base_delivery_fee_npr: options.baseDeliveryFee ?? 50,
         location: { x: 85.3123, y: 27.7154 },
       })
       .returning({ id: vendors.id }),
@@ -87,6 +92,7 @@ export async function createProduct(
   db: Database,
   vendorId: string,
   stock: number,
+  priceNpr = 100,
 ): Promise<string> {
   return one(
     await db
@@ -94,7 +100,7 @@ export async function createProduct(
       .values({
         vendor_id: vendorId,
         name: `Product ${randomUUID()}`,
-        price_npr: 100,
+        price_npr: priceNpr,
         stock_quantity: stock,
       })
       .returning({ id: products.id }),

@@ -115,7 +115,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 2. App requests GPS. PostGIS validates 'NP' polygon.
 3. Feed compiles using geospatial radius + 10% buffer. Unserviceable vendors render in a desaturated "Explore Further" section with carts disabled.
 4. User adds to cart. System enforces single-vendor cart restriction.
-5. Cart validates `total >= vendor.MOV` (Minimum Order Value). Applies Small Cart Surcharge if below.
+5. Cart validates `total >= vendor.MOV` (Minimum Order Value). Applies Cart validates total >= vendor.MOV. Rejects with HTTP 422 if below.
 6. Checkout triggers Redis 10-min inventory lock.
 7. Payment selection evaluates COD eligibility based on customer rating.
 8. Unskippable 60-second cancellation window starts post-order.
@@ -201,6 +201,7 @@ interface Vendor {
   min_order_value: number;
   location: any; // PostGIS Point (Lat/Lng)
   wallet_balance_npr: number;
+  fulfillment_mode: FulfillmentMode;
 }
 
 interface OrderSnapshot {

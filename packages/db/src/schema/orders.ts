@@ -18,6 +18,7 @@ export const orders = pgTable(
     vendor_id: uuid()
       .notNull()
       .references(() => vendors.id, { onDelete: 'restrict' }),
+    reservation_id: uuid(),
     driver_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
     state: orderStateEnum().notNull().default('PENDING_PAYMENT'),
     subtotal: npr().notNull(),
@@ -39,6 +40,8 @@ export const orders = pgTable(
     unique('orders_payment_gateway_ref_key').on(t.payment_method, t.payment_gateway_ref),
     // Target for composite FKs that must agree with the order's vendor (e.g. wallet ledger).
     unique('orders_id_vendor_id_key').on(t.id, t.vendor_id),
+    // One order per inventory lock.
+    unique('orders_reservation_id_key').on(t.reservation_id),
     index('orders_customer_id_idx').on(t.customer_id),
     index('orders_vendor_id_state_idx').on(t.vendor_id, t.state),
     check('orders_idempotency_key_check', sql`btrim(${t.idempotency_key}) <> ''`),

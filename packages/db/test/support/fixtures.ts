@@ -56,9 +56,9 @@ export async function createVendor(db: Pool, options: VendorOptions = {}): Promi
   const userId = await createUser(db, 'VENDOR');
   const { rows } = await db.query<{ id: string }>(
     `INSERT INTO vendors (user_id, business_name, phone, status, pricing_model, commission_rate,
-                          delivery_scope, radius_km, municipality_palika_string, min_order_value,
+                          delivery_scope, fulfillment_mode, radius_km, municipality_palika_string, min_order_value,
                           base_delivery_fee_npr, location)
-     VALUES ($1, 'Test Pasal', $2, $3, $4, $5, $6, $7, 'Kathmandu Metropolitan City', 500, 50,
+     VALUES ($1, 'Test Pasal', $2, $3, $4, $5, $6, 'SELF_DELIVERY', $7, 'Kathmandu Metropolitan City', 500, 50,
              ST_SetSRID(ST_MakePoint($8, $9), 4326))
      RETURNING id`,
     [

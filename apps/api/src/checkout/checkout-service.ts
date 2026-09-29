@@ -1,8 +1,30 @@
-import { enqueueDomainEvent, orders, products, type Database } from '@hamro-pasal/db';
-import type { DomainEvent, Order } from '@hamro-pasal/shared-types';
-import { and, eq, gte, sql } from 'drizzle-orm';
+import {
+  enqueueDomainEvent,
+  orderItems,
+  orders,
+  products,
+  reviews,
+  vendors,
+  type Database,
+} from '@hamro-pasal/db';
+import {
+  COD_MIN_CUSTOMER_RATING,
+  type CheckoutRequest,
+  type DomainEvent,
+  type Order,
+} from '@hamro-pasal/shared-types';
+import { and, avg, count, eq, gte, inArray, sql } from 'drizzle-orm';
 
-import { InsufficientStockError, ReservationExpiredError } from '../inventory/errors';
+import { isUniqueViolation } from '../infra/pg-errors';
+import type { RedisKeyedMutex } from '../infra/redis-mutex';
+import {
+  InsufficientStockError,
+  ProductUnavailableError,
+  ReservationExpiredError,
+} from '../inventory/errors';
+import { toNpr } from '../ledger/money';
+import { generateDeliveryOtp, hashDeliveryOtp } from './delivery-otp';
+import { CheckoutRejectedError, priceCart } from './pricing';
 import type {
   InventoryLockService,
   InventoryReservation,
@@ -19,6 +41,39 @@ export class OrderNotPlaceableError extends Error {
     this.name = 'OrderNotPlaceableError';
   }
 }
+
+export class OrderNotFoundError extends Error {
+  constructor(readonly orderId: string) {
+    super(`Order ${orderId} not found`);
+    this.name = 'OrderNotFoundError';
+  }
+}
+
+export interface CheckoutResult {
+  readonly order: Order;
+  readonly reservation: { readonly id: string; readonly expiresAt: Date | null };
+  /**
+   * The raw 4-digit handoff code. Returned once; only its bcrypt hash is stored. A replayed
+   * checkout rotates it, so the latest response always holds a valid code.
+   */
+  readonly deliveryOtp: string | null;
+  readonly replayed: boolean;
+}
+
+export type LockStatusView =
+  | { readonly status: 'ACTIVE'; readonly ttlMs: number; readonly expiresAt: Date }
+  /** TTL hit 0 before payment: SPEC edge case 1, the client purges the cart. */
+  | { readonly status: 'EXPIRED' }
+  /** The lock was claimed (order placed) or the order left checkout. */
+  | { readonly status: 'RELEASED' };
+
+/** Order states in which the customer still needs the handoff OTP. */
+const OTP_ROTATABLE_STATES = new Set<Order['state']>([
+  'PENDING_PAYMENT',
+  'PLACED',
+  'PREPARING',
+  'OUT_FOR_DELIVERY',
+]);
 
 export interface PlaceOrderInput {
   readonly orderId: string;
@@ -42,7 +97,223 @@ export class CheckoutService {
   constructor(
     private readonly db: Database,
     private readonly locks: InventoryLockService,
+    private readonly mutex: RedisKeyedMutex,
   ) {}
+
+  /**
+   * POST /api/cart/checkout: locks the cart's quantities for 600 s (SPEC §3) and creates the
+   * PENDING_PAYMENT order, priced on the server, in one step. COD orders are confirmed at once
+   * (lock claimed, order PLACED). Prepaid orders wait for the gateway to confirm within the lock.
+   * Replaying the same idempotency key returns the same order.
+   */
+  checkout(customerId: string, request: CheckoutRequest): Promise<CheckoutResult> {
+    // Same-key submissions are serialised: a retry that races the original must get the original
+    // order back. Otherwise it would find the stock already held and report it as unavailable.
+    return this.mutex.runExclusive(`checkout:${request.idempotency_key}`, () =>
+      this.checkoutExclusive(customerId, request),
+    );
+  }
+
+  private async checkoutExclusive(
+    customerId: string,
+    request: CheckoutRequest,
+  ): Promise<CheckoutResult> {
+    const existing = await this.findByIdempotencyKey(request.idempotency_key);
+    if (existing !== undefined) {
+      return this.replay(customerId, existing);
+    }
+
+    const [vendor] = await this.db.select().from(vendors).where(eq(vendors.id, request.vendor_id));
+    if (vendor?.status !== 'LIVE') {
+      throw new CheckoutRejectedError('VENDOR_UNAVAILABLE', 'This vendor is not accepting orders');
+    }
+
+    const items = mergeLines(request.items);
+    const catalogue = await this.db
+      .select({ id: products.id, name: products.name, price_npr: products.price_npr })
+      .from(products)
+      .where(
+        and(
+          eq(products.vendor_id, vendor.id),
+          eq(products.is_active, true),
+          inArray(
+            products.id,
+            items.map((i) => i.productId),
+          ),
+        ),
+      );
+    const byId = new Map(catalogue.map((p) => [p.id, p]));
+    const missing = items.filter((i) => !byId.has(i.productId)).map((i) => i.productId);
+    if (missing.length > 0) {
+      throw new ProductUnavailableError(missing);
+    }
+    const priced = priceCart(vendor, byId, items);
+
+    if (request.payment_method === 'COD') {
+      await this.assertCodEligible(customerId);
+    }
+
+    const otp = generateDeliveryOtp();
+    const otpHash = await hashDeliveryOtp(otp);
+    const reservation = await this.locks.reserve({ vendorId: vendor.id, customerId, items });
+
+    let order: Order;
+    try {
+      order = await this.db.transaction(async (tx) => {
+        const [created] = await tx
+          .insert(orders)
+          .values({
+            idempotency_key: request.idempotency_key,
+            customer_id: customerId,
+            vendor_id: vendor.id,
+            reservation_id: reservation.id,
+            subtotal: toNpr(priced.subtotalPaisa),
+            delivery_fee: toNpr(priced.deliveryFeePaisa),
+            platform_commission_amount: toNpr(priced.commissionPaisa),
+            fulfillment_locked: vendor.fulfillment_mode,
+            payment_method: request.payment_method,
+            delivery_otp: otpHash,
+          })
+          .returning();
+        if (created === undefined) {
+          throw new Error('Order insert returned no row');
+        }
+        await tx.insert(orderItems).values(
+          priced.lines.map((line) => ({
+            order_id: created.id,
+            product_id: line.productId,
+            product_name: line.productName,
+            unit_price_npr: toNpr(line.unitPricePaisa),
+            quantity: line.quantity,
+          })),
+        );
+        await enqueueDomainEvent(tx, {
+          type: 'order.locked',
+          aggregateId: reservation.id,
+          occurredAt: reservation.lockedAt,
+          payload: {
+            reservation_id: reservation.id,
+            vendor_id: vendor.id,
+            customer_id: customerId,
+            items: items.map((l) => ({ product_id: l.productId, quantity: l.quantity })),
+            locked_at: reservation.lockedAt.toISOString(),
+            expires_at: reservation.expiresAt.toISOString(),
+          },
+        });
+        return created;
+      });
+    } catch (error: unknown) {
+      // Redis and PostgreSQL cannot commit together: never leave an orphaned lock behind.
+      await this.locks.release(vendor.id, reservation.id);
+      if (isUniqueViolation(error, 'orders_idempotency_key_key')) {
+        const winner = await this.findByIdempotencyKey(request.idempotency_key);
+        if (winner !== undefined) return this.replay(customerId, winner);
+      }
+      throw error;
+    }
+
+    if (order.payment_method === 'COD') {
+      const placed = await this.claim({
+        orderId: order.id,
+        vendorId: vendor.id,
+        reservationId: reservation.id,
+      });
+      order = placed.order;
+    }
+    return {
+      order,
+      reservation: { id: reservation.id, expiresAt: reservation.expiresAt },
+      deliveryOtp: otp,
+      replayed: false,
+    };
+  }
+
+  /** GET /api/cart/lock-status: the customer's view of an order's 600 s lock. */
+  async getOrderLockStatus(
+    customerId: string,
+    orderId: string,
+  ): Promise<{ order: Order; lock: LockStatusView }> {
+    const [order] = await this.db
+      .select()
+      .from(orders)
+      .where(and(eq(orders.id, orderId), eq(orders.customer_id, customerId)));
+    if (order === undefined) {
+      throw new OrderNotFoundError(orderId);
+    }
+    if (order.state !== 'PENDING_PAYMENT' || order.reservation_id === null) {
+      return { order, lock: { status: 'RELEASED' } };
+    }
+    const status = await this.locks.getStatus(order.vendor_id, order.reservation_id);
+    return {
+      order,
+      lock:
+        status === null
+          ? { status: 'EXPIRED' }
+          : { status: 'ACTIVE', ttlMs: status.ttlMs, expiresAt: status.reservation.expiresAt },
+    };
+  }
+
+  private async findByIdempotencyKey(key: string): Promise<Order | undefined> {
+    const [order] = await this.db.select().from(orders).where(eq(orders.idempotency_key, key));
+    return order;
+  }
+
+  private async replay(customerId: string, order: Order): Promise<CheckoutResult> {
+    if (order.customer_id !== customerId) {
+      throw new CheckoutRejectedError(
+        'IDEMPOTENCY_KEY_REUSED',
+        'This idempotency key belongs to another checkout',
+        undefined,
+        409,
+      );
+    }
+    let deliveryOtp: string | null = null;
+    if (OTP_ROTATABLE_STATES.has(order.state)) {
+      deliveryOtp = generateDeliveryOtp();
+      await this.db
+        .update(orders)
+        .set({ delivery_otp: await hashDeliveryOtp(deliveryOtp) })
+        .where(eq(orders.id, order.id));
+    }
+    const status =
+      order.reservation_id === null
+        ? null
+        : await this.locks.getStatus(order.vendor_id, order.reservation_id);
+    return {
+      order,
+      reservation: {
+        id: order.reservation_id ?? '',
+        expiresAt: status?.reservation.expiresAt ?? null,
+      },
+      deliveryOtp,
+      replayed: true,
+    };
+  }
+
+  /** SPEC §6 / journey 7: an average rating below 3.0 disables COD for the customer. */
+  private async assertCodEligible(customerId: string): Promise<void> {
+    const [rating] = await this.db
+      .select({ average: avg(reviews.rating), total: count() })
+      .from(reviews)
+      .innerJoin(orders, eq(orders.id, reviews.order_id))
+      .where(
+        and(
+          eq(orders.customer_id, customerId),
+          eq(reviews.direction, 'VENDOR_TO_CUSTOMER'),
+          eq(reviews.is_published, true),
+        ),
+      );
+    if (
+      rating !== undefined &&
+      rating.total > 0 &&
+      Number(rating.average) < COD_MIN_CUSTOMER_RATING
+    ) {
+      throw new CheckoutRejectedError(
+        'COD_NOT_AVAILABLE',
+        'Cash on delivery is not available for this account',
+      );
+    }
+  }
 
   async lockCart(request: LockRequest): Promise<InventoryReservation> {
     const reservation = await this.locks.reserve(request);
@@ -161,4 +432,12 @@ export class CheckoutService {
     await this.locks.release(input.vendorId, input.reservationId);
     return placed;
   }
+}
+
+function mergeLines(items: CheckoutRequest['items']): { productId: string; quantity: number }[] {
+  const merged = new Map<string, number>();
+  for (const item of items) {
+    merged.set(item.product_id, (merged.get(item.product_id) ?? 0) + item.quantity);
+  }
+  return [...merged].map(([productId, quantity]) => ({ productId, quantity }));
 }

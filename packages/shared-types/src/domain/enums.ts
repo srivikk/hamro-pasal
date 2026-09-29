@@ -27,6 +27,11 @@ export const fulfillmentModes = ['SELF_DELIVERY', 'PLATFORM_FLEET', 'EMERGENCY_F
 export const fulfillmentModeSchema = z.enum(fulfillmentModes);
 export type FulfillmentMode = z.infer<typeof fulfillmentModeSchema>;
 
+/** A vendor's standing choice (SPEC §2). EMERGENCY_FLEET only ever applies to a single order. */
+export const vendorFulfillmentModes = ['SELF_DELIVERY', 'PLATFORM_FLEET'] as const;
+export const vendorFulfillmentModeSchema = z.enum(vendorFulfillmentModes);
+export type VendorFulfillmentMode = z.infer<typeof vendorFulfillmentModeSchema>;
+
 export const orderStates = [
   'PENDING_PAYMENT',
   'PLACED',

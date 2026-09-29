@@ -18,6 +18,7 @@ import {
   pricingModelSchema,
   reviewDirectionSchema,
   userRoleSchema,
+  vendorFulfillmentModeSchema,
   vendorStatusSchema,
 } from './enums';
 
@@ -83,6 +84,8 @@ export const vendorSchema = z.strictObject({
   /** Fraction, e.g. 0.1 = 10%. Always 0 on SUBSCRIPTION. */
   commission_rate: z.number().min(0).max(1),
   delivery_scope: deliveryScopeSchema,
+  /** Copied onto each order as fulfillment_locked at checkout. */
+  fulfillment_mode: vendorFulfillmentModeSchema,
   radius_km: z.number().positive(),
   /**
    * Same field as CustomerAddress.municipality_palika_string. CITY_WIDE vendors serve customers
@@ -118,6 +121,8 @@ export const orderSchema = z.strictObject({
   idempotency_key: nonEmptyTextSchema,
   customer_id: z.uuid(),
   vendor_id: z.uuid(),
+  /** The 600 s Redis inventory lock created at checkout and claimed when payment confirms. */
+  reservation_id: z.uuid().nullable(),
   /** Platform-fleet rider. Required before a PLATFORM_FLEET / EMERGENCY_FLEET order is DELIVERED. */
   driver_user_id: z.uuid().nullable(),
   state: orderStateSchema,

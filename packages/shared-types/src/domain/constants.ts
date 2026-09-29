@@ -18,5 +18,8 @@ export const VENDOR_WALLET_HARD_FLOOR_NPR = -2000;
 /** SPEC §3: checkout locks SKU quantities in Redis for exactly 10 minutes. */
 export const INVENTORY_LOCK_TTL_SECONDS = 600;
 
+/** SPEC §6: customers whose average rating is below this lose COD everywhere. */
+export const COD_MIN_CUSTOMER_RATING = 3.0;
+
 /** WGS 84, the SRID of every stored geometry. */
 export const GEO_SRID = 4326;

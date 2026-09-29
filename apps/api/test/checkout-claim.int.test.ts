@@ -3,6 +3,7 @@ import { orderLockedPayloadSchema, orderPlacedPayloadSchema } from '@hamro-pasal
 import { eq } from 'drizzle-orm';
 
 import { CheckoutService, OrderNotPlaceableError } from '../src/checkout/checkout-service';
+import { RedisKeyedMutex } from '../src/infra/redis-mutex';
 import type { RedisConnectionPool } from '../src/infra/redis-pool';
 import { InsufficientStockError, ReservationExpiredError } from '../src/inventory/errors';
 import { InventoryLockService } from '../src/inventory/inventory-lock-service';
@@ -33,7 +34,7 @@ describe('checkout lock / claim / release workflows', () => {
     db = testDatabase();
     pool = testRedisPool(10);
     locks = new InventoryLockService(pool, new DrizzleStockReader(db));
-    checkout = new CheckoutService(db, locks);
+    checkout = new CheckoutService(db, locks, new RedisKeyedMutex(pool));
     vendorId = await createVendor(db);
     customerId = await createUser(db);
   });
@@ -98,7 +99,11 @@ describe('checkout lock / claim / release workflows', () => {
   it('refuses to claim after the lock expired ("Session Expired")', async () => {
     const productId = await createProduct(db, vendorId, 5);
     const shortLocks = new InventoryLockService(pool, new DrizzleStockReader(db), { ttlMs: 200 });
-    const reservation = await new CheckoutService(db, shortLocks).lockCart({
+    const reservation = await new CheckoutService(
+      db,
+      shortLocks,
+      new RedisKeyedMutex(pool),
+    ).lockCart({
       vendorId,
       customerId,
       items: [{ productId, quantity: 1 }],

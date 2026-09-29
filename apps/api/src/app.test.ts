@@ -16,7 +16,7 @@ describe('createApp', () => {
     const res = await request(app).get('/does-not-exist');
 
     expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'NOT_FOUND' });
+    expect(res.body).toEqual({ error: { code: 'NOT_FOUND', message: 'Route not found' } });
   });
 
   it('does not advertise the framework', async () => {

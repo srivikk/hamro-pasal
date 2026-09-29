@@ -1,8 +1,10 @@
 import { createApp } from './app';
 import { loadEnv } from './config/env';
+import { buildContainerFromEnv } from './container';
 
 const env = loadEnv();
-const server = createApp().listen(env.API_PORT, () => {
+const container = buildContainerFromEnv(env);
+const server = createApp(container).listen(env.API_PORT, () => {
   console.info(`[api] listening on :${String(env.API_PORT)} (${env.NODE_ENV})`);
 });
 
@@ -12,11 +14,13 @@ const shutdown = (signal: NodeJS.Signals): void => {
   shuttingDown = true;
   console.info(`[api] ${signal} received, closing HTTP server`);
   server.close((err) => {
-    if (err) {
-      console.error(err);
-      process.exit(1);
-    }
-    process.exit(0);
+    container.close().then(
+      () => process.exit(err ? 1 : 0),
+      (closeError: unknown) => {
+        console.error(closeError);
+        process.exit(1);
+      },
+    );
   });
 };
 

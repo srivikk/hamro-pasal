@@ -1,4 +1,8 @@
-import { NEPAL_PHONE_PATTERN, VENDOR_WALLET_HARD_FLOOR_NPR } from '@hamro-pasal/shared-types';
+import {
+  NEPAL_PHONE_PATTERN,
+  VENDOR_WALLET_HARD_FLOOR_NPR,
+  type VendorFulfillmentMode,
+} from '@hamro-pasal/shared-types';
 import { sql } from 'drizzle-orm';
 import {
   boolean,
@@ -14,7 +18,12 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { createdAt, geoPoint, npr, primaryId, updatedAt } from './columns';
-import { deliveryScopeEnum, pricingModelEnum, vendorStatusEnum } from './enums';
+import {
+  deliveryScopeEnum,
+  fulfillmentModeEnum,
+  pricingModelEnum,
+  vendorStatusEnum,
+} from './enums';
 import { users } from './users';
 
 const hardFloor = sql.raw(String(VENDOR_WALLET_HARD_FLOOR_NPR));
@@ -35,6 +44,7 @@ export const vendors = pgTable(
     scheduled_downgrade: boolean().notNull().default(false),
     commission_rate: numeric({ precision: 5, scale: 4, mode: 'number' }).notNull(),
     delivery_scope: deliveryScopeEnum().notNull(),
+    fulfillment_mode: fulfillmentModeEnum().$type<VendorFulfillmentMode>().notNull(),
     radius_km: numeric({ precision: 6, scale: 2, mode: 'number' }).notNull(),
     // Matches customer_addresses.municipality_palika_string for CITY_WIDE delivery (SPEC §2).
     municipality_palika_string: text().notNull(),
@@ -68,6 +78,11 @@ export const vendors = pgTable(
       sql`${t.status} <> 'LIVE' OR ${t.pricing_model} IS NOT NULL`,
     ),
     check('vendors_radius_km_check', sql`${t.radius_km} > 0`),
+    // EMERGENCY_FLEET is an order-level override, never a vendor's standing mode.
+    check(
+      'vendors_fulfillment_mode_check',
+      sql`${t.fulfillment_mode} IN ('SELF_DELIVERY', 'PLATFORM_FLEET')`,
+    ),
     check('vendors_min_order_value_check', sql`${t.min_order_value} >= 0`),
     check('vendors_base_delivery_fee_check', sql`${t.base_delivery_fee_npr} >= 0`),
     // Negative wallet invariant (SPEC §5, edge case #2): an active vendor can never sit below

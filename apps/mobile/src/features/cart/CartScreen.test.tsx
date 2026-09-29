@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw';
 
 import CartScreen from '../../../app/(tabs)/cart';
 import { CHECKOUT_PATH } from '../../api/mutations';
+import { KHALTI_INITIATE_PATH } from '../../api/payments';
 import { useCartStore } from '../../store/useCartStore';
 import { useCheckoutStore } from '../../store/useCheckoutStore';
 import { checkoutResponse, errorBody, NOODLES, RICE, THAMEL_VENDOR } from '../../test/api-fixtures';
@@ -70,9 +71,16 @@ describe('Cart screen', () => {
     expect(screen.getByRole('button', { name: 'Proceed to Checkout' })).toBeDisabled();
   });
 
-  it('checks out with the chosen method, then shows the reservation and freezes the cart', async () => {
+  it('checks out with the chosen method, opens its payment page and freezes the cart', async () => {
     const received: CapturedRequest[] = [];
     server.use(
+      http.post(apiUrl(KHALTI_INITIATE_PATH), () =>
+        HttpResponse.json({
+          pidx: 'bZQLD9wRVWo4CdESSfuSsB',
+          payment_url: 'https://test-pay.khalti.com/?pidx=bZQLD9wRVWo4CdESSfuSsB',
+          expires_at: null,
+        }),
+      ),
       http.post(apiUrl(CHECKOUT_PATH), async ({ request }) => {
         received.push(await capture(request));
         return HttpResponse.json(
@@ -90,7 +98,9 @@ describe('Cart screen', () => {
     fireEvent.press(screen.getByTestId('payment-method-KHALTI'));
     fireEvent.press(screen.getByRole('button', { name: 'Proceed to Checkout' }));
 
-    expect(await screen.findByTestId('reservation-countdown')).toBeOnTheScreen();
+    // Prepaid: the gateway opens straight after the reservation is made (Phase 5.4).
+    expect(await screen.findByTestId('payment-webview')).toBeOnTheScreen();
+    expect(screen.getByTestId('reservation-countdown')).toBeOnTheScreen();
     expect(screen.getByText(/^Complete payment within (10:00|09:5\d)$/)).toBeOnTheScreen();
     expect(received).toHaveLength(1);
     expect(received[0]?.body).toMatchObject({

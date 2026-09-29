@@ -196,6 +196,44 @@ describe('checkout store', () => {
       expect(clearCart).not.toHaveBeenCalled();
     });
 
+    it('applies a confirmed payment: PLACED updates the session and empties the cart', () => {
+      store.getState().startSession(checkoutResponse());
+
+      store.getState().applyPaymentView({
+        order_id: ORDER_ID,
+        order_state: 'PLACED',
+        payment_status: 'PAID',
+        duplicate: false,
+      });
+
+      expect(store.getState().session?.orderState).toBe('PLACED');
+      expect(clearCart).toHaveBeenCalledTimes(1);
+      expect(selectShouldPollLock(store.getState())).toBe(false);
+    });
+
+    it('records a FAILED order without touching the cart', () => {
+      store.getState().startSession(checkoutResponse());
+
+      store.getState().setOrderState(ORDER_ID, 'FAILED');
+
+      expect(store.getState().session?.orderState).toBe('FAILED');
+      expect(clearCart).not.toHaveBeenCalled();
+    });
+
+    it('ignores payment results for another order', () => {
+      store.getState().startSession(checkoutResponse());
+
+      store.getState().applyPaymentView({
+        order_id: '99999999-9999-4999-8999-999999999999',
+        order_state: 'PLACED',
+        payment_status: 'PAID',
+        duplicate: false,
+      });
+
+      expect(store.getState().session?.orderState).toBe('PENDING_PAYMENT');
+      expect(clearCart).not.toHaveBeenCalled();
+    });
+
     it('ignores lock statuses for another order', () => {
       store.getState().startSession(checkoutResponse());
 

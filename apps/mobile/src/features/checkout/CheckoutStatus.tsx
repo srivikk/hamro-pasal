@@ -24,14 +24,16 @@ export function SessionExpiredNotice() {
 
 /** Countdown for a reservation that is waiting for payment. */
 export function ReservationCountdown() {
-  const { t } = useTranslation();
-  const locale = useAuthStore((state) => state.locale);
   const pending = useCheckoutStore(selectIsCheckoutPending);
   const expiresAt = useCheckoutStore((state) => state.session?.expiresAt ?? null);
-  const now = useNow(pending);
-  if (!pending) return null;
+  return pending ? <LiveCountdown expiresAt={expiresAt} /> : null;
+}
 
-  const left = remainingMs(expiresAt, now);
+/** Mounted only while pending, so its once-per-second clock runs only then. */
+function LiveCountdown({ expiresAt }: { expiresAt: string | null }) {
+  const { t } = useTranslation();
+  const locale = useAuthStore((state) => state.locale);
+  const left = remainingMs(expiresAt, useNow());
   return (
     <View className="gap-1 rounded-2xl bg-amber-50 p-4" testID="reservation-countdown">
       <Text className="text-base font-bold text-amber-900">{t('checkout.reservedTitle')}</Text>

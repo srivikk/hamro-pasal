@@ -3,6 +3,8 @@ import {
   paymentMethodSchema,
   type CheckoutResponseBody,
   type LockStatusResponseBody,
+  type OrderState,
+  type PaymentView,
 } from '@hamro-pasal/shared-types';
 import { randomUUID } from 'expo-crypto';
 import { z } from 'zod';
@@ -64,6 +66,10 @@ export interface CheckoutState {
   startSession: (response: CheckoutResponseBody) => void;
   /** Applies a GET /api/cart/lock-status result (SPEC edge case 1). */
   applyLockStatus: (response: LockStatusResponseBody) => void;
+  /** Applies a confirmed payment (eSewa webhook / Khalti lookup). PLACED empties the cart. */
+  applyPaymentView: (payment: PaymentView) => void;
+  /** Records a state the server reported for the session's order outside a lock-status poll. */
+  setOrderState: (orderId: string, orderState: OrderState) => void;
   /** TTL reached 0: purge the cart and return the user to it with "Session Expired" (SPEC §3). */
   expireSession: () => void;
   endSession: () => void;
@@ -167,6 +173,17 @@ export function createCheckoutStore(
           });
           // RELEASED + PLACED: payment confirmed and stock claimed; the cart has become an order.
           if (lock.status === 'RELEASED' && order.state === 'PLACED') clearCart();
+        },
+
+        applyPaymentView: ({ order_id, order_state }) => {
+          get().setOrderState(order_id, order_state);
+        },
+
+        setOrderState: (orderId, orderState) => {
+          const { session } = get();
+          if (session?.orderId !== orderId) return;
+          set({ session: { ...session, orderState } });
+          if (orderState === 'PLACED') clearCart();
         },
 
         expireSession: () => {

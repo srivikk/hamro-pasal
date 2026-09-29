@@ -20,21 +20,19 @@ export function formatCountdown(ms: number, locale: AppLocale): string {
   );
 }
 
-/** Re-renders once per second while `active`, returning the current time in ms. */
-export function useNow(active: boolean): number {
+/**
+ * The current time in ms, re-rendering once per second while mounted. Mount it only where a
+ * countdown is shown: the clock starts fresh at mount, so no immediate tick is needed.
+ */
+export function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!active) return undefined;
-    const tick = (): void => {
+    const timer = setInterval(() => {
       setNow(Date.now());
-    };
-    // First tick right away (the clock may be stale if the countdown just became active).
-    const first = setTimeout(tick, 0);
-    const timer = setInterval(tick, 1000);
+    }, 1000);
     return () => {
-      clearTimeout(first);
       clearInterval(timer);
     };
-  }, [active]);
+  }, []);
   return now;
 }

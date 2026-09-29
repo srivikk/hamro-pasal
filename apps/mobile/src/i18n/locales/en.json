@@ -105,5 +105,18 @@
     "use": "Use token",
     "signedIn": "Signed in with a developer token.",
     "signOut": "Sign out"
+  },
+  "paymentFlow": {
+    "title": "Pay with {{method}}",
+    "cancel": "Cancel",
+    "payNow": "Pay with {{method}}",
+    "confirming": "Confirming your payment…",
+    "success": "Payment received. Your order is placed!",
+    "failed": "Payment failed or was cancelled. Your items are still reserved, so you can try again.",
+    "cancelled": "Payment cancelled. Your items are still reserved until the timer runs out.",
+    "notCompleted": "Your payment is not complete yet. You can try again.",
+    "initiateFailed": "Couldn't open the payment page. Please try again.",
+    "confirmFailed": "We couldn't confirm your payment yet. We'll keep checking.",
+    "paidAfterExpiry": "Your payment arrived after the reservation expired. You will be refunded."
   }
 }

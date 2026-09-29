@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import type { ApiError } from '../../src/api/http';
 import { useCheckout } from '../../src/api/mutations';
 import { Button } from '../../src/components/Button';
+import { PaymentWebViewModal } from '../../src/components/PaymentWebViewModal';
 import { computeCartSummary } from '../../src/features/cart/cart-summary';
 import {
   CheckoutOutcome,
@@ -13,6 +14,7 @@ import {
   SessionExpiredNotice,
 } from '../../src/features/checkout/CheckoutStatus';
 import { PaymentMethodPicker } from '../../src/features/checkout/PaymentMethodPicker';
+import { usePaymentFlow } from '../../src/features/payment/usePaymentFlow';
 import { formatLocalizedNumber } from '../../src/i18n/format-number';
 import { toNpr, toPaisa } from '../../src/lib/money';
 import { useAuthStore } from '../../src/store/useAuthStore';
@@ -71,6 +73,16 @@ export default function CartScreen() {
   const checkoutPending = useCheckoutStore(selectIsCheckoutPending);
   const checkout = useCheckout();
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('ESEWA');
+  const session = useCheckoutStore((state) => state.session);
+  const payment = usePaymentFlow();
+
+  const paymentModal = (
+    <PaymentWebViewModal
+      target={payment.target}
+      onRedirect={payment.handleRedirect}
+      onCancel={payment.cancel}
+    />
+  );
 
   const errorMessage = (error: ApiError | null): string | null => {
     // A lapsed reservation is reported by the Session Expired notice instead.
@@ -88,6 +100,7 @@ export default function CartScreen() {
         <View className="flex-1 items-center justify-center px-6">
           <Text className="text-base text-neutral-600">{t('cart.empty')}</Text>
         </View>
+        {paymentModal}
       </View>
     );
   }
@@ -179,8 +192,25 @@ export default function CartScreen() {
           </Text>
         ) : null}
 
-        {checkoutPending ? (
-          <ReservationCountdown />
+        {checkoutPending && session !== null ? (
+          <>
+            <ReservationCountdown />
+            {session.paymentMethod === 'COD' ? null : (
+              <Button
+                label={
+                  payment.isConfirming
+                    ? t('paymentFlow.confirming')
+                    : t('paymentFlow.payNow', { method: t(`payment.${session.paymentMethod}`) })
+                }
+                disabled={payment.isStarting || payment.isConfirming}
+                onPress={() => {
+                  if (session.paymentMethod !== 'COD') {
+                    payment.start(session.orderId, session.paymentMethod);
+                  }
+                }}
+              />
+            )}
+          </>
         ) : (
           <>
             <PaymentMethodPicker
@@ -197,7 +227,14 @@ export default function CartScreen() {
               label={t('cart.proceed')}
               disabled={checkout.isPending || summary.shortOfMinimumNpr > 0}
               onPress={() => {
-                checkout.mutate(paymentMethod);
+                checkout.mutate(paymentMethod, {
+                  // Prepaid orders wait in PENDING_PAYMENT: open the gateway straight away.
+                  onSuccess: ({ order }) => {
+                    if (order.state === 'PENDING_PAYMENT' && order.payment_method !== 'COD') {
+                      payment.start(order.id, order.payment_method);
+                    }
+                  },
+                });
               }}
             />
             <Button
@@ -209,6 +246,7 @@ export default function CartScreen() {
           </>
         )}
       </View>
+      {paymentModal}
     </View>
   );
 }

@@ -9,6 +9,21 @@ jest.mock('react-native-mmkv', () => {
   return { createMMKV: () => new InMemoryMmkv() };
 });
 
+// Reanimated's worklet runtime is native. Both libraries ship Jest mocks (worklets first: the
+// Reanimated mock imports it); animations then run synchronously.
+jest.mock('react-native-worklets', () =>
+  jest.requireActual<Record<string, unknown>>('react-native-worklets/src/mock'),
+);
+jest.mock('react-native-reanimated', () =>
+  jest.requireActual<Record<string, unknown>>('react-native-reanimated/mock'),
+);
+
+// WebView is a native view. The stand-in records its props so tests can drive navigation
+// (src/test/mock-webview.tsx); it is loaded lazily, when a test first imports the WebView.
+jest.mock('react-native-webview', () =>
+  jest.requireActual<Record<string, unknown>>('./src/test/mock-webview'),
+);
+
 // Native keychain and CSPRNG stand-ins with the same synchronous API, backed by Node.
 jest.mock('expo-secure-store', () => {
   const entries = new Map<string, string>();

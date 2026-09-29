@@ -1,6 +1,6 @@
+import type { FeedEntry } from '@hamro-pasal/shared-types';
 import { fireEvent, screen } from '@testing-library/react-native';
 
-import type { FeedEntry } from '../features/feed/feed-contract';
 import { useCartStore } from '../store/useCartStore';
 import { renderWithProviders } from '../test/render';
 import { Button } from './Button';

@@ -1,17 +1,28 @@
 import { fireEvent, screen, within } from '@testing-library/react-native';
+import { http, HttpResponse } from 'msw';
 
 import VendorMenuScreen from '../../../app/vendor/[id]';
+import { VENDOR_NOT_FOUND, vendorProductsPath } from '../../api/catalog';
 import { ReplaceCartModal } from '../../components/ReplaceCartModal';
+import { useAddressStore } from '../../store/useAddressStore';
 import { useCartStore } from '../../store/useCartStore';
 import { useCheckoutStore } from '../../store/useCheckoutStore';
-import { checkoutResponse } from '../../test/api-fixtures';
+import {
+  checkoutResponse,
+  errorBody,
+  MUSTARD_OIL_ID,
+  NOODLES,
+  PATAN_VENDOR,
+  RICE,
+  THAMEL_ADDRESS,
+  THAMEL_VENDOR,
+  vendorMenu,
+} from '../../test/api-fixtures';
+import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
-import type * as MockMenuApi from './mock-menu-api';
-import { MOCK_PRODUCTS_BY_VENDOR } from './mock-menu-api';
 
-const THAMEL = '6f1c2a10-0000-4000-8000-000000000011';
+const THAMEL = THAMEL_VENDOR.id;
 const BOUDHA = '6f1c2a10-0000-4000-8000-000000000014';
-const PATAN = '6f1c2a10-0000-4000-8000-000000000012';
 
 let mockVendorId = THAMEL;
 jest.mock('expo-router', () => ({
@@ -20,20 +31,19 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
 }));
 
-jest.mock('./mock-menu-api', () => {
-  const actual = jest.requireActual<typeof MockMenuApi>('./mock-menu-api');
-  return {
-    ...actual,
-    fetchMockVendorMenu: (...[vendorId, customer]: Parameters<typeof actual.fetchMockVendorMenu>) =>
-      actual.fetchMockVendorMenu(vendorId, customer, { latencyMs: 0 }),
-  };
-});
+setupApiTestEnvironment();
 
-const productId = (vendorId: string, index: number): string => {
-  const product = MOCK_PRODUCTS_BY_VENDOR[vendorId]?.[index];
-  if (product === undefined) throw new Error('fixture');
-  return product.id;
-};
+/** Serves GET /api/vendors/:id/products for one vendor and records the query strings. */
+function serveMenu(vendorId: string, respond: () => Response) {
+  const queries: Record<string, string>[] = [];
+  server.use(
+    http.get(apiUrl(vendorProductsPath(vendorId)), ({ request }) => {
+      queries.push(Object.fromEntries(new URL(request.url).searchParams));
+      return respond();
+    }),
+  );
+  return queries;
+}
 
 function renderMenu(vendorId: string) {
   mockVendorId = vendorId;
@@ -46,24 +56,33 @@ function renderMenu(vendorId: string) {
 }
 
 beforeEach(() => {
-  useCartStore.getState().clearCart();
-  useCheckoutStore.setState({
-    session: null,
-    attempt: null,
-    deliveryOtp: null,
-    sessionExpired: false,
-  });
+  serveMenu(THAMEL, () => HttpResponse.json(vendorMenu()));
 });
 
-describe('Vendor menu screen', () => {
+describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
   it('lists the vendor products with localized prices and stock', async () => {
     renderMenu(THAMEL);
 
     expect(await screen.findByText('Basmati Rice 5kg')).toBeOnTheScreen();
     expect(screen.getByText('Rs. 1150')).toBeOnTheScreen();
-    const oil = screen.getByTestId(`menu-product-${productId(THAMEL, 3)}`);
+    const oil = screen.getByTestId(`menu-product-${MUSTARD_OIL_ID}`);
     expect(within(oil).getByText('Out of stock')).toBeOnTheScreen();
     expect(within(oil).queryByRole('button')).toBeNull();
+  });
+
+  it("asks for the menu from the saved address's pin", async () => {
+    const queries = serveMenu(THAMEL, () => HttpResponse.json(vendorMenu()));
+    useAddressStore
+      .getState()
+      .setAddress({ ...THAMEL_ADDRESS, exact_lat: 27.712, exact_lng: 85.31 });
+    renderMenu(THAMEL);
+
+    expect(await screen.findByText('Basmati Rice 5kg')).toBeOnTheScreen();
+    expect(queries[0]).toEqual({
+      lat: '27.712',
+      lng: '85.31',
+      municipality_palika_string: 'Kathmandu Metropolitan City',
+    });
   });
 
   it('adds a product with the vendor snapshot the cart summary needs', async () => {
@@ -79,26 +98,23 @@ describe('Vendor menu screen', () => {
       minOrderValueNpr: 500,
     });
     expect(useCartStore.getState().lines).toEqual([
-      {
-        productId: productId(THAMEL, 1),
-        name: 'Basmati Rice 5kg',
-        unitPriceNpr: 1150,
-        quantity: 2,
-      },
+      { productId: RICE.id, name: 'Basmati Rice 5kg', unitPriceNpr: 1150, quantity: 2 },
     ]);
     expect(screen.getByText('2 in cart')).toBeOnTheScreen();
   });
 
   it('opens the replace-cart modal when the cart holds another vendor', async () => {
-    useCartStore
-      .getState()
-      .addItem(
-        { id: BOUDHA, name: 'Boudha Fresh Mart', deliveryFeeNpr: 60, minOrderValueNpr: 300 },
-        { id: productId(BOUDHA, 0), name: 'Fresh Tomatoes 1kg', unitPriceNpr: 90 },
-      );
+    useCartStore.getState().addItem(
+      { id: BOUDHA, name: 'Boudha Fresh Mart', deliveryFeeNpr: 60, minOrderValueNpr: 300 },
+      {
+        id: '7a2b3c40-0014-4000-8000-000000000001',
+        name: 'Fresh Tomatoes 1kg',
+        unitPriceNpr: 90,
+      },
+    );
     renderMenu(THAMEL);
 
-    fireEvent.press(await screen.findByRole('button', { name: 'Add Ilam Tea 500g' }));
+    fireEvent.press(await screen.findByRole('button', { name: `Add ${NOODLES.name}` }));
 
     expect(
       screen.getByText(
@@ -110,11 +126,27 @@ describe('Vendor menu screen', () => {
     fireEvent.press(screen.getByRole('button', { name: 'Clear and add' }));
 
     expect(useCartStore.getState().vendor?.id).toBe(THAMEL);
-    expect(useCartStore.getState().lines.map((line) => line.name)).toEqual(['Ilam Tea 500g']);
+    expect(useCartStore.getState().lines.map((line) => line.name)).toEqual([NOODLES.name]);
   });
 
   it('shows an Explore Further vendor for browsing only, with carts disabled', async () => {
-    renderMenu(PATAN);
+    serveMenu(PATAN_VENDOR.id, () =>
+      HttpResponse.json(
+        vendorMenu({
+          vendor: PATAN_VENDOR,
+          serviceable: false,
+          products: [
+            {
+              id: '7a2b3c40-0012-4000-8000-000000000002',
+              name: 'Local Honey 500g',
+              price_npr: 900,
+              in_stock: true,
+            },
+          ],
+        }),
+      ),
+    );
+    renderMenu(PATAN_VENDOR.id);
 
     expect(
       await screen.findByText(
@@ -135,12 +167,28 @@ describe('Vendor menu screen', () => {
     expect(
       await screen.findByText('Finish your current checkout before adding more items.'),
     ).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: 'Add Ilam Tea 500g' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: `Add ${NOODLES.name}` })).toBeDisabled();
   });
 
-  it('reports a vendor that is not listed', async () => {
-    renderMenu('6f1c2a10-0000-4000-8000-000000000013');
+  it('reports a vendor the server does not list (404 VENDOR_NOT_FOUND), with no retry', async () => {
+    const hidden = '6f1c2a10-0000-4000-8000-000000000013';
+    serveMenu(hidden, () => HttpResponse.json(errorBody(VENDOR_NOT_FOUND), { status: 404 }));
+    renderMenu(hidden);
 
     expect(await screen.findByText("This shop isn't available.")).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+
+  it('offers a retry for other failures', async () => {
+    serveMenu(THAMEL, () => HttpResponse.json(errorBody('UNAUTHENTICATED'), { status: 401 }));
+    renderMenu(THAMEL);
+
+    expect(
+      await screen.findByText("Couldn't load this shop's products. Check your connection."),
+    ).toBeOnTheScreen();
+    serveMenu(THAMEL, () => HttpResponse.json(vendorMenu()));
+    fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByText('Basmati Rice 5kg')).toBeOnTheScreen();
   });
 });

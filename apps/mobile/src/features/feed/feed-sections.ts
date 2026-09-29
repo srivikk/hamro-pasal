@@ -1,4 +1,4 @@
-import type { FeedEntry, FeedResponse } from './feed-contract';
+import type { FeedEntry, FeedResponse } from '@hamro-pasal/shared-types';
 
 export type FeedSectionKey = 'serviceable' | 'explore_further';
 

@@ -1,12 +1,13 @@
+import type { MenuProduct, VendorMenu } from '@hamro-pasal/shared-types';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { VENDOR_NOT_FOUND } from '../../src/api/catalog';
+import { ApiError } from '../../src/api/http';
 import { Button } from '../../src/components/Button';
-import { MOCK_CUSTOMER_LOCATION } from '../../src/features/feed/mock-feed-api';
-import type { MenuProduct, VendorMenu } from '../../src/features/menu/menu-contract';
-import { VendorNotFoundError } from '../../src/features/menu/mock-menu-api';
+import { useCustomerLocation } from '../../src/features/location/customer-location';
 import { useVendorMenuQuery } from '../../src/features/menu/useVendorMenuQuery';
 import {
   MAX_CART_LINES,
@@ -28,8 +29,7 @@ function toCartVendor({ vendor }: VendorMenu): CartVendor {
 export default function VendorMenuScreen() {
   const { t } = useTranslation();
   const { id } = useLocalSearchParams<{ id: string }>();
-  // MOCK: the customer's real location arrives with the GPS phase.
-  const menu = useVendorMenuQuery(id, MOCK_CUSTOMER_LOCATION);
+  const menu = useVendorMenuQuery(id, useCustomerLocation());
   const cartVendorId = useCartStore((state) => state.vendor?.id ?? null);
   const lines = useCartStore((state) => state.lines);
   const addItem = useCartStore((state) => state.addItem);
@@ -56,7 +56,7 @@ export default function VendorMenuScreen() {
   }
 
   if (menu.isError) {
-    const notFound = menu.error instanceof VendorNotFoundError;
+    const notFound = menu.error instanceof ApiError && menu.error.code === VENDOR_NOT_FOUND;
     return (
       <View className="flex-1 items-center justify-center gap-4 bg-neutral-50 px-6">
         {header}

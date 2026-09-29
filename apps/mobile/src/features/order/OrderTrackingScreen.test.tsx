@@ -1,14 +1,16 @@
 import type { OrderState } from '@hamro-pasal/shared-types';
 import { act, fireEvent, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
+import { delay, http, HttpResponse } from 'msw';
 
 import OrderTrackingScreen from '../../../app/order/[id]';
-import { fetchOrder } from '../../api/orders';
+import { cancelOrderPath, orderPath } from '../../api/orders';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useDeliveryOtpStore } from '../../store/useDeliveryOtpStore';
 import { useOrderStore } from '../../store/useOrderStore';
 import { useToastStore } from '../../store/useToastStore';
-import { ORDER_ID, orderView } from '../../test/api-fixtures';
+import { cancelResponse, errorBody, ORDER_ID, orderDetailResponse } from '../../test/api-fixtures';
+import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
 
 jest.mock('expo-router', () => ({
@@ -17,9 +19,12 @@ jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
 }));
 
-jest.mock('../../api/orders', () => ({ fetchOrder: jest.fn() }));
 const mockRouterPush = jest.mocked(router.push);
-const mockFetchOrder = jest.mocked(fetchOrder);
+
+setupApiTestEnvironment();
+
+/** Simulated server latency for POST /cancel, so the in-flight state can be observed. */
+const CANCEL_LATENCY_MS = 300;
 
 const NOW = Date.parse('2026-09-29T10:00:00.000Z');
 
@@ -30,8 +35,26 @@ async function advance(ms: number): Promise<void> {
   });
 }
 
+/** GET /api/orders/:id answers with this state (validated by orderDetailResponseSchema). */
 function serverState(state: OrderState): void {
-  mockFetchOrder.mockResolvedValue(orderView({ state, payment_method: 'COD', total_npr: 1250 }));
+  server.use(
+    http.get(apiUrl(orderPath(ORDER_ID)), () =>
+      HttpResponse.json(orderDetailResponse({ state, payment_method: 'COD', total_npr: 1250 })),
+    ),
+  );
+}
+
+/** POST /api/orders/:id/cancel answers `respond()` after the simulated latency. */
+function serveCancel(respond: () => Response): { calls: () => number } {
+  let calls = 0;
+  server.use(
+    http.post(apiUrl(cancelOrderPath(ORDER_ID)), async () => {
+      calls += 1;
+      await delay(CANCEL_LATENCY_MS);
+      return respond();
+    }),
+  );
+  return { calls: () => calls };
 }
 
 function placeOrder(
@@ -70,7 +93,6 @@ beforeEach(() => {
   useOrderStore.setState({ orders: {} });
   useDeliveryOtpStore.setState({ otps: { [ORDER_ID]: '4821' } });
   useToastStore.setState({ toast: null });
-  mockFetchOrder.mockReset();
   serverState('PLACED');
 });
 
@@ -93,7 +115,8 @@ describe('60-second cancellation window', () => {
     expect(cancelButton()).toBeEnabled();
   });
 
-  it('cancels the order when tapped inside the window', async () => {
+  it('cancels the order through the API when tapped inside the window', async () => {
+    const cancel = serveCancel(() => HttpResponse.json(cancelResponse()));
     placeOrder(NOW);
     await renderScreen();
     await advance(20_000);
@@ -101,8 +124,9 @@ describe('60-second cancellation window', () => {
     fireEvent.press(screen.getByRole('button', { name: 'Cancel Order' }));
     await advance(0);
     expect(screen.getByRole('button', { name: 'Cancelling…' })).toBeDisabled();
-    await advance(300); // mock cancel API latency
+    await advance(CANCEL_LATENCY_MS);
 
+    expect(cancel.calls()).toBe(1);
     expect(screen.getByText('Order cancelled')).toBeOnTheScreen();
     expect(useOrderStore.getState().orders[ORDER_ID]?.state).toBe('CANCELED');
     expect(useToastStore.getState().toast?.message).toBe('Your order was cancelled.');
@@ -112,6 +136,28 @@ describe('60-second cancellation window', () => {
     expect(screen.queryByTestId('cancellation-window')).toBeNull();
     expect(screen.queryByTestId('order-tracker')).toBeNull();
   });
+
+  it.each([
+    ['en', 'Order cancelled. Escrow refund initiated.'],
+    ['ne', 'अर्डर रद्द भयो। रकम फिर्ता प्रक्रिया सुरु भयो।'],
+  ] as const)(
+    'tells the customer (%s) that a prepaid order is being refunded',
+    async (locale, message) => {
+      serveCancel(() => HttpResponse.json(cancelResponse(true)));
+      placeOrder(NOW);
+      await renderScreen(locale);
+
+      fireEvent.press(
+        screen.getByRole('button', {
+          name: locale === 'en' ? 'Cancel Order' : 'अर्डर रद्द गर्नुहोस्',
+        }),
+      );
+      await advance(CANCEL_LATENCY_MS);
+
+      expect(useOrderStore.getState().orders[ORDER_ID]?.state).toBe('CANCELED');
+      expect(useToastStore.getState().toast).toMatchObject({ message, tone: 'info' });
+    },
+  );
 
   it('removes cancellation and advances the tracker to Preparing when the timer hits 0', async () => {
     placeOrder(NOW);
@@ -130,18 +176,41 @@ describe('60-second cancellation window', () => {
     expect(useOrderStore.getState().orders[ORDER_ID]?.state).toBe('PLACED');
   });
 
-  it('refuses a cancellation that reaches the server after the window closed', async () => {
+  it('shows a toast when the server answers 422 CANCELLATION_WINDOW_EXPIRED', async () => {
+    serveCancel(() => HttpResponse.json(errorBody('CANCELLATION_WINDOW_EXPIRED'), { status: 422 }));
     placeOrder(NOW);
     await renderScreen();
     await advance(59_900);
 
     fireEvent.press(screen.getByRole('button', { name: 'Cancel Order' }));
-    await advance(300);
+    await advance(CANCEL_LATENCY_MS);
 
     expect(useOrderStore.getState().orders[ORDER_ID]?.state).toBe('PLACED');
-    expect(useToastStore.getState().toast?.message).toBe(
-      'The 60-second cancellation window has ended.',
+    expect(useToastStore.getState().toast).toMatchObject({
+      message: 'The 60-second cancellation window has ended.',
+      tone: 'error',
+    });
+    expect(cancelButton()).toBeNull();
+  });
+
+  it('shows the server state when it refuses for another reason (the vendor moved on)', async () => {
+    serveCancel(() =>
+      HttpResponse.json(errorBody('ORDER_STATE_CONFLICT', { state: 'PREPARING' }), {
+        status: 409,
+      }),
     );
+    placeOrder(NOW);
+    await renderScreen();
+    serverState('PREPARING');
+
+    fireEvent.press(screen.getByRole('button', { name: 'Cancel Order' }));
+    await advance(CANCEL_LATENCY_MS);
+
+    expect(useToastStore.getState().toast).toMatchObject({
+      message: "Couldn't cancel the order. Please try again.",
+      tone: 'error',
+    });
+    expect(useOrderStore.getState().orders[ORDER_ID]?.state).toBe('PREPARING');
     expect(cancelButton()).toBeNull();
   });
 

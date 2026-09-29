@@ -5,13 +5,13 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '../../src/components/Button';
 import { VendorCard } from '../../src/components/VendorCard';
 import { toFeedSections } from '../../src/features/feed/feed-sections';
-import { MOCK_CUSTOMER_LOCATION } from '../../src/features/feed/mock-feed-api';
 import { useFeedQuery } from '../../src/features/feed/useFeedQuery';
+import { useCustomerLocation } from '../../src/features/location/customer-location';
 
 export default function FeedScreen() {
   const { t } = useTranslation();
-  // MOCK: the customer's GPS fix and NP-polygon validation (customer flow step 2) come in a later phase.
-  const feed = useFeedQuery(MOCK_CUSTOMER_LOCATION);
+  // The saved delivery address's pin (Thamel until one is saved); live GPS comes in a later phase.
+  const feed = useFeedQuery(useCustomerLocation());
 
   if (feed.isPending) {
     return (

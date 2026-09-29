@@ -95,9 +95,7 @@ export default function OrderTrackingScreen() {
           locale={locale}
           cancelling={cancel.isPending}
           onCancel={() => {
-            if (order.placedAt !== null) {
-              cancel.mutate({ orderId: order.orderId, placedAtMs: order.placedAt });
-            }
+            cancel.mutate({ orderId: order.orderId });
           }}
         />
       ) : null}

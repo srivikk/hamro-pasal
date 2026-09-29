@@ -1,17 +1,25 @@
 import { useQuery } from '@tanstack/react-query';
 
-import type { CustomerLocation } from '../feed/serviceability';
-import { fetchMockVendorMenu, VendorNotFoundError } from './mock-menu-api';
+import { fetchVendorMenu } from '../../api/catalog';
+import { retryTransientFailures } from '../../api/query-client';
+import type { CustomerLocation } from '../location/customer-location';
 
-export function vendorMenuQueryKey(vendorId: string, customer: CustomerLocation) {
-  return ['vendor-menu', vendorId, customer.point.y, customer.point.x] as const;
+export function vendorMenuQueryKey(vendorId: string, location: CustomerLocation) {
+  return [
+    'vendor-menu',
+    vendorId,
+    location.lat,
+    location.lng,
+    location.municipalityPalika,
+  ] as const;
 }
 
-export function useVendorMenuQuery(vendorId: string, customer: CustomerLocation) {
+/** GET /api/vendors/:id/products; the response is validated by vendorMenuSchema. */
+export function useVendorMenuQuery(vendorId: string, location: CustomerLocation) {
   return useQuery({
-    queryKey: vendorMenuQueryKey(vendorId, customer),
-    queryFn: () => fetchMockVendorMenu(vendorId, customer),
-    // An unknown vendor will not appear by retrying; transient failures still retry.
-    retry: (failureCount, error) => !(error instanceof VendorNotFoundError) && failureCount < 3,
+    queryKey: vendorMenuQueryKey(vendorId, location),
+    queryFn: () => fetchVendorMenu(vendorId, location),
+    // An unknown vendor (404 VENDOR_NOT_FOUND) will not appear by retrying.
+    retry: retryTransientFailures,
   });
 }

@@ -1,17 +1,18 @@
-# Hamro Pasal: State Handoff (Phases 0–6 complete)
+# Hamro Pasal: State Handoff (Phases 0–6.5 complete)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 6 (Backend
-Gap-Closing & Customer E2E Linkage)**. When this file and the code disagree, **the code wins**.
-When anything disagrees with `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
+work without re-deriving it. It describes the tree at the end of **Phase 6.5 (Mobile Client E2E
+Live-Link)**, on top of Phase 6 (Backend Gap-Closing). When this file and the code disagree,
+**the code wins**. When anything disagrees with `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
 
-> **Status in one paragraph.** The backend now serves the customer read path (PostGIS vendor
-> feed, vendor menus, order detail) and server-side cancellation, and checkout requires and stores
-> a Nepal delivery address. **The mobile app still renders MOCK feed and menu data** (with mock
-> ids that do not exist in the database), and its cancel button still calls a client-side mock.
-> Swapping those three mocks for the real endpoints is the next step towards a live end-to-end
-> run (§10, §11). Auth/OTP login, the order lifecycle after PLACED, reviews, disputes, Socket.io
-> and refunds are still not built.
+> **Status in one paragraph.** The customer path is now linked end to end in code: the mobile app
+> reads the PostGIS vendor feed, vendor menus and order detail from the Express API, sends the
+> saved Nepal delivery address with checkout, and cancels through the server. **The feed, menu and
+> cancel mocks are deleted.** Every call is validated against the shared-types Zod contracts, and
+> both sides are covered by tests (API integration tests on real Postgres/Redis; mobile tests over
+> msw). **No live device run has happened yet** (§13). Still not built: OTP login (the app uses a
+> `__DEV__` token), the order lifecycle after PLACED, reviews, disputes, Socket.io and refund
+> payouts.
 
 ---
 
@@ -31,22 +32,25 @@ When anything disagrees with `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
   can see a change. Stale `dist/` shows up as confusing type errors (e.g. a new column "missing").
 - The project verifies important behaviour with **mutation checks**: break the rule on purpose,
   confirm a test fails, restore. Phase 6 did this for the 1.1× radius buffer, the 60 s window, the
-  `placed_at` anchor and the address-aware idempotency fingerprint.
+  `placed_at` anchor and the address-aware idempotency fingerprint; Phase 6.5 for the address-based
+  feed location, the `CANCELLATION_WINDOW_EXPIRED` mapping and the refund toast. **A test must not
+  build its expectation from the constant it is guarding** (the 422 screen test uses the literal
+  server code for this reason).
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                           |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · Phase 6 (the commit that adds this file) |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                   |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                          |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                     |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                    |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                              |
-| Unit tests      | **623 passing** (`pnpm test`): shared-types 82, api 67, worker 9, kafka 7, db 7, mobile 451                                                                                                                                                                                                                                     |
-| Integ. tests    | **137 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 46, api 80, worker 10, kafka 1. Run at the end of Phase 6                                                                                                                                                                                                  |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 6                                                                                                                                                                            |
-| Dev database    | Migrations 0000–0009 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                            |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · Phase 6.5 (the commit that adds this file) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                    |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                           |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                      |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                     |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                               |
+| Unit tests      | **611 passing** (`pnpm test`): shared-types 82, api 67, worker 9, kafka 7, db 7, mobile 439 (Phase 6.5 deleted the mock tests and added msw-based ones)                                                                                                                                                                                          |
+| Integ. tests    | **137 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 46, api 80, worker 10, kafka 1. Re-run at the end of Phase 6.5 (the backend did not change)                                                                                                                                                                                 |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 6.5                                                                                                                                                                                           |
+| Dev database    | Migrations 0000–0009 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                             |
 
 ### Root commands (`package.json`)
 
@@ -128,19 +132,22 @@ jest.config.js · jest.setup.ts · jest.setup-after-env.ts                      
 app/_layout.tsx           root: QueryClientProvider > I18nextProvider > Stack + ReplaceCartModal,
                           CheckoutSessionWatcher, ReviewPrompt, ToastHost, TerritoryGate (last = topmost)
 app/(tabs)/_layout.tsx    Tabs: Shops / Cart (badge = item count) / Profile
-app/(tabs)/index.tsx      feed (MOCK data)          app/(tabs)/cart.tsx      cart, address, checkout, payment
+app/(tabs)/index.tsx      feed (GET /api/vendors)   app/(tabs)/cart.tsx      cart, address, checkout, payment
 app/(tabs)/profile.tsx    language + __DEV__ sign-in + __DEV__ territory simulator
-app/vendor/[id].tsx       vendor menu (MOCK data)
-app/order/[id]/index.tsx  order tracking, 60 s cancel (MOCK), OTP, dispute button
+app/vendor/[id].tsx       vendor menu (GET /api/vendors/:id/products)
+app/order/[id]/index.tsx  order tracking (GET /api/orders/:id), 60 s cancel (POST …/cancel), OTP, dispute button
 app/order/[id]/dispute.tsx  dispute chat (Socket.io /chat scaffold)
 
 src/api/        http.ts (apiRequest, ApiError) · mutations.ts (useCheckout, NO_DELIVERY_ADDRESS) · queries.ts (useLockStatus)
-                payments.ts (eSewa/Khalti calls) · orders.ts (fetchOrder via lock-status) · query-client.ts
+                catalog.ts (fetchFeed, fetchVendorMenu, VENDOR_NOT_FOUND) · orders.ts (fetchOrder, cancelOrder,
+                CANCELLATION_WINDOW_EXPIRED) · payments.ts (eSewa/Khalti calls)
+                query-client.ts (createQueryClient, retryTransientFailures)
 src/services/   socket.ts (Socket.io client config, typed /chat events)
 src/store/      useAuthStore · useCartStore · useCheckoutStore · useOrderStore · useDeliveryOtpStore
                 useAddressStore · useReviewStore · useToastStore
 src/storage/    app-mmkv.ts (plain) · secure-mmkv.ts (AES-256) · encryption-key.ts · mmkv-state-storage.ts
-src/features/   address/ auth/ cart/ checkout/ dispute/ feed/ menu/ order/ payment/ review/ territory/
+src/features/   address/ auth/ cart/ checkout/ dispute/ feed/ location/ menu/ order/ payment/ review/ territory/
+                (location/customer-location.ts: useCustomerLocation, THAMEL_FALLBACK_LOCATION)
 src/components/ Button, VendorCard, ReplaceCartModal, PaymentWebViewModal, AddressFormModal, ReviewModal, Toast
 src/i18n/       i18n.ts (createI18n, bindLocale, `localizedNumber` formatter) · format-number.ts · locales/{en,ne}.json
 src/config/     api.ts (API_URL, throws at startup if EXPO_PUBLIC_API_URL is missing) · parse-api-url.ts
@@ -158,6 +165,11 @@ src/test/       msw.ts · api-fixtures.ts · render.tsx · in-memory-mmkv.ts · 
   `notifications.broadcast` (2). Auto-create is disabled.
 - Root `.env` passes `parseServerEnv`. Never print or commit `.env` values. The API has still not
   been started live against a device.
+- **Running the app against the API:** `pnpm infra:up`, `pnpm db:migrate`, `pnpm db:seed`,
+  `pnpm --filter @hamro-pasal/api dev`, then mint a token with
+  `pnpm --filter @hamro-pasal/api token:dev -- --phone 9800000001` (Aarav) and paste it into the
+  Profile tab's `__DEV__` sign-in. **Every screen that reads the API needs that token**; without it
+  the feed shows its load error at once (`NOT_SIGNED_IN` is not retried).
 - **Mobile → API:** `apps/mobile/.env` holds only `EXPO_PUBLIC_API_URL`. A device or emulator cannot
   reach the host's `127.0.0.1`. Expo inlines only `EXPO_PUBLIC_*` values into the bundle.
 - The mobile app needs a **development build** (`npx expo prebuild` + `expo run:android`, or EAS),
@@ -343,19 +355,19 @@ esewa, khalti }`. Routers (all customer routes behind `requireAuth(CUSTOMER)`):
 
 ### Implemented routes (the complete list)
 
-| Method & path                                              | Auth                          | Request                                                                                                                                          | Success              | Response schema                                                                                                    | Used by mobile                                  |
-| ---------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
-| `GET /health`                                              | none                          | –                                                                                                                                                | 200 `{status:'ok'}`  | –                                                                                                                  | no                                              |
-| `GET /api/vendors?lat=&lng=[&municipality_palika_string=]` | Bearer CUSTOMER               | `vendorFeedQuerySchema` (coordinates inside `NEPAL_BOUNDING_BOX`)                                                                                | 200                  | `feedResponseSchema {serviceable[], explore_further[]}` of `{vendor: FeedVendor, distance_km, serviceable}`        | **no** (app still uses `mock-feed-api.ts`)      |
-| `GET /api/vendors/:id/products?lat=&lng=[&municipality_…]` | Bearer CUSTOMER               | `idParamSchema` + `vendorMenuQuerySchema`                                                                                                        | 200                  | `vendorMenuSchema {vendor, serviceable, products[{id, name, price_npr, in_stock}]}`                                | **no** (app still uses `mock-menu-api.ts`)      |
-| `POST /api/cart/checkout`                                  | Bearer CUSTOMER               | `checkoutRequestSchema {idempotency_key(8–100), vendor_id, payment_method, items[1–50]{product_id, quantity 1–99}, delivery_address (required)}` | 201 new / 200 replay | `checkoutResponseSchema {order: OrderView, reservation{id\|null, expires_at\|null}, delivery_otp\|null, replayed}` | `useCheckout` (sends the saved address)         |
-| `GET /api/cart/lock-status?order_id=`                      | Bearer CUSTOMER (owner)       | `lockStatusQuerySchema`                                                                                                                          | 200                  | `lockStatusResponseSchema {order, lock{status ACTIVE\|EXPIRED\|RELEASED, ttl_ms, expires_at}}`                     | `useLockStatus` (5 s poll) **and** `fetchOrder` |
-| `GET /api/orders/:id`                                      | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200                  | `orderDetailResponseSchema {order: OrderSnapshot}`                                                                 | **no** (tracking still reads lock-status)       |
-| `POST /api/orders/:id/cancel`                              | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `cancelOrderResponseSchema {order_id, state:'CANCELED', refund_required}`                                          | **no** (app still uses `mock-cancel-api.ts`)    |
-| `POST /api/payments/esewa/initiate`                        | Bearer CUSTOMER (owner)       | `paymentInitiateRequestSchema {order_id}`                                                                                                        | 200                  | `esewaInitiateResponseSchema {payment_url, method:'POST', fields}`                                                 | `initiateEsewa`                                 |
-| `POST /api/payments/esewa/webhook`                         | **none** (HMAC-authenticated) | `esewaWebhookRequestSchema {data: base64}`                                                                                                       | 200                  | `paymentStatusResponseSchema {status, payment: PaymentView\|null}`                                                 | `confirmEsewa` (the app forwards the redirect)  |
-| `POST /api/payments/khalti/initiate`                       | Bearer CUSTOMER (owner)       | `{order_id}`                                                                                                                                     | 200                  | `khaltiInitiateResponseSchema {pidx, payment_url, expires_at}`                                                     | `initiateKhalti`                                |
-| `POST /api/payments/khalti/lookup`                         | Bearer CUSTOMER (pidx owner)  | `khaltiLookupRequestSchema {pidx}`                                                                                                               | 200                  | `paymentStatusResponseSchema`                                                                                      | `lookupKhalti`                                  |
+| Method & path                                              | Auth                          | Request                                                                                                                                          | Success              | Response schema                                                                                                    | Used by mobile                                 |
+| ---------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| `GET /health`                                              | none                          | –                                                                                                                                                | 200 `{status:'ok'}`  | –                                                                                                                  | no                                             |
+| `GET /api/vendors?lat=&lng=[&municipality_palika_string=]` | Bearer CUSTOMER               | `vendorFeedQuerySchema` (coordinates inside `NEPAL_BOUNDING_BOX`)                                                                                | 200                  | `feedResponseSchema {serviceable[], explore_further[]}` of `{vendor: FeedVendor, distance_km, serviceable}`        | `useFeedQuery` (Shops tab)                     |
+| `GET /api/vendors/:id/products?lat=&lng=[&municipality_…]` | Bearer CUSTOMER               | `idParamSchema` + `vendorMenuQuerySchema`                                                                                                        | 200                  | `vendorMenuSchema {vendor, serviceable, products[{id, name, price_npr, in_stock}]}`                                | `useVendorMenuQuery` (vendor screen)           |
+| `POST /api/cart/checkout`                                  | Bearer CUSTOMER               | `checkoutRequestSchema {idempotency_key(8–100), vendor_id, payment_method, items[1–50]{product_id, quantity 1–99}, delivery_address (required)}` | 201 new / 200 replay | `checkoutResponseSchema {order: OrderView, reservation{id\|null, expires_at\|null}, delivery_otp\|null, replayed}` | `useCheckout` (sends the saved address)        |
+| `GET /api/cart/lock-status?order_id=`                      | Bearer CUSTOMER (owner)       | `lockStatusQuerySchema`                                                                                                                          | 200                  | `lockStatusResponseSchema {order, lock{status ACTIVE\|EXPIRED\|RELEASED, ttl_ms, expires_at}}`                     | `useLockStatus` (5 s poll, checkout only)      |
+| `GET /api/orders/:id`                                      | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200                  | `orderDetailResponseSchema {order: OrderSnapshot}`                                                                 | `useOrderQuery` → `fetchOrder` (30 s refresh)  |
+| `POST /api/orders/:id/cancel`                              | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `cancelOrderResponseSchema {order_id, state:'CANCELED', refund_required}`                                          | `useCancelOrder` → `cancelOrder`               |
+| `POST /api/payments/esewa/initiate`                        | Bearer CUSTOMER (owner)       | `paymentInitiateRequestSchema {order_id}`                                                                                                        | 200                  | `esewaInitiateResponseSchema {payment_url, method:'POST', fields}`                                                 | `initiateEsewa`                                |
+| `POST /api/payments/esewa/webhook`                         | **none** (HMAC-authenticated) | `esewaWebhookRequestSchema {data: base64}`                                                                                                       | 200                  | `paymentStatusResponseSchema {status, payment: PaymentView\|null}`                                                 | `confirmEsewa` (the app forwards the redirect) |
+| `POST /api/payments/khalti/initiate`                       | Bearer CUSTOMER (owner)       | `{order_id}`                                                                                                                                     | 200                  | `khaltiInitiateResponseSchema {pidx, payment_url, expires_at}`                                                     | `initiateKhalti`                               |
+| `POST /api/payments/khalti/lookup`                         | Bearer CUSTOMER (pidx owner)  | `khaltiLookupRequestSchema {pidx}`                                                                                                               | 200                  | `paymentStatusResponseSchema`                                                                                      | `lookupKhalti`                                 |
 
 - `OrderView = {id, vendor_id, state, payment_method, payment_status, fulfillment, subtotal_npr,
 delivery_fee_npr, total_npr, created_at}` (no OTP hash, gateway ref or commission).
@@ -434,7 +446,7 @@ reviews, disputes, evidence uploads, refunds, admin, vendor or driver apps, `/me
 limiting. No Socket.io server (`/orders`, `/chat`). No push notifications. The SMS adapters are not
 wired to any route. Worker consumers and timer handlers are placeholders.
 
-## 9. Mobile app: state as of Phase 6
+## 9. Mobile app: state as of Phase 6.5
 
 Expo SDK 57 (`expo ~57.0.25`, `react-native 0.86.3`, `react 19.2.3`), Expo Router (typed routes),
 strict TS, NativeWind 4.2.7 + **Tailwind 3.4** (NativeWind 4 requires v3), Reanimated 4.5.1,
@@ -442,10 +454,30 @@ TanStack Query 5, Zustand 5, i18next 26, react-native-mmkv 4.3.2 (+ nitro-module
 react-native-webview 13.16.1, socket.io-client 4.8.4, expo-location, expo-image-picker,
 expo-secure-store, expo-crypto, zod 4. `pnpm peers check` is clean.
 
-**Phase 6 touched the mobile app only in logic, never in UI:** the checkout mutation sends the
-delivery address (§9.4), the idempotency fingerprint includes it, the cancel mock and hook use the
-server's `422 CANCELLATION_WINDOW_EXPIRED` (§9.6), and the territory gate reads the shared
-`NEPAL_BOUNDING_BOX` (§9.7).
+**Phase 6** changed only logic: checkout sends the delivery address (§9.4), the idempotency
+fingerprint includes it, and the territory gate reads the shared `NEPAL_BOUNDING_BOX` (§9.7).
+**Phase 6.5** linked the app to the live API and deleted the mocks:
+
+- **Deleted:** `features/feed/{mock-feed-api,feed-contract,serviceability}.ts`,
+  `features/menu/{mock-menu-api,menu-contract}.ts`, `features/order/mock-cancel-api.ts`, and their
+  tests. The app now uses the shared-types schemas (`feedResponseSchema`, `vendorMenuSchema`,
+  `orderDetailResponseSchema`, `cancelOrderResponseSchema`) and types (`FeedEntry`, `VendorMenu`,
+  `MenuProduct`, `OrderSnapshotView`). Client-side serviceability (haversine) is gone: the server
+  decides (§8).
+- **Customer location** (`features/location/customer-location.ts`): `useCustomerLocation()` returns
+  the saved address's `exact_lat`/`exact_lng` and Palika from `useAddressStore` (encrypted MMKV), or
+  `THAMEL_FALLBACK_LOCATION` (27.7154, 85.3123, Kathmandu Metropolitan City) when none is saved. The
+  Palika is sent as `municipality_palika_string` so CITY_WIDE vendors can match. Changing the saved
+  address changes the query key, so the feed and menus refetch. **Live GPS is not used for the feed
+  yet.**
+- **Feed** (`useFeedQuery`, `app/(tabs)/index.tsx`) and **menus** (`useVendorMenuQuery`,
+  `app/vendor/[id].tsx`) call `src/api/catalog.ts`. `404 VENDOR_NOT_FOUND` shows "This shop isn't
+  available." without a retry button; other failures show the load error with "Try again".
+- **Retry policy:** these reads (and the order read) use `retryTransientFailures`
+  (`src/api/query-client.ts`): network errors, 408, 429 and 5xx retry up to 3 times with the
+  default backoff; every other 4xx surfaces at once. Other queries keep the global default.
+- **Only UI files touched:** the three screens' data wiring (which hook, which error code), and the
+  cancel button's mutation arguments. No layout, style or copy changed except the new refund toast.
 
 ### 9.1 Storage
 
@@ -465,7 +497,7 @@ fails**. Each store has a `create*Store(storage)` factory for tests plus an app-
 | `useAuthStore`                                                        | `hamro-pasal.auth` v1 (secure)             | `refreshToken`, `locale` ('en' \| 'ne')                                                                                     | **`accessToken`** (SPEC: memory only)  | Only `setAccessToken` is used in the app, by the `__DEV__` sign-in (`src/features/auth/DevSignIn.tsx`) that accepts a `token:dev` JWT. No login screen, no refresh flow.                                                                                                                                                                                                                            |
 | `useCartStore`                                                        | `hamro-pasal.cart` v2 (app)                | `vendor {id, name, deliveryFeeNpr, minOrderValueNpr}`, `lines[{productId, name, unitPriceNpr, quantity}]`                   | `pendingAddition`                      | **Single-vendor** (SPEC edge case 4) with a replace prompt (`ReplaceCartModal`). Limits from shared-types (99 per line, 50 lines). Prices are display-only; the server re-prices.                                                                                                                                                                                                                   |
 | `useCheckoutStore`                                                    | `hamro-pasal.checkout` v1 (app)            | `session {orderId, reservationId, expiresAt, orderState, paymentMethod, totalNpr}`, `attempt {idempotencyKey, fingerprint}` | `deliveryOtp`, `sessionExpired`        | One idempotency key per **checkout fingerprint = vendor + method + sorted items + delivery address** (Phase 6 added the address), reused across retries and relaunches. `startSession`, `applyLockStatus`, `applyPaymentView`, `setOrderState`, `expireSession`, `endSession`. A stored v1 fingerprint without the address no longer matches, so the first checkout after upgrade gets a fresh key. |
-| `useOrderStore`                                                       | `hamro-pasal.orders` v2 (app)              | `orders[id] {orderId, placedAt, deliveredAt, state, paymentMethod, totalNpr}`, capped at 20                                 | –                                      | `placedAt` = when the device saw PLACED (60 s window anchor on the device); `deliveredAt` = when it first saw DELIVERED (48 h window anchor). The server now exposes both `placed_at` and `delivered_at` via `GET /api/orders/:id`, but the app does not read that endpoint yet.                                                                                                                    |
+| `useOrderStore`                                                       | `hamro-pasal.orders` v2 (app)              | `orders[id] {orderId, placedAt, deliveredAt, state, paymentMethod, totalNpr}`, capped at 20                                 | –                                      | `placedAt` = when the device saw PLACED (60 s countdown anchor); `deliveredAt` = when it first saw DELIVERED (48 h dispute anchor). **Deliberately device clocks** (§9.6, §12): the server's `placed_at`/`delivered_at` arrive with `GET /api/orders/:id` but are not used for the UI timers.                                                                                                       |
 | `useDeliveryOtpStore`                                                 | `hamro-pasal.delivery-otps` v1 (secure)    | `otps[orderId]` (4 digits)                                                                                                  | –                                      | Written on every checkout success (newest replay wins); cleared on DELIVERED/CANCELED/FAILED.                                                                                                                                                                                                                                                                                                       |
 | `useAddressStore`                                                     | `hamro-pasal.delivery-address` v1 (secure) | `address: NepalAddress \| null`                                                                                             | –                                      | `setAddress` parses with `nepalAddressInputSchema` (throws on invalid). **Sent with every checkout** (Phase 6); not synced to `customer_addresses` (no endpoint).                                                                                                                                                                                                                                   |
 | `useReviewStore`                                                      | `hamro-pasal.reviews` v1 (app)             | `submitted[orderId] {reviewId, rating, comment, submittedAt}`                                                               | `snoozed` ("Not now")                  | Written only after a (mock) submission succeeds.                                                                                                                                                                                                                                                                                                                                                    |
@@ -479,8 +511,11 @@ call time**, JSON-encodes the body, builds the query string by hand (RN's `URLSe
 incomplete), parses non-2xx bodies with `errorBodySchema` into `ApiError(status, code, message,
 details)`, and validates 2xx bodies with the given shared-types schema. Client-side codes:
 `NOT_SIGNED_IN` (no request sent), `NETWORK_ERROR`, `UNEXPECTED_RESPONSE`, plus `INVALID_CART` and
-`NO_DELIVERY_ADDRESS` from the checkout builder. Query defaults (`query-client.ts`): staleTime 30 s,
-3 retries with capped exponential backoff, **mutations never retried automatically**.
+`NO_DELIVERY_ADDRESS` from the checkout builder. **Every API call goes through `apiRequest`**, so
+every request carries the Bearer token and every 2xx body is Zod-validated; a contract break becomes
+`UNEXPECTED_RESPONSE`. Query defaults (`query-client.ts`): staleTime 30 s, 3 retries with capped
+exponential backoff (`retryTransientFailures` narrows that for the catalogue and order reads, §9),
+**mutations never retried automatically**.
 
 ### 9.4 Checkout and lock status
 
@@ -516,20 +551,26 @@ details)`, and validates 2xx bodies with the given shared-types schema. Client-s
 
 ### 9.6 Order tracking and the 60-second cancellation (`app/order/[id]/index.tsx`, `src/features/order/`)
 
-- The order is read with `fetchOrder` (`src/api/orders.ts`), which **still uses
-  `GET /api/cart/lock-status`**, refreshed every 30 s until terminal. `GET /api/orders/:id` now exists
-  and should replace it (§11).
-- **Cancellation window:** `CANCELLATION_WINDOW_MS = 60_000` from the persisted device `placedAt`,
-  clamped to [0, 60 s], with a live countdown and a "Cancel Order" button. When it closes, a
-  still-PLACED order is **displayed** as PREPARING (`displayedOrderState`).
-- **Cancellation is still a MOCK:** `src/features/order/mock-cancel-api.ts#cancelOrder(orderId,
-placedAtMs)` waits 300 ms and, after 60 s, rejects with **`ApiError(422,
-CANCELLATION_WINDOW_EXPIRED)`**, the real server's code (Phase 6; it was `409
-CANCELLATION_WINDOW_CLOSED`). `useCancelOrder` (`order-hooks.ts`) maps that code to the "window has
-  ended" toast. On success the app marks the order CANCELED **locally only**. **The server order stays
-  PLACED, stock is not restored, the vendor still gets it, and prepaid money is not flagged for
-  refund.** Replacing the mock with `POST /api/orders/:id/cancel` is a one-file change: the response
-  (`cancelOrderResponseSchema`) is a superset of `CancelOrderResult` and the error code already matches.
+- **Order read:** `useOrderQuery` → `fetchOrder` (`src/api/orders.ts`) → `GET /api/orders/:id`
+  (`orderDetailResponseSchema`), refreshed every 30 s until terminal (stand-in for Socket.io
+  `/orders`). `applyOrderView` copies the server state into `useOrderStore`; terminal states erase the
+  OTP. The lock-status stand-in is gone.
+- **Cancellation window (UX only):** `CANCELLATION_WINDOW_MS = 60_000` from the persisted **device**
+  `placedAt`, clamped to [0, 60 s], with a live countdown and a "Cancel Order" button. When it closes,
+  a still-PLACED order is **displayed** as PREPARING (`displayedOrderState`). This timer is purely for
+  UX: **Postgres is the gatekeeper** (`placed_at + 60 s` on the database clock, §8). Anchoring the
+  countdown on the server's `placed_at` was rejected because it would compare a server timestamp with
+  a possibly skewed device clock.
+- **Cancellation is live:** `useCancelOrder` (`order-hooks.ts`) → `cancelOrder(orderId)` →
+  `POST /api/orders/:id/cancel` (`cancelOrderResponseSchema`).
+  - success → order CANCELED in `useOrderStore` and the checkout store, OTP erased, toast
+    `order.cancel.done` ("Your order was cancelled.") or, when the server answers
+    `refund_required: true` (a PAID prepaid order), `order.cancel.doneRefund` ("Order cancelled.
+    Escrow refund initiated." / "अर्डर रद्द भयो। रकम फिर्ता प्रक्रिया सुरु भयो।");
+  - `422 CANCELLATION_WINDOW_EXPIRED` → error toast `order.cancel.windowClosed`;
+  - any other error (e.g. `409 ORDER_STATE_CONFLICT` because the vendor moved on) → error toast
+    `order.cancel.failed`;
+  - on every error the order query is invalidated, so the screen shows the server's real state.
 - Tracker: Order Placed → Preparing → Out for Delivery → Arrived → Delivered. **There is no ARRIVED
   `OrderState`**, so Arrived completes together with DELIVERED. No map polling.
 - OTP badge: 4 digits from `useDeliveryOtpStore`, Devanagari under `ne`, hidden and erased when terminal.
@@ -592,9 +633,18 @@ content_type image/* }], sent_at ISO }`; `ChatUser = { id, first_name|null, role
 
 ### 9.12 Mobile test infrastructure
 
-- 451 Jest tests (jest-expo + React Native Testing Library 13 + react-test-renderer 19.2.3).
-- **msw 2** intercepts `fetch` for the API tests (`src/test/msw.ts`, `setupApiTestEnvironment()`,
-  which also saves `THAMEL_ADDRESS` before each test, since checkout requires it).
+- 439 Jest tests (jest-expo + React Native Testing Library 13 + react-test-renderer 19.2.3).
+- **msw 2** intercepts `fetch` for every API-backed test (`src/test/msw.ts`,
+  `setupApiTestEnvironment()`: listens with `onUnhandledRequest: 'error'`, sets the test access
+  token and saves `THAMEL_ADDRESS` before each test). Screen tests (feed, menu, order tracking) go
+  through the real `apiRequest`, so they also exercise the Zod contracts and the Bearer header.
+  `src/api/{catalog,orders,checkout,lock-status}.int.test.ts` assert the exact wire format.
+- **Fixtures** (`src/test/api-fixtures.ts`) are seed-shaped, fixed-uuid test data built through the
+  shared-types response schemas (`feedResponse`, `vendorMenu`, `orderSnapshot`,
+  `orderDetailResponse`, `cancelResponse`, …), so a fixture can never drift from the contract.
+  They are test-only; nothing in `app/` or `src/` outside `src/test/` imports them.
+- The order tracking screen test uses fake timers **with** msw; the cancel handler uses msw's
+  `delay(300)` so the in-flight "Cancelling…" state is observable with `advanceTimersByTimeAsync`.
 - `jest.setup.ts` globally mocks MMKV (in-memory), Reanimated and worklets, WebView, Ionicons,
   SecureStore and expo-crypto, and defaults `EXPO_PUBLIC_API_URL=http://api.hamropasal.test`.
 - `jest.setup-after-env.ts` sets `asyncUtilTimeout` to 5 s; `testTimeout` is 15 s.
@@ -604,48 +654,48 @@ content_type image/* }], sent_at ISO }`; `ChatUser = { id, first_name|null, role
 
 ## 10. Mock inventory (what the app still fakes)
 
-| Mock                           | File                                                                                                        | Real replacement (status)                                                                                                                                                                                                                                              |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Vendor feed**                | `src/features/feed/mock-feed-api.ts` (`MOCK_VENDORS`: 7 records, 6 LIVE; `MOCK_CUSTOMER_LOCATION` = Thamel) | **Endpoint ready:** `GET /api/vendors`. The app's draft `feed-contract.ts` matches `feedResponseSchema` in shared-types except that the server's `vendor.id` is a strict uuid; switch the app to the shared schema and send the saved address's pin + palika (or GPS). |
-| **Vendor menus / products**    | `src/features/menu/mock-menu-api.ts` (`MOCK_PRODUCTS_BY_VENDOR`)                                            | **Endpoint ready:** `GET /api/vendors/:id/products?lat&lng`. Same shape as the app's `menu-contract.ts` (`vendorMenuSchema`).                                                                                                                                          |
-| Customer location for the feed | `MOCK_CUSTOMER_LOCATION` in `mock-feed-api.ts`                                                              | The saved address (`useAddressStore`) or GPS, sent as `lat`/`lng`/`municipality_palika_string`.                                                                                                                                                                        |
-| Order cancellation             | `src/features/order/mock-cancel-api.ts` (now answers `422 CANCELLATION_WINDOW_EXPIRED`)                     | **Endpoint ready:** `POST /api/orders/:id/cancel`.                                                                                                                                                                                                                     |
-| Order read                     | `src/api/orders.ts#fetchOrder` via lock-status                                                              | **Endpoint ready:** `GET /api/orders/:id` (adds `placed_at`, `delivered_at`, address, items). Would let the 60 s and 48 h windows use server times.                                                                                                                    |
-| Review submission              | `src/features/review/review-api.ts#submitReview`                                                            | Reviews endpoint (not built).                                                                                                                                                                                                                                          |
-| Dispute evidence upload        | `src/features/dispute/mock-evidence-upload.ts`                                                              | Presigned Cloudflare R2 upload + react-native-compressor (not built).                                                                                                                                                                                                  |
-| Login                          | `src/features/auth/DevSignIn.tsx` (`__DEV__`)                                                               | OTP login + refresh token endpoints (not built).                                                                                                                                                                                                                       |
+Phase 6.5 removed every catalogue, order and cancellation mock. What remains:
 
-**Mock ids do not exist in the database.** Mock vendors are `6f1c2a10-0000-4000-8000-0000000000NN`
-and mock products `7a2b3c40-00NN-4000-8000-00000000000K`; the seed uses random UUIDs. So **a live
-checkout from the current app is still rejected with `422 VENDOR_UNAVAILABLE`** until the app reads
-the real feed and menus (which return real ids; a test confirms menu ids check out).
+| Mock                    | File                                             | Real replacement (status)                                                                     |
+| ----------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| Review submission       | `src/features/review/review-api.ts#submitReview` | Reviews endpoint (not built).                                                                 |
+| Dispute evidence upload | `src/features/dispute/mock-evidence-upload.ts`   | Presigned Cloudflare R2 upload + react-native-compressor (not built).                         |
+| Login                   | `src/features/auth/DevSignIn.tsx` (`__DEV__`)    | OTP login + refresh token endpoints (not built). Until then use `token:dev` (§3).             |
+| Feed location           | `THAMEL_FALLBACK_LOCATION` when no address saved | Live GPS (`expo-location` is already used by the territory gate) or a Mapbox pin-drop (§9.8). |
+
+The **dispute chat** has no server either (§9.10), so on a device the socket keeps reconnecting.
+
+**Ids are real now.** The feed and menus return database uuids, so a checkout started from the app
+references real vendors and products (a Phase 6 API test checks out a product id taken from the
+menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gone.
 
 ## 11. Backlog (suggested order)
 
-1. **Wire the mobile app to the Phase 6 endpoints** (logic only, no UI rebuild): feed, menus, order
-   read (`GET /api/orders/:id`, then drop the lock-status stand-in and the device-side window
-   anchors) and real cancellation. Move `feed-contract.ts` / `menu-contract.ts` to the shared-types
-   schemas. This unblocks the first live end-to-end run.
+1. **First live end-to-end run** on a development build against the local API (§3): feed → menu →
+   checkout (COD, then eSewa and Khalti sandboxes) → tracking → cancel. Confirm eSewa's real success
+   redirect matches `rawQueryParam` (§13).
 2. **Auth:** `POST /api/auth/otp/*` via the existing SMS adapters (+977 only), token issuance, and
-   7-day refresh tokens (SPEC: HTTP-only refresh; the app keeps the access token in memory).
+   7-day refresh tokens (SPEC: HTTP-only refresh; the app keeps the access token in memory), then a
+   login screen replacing `DevSignIn`.
 3. **Order lifecycle** (vendor accept → PREPARING, dispatch, OUT_FOR_DELIVERY, arrival, delivery-OTP
    verification → DELIVERED + `delivered_at` + settlement) with BullMQ timers (90 s acceptance/IVR,
    8 min ghost customer) and **Socket.io `/orders`** (`order:state_update`) with
-   `@socket.io/redis-adapter`, `pingInterval: 25000`.
+   `@socket.io/redis-adapter`, `pingInterval: 25000`; then drop the 30 s order refresh.
 4. **Cancellation follow-ups:** emit a general cancellation event (the vendor currently learns nothing
    about a canceled COD order); decide how the 60 s window interacts with a vendor accepting within it.
 5. **Refunds:** a worker consumer for `order.canceled_refund_due` (eSewa/Khalti refund APIs + a ledger
    journal out of SYSTEM_ESCROW), and the same for `PAID_AFTER_SESSION_EXPIRED` (which should also set
-   `refund_required`).
+   `refund_required`). The app already tells the customer "Escrow refund initiated".
 6. **Checkout serviceability:** reject a delivery address outside the vendor's scope (reuse the
    CatalogService SQL).
-7. **Saved addresses** (`customer_addresses` CRUD) if the app should sync addresses across devices.
-8. **Reviews** (double-blind publish rule; SPEC verification test 4) and **disputes** + **Socket.io
+7. **Feed location from GPS** instead of the saved address / Thamel fallback.
+8. **Saved addresses** (`customer_addresses` CRUD) if the app should sync addresses across devices.
+9. **Reviews** (double-blind publish rule; SPEC verification test 4) and **disputes** + **Socket.io
    `/chat`**: authenticate the handshake `auth.token`, handle `chat:join { order_id }` (owner, vendor
    or admin only), ack `chat:new_message`, broadcast **with `last_name` and `phone_number` stripped**
    (client contract: `src/features/dispute/chat-contract.ts`), reject messages after the 48 h window.
-9. **Evidence upload:** presigned R2 PUT URLs (image types, size limit).
-10. Landing pages for `ESEWA_SUCCESS_URL` / `ESEWA_FAILURE_URL` / `KHALTI_RETURN_URL`, eSewa app-to-app
+10. **Evidence upload:** presigned R2 PUT URLs (image types, size limit).
+11. Landing pages for `ESEWA_SUCCESS_URL` / `ESEWA_FAILURE_URL` / `KHALTI_RETURN_URL`, eSewa app-to-app
     support, `/metrics` (the Prometheus target is down), rate limiting, worker consumers and timer
     handlers, feed pagination (sections are capped at 100).
 
@@ -674,20 +724,37 @@ the real feed and menus (which return real ids; a test confirms menu ids check o
   - The refund-due event is named `order.canceled_refund_due` (dotted like the others) on
     `payment.reconciliation`.
   - Existing placed orders were backfilled with `placed_at = created_at` (0009).
+- **Phase 6.5:**
+  - **Clock ownership:** the mobile 60 s countdown (and the 48 h dispute button) run on the
+    device's own observation times (`placedAt` / `deliveredAt` in `useOrderStore`); they are UX
+    only. The Postgres `placed_at + 60 s` check is the authority, and the app handles its
+    `422 CANCELLATION_WINDOW_EXPIRED`. Do not anchor client timers on server timestamps (device clock
+    drift).
+  - The feed and menus are asked from the saved address's pin and Palika, falling back to Thamel;
+    live GPS for the feed is deferred.
+  - Mocks are deleted, not kept behind flags; tests use msw with schema-built fixtures instead.
+  - Reads that cannot succeed on retry (4xx other than 408/429) are not retried.
+  - A prepaid cancel is announced as "Order cancelled. Escrow refund initiated." based on the
+    server's `refund_required`, not on the client's idea of the payment method.
 
 ## 13. Known gaps and risks
 
 - **No live end-to-end run** of the app against the API, and no live eSewa/Khalti sandbox session.
-  All gateway and API behaviour on mobile is verified with msw. The first sandbox run should confirm
+  The link is verified from both ends (API integration tests on real Postgres/Redis, mobile tests
+  over msw with the same Zod contracts), but never together on a device. The first sandbox run should confirm
   that eSewa's real success redirect carries `data` in the form `rawQueryParam` expects.
-- **The app's cancellation is still a mock** and diverges from the server (§9.6). Do not ship it.
 - **Refunds are flagged, never paid:** `refund_required` + `order.canceled_refund_due` have no
-  consumer; `PAID_AFTER_SESSION_EXPIRED` orders are not even flagged.
+  consumer, yet the app tells the customer "Escrow refund initiated"; `PAID_AFTER_SESSION_EXPIRED`
+  orders are not even flagged.
 - **Canceled COD orders emit no event**; nothing tells the vendor.
 - **Checkout accepts an address outside the vendor's delivery area.**
 - The device-side 60 s countdown starts when the device sees PLACED, the server's at `placed_at`;
-  a device that learns of the placement late shows more time than the server allows (the server
-  answers 422, which the app handles).
+  a device that learns of the placement late shows more time than the server allows. **Accepted by
+  design** (§12): the server answers 422 and the app shows the "window has ended" toast.
+- **Login is a `__DEV__` token paste.** Access tokens expire after 15 min with no refresh, so a long
+  session starts failing with `UNAUTHENTICATED` until a new token is pasted.
+- An order placed on another device (or before this app version) has no device `placedAt`, so its
+  cancel button never shows even inside the server's window.
 - `in_stock` on menus ignores Redis holds; the feed loads every LIVE vendor before capping at 100 per
   section (fine at current scale, needs SQL-side limiting or pagination later).
 - The `order.locked` outbox write can't be atomic with Redis (the lock is released if the insert fails).

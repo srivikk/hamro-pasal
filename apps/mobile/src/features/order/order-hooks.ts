@@ -1,19 +1,16 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import type { CancelOrderResponseBody } from '@hamro-pasal/shared-types';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { ApiError } from '../../api/http';
-import { fetchOrder } from '../../api/orders';
+import { CANCELLATION_WINDOW_EXPIRED, cancelOrder, fetchOrder } from '../../api/orders';
+import { retryTransientFailures } from '../../api/query-client';
 import { useCheckoutStore } from '../../store/useCheckoutStore';
 import { useDeliveryOtpStore } from '../../store/useDeliveryOtpStore';
 import { useOrderStore } from '../../store/useOrderStore';
 import { useToastStore } from '../../store/useToastStore';
 import { cancellationRemainingMs } from './cancellation-window';
-import {
-  CANCELLATION_WINDOW_EXPIRED,
-  cancelOrder,
-  type CancelOrderResult,
-} from './mock-cancel-api';
 import { isTerminalOrderState } from './order-tracker';
 
 /**
@@ -43,29 +40,35 @@ export function useOrderQuery(orderId: string) {
     },
     enabled: live,
     refetchInterval: live ? ORDER_REFRESH_INTERVAL_MS : false,
+    retry: retryTransientFailures,
   });
 }
 
+/** POST /api/orders/:id/cancel. The server is the judge of the 60 s window. */
 export function useCancelOrder() {
   const { t } = useTranslation();
   const toast = useToastStore((store) => store.show);
+  const queryClient = useQueryClient();
 
-  return useMutation<CancelOrderResult, ApiError, { orderId: string; placedAtMs: number }>({
+  return useMutation<CancelOrderResponseBody, ApiError, { orderId: string }>({
     mutationKey: ['order-cancel'],
-    mutationFn: ({ orderId, placedAtMs }) => cancelOrder(orderId, placedAtMs),
-    onSuccess: ({ order_id: orderId }) => {
+    mutationFn: ({ orderId }) => cancelOrder(orderId),
+    onSuccess: ({ order_id: orderId, refund_required: refundRequired }) => {
       useOrderStore.getState().setState(orderId, 'CANCELED');
       useCheckoutStore.getState().setOrderState(orderId, 'CANCELED');
       useDeliveryOtpStore.getState().clearOtp(orderId);
-      toast(t('order.cancel.done'), 'info');
+      // The server sets refund_required for a PAID (prepaid) order: its escrow is being refunded.
+      toast(t(refundRequired ? 'order.cancel.doneRefund' : 'order.cancel.done'), 'info');
     },
-    onError: (error) => {
+    onError: (error, { orderId }) => {
       toast(
         error.code === CANCELLATION_WINDOW_EXPIRED
           ? t('order.cancel.windowClosed')
           : t('order.cancel.failed'),
         'error',
       );
+      // The server refused: show whatever state it actually holds (e.g. the vendor moved on).
+      void queryClient.invalidateQueries({ queryKey: orderQueryKey(orderId) });
     },
   });
 }

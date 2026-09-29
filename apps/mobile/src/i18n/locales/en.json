@@ -146,6 +146,7 @@
       "button": "Cancel Order",
       "cancelling": "Cancelling…",
       "done": "Your order was cancelled.",
+      "doneRefund": "Order cancelled. Escrow refund initiated.",
       "windowClosed": "The 60-second cancellation window has ended.",
       "failed": "Couldn't cancel the order. Please try again."
     },

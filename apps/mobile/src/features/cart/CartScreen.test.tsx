@@ -1,9 +1,10 @@
-import { fireEvent, screen, within } from '@testing-library/react-native';
+import { act, fireEvent, screen, within } from '@testing-library/react-native';
 import { http, HttpResponse } from 'msw';
 
 import CartScreen from '../../../app/(tabs)/cart';
 import { CHECKOUT_PATH } from '../../api/mutations';
 import { KHALTI_INITIATE_PATH } from '../../api/payments';
+import { useAddressStore } from '../../store/useAddressStore';
 import { useCartStore } from '../../store/useCartStore';
 import { useCheckoutStore } from '../../store/useCheckoutStore';
 import { checkoutResponse, errorBody, NOODLES, RICE, THAMEL_VENDOR } from '../../test/api-fixtures';
@@ -15,6 +16,7 @@ import {
   type CapturedRequest,
 } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
+import { useTerritorySimulator } from '../territory/territory-simulator';
 
 setupApiTestEnvironment();
 
@@ -59,6 +61,40 @@ describe('Cart screen', () => {
     fireEvent.press(screen.getByRole('button', { name: `Remove one ${NOODLES.name}` }));
     fireEvent.press(screen.getByRole('button', { name: `Remove one ${NOODLES.name}` }));
     expect(screen.getByText('Your cart is empty')).toBeOnTheScreen();
+  });
+
+  it('requires a delivery address before checkout, then shows the saved one', async () => {
+    useAddressStore.getState().clearAddress();
+    useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 1);
+    renderWithProviders(<CartScreen />);
+
+    expect(screen.getByText('Add a delivery address to continue.')).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: 'Proceed to Checkout' })).toBeDisabled();
+
+    fireEvent.press(screen.getByRole('button', { name: 'Add delivery address' }));
+    fireEvent.press(screen.getByTestId('address-province'));
+    fireEvent.press(screen.getByText('3. Bagmati'));
+    fireEvent.press(screen.getByTestId('address-district'));
+    fireEvent.press(screen.getByText('Kathmandu'));
+    fireEvent.changeText(screen.getByTestId('address-palika'), 'Kathmandu Metropolitan City');
+    fireEvent.changeText(screen.getByTestId('address-ward'), '26');
+    fireEvent.changeText(screen.getByTestId('address-tole'), 'Thamel');
+    fireEvent.changeText(screen.getByTestId('address-landmark'), 'Near Kathmandu Guest House');
+    // The pin stub reads the position through the __DEV__ simulator here (Kathmandu).
+    useTerritorySimulator.setState({ simulation: 'inside' });
+    await act(async () => {
+      fireEvent.press(screen.getByRole('button', { name: 'Use my current location' }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    fireEvent.press(screen.getByRole('button', { name: 'Save address' }));
+    useTerritorySimulator.setState({ simulation: 'off' });
+
+    expect(screen.getByTestId('delivery-address-line')).toHaveTextContent(
+      'Thamel, Kathmandu Metropolitan City-26, Kathmandu',
+    );
+    expect(screen.queryByText('Add a delivery address to continue.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Proceed to Checkout' })).toBeEnabled();
+    expect(useAddressStore.getState().address?.ward_number).toBe(26);
   });
 
   it('blocks checkout below the vendor minimum order value (SPEC step 5)', () => {

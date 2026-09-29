@@ -16,4 +16,12 @@ export class InMemoryMmkv implements MmkvEngine {
   remove(key: string): boolean {
     return this.values.delete(key);
   }
+
+  clearAll(): void {
+    this.values.clear();
+  }
+
+  getAllKeys(): string[] {
+    return [...this.values.keys()];
+  }
 }

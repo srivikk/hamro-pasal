@@ -5,7 +5,7 @@ import { createMMKV, type MMKV } from 'react-native-mmkv';
 import { getOrCreateStorageKey } from './encryption-key';
 
 const SECURE_STORAGE_ID = 'hamro-pasal.secure';
-const ENCRYPTION_KEY_VAULT_ENTRY = 'hamro-pasal.mmkv-key';
+export const ENCRYPTION_KEY_VAULT_ENTRY = 'hamro-pasal.mmkv-key';
 
 /** Keychain entry readable after the first unlock (background token refresh), never synced off-device. */
 const vaultOptions: SecureStore.SecureStoreOptions = {

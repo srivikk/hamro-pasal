@@ -48,7 +48,11 @@
     "belowMinimum": "Add Rs. {{amount, localizedNumber}} more to reach this shop's minimum order.",
     "paymentMethod": "Payment method",
     "proceed": "Proceed to Checkout",
-    "locked": "Your items are reserved. The cart can't be changed until checkout finishes."
+    "locked": "Your items are reserved. The cart can't be changed until checkout finishes.",
+    "deliverTo": "Deliver to",
+    "addAddress": "Add delivery address",
+    "changeAddress": "Change",
+    "addressRequired": "Add a delivery address to continue."
   },
   "cartConflict": {
     "title": "Start a new cart?",
@@ -153,5 +157,61 @@
     },
     "cancelledTitle": "Order cancelled",
     "failedTitle": "This order could not be completed."
+  },
+  "territory": {
+    "checking": "Checking your location…",
+    "blockedDetail": "Hamro Pasal currently serves customers in Nepal only.",
+    "permissionTitle": "Location access needed",
+    "permissionBody": "Hamro Pasal serves Nepal only. Allow location access so we can confirm you're in Nepal.",
+    "allow": "Allow location",
+    "openSettings": "Open settings",
+    "unavailableTitle": "We couldn't find your location",
+    "unavailableBody": "Turn on location services (GPS) and try again.",
+    "simulator": {
+      "title": "Dev: location simulator",
+      "off": "Real GPS",
+      "inside": "Nepal",
+      "outside": "Outside"
+    }
+  },
+  "provinces": {
+    "1": "Koshi",
+    "2": "Madhesh",
+    "3": "Bagmati",
+    "4": "Gandaki",
+    "5": "Lumbini",
+    "6": "Karnali",
+    "7": "Sudurpashchim"
+  },
+  "address": {
+    "title": "Delivery address",
+    "province": "Province",
+    "district": "District",
+    "palika": "Municipality / Palika",
+    "ward": "Ward number",
+    "tole": "Tole / Locality",
+    "landmark": "Landmark",
+    "select": "Select…",
+    "selectProvinceFirst": "Select a province first",
+    "save": "Save address",
+    "cancel": "Cancel",
+    "pin": {
+      "title": "Pin location",
+      "none": "No pin yet",
+      "coords": "{{lat}}, {{lng}}",
+      "use": "Use my current location",
+      "locating": "Locating…",
+      "stub": "Map pin-drop is coming soon. For now, your current location is used.",
+      "failed": "Couldn't get your location. Check that GPS is on and try again."
+    },
+    "errors": {
+      "province_id": "Select a province.",
+      "district_string": "Select a district in the selected province.",
+      "municipality_palika_string": "Enter your municipality or palika.",
+      "ward_number": "Enter a ward number from 1 to 33.",
+      "tole_locality": "Enter your tole or locality.",
+      "landmark": "Enter a nearby landmark.",
+      "pin": "Drop a pin inside Nepal."
+    }
   }
 }

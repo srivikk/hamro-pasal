@@ -1,9 +1,11 @@
 import { setupServer } from 'msw/node';
 
 import { API_URL } from '../config/api';
+import { useAddressStore } from '../store/useAddressStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useCartStore } from '../store/useCartStore';
 import { useCheckoutStore } from '../store/useCheckoutStore';
+import { THAMEL_ADDRESS } from './api-fixtures';
 
 /** Intercepts every fetch; an unexpected request fails the test instead of reaching the network. */
 export const server = setupServer();
@@ -44,6 +46,8 @@ export function setupApiTestEnvironment(): void {
       sessionExpired: false,
     });
     useAuthStore.getState().setAccessToken(TEST_ACCESS_TOKEN);
+    // Checkout requires a delivery address (Phase 5.6); API tests start with a valid one saved.
+    useAddressStore.getState().setAddress(THAMEL_ADDRESS);
   });
   afterEach(() => {
     server.resetHandlers();

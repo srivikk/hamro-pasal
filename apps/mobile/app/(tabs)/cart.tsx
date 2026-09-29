@@ -7,6 +7,7 @@ import type { ApiError } from '../../src/api/http';
 import { useCheckout } from '../../src/api/mutations';
 import { Button } from '../../src/components/Button';
 import { PaymentWebViewModal } from '../../src/components/PaymentWebViewModal';
+import { DeliveryAddressCard } from '../../src/features/address/DeliveryAddressCard';
 import { computeCartSummary } from '../../src/features/cart/cart-summary';
 import {
   CheckoutOutcome,
@@ -17,6 +18,7 @@ import { PaymentMethodPicker } from '../../src/features/checkout/PaymentMethodPi
 import { usePaymentFlow } from '../../src/features/payment/usePaymentFlow';
 import { formatLocalizedNumber } from '../../src/i18n/format-number';
 import { toNpr, toPaisa } from '../../src/lib/money';
+import { useAddressStore } from '../../src/store/useAddressStore';
 import { useAuthStore } from '../../src/store/useAuthStore';
 import { MAX_LINE_QUANTITY, useCartStore, useItemCount } from '../../src/store/useCartStore';
 import { selectIsCheckoutPending, useCheckoutStore } from '../../src/store/useCheckoutStore';
@@ -75,6 +77,7 @@ export default function CartScreen() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('ESEWA');
   const session = useCheckoutStore((state) => state.session);
   const payment = usePaymentFlow();
+  const hasAddress = useAddressStore((state) => state.address !== null);
 
   const paymentModal = (
     <PaymentWebViewModal
@@ -213,6 +216,12 @@ export default function CartScreen() {
           </>
         ) : (
           <>
+            <DeliveryAddressCard disabled={checkout.isPending} />
+            {hasAddress ? null : (
+              <Text className="text-sm text-amber-800" testID="address-required">
+                {t('cart.addressRequired')}
+              </Text>
+            )}
             <PaymentMethodPicker
               value={paymentMethod}
               onChange={setPaymentMethod}
@@ -225,7 +234,8 @@ export default function CartScreen() {
             )}
             <Button
               label={t('cart.proceed')}
-              disabled={checkout.isPending || summary.shortOfMinimumNpr > 0}
+              // SPEC Nepal localizations §3: no checkout without a valid delivery address.
+              disabled={checkout.isPending || summary.shortOfMinimumNpr > 0 || !hasAddress}
               onPress={() => {
                 checkout.mutate(paymentMethod, {
                   // Prepaid orders wait in PENDING_PAYMENT: open the gateway straight away.

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 
 import { Button } from '../../src/components/Button';
 import { DevSignIn } from '../../src/features/auth/DevSignIn';
+import { TerritorySimulatorControls } from '../../src/features/territory/TerritoryGate';
 import { useAuthStore } from '../../src/store/useAuthStore';
 
 export default function ProfileScreen() {
@@ -13,6 +14,7 @@ export default function ProfileScreen() {
   return (
     <View className="flex-1 gap-6 bg-neutral-50 p-4">
       {__DEV__ ? <DevSignIn /> : null}
+      {__DEV__ ? <TerritorySimulatorControls /> : null}
       <View>
         <Text className="mb-3 text-lg font-bold text-neutral-900">{t('settings.language')}</Text>
         <View className="flex-row gap-3">

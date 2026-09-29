@@ -6,7 +6,16 @@
     "version": "0.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "plugins": ["expo-router", "expo-secure-store"],
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Hamro Pasal uses your location to confirm that service is available in Nepal and to pin your delivery address."
+        }
+      ]
+    ],
     "experiments": {
       "typedRoutes": true
     }

@@ -1,4 +1,6 @@
 import {
+  nepalAddressInputSchema,
+  type NepalAddress,
   checkoutResponseSchema,
   lockStatusResponseSchema,
   type CheckoutResponseBody,
@@ -78,3 +80,15 @@ export function errorBody(code: string, details?: unknown) {
     error: { code, message: `${code} (test)`, ...(details === undefined ? {} : { details }) },
   };
 }
+
+/** The seeded customer's delivery address (Thamel, Kathmandu MC ward 26), schema-validated. */
+export const THAMEL_ADDRESS: NepalAddress = nepalAddressInputSchema.parse({
+  province_id: 3,
+  district_string: 'Kathmandu',
+  municipality_palika_string: 'Kathmandu Metropolitan City',
+  ward_number: 26,
+  tole_locality: 'Thamel',
+  landmark: 'Near Kathmandu Guest House',
+  exact_lat: 27.7154,
+  exact_lng: 85.3123,
+});

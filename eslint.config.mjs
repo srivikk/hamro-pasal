@@ -54,5 +54,10 @@ export default tseslint.config(
       globals: globals.node,
     },
   },
+  {
+    // Metro, Babel and Tailwind load these as CommonJS; `require` is the only import form they support.
+    files: ['apps/mobile/*.config.js'],
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
   prettier,
 );

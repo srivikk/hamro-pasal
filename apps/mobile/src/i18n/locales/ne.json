@@ -1,0 +1,15 @@
+{
+  "common": {
+    "appName": "हाम्रो पसल",
+    "price": "रु. {{amount, localizedNumber}}"
+  },
+  "settings": {
+    "language": "भाषा",
+    "english": "English",
+    "nepali": "नेपाली"
+  },
+  "cart": {
+    "itemCount_one": "{{count, localizedNumber}} वटा सामान",
+    "itemCount_other": "{{count, localizedNumber}} वटा सामान"
+  }
+}

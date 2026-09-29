@@ -1,0 +1,15 @@
+{
+  "common": {
+    "appName": "Hamro Pasal",
+    "price": "Rs. {{amount, localizedNumber}}"
+  },
+  "settings": {
+    "language": "Language",
+    "english": "English",
+    "nepali": "नेपाली"
+  },
+  "cart": {
+    "itemCount_one": "{{count, localizedNumber}} item",
+    "itemCount_other": "{{count, localizedNumber}} items"
+  }
+}

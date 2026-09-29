@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { useAuthStore } from '../store/useAuthStore';
 import { useCartStore } from '../store/useCartStore';
 import { useCheckoutStore } from '../store/useCheckoutStore';
+import { useDeliveryOtpStore } from '../store/useDeliveryOtpStore';
 import {
   checkoutResponse,
   errorBody,
@@ -113,6 +114,21 @@ describe('useCheckout → POST /api/cart/checkout', () => {
 
     expect(received).toHaveLength(0);
     expect(result.current.error?.code).toBe(CLIENT_ERROR_CODES.notSignedIn);
+  });
+
+  it('saves the delivery OTP to encrypted storage, keeping only the newest on replay', async () => {
+    checkoutEndpoint((call) =>
+      HttpResponse.json(checkoutResponse({ otp: call === 1 ? '4821' : '0427' }), {
+        status: call === 1 ? 201 : 200,
+      }),
+    );
+    fillCart();
+
+    await checkoutWith('ESEWA');
+    expect(useDeliveryOtpStore.getState().otps[ORDER_ID]).toBe('4821');
+    await checkoutWith('ESEWA');
+
+    expect(useDeliveryOtpStore.getState().otps[ORDER_ID]).toBe('0427');
   });
 
   it('starts a checkout session for a prepaid order and keeps the cart until payment', async () => {

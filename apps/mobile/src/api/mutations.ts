@@ -8,6 +8,7 @@ import {
 import { useMutation } from '@tanstack/react-query';
 
 import { useCartStore } from '../store/useCartStore';
+import { useDeliveryOtpStore } from '../store/useDeliveryOtpStore';
 import { checkoutFingerprint, useCheckoutStore } from '../store/useCheckoutStore';
 import { ApiError, apiRequest } from './http';
 
@@ -76,6 +77,11 @@ export function useCheckout() {
     mutationKey: ['checkout'],
     mutationFn: submitCheckout,
     onSuccess: (response) => {
+      // Saved before the session starts, so the tracking screen that a PLACED order opens can
+      // already show it. A replay rotates the code; the newest one overwrites the old.
+      if (response.delivery_otp !== null) {
+        useDeliveryOtpStore.getState().setOtp(response.order.id, response.delivery_otp);
+      }
       useCheckoutStore.getState().startSession(response);
     },
     onError: onCheckoutError,

@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -71,6 +72,15 @@ export function CheckoutOutcome() {
           </Text>
           <Text className="text-sm text-emerald-900">{t('checkout.deliveryCodeHint')}</Text>
         </>
+      ) : null}
+      {placed ? (
+        <Button
+          label={t('order.track')}
+          size="sm"
+          onPress={() => {
+            router.push({ pathname: '/order/[id]', params: { id: session.orderId } });
+          }}
+        />
       ) : null}
       <Button label={t('checkout.dismiss')} variant="secondary" size="sm" onPress={endSession} />
     </View>

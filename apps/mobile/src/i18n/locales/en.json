@@ -118,5 +118,40 @@
     "initiateFailed": "Couldn't open the payment page. Please try again.",
     "confirmFailed": "We couldn't confirm your payment yet. We'll keep checking.",
     "paidAfterExpiry": "Your payment arrived after the reservation expired. You will be refunded."
+  },
+  "order": {
+    "title": "Your order",
+    "code": "Order #{{code}}",
+    "total": "Rs. {{amount, localizedNumber}}",
+    "loadError": "Couldn't load this order. Check your connection.",
+    "track": "Track order",
+    "steps": {
+      "PLACED": "Order Placed",
+      "PREPARING": "Preparing",
+      "OUT_FOR_DELIVERY": "Out for Delivery",
+      "ARRIVED": "Arrived",
+      "DELIVERED": "Delivered"
+    },
+    "stepStatus": {
+      "completed": "{{step}}: done",
+      "active": "{{step}}: in progress",
+      "pending": "{{step}}: upcoming"
+    },
+    "cancel": {
+      "countdown": "You can cancel this order for {{time}}",
+      "button": "Cancel Order",
+      "cancelling": "Cancelling…",
+      "done": "Your order was cancelled.",
+      "windowClosed": "The 60-second cancellation window has ended.",
+      "failed": "Couldn't cancel the order. Please try again."
+    },
+    "otp": {
+      "title": "Delivery code",
+      "note": "Share only with rider upon arrival.",
+      "unavailable": "Your delivery code isn't available on this device.",
+      "a11y": "Delivery code {{digits}}"
+    },
+    "cancelledTitle": "Order cancelled",
+    "failedTitle": "This order could not be completed."
   }
 }

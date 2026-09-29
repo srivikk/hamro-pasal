@@ -8,7 +8,7 @@ import type {
 } from '@hamro-pasal/shared-types';
 import { DatabaseError, Pool, type PoolClient } from 'pg';
 
-import { resolveTestDatabaseUrl } from './test-database';
+import { resolveTestDatabaseUrl } from '../../src/testing';
 
 type Queryable = Pool | PoolClient;
 
@@ -48,14 +48,18 @@ export interface VendorOptions {
   walletBalanceNpr?: number;
 }
 
-export async function createVendor(db: Queryable, options: VendorOptions = {}): Promise<string> {
+/**
+ * Creates a vendor (its VENDOR_WALLET account is created by trigger). A non-zero starting
+ * balance is reached the only legal way: a balanced ADJUSTMENT journal against PLATFORM_REVENUE.
+ */
+export async function createVendor(db: Pool, options: VendorOptions = {}): Promise<string> {
   const userId = await createUser(db, 'VENDOR');
   const { rows } = await db.query<{ id: string }>(
     `INSERT INTO vendors (user_id, business_name, phone, status, pricing_model, commission_rate,
-                          delivery_scope, radius_km, city_string, min_order_value,
-                          base_delivery_fee_npr, location, wallet_balance_npr)
-     VALUES ($1, 'Test Pasal', $2, $3, $4, $5, $6, $7, 'Kathmandu', 500, 50,
-             ST_SetSRID(ST_MakePoint($8, $9), 4326), $10)
+                          delivery_scope, radius_km, municipality_palika_string, min_order_value,
+                          base_delivery_fee_npr, location)
+     VALUES ($1, 'Test Pasal', $2, $3, $4, $5, $6, $7, 'Kathmandu Metropolitan City', 500, 50,
+             ST_SetSRID(ST_MakePoint($8, $9), 4326))
      RETURNING id`,
     [
       userId,
@@ -67,10 +71,103 @@ export async function createVendor(db: Queryable, options: VendorOptions = {}): 
       options.radiusKm ?? 5,
       options.lng ?? THAMEL.lng,
       options.lat ?? THAMEL.lat,
-      options.walletBalanceNpr ?? 0,
     ],
   );
+  const vendorId = firstRow(rows).id;
+  if (options.walletBalanceNpr !== undefined && options.walletBalanceNpr !== 0) {
+    await adjustVendorWallet(db, vendorId, options.walletBalanceNpr);
+  }
+  return vendorId;
+}
+
+export type SystemAccount = 'SYSTEM_ESCROW' | 'PLATFORM_REVENUE';
+
+export async function systemAccountId(db: Queryable, type: SystemAccount): Promise<string> {
+  const { rows } = await db.query<{ id: string }>(
+    'SELECT id FROM ledger_accounts WHERE account_type = $1',
+    [type],
+  );
   return firstRow(rows).id;
+}
+
+export async function vendorAccountId(db: Queryable, vendorId: string): Promise<string> {
+  const { rows } = await db.query<{ id: string }>(
+    'SELECT id FROM ledger_accounts WHERE vendor_id = $1',
+    [vendorId],
+  );
+  return firstRow(rows).id;
+}
+
+export interface Posting {
+  accountId: string;
+  amountNpr: number;
+}
+
+export interface JournalOptions {
+  kind?: string;
+  orderId?: string | null;
+  idempotencyKey?: string;
+}
+
+/** Inserts a journal header and its postings inside one DB transaction. */
+export async function postJournal(
+  pool: Pool,
+  postings: Posting[],
+  options: JournalOptions = {},
+): Promise<string> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const transactionId = await insertJournal(client, postings, options);
+    await client.query('COMMIT');
+    return transactionId;
+  } catch (error: unknown) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/** Journal insert on an already-open transaction (caller commits / rolls back). */
+export async function insertJournal(
+  client: PoolClient,
+  postings: Posting[],
+  options: JournalOptions = {},
+): Promise<string> {
+  const { rows } = await client.query<{ id: string }>(
+    `INSERT INTO ledger_transactions (kind, idempotency_key, order_id) VALUES ($1, $2, $3) RETURNING id`,
+    [options.kind ?? 'ADJUSTMENT', options.idempotencyKey ?? randomUUID(), options.orderId ?? null],
+  );
+  const transactionId = firstRow(rows).id;
+  for (const posting of postings) {
+    await client.query(
+      'INSERT INTO ledger_entries (transaction_id, account_id, amount_npr) VALUES ($1, $2, $3)',
+      [transactionId, posting.accountId, posting.amountNpr],
+    );
+  }
+  return transactionId;
+}
+
+/** Moves `amountNpr` into (positive) or out of (negative) a vendor wallet against platform revenue. */
+export async function adjustVendorWallet(
+  pool: Pool,
+  vendorId: string,
+  amountNpr: number,
+  options: JournalOptions = {},
+): Promise<string> {
+  const [vendorAccount, revenue] = await Promise.all([
+    vendorAccountId(pool, vendorId),
+    systemAccountId(pool, 'PLATFORM_REVENUE'),
+  ]);
+  return postJournal(
+    pool,
+    [
+      { accountId: vendorAccount, amountNpr },
+      { accountId: revenue, amountNpr: -amountNpr },
+    ],
+    options,
+  );
 }
 
 export interface OrderOptions {

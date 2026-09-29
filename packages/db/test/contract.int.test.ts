@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 import {
   customerAddressSchema,
   disputeSchema,
+  ledgerAccountSchema,
+  ledgerEntrySchema,
+  ledgerTransactionSchema,
   orderItemSchema,
   orderSchema,
   platformSettingsSchema,
@@ -10,7 +13,6 @@ import {
   reviewSchema,
   userSchema,
   vendorSchema,
-  walletLedgerSchema,
 } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 
@@ -18,6 +20,9 @@ import { createDatabase, type Database } from '../src/client';
 import {
   customerAddresses,
   disputes,
+  ledgerAccounts,
+  ledgerEntries,
+  ledgerTransactions,
   orderItems,
   orders,
   platformSettings,
@@ -25,7 +30,6 @@ import {
   reviews,
   users,
   vendors,
-  walletLedgers,
 } from '../src/schema';
 import { BCRYPT_OTP_HASH, uniqueNepalPhone } from './support/fixtures';
 
@@ -51,6 +55,7 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
   }
 
   it('round-trips every table', async () => {
+    const read = async <T>(query: Promise<T[]>) => one(await query);
     const customer = one(
       await db
         .insert(users)
@@ -96,7 +101,7 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
           commission_rate: 0.1,
           delivery_scope: 'RADIUS_BOUND',
           radius_km: 5,
-          city_string: 'Kathmandu',
+          municipality_palika_string: 'Kathmandu Metropolitan City',
           min_order_value: 500,
           base_delivery_fee_npr: 50,
           location: { x: 85.3123, y: 27.7154 },
@@ -142,17 +147,33 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
         })
         .returning(),
     );
-    const ledger = one(
-      await db
-        .insert(walletLedgers)
-        .values({
-          vendor_id: vendor.id,
-          order_id: order.id,
-          entry_type: 'COD_COMMISSION',
-          amount_npr: -90.1,
-        })
-        .returning(),
-    );
+    // COD self-delivery commission: vendor wallet -90.10, platform revenue +90.10.
+    const [vendorAccount, revenueAccount] = await Promise.all([
+      read(db.select().from(ledgerAccounts).where(eq(ledgerAccounts.vendor_id, vendor.id))),
+      read(
+        db.select().from(ledgerAccounts).where(eq(ledgerAccounts.account_type, 'PLATFORM_REVENUE')),
+      ),
+    ]);
+    const journal = await db.transaction(async (tx) => {
+      const header = one(
+        await tx
+          .insert(ledgerTransactions)
+          .values({
+            kind: 'ORDER_SETTLEMENT',
+            idempotency_key: `settlement:${order.id}`,
+            order_id: order.id,
+          })
+          .returning(),
+      );
+      const postings = await tx
+        .insert(ledgerEntries)
+        .values([
+          { transaction_id: header.id, account_id: vendorAccount.id, amount_npr: -90.1 },
+          { transaction_id: header.id, account_id: revenueAccount.id, amount_npr: 90.1 },
+        ])
+        .returning();
+      return { header, postings };
+    });
     const dispute = one(
       await db
         .insert(disputes)
@@ -166,7 +187,6 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
         .returning(),
     );
 
-    const read = async <T>(query: Promise<T[]>) => one(await query);
     const reloadedVendor = await read(db.select().from(vendors).where(eq(vendors.id, vendor.id)));
 
     expect(
@@ -193,9 +213,19 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
       ),
     ).toBeDefined();
     expect(
-      walletLedgerSchema.parse(
-        await read(db.select().from(walletLedgers).where(eq(walletLedgers.id, ledger.id))),
-      ).amount_npr,
+      ledgerTransactionSchema.parse(
+        await read(
+          db.select().from(ledgerTransactions).where(eq(ledgerTransactions.id, journal.header.id)),
+        ),
+      ).kind,
+    ).toBe('ORDER_SETTLEMENT');
+    for (const posting of journal.postings) {
+      expect(ledgerEntrySchema.parse(posting).transaction_id).toBe(journal.header.id);
+    }
+    expect(
+      ledgerAccountSchema.parse(
+        await read(db.select().from(ledgerAccounts).where(eq(ledgerAccounts.id, vendorAccount.id))),
+      ).balance_npr,
     ).toBe(-90.1);
     expect(
       disputeSchema.parse(

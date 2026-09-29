@@ -1,6 +1,6 @@
-import type { EachMessagePayload } from 'kafkajs';
+import type { KafkaJS } from '@hamro-pasal/kafka';
 
 export interface KafkaConsumerDefinition {
   readonly topic: string;
-  readonly handle: (payload: EachMessagePayload) => Promise<void>;
+  readonly handle: (payload: KafkaJS.EachMessagePayload) => Promise<void>;
 }

@@ -63,8 +63,8 @@ describe('PostGIS', () => {
     const insertVendorWith = async (geom: string) =>
       pool.query<{ srid: number }>(
         `INSERT INTO vendors (user_id, business_name, phone, commission_rate, delivery_scope,
-                              radius_km, city_string, min_order_value, base_delivery_fee_npr, location)
-         VALUES ($1, 'X', '+9779811111111', 0.1, 'RADIUS_BOUND', 5, 'Kathmandu', 0, 0, ${geom})
+                              radius_km, municipality_palika_string, min_order_value, base_delivery_fee_npr, location)
+         VALUES ($1, 'X', '+9779811111111', 0.1, 'RADIUS_BOUND', 5, 'Kathmandu Metropolitan City', 0, 0, ${geom})
          RETURNING ST_SRID(location) AS srid`,
         [await createUser(pool, 'VENDOR')],
       );

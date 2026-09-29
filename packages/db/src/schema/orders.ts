@@ -18,6 +18,7 @@ export const orders = pgTable(
     vendor_id: uuid()
       .notNull()
       .references(() => vendors.id, { onDelete: 'restrict' }),
+    driver_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
     state: orderStateEnum().notNull().default('PENDING_PAYMENT'),
     subtotal: npr().notNull(),
     delivery_fee: npr().notNull(),
@@ -47,6 +48,11 @@ export const orders = pgTable(
     check(
       'orders_cod_has_no_gateway_ref_check',
       sql`${t.payment_method} <> 'COD' OR ${t.payment_gateway_ref} IS NULL`,
+    ),
+    // Settlement pays the delivery fee to the rider, so a fleet order cannot be DELIVERED without one.
+    check(
+      'orders_fleet_delivered_has_driver_check',
+      sql`${t.fulfillment_locked} = 'SELF_DELIVERY' OR ${t.state} <> 'DELIVERED' OR ${t.driver_user_id} IS NOT NULL`,
     ),
     // SPEC: delivery_otp is stored as a bcrypt hash only, never the raw 4-digit code.
     check('orders_delivery_otp_bcrypt_check', sql`${t.delivery_otp} ~ '^\\$2[aby]\\$'`),

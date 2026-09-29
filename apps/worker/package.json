@@ -2,7 +2,7 @@
   "name": "@hamro-pasal/worker",
   "version": "0.0.0",
   "private": true,
-  "description": "Hamro Pasal background worker: Kafka event consumers and BullMQ scheduled/delayed jobs.",
+  "description": "Hamro Pasal background worker: outbox relay to Kafka, Kafka consumers, BullMQ delayed jobs and crons.",
   "main": "./dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -11,13 +11,17 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "jest",
-    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "test:integration": "jest --config jest.integration.config.js --runInBand"
   },
   "dependencies": {
+    "@hamro-pasal/db": "workspace:*",
+    "@hamro-pasal/kafka": "workspace:*",
     "@hamro-pasal/shared-types": "workspace:*",
     "bullmq": "^6.3.9",
-    "ioredis": "^6.0.0",
-    "kafkajs": "^2.2.4"
+    "drizzle-orm": "^0.45.3",
+    "ioredis": "^5.11.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

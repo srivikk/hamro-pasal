@@ -36,7 +36,8 @@ export const vendors = pgTable(
     commission_rate: numeric({ precision: 5, scale: 4, mode: 'number' }).notNull(),
     delivery_scope: deliveryScopeEnum().notNull(),
     radius_km: numeric({ precision: 6, scale: 2, mode: 'number' }).notNull(),
-    city_string: text().notNull(),
+    // Matches customer_addresses.municipality_palika_string for CITY_WIDE delivery (SPEC §2).
+    municipality_palika_string: text().notNull(),
     min_order_value: npr().notNull(),
     base_delivery_fee_npr: npr().notNull(),
     location: geoPoint().notNull(),
@@ -51,7 +52,10 @@ export const vendors = pgTable(
     index('vendors_status_idx').on(t.status),
     check('vendors_phone_np_check', sql`${t.phone} ~ '${sql.raw(NEPAL_PHONE_PATTERN)}'`),
     check('vendors_business_name_check', sql`btrim(${t.business_name}) <> ''`),
-    check('vendors_city_string_check', sql`btrim(${t.city_string}) <> ''`),
+    check(
+      'vendors_municipality_palika_string_check',
+      sql`btrim(${t.municipality_palika_string}) <> ''`,
+    ),
     check('vendors_commission_rate_check', sql`${t.commission_rate} BETWEEN 0 AND 1`),
     // SPEC §4: subscription vendors pay 0% commission.
     check(

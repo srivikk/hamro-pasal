@@ -9,6 +9,37 @@ export type SmsProvider = (typeof smsProviders)[number];
 export const kafkaSaslMechanisms = ['plain', 'scram-sha-256', 'scram-sha-512'] as const;
 export type KafkaSaslMechanism = (typeof kafkaSaslMechanisms)[number];
 
+/** Kafka connection variables, also usable on their own (e.g. by broker integration tests). */
+const kafkaEnvShape = {
+  KAFKA_BROKERS: z
+    .string()
+    .transform((value) =>
+      value
+        .split(',')
+        .map((broker) => broker.trim())
+        .filter((broker) => broker.length > 0),
+    )
+    .pipe(z.array(z.string()).min(1)),
+  KAFKA_CLIENT_ID: nonEmpty,
+  KAFKA_CONSUMER_GROUP_ID: nonEmpty,
+  KAFKA_SSL: z.stringbool().default(false),
+  KAFKA_SASL_MECHANISM: z.enum(kafkaSaslMechanisms).optional(),
+  KAFKA_SASL_USERNAME: optionalNonEmpty,
+  KAFKA_SASL_PASSWORD: optionalNonEmpty,
+};
+
+export const kafkaEnvSchema = z.object(kafkaEnvShape);
+export type KafkaEnvVars = z.infer<typeof kafkaEnvSchema>;
+
+/** Validates only the Kafka variables (empty strings treated as unset). */
+export function parseKafkaEnv(source: Readonly<Record<string, string | undefined>>): KafkaEnvVars {
+  const result = kafkaEnvSchema.safeParse(withoutEmpty(source));
+  if (!result.success) {
+    throw new InvalidEnvError(z.prettifyError(result.error));
+  }
+  return result.data;
+}
+
 /**
  * Runtime configuration shared by `apps/api` and `apps/worker`.
  * Every variable here is declared in the root `.env.example`.
@@ -28,21 +59,7 @@ export const serverEnvSchema = z
     REDIS_URL: z.url({ protocol: /^rediss?$/ }),
 
     // Kafka
-    KAFKA_BROKERS: z
-      .string()
-      .transform((value) =>
-        value
-          .split(',')
-          .map((broker) => broker.trim())
-          .filter((broker) => broker.length > 0),
-      )
-      .pipe(z.array(z.string()).min(1)),
-    KAFKA_CLIENT_ID: nonEmpty,
-    KAFKA_CONSUMER_GROUP_ID: nonEmpty,
-    KAFKA_SSL: z.stringbool().default(false),
-    KAFKA_SASL_MECHANISM: z.enum(kafkaSaslMechanisms).optional(),
-    KAFKA_SASL_USERNAME: optionalNonEmpty,
-    KAFKA_SASL_PASSWORD: optionalNonEmpty,
+    ...kafkaEnvShape,
 
     // JWT
     JWT_ACCESS_SECRET: z.string().min(32),
@@ -127,12 +144,19 @@ export class InvalidEnvError extends Error {
  * Empty strings are treated as unset so `.env.example` placeholders fail loudly.
  */
 export function parseServerEnv(source: Readonly<Record<string, string | undefined>>): ServerEnv {
-  const cleaned = Object.fromEntries(
-    Object.entries(source).filter(([, value]) => value !== undefined && value !== ''),
-  );
-  const result = serverEnvSchema.safeParse(cleaned);
+  const result = serverEnvSchema.safeParse(withoutEmpty(source));
   if (!result.success) {
     throw new InvalidEnvError(z.prettifyError(result.error));
   }
   return result.data;
+}
+
+function withoutEmpty(
+  source: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(source).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined && entry[1] !== '',
+    ),
+  );
 }

@@ -2,6 +2,8 @@ import {
   deliveryScopes,
   disputeStatuses,
   fulfillmentModes,
+  ledgerAccountTypes,
+  ledgerTransactionKinds,
   orderStates,
   paymentMethods,
   paymentStatuses,
@@ -9,7 +11,6 @@ import {
   reviewDirections,
   userRoles,
   vendorStatuses,
-  walletLedgerEntryTypes,
 } from '@hamro-pasal/shared-types';
 import { pgEnum } from 'drizzle-orm/pg-core';
 
@@ -22,6 +23,7 @@ export const fulfillmentModeEnum = pgEnum('fulfillment_mode', fulfillmentModes);
 export const orderStateEnum = pgEnum('order_state', orderStates);
 export const paymentMethodEnum = pgEnum('payment_method', paymentMethods);
 export const paymentStatusEnum = pgEnum('payment_status', paymentStatuses);
-export const walletLedgerEntryTypeEnum = pgEnum('wallet_ledger_entry_type', walletLedgerEntryTypes);
+export const ledgerAccountTypeEnum = pgEnum('ledger_account_type', ledgerAccountTypes);
+export const ledgerTransactionKindEnum = pgEnum('ledger_transaction_kind', ledgerTransactionKinds);
 export const disputeStatusEnum = pgEnum('dispute_status', disputeStatuses);
 export const reviewDirectionEnum = pgEnum('review_direction', reviewDirections);

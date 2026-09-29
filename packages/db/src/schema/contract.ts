@@ -1,5 +1,8 @@
 import type {
   CustomerAddress,
+  LedgerAccount,
+  LedgerEntry,
+  LedgerTransaction,
   Dispute,
   Order,
   OrderItem,
@@ -8,14 +11,14 @@ import type {
   Review,
   User,
   Vendor,
-  WalletLedger,
 } from '@hamro-pasal/shared-types';
 
 import type { disputes, reviews } from './disputes';
+import type { ledgerAccounts, ledgerEntries, ledgerTransactions } from './ledger';
 import type { orderItems, orders } from './orders';
 import type { customerAddresses, users } from './users';
 import type { products, vendors } from './vendors';
-import type { platformSettings, walletLedgers } from './wallet';
+import type { platformSettings } from './wallet';
 
 /*
  * Compile-time contract: each table's selected row type must be *identical* to the Zod-inferred
@@ -37,7 +40,9 @@ export type SchemaContract = [
   Assert<Equals<typeof products.$inferSelect, Product>>,
   Assert<Equals<typeof orders.$inferSelect, Order>>,
   Assert<Equals<typeof orderItems.$inferSelect, OrderItem>>,
-  Assert<Equals<typeof walletLedgers.$inferSelect, WalletLedger>>,
+  Assert<Equals<typeof ledgerAccounts.$inferSelect, LedgerAccount>>,
+  Assert<Equals<typeof ledgerTransactions.$inferSelect, LedgerTransaction>>,
+  Assert<Equals<typeof ledgerEntries.$inferSelect, LedgerEntry>>,
   Assert<Equals<typeof disputes.$inferSelect, Dispute>>,
   Assert<Equals<typeof reviews.$inferSelect, Review>>,
   Assert<Equals<typeof platformSettings.$inferSelect, PlatformSettings>>,

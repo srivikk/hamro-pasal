@@ -27,6 +27,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
   * Push notification and third-party SMS fan-outs.
 - Event Streaming: Apache Kafka for domain event streaming.
   * Node.js Kafka Client: Use `@confluentinc/kafka-javascript` instead of the deprecated `kafkajs` library.
+  * Event Publishing: Transactional Outbox pattern required to guarantee atomicity between Postgres database commits and Kafka publishes.
 - Real-Time Protocol Configuration:
   * Socket.io structured with discrete namespaces: `/orders` and `/chat`.
   * Horizontal clustering facilitated via `@socket.io/redis-adapter`.
@@ -99,6 +100,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 * **Escrow:** All upfront payments land in a central platform ledger. Escrow splits into `vendor_wallet`, `driver_wallet`, and `platform_revenue` only *after* the `DELIVERED` state.
 * **The COD Problem:** On a COD Self-Delivery order, the vendor collects 100% cash, including the platform's commission.
 * **Enforcement:** The backend automatically debits the `vendor_wallet` for the commission amount, pushing it into the negative. If `vendor_wallet < -2000 NPR` (Superadmin configurable limit), a database trigger automatically mutates the vendor's status to `SUSPENDED`. The vendor's app locks until they clear the negative balance via an upfront eSewa payment.
+* **Ledger Model:** True double-entry accounting with balanced postings. Single-entry wallet tables are prohibited; `vendor.wallet_balance_npr` is a materialized projection.
 
 **6. Double-Blind Review System & Disputes**
 
@@ -195,7 +197,7 @@ interface Vendor {
   commission_rate: number;
   delivery_scope: DeliveryScope;
   radius_km: number;
-  city_string: string;
+  municipality_palika_string: string;
   min_order_value: number;
   location: any; // PostGIS Point (Lat/Lng)
   wallet_balance_npr: number;

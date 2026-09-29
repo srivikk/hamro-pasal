@@ -22,6 +22,34 @@
       "when": 1790620144263,
       "tag": "0002_wallet_invariant_and_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790621898755,
+      "tag": "0003_rename_vendor_city_to_palika",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790621927496,
+      "tag": "0004_drop_single_entry_wallet_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790621993544,
+      "tag": "0005_double_entry_ledger_and_outbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790622029068,
+      "tag": "0006_ledger_integrity_triggers",
+      "breakpoints": true
     }
   ]
 }

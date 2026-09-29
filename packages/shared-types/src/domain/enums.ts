@@ -49,22 +49,39 @@ export const paymentStatusSchema = z.enum(paymentStatuses);
 export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
 
 /**
- * Vendor wallet movements. Debits are stored as negative amounts, credits as positive.
- * - ESCROW_RELEASE: vendor share credited after DELIVERED (SPEC §5).
- * - COD_COMMISSION: platform commission debited on COD self-delivery (SPEC §5).
- * - EMERGENCY_RIDER_FEE: platform delivery fee debited on Emergency Rider override (SPEC §2).
- * - TOP_UP: upfront eSewa payment to clear a negative balance (SPEC §5).
- * - ADJUSTMENT: Superadmin correction, either sign.
+ * Double-entry ledger accounts (SPEC §5).
+ * - SYSTEM_ESCROW: every upfront payment lands here; released only after DELIVERED. Never negative.
+ * - PLATFORM_REVENUE: platform commission.
+ * - GATEWAY_CLEARING: one per gateway (eSewa, Khalti). Money received but not yet paid out by the
+ *   gateway to the platform bank account. It goes negative on capture, as the gateway owes us.
+ * - VENDOR_WALLET: one per vendor. Mirrored into vendors.wallet_balance_npr.
+ * - DRIVER_WALLET: one per platform-fleet driver. Goes negative while holding COD cash (SPEC float).
  */
-export const walletLedgerEntryTypes = [
-  'ESCROW_RELEASE',
-  'COD_COMMISSION',
-  'EMERGENCY_RIDER_FEE',
-  'TOP_UP',
+export const ledgerAccountTypes = [
+  'SYSTEM_ESCROW',
+  'PLATFORM_REVENUE',
+  'GATEWAY_CLEARING',
+  'VENDOR_WALLET',
+  'DRIVER_WALLET',
+] as const;
+export const ledgerAccountTypeSchema = z.enum(ledgerAccountTypes);
+export type LedgerAccountType = z.infer<typeof ledgerAccountTypeSchema>;
+
+/**
+ * Journal transaction kinds.
+ * - PAYMENT_CAPTURE: gateway payment confirmed. GATEWAY_CLEARING to SYSTEM_ESCROW.
+ * - ORDER_SETTLEMENT: after DELIVERED. Escrow (or COD cash) split to vendor, driver, platform.
+ * - VENDOR_TOP_UP: vendor pays upfront via a gateway to clear a negative wallet (SPEC §5).
+ * - ADJUSTMENT: Super Admin correction between accounts.
+ */
+export const ledgerTransactionKinds = [
+  'PAYMENT_CAPTURE',
+  'ORDER_SETTLEMENT',
+  'VENDOR_TOP_UP',
   'ADJUSTMENT',
 ] as const;
-export const walletLedgerEntryTypeSchema = z.enum(walletLedgerEntryTypes);
-export type WalletLedgerEntryType = z.infer<typeof walletLedgerEntryTypeSchema>;
+export const ledgerTransactionKindSchema = z.enum(ledgerTransactionKinds);
+export type LedgerTransactionKind = z.infer<typeof ledgerTransactionKindSchema>;
 
 /** Super Admin arbitration outcomes (SPEC Super Admin flow step 3). */
 export const disputeStatuses = ['OPEN', 'REFUNDED_TO_CUSTOMER', 'RELEASED_TO_VENDOR'] as const;

@@ -10,6 +10,8 @@ import {
   deliveryScopeSchema,
   disputeStatusSchema,
   fulfillmentModeSchema,
+  ledgerAccountTypeSchema,
+  ledgerTransactionKindSchema,
   orderStateSchema,
   paymentMethodSchema,
   paymentStatusSchema,
@@ -17,7 +19,6 @@ import {
   reviewDirectionSchema,
   userRoleSchema,
   vendorStatusSchema,
-  walletLedgerEntryTypeSchema,
 } from './enums';
 
 /*
@@ -83,7 +84,11 @@ export const vendorSchema = z.strictObject({
   commission_rate: z.number().min(0).max(1),
   delivery_scope: deliveryScopeSchema,
   radius_km: z.number().positive(),
-  city_string: nonEmptyTextSchema,
+  /**
+   * Same field as CustomerAddress.municipality_palika_string. CITY_WIDE vendors serve customers
+   * whose address carries the same Palika (SPEC §2).
+   */
+  municipality_palika_string: nonEmptyTextSchema,
   min_order_value: nonNegativeNprSchema,
   base_delivery_fee_npr: nonNegativeNprSchema,
   location: geoPointSchema,
@@ -113,6 +118,8 @@ export const orderSchema = z.strictObject({
   idempotency_key: nonEmptyTextSchema,
   customer_id: z.uuid(),
   vendor_id: z.uuid(),
+  /** Platform-fleet rider. Required before a PLATFORM_FLEET / EMERGENCY_FLEET order is DELIVERED. */
+  driver_user_id: z.uuid().nullable(),
   state: orderStateSchema,
   subtotal: nonNegativeNprSchema,
   delivery_fee: nonNegativeNprSchema,
@@ -144,17 +151,48 @@ export const orderItemSchema = z.strictObject({
 });
 export type OrderItem = z.infer<typeof orderItemSchema>;
 
-/** Append-only. Inserting a row applies `amount_npr` to the vendor's wallet (DB trigger). */
-export const walletLedgerSchema = z.strictObject({
+/*
+ * Double-entry ledger. Money moves between accounts; every journal transaction's postings sum
+ * to exactly zero (enforced by a deferred DB constraint trigger). A posting's amount is the
+ * signed change to its account's balance. VENDOR_WALLET balances are mirrored into
+ * vendors.wallet_balance_npr, which drives the SPEC §5 suspension rules.
+ */
+
+export const ledgerAccountSchema = z.strictObject({
   id: z.uuid(),
-  vendor_id: z.uuid(),
+  account_type: ledgerAccountTypeSchema,
+  /** Owner of a VENDOR_WALLET account, otherwise null. */
+  vendor_id: z.uuid().nullable(),
+  /** Owner of a DRIVER_WALLET account, otherwise null. */
+  driver_user_id: z.uuid().nullable(),
+  /** Gateway of a GATEWAY_CLEARING account (ESEWA / KHALTI), otherwise null. */
+  gateway: paymentMethodSchema.nullable(),
+  balance_npr: nprAmountSchema,
+  created_at: z.date(),
+  updated_at: z.date(),
+});
+export type LedgerAccount = z.infer<typeof ledgerAccountSchema>;
+
+export const ledgerTransactionSchema = z.strictObject({
+  id: z.uuid(),
+  kind: ledgerTransactionKindSchema,
+  /** Deterministic per business event (e.g. `settlement:<order_id>`), so replays are no-ops. */
+  idempotency_key: nonEmptyTextSchema,
   order_id: z.uuid().nullable(),
-  entry_type: walletLedgerEntryTypeSchema,
-  amount_npr: nprAmountSchema.refine((value) => value !== 0, 'Must be non-zero'),
   description: nonEmptyTextSchema.nullable(),
   created_at: z.date(),
 });
-export type WalletLedger = z.infer<typeof walletLedgerSchema>;
+export type LedgerTransaction = z.infer<typeof ledgerTransactionSchema>;
+
+export const ledgerEntrySchema = z.strictObject({
+  id: z.uuid(),
+  transaction_id: z.uuid(),
+  account_id: z.uuid(),
+  /** Signed change to the account balance; never zero. */
+  amount_npr: nprAmountSchema.refine((value) => value !== 0, 'Must be non-zero'),
+  created_at: z.date(),
+});
+export type LedgerEntry = z.infer<typeof ledgerEntrySchema>;
 
 export const disputeSchema = z.strictObject({
   id: z.uuid(),

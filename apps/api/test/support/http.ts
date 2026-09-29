@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
+import { errorBodySchema, type ErrorBody } from '@hamro-pasal/shared-types';
 import type { Express } from 'express';
+import type { z } from 'zod';
 
 import { createApp } from '../../src/app';
 import { signAccessToken } from '../../src/auth/access-token';
 import { buildContainer, type ApiContainer } from '../../src/container';
 import { esewaHmacBase64, esewaSignatureMessage } from '../../src/payments/esewa/signature';
-import type { ErrorBody } from '../../src/http/errors';
 import type { FetchLike } from '../../src/payments/gateway-http';
 import { testDatabase, testRedisPool } from './fixtures';
 
@@ -16,17 +17,19 @@ export const ESEWA_UAT_SECRET = '8gBm/:&EnhH.1/q';
 export const KHALTI_BASE = 'https://a.khalti.com/api/v2';
 
 /**
- * Reads a supertest response body through the route's declared response type (views.ts).
- * Test-only: supertest types bodies as `any`, and this confines that to one audited cast.
+ * Parses a supertest response body with its shared-types response schema. Every read is therefore
+ * also a runtime check that the server honours the contract the mobile app relies on.
  */
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
-export function bodyOf<T>(res: { body: unknown }): T {
-  return res.body as T;
+export function bodyOf<TSchema extends z.ZodType>(
+  schema: TSchema,
+  res: { body: unknown },
+): z.output<TSchema> {
+  return schema.parse(res.body);
 }
 
-/** The standard error envelope of a failed request. */
+/** Parses the standard error envelope of a failed request (shared-types errorBodySchema). */
 export function errorOf(res: { body: unknown }): ErrorBody['error'] {
-  return (res.body as ErrorBody).error;
+  return errorBodySchema.parse(res.body).error;
 }
 
 /** The string body of a fetch call made by the code under test. */

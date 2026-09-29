@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import { orderItems, orders, reviews } from '@hamro-pasal/db';
 import { compare } from 'bcryptjs';
+import { checkoutResponseSchema, lockStatusResponseSchema } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 import request from 'supertest';
 
-import type { CheckoutResponseBody, LockStatusResponseBody } from '../src/routes/views';
 import {
   createOrder,
   createProduct,
@@ -93,7 +93,7 @@ describe('cart API', () => {
       const res = await checkout(customerId, cart(vendorId, productId, 'ESEWA', 3));
 
       expect(res.status).toBe(201);
-      const body = bodyOf<CheckoutResponseBody>(res);
+      const body = bodyOf(checkoutResponseSchema, res);
       expect(body.order).toMatchObject({
         state: 'PENDING_PAYMENT',
         payment_method: 'ESEWA',
@@ -119,7 +119,10 @@ describe('cart API', () => {
       ).toEqual([
         expect.objectContaining({ product_id: productId, quantity: 3, unit_price_npr: 250 }),
       ]);
-      expect((await outboxFor(db(), body.reservation.id))[0]?.event_type).toBe('order.locked');
+      expect(body.reservation.id).not.toBeNull();
+      expect((await outboxFor(db(), body.reservation.id ?? ''))[0]?.event_type).toBe(
+        'order.locked',
+      );
       expect(await stockOf(db(), productId)).toBe(10); // held in Redis, not yet decremented
     });
 
@@ -129,10 +132,10 @@ describe('cart API', () => {
       const res = await checkout(customerId, cart(vendorId, productId, 'COD', 2));
 
       expect(res.status).toBe(201);
-      const body = bodyOf<CheckoutResponseBody>(res);
+      const body = bodyOf(checkoutResponseSchema, res);
       expect(body.order.state).toBe('PLACED');
       expect(await stockOf(db(), productId)).toBe(8);
-      const status = bodyOf<LockStatusResponseBody>(await lockStatus(customerId, body.order.id));
+      const status = bodyOf(lockStatusResponseSchema, await lockStatus(customerId, body.order.id));
       expect(status.lock).toEqual({ status: 'RELEASED', ttl_ms: 0, expires_at: null });
     });
 
@@ -140,9 +143,9 @@ describe('cart API', () => {
       const { customerId, vendorId, productId } = await setup();
       const request = cart(vendorId, productId, 'KHALTI');
 
-      const first = bodyOf<CheckoutResponseBody>(await checkout(customerId, request));
+      const first = bodyOf(checkoutResponseSchema, await checkout(customerId, request));
       const replayRes = await checkout(customerId, request);
-      const replay = bodyOf<CheckoutResponseBody>(replayRes);
+      const replay = bodyOf(checkoutResponseSchema, replayRes);
       const [order] = await db().select().from(orders).where(eq(orders.id, first.order.id));
 
       expect(replayRes.status).toBe(200);
@@ -161,7 +164,7 @@ describe('cart API', () => {
         Array.from({ length: 5 }, () => checkout(customerId, request)),
       );
 
-      const ids = responses.map((r) => bodyOf<CheckoutResponseBody>(r).order.id);
+      const ids = responses.map((r) => bodyOf(checkoutResponseSchema, r).order.id);
       expect(new Set(ids).size).toBe(1);
       expect(responses.filter((r) => r.status === 201)).toHaveLength(1);
       // Only one lock exists: the 5 units are held once, not five times.
@@ -223,14 +226,15 @@ describe('cart API', () => {
   describe('GET /api/cart/lock-status', () => {
     it('reports the remaining TTL of an active lock', async () => {
       const { customerId, vendorId, productId } = await setup();
-      const created = bodyOf<CheckoutResponseBody>(
+      const created = bodyOf(
+        checkoutResponseSchema,
         await checkout(customerId, cart(vendorId, productId, 'ESEWA')),
       );
 
       const res = await lockStatus(customerId, created.order.id);
 
       expect(res.status).toBe(200);
-      const { lock } = bodyOf<LockStatusResponseBody>(res);
+      const { lock } = bodyOf(lockStatusResponseSchema, res);
       expect(lock.status).toBe('ACTIVE');
       expect(lock.ttl_ms).toBeGreaterThan(590_000);
     });
@@ -239,14 +243,15 @@ describe('cart API', () => {
       const short = buildTestApp({ lockTtlMs: 300 });
       try {
         const { customerId, vendorId, productId } = await setup();
-        const created = bodyOf<CheckoutResponseBody>(
+        const created = bodyOf(
+          checkoutResponseSchema,
           await checkout(customerId, cart(vendorId, productId, 'ESEWA'), short.app),
         );
         await new Promise((resolve) => setTimeout(resolve, 600));
 
         const res = await lockStatus(customerId, created.order.id, short.app);
 
-        expect(bodyOf<LockStatusResponseBody>(res).lock).toEqual({
+        expect(bodyOf(lockStatusResponseSchema, res).lock).toEqual({
           status: 'EXPIRED',
           ttl_ms: 0,
           expires_at: null,
@@ -258,7 +263,8 @@ describe('cart API', () => {
 
     it('hides other customers’ orders and validates the query', async () => {
       const { customerId, vendorId, productId } = await setup();
-      const created = bodyOf<CheckoutResponseBody>(
+      const created = bodyOf(
+        checkoutResponseSchema,
         await checkout(customerId, cart(vendorId, productId, 'ESEWA')),
       );
 

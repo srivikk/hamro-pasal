@@ -1,15 +1,15 @@
-import { checkoutRequestSchema, lockStatusQuerySchema } from '@hamro-pasal/shared-types';
+import {
+  checkoutRequestSchema,
+  lockStatusQuerySchema,
+  type CheckoutResponseBody,
+  type LockStatusResponseBody,
+} from '@hamro-pasal/shared-types';
 import { Router } from 'express';
 
 import type { CheckoutService } from '../checkout/checkout-service';
 import { authOf } from '../http/auth';
 import { parseInput } from '../http/validate';
-import {
-  lockView,
-  orderView,
-  type CheckoutResponseBody,
-  type LockStatusResponseBody,
-} from './views';
+import { lockView, orderView } from './views';
 
 /** Mounted at /api/cart behind requireAuth(CUSTOMER). */
 export function cartRouter(checkout: CheckoutService): Router {

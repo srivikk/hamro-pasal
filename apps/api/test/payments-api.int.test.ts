@@ -1,16 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
 import { orders } from '@hamro-pasal/db';
+import {
+  checkoutResponseSchema,
+  esewaInitiateResponseSchema,
+  khaltiInitiateResponseSchema,
+  paymentStatusResponseSchema,
+} from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 import request from 'supertest';
 
 import { esewaSignatureMessage, signEsewaRequest } from '../src/payments/esewa/signature';
-import type {
-  CheckoutResponseBody,
-  EsewaInitiateResponseBody,
-  KhaltiInitiateResponseBody,
-  PaymentStatusResponseBody,
-} from '../src/routes/views';
 import {
   balanceOf,
   createProduct,
@@ -61,7 +61,12 @@ describe('payments API', () => {
         items: [{ product_id: productId, quantity: 2 }],
       });
     expect(res.status).toBe(201);
-    return { customerId, vendorId, productId, orderId: bodyOf<CheckoutResponseBody>(res).order.id };
+    return {
+      customerId,
+      vendorId,
+      productId,
+      orderId: bodyOf(checkoutResponseSchema, res).order.id,
+    };
   }
 
   async function orderRow(orderId: string) {
@@ -77,7 +82,7 @@ describe('payments API', () => {
         .send({ order_id: orderId });
 
     const initiate = async (customerId: string, orderId: string, app = t.app) =>
-      bodyOf<EsewaInitiateResponseBody>(await initiateRes(customerId, orderId, app)).fields;
+      bodyOf(esewaInitiateResponseSchema, await initiateRes(customerId, orderId, app)).fields;
 
     const webhook = (data: string, app = t.app) =>
       request(app).post('/api/payments/esewa/webhook').send({ data });
@@ -91,7 +96,7 @@ describe('payments API', () => {
       const res = await initiateRes(customerId, orderId);
 
       expect(res.status).toBe(200);
-      const { fields } = bodyOf<EsewaInitiateResponseBody>(res);
+      const { fields } = bodyOf(esewaInitiateResponseSchema, res);
       const transactionUuid = fields.transaction_uuid ?? '';
       expect(fields).toMatchObject({
         amount: '1000',
@@ -122,7 +127,7 @@ describe('payments API', () => {
       const res = await webhook(paid(fields.transaction_uuid, '1050.0'));
 
       expect(res.status).toBe(200);
-      expect(bodyOf<PaymentStatusResponseBody>(res)).toEqual({
+      expect(bodyOf(paymentStatusResponseSchema, res)).toEqual({
         status: 'COMPLETE',
         payment: {
           order_id: orderId,
@@ -144,11 +149,11 @@ describe('payments API', () => {
       const escrowBefore = await escrow();
 
       const concurrent = await Promise.all(Array.from({ length: 6 }, () => webhook(data)));
-      const replay = bodyOf<PaymentStatusResponseBody>(await webhook(data));
+      const replay = bodyOf(paymentStatusResponseSchema, await webhook(data));
 
       expect(concurrent.every((r) => r.status === 200)).toBe(true);
       const firstCredits = concurrent.filter(
-        (r) => bodyOf<PaymentStatusResponseBody>(r).payment?.duplicate === false,
+        (r) => bodyOf(paymentStatusResponseSchema, r).payment?.duplicate === false,
       );
       expect(firstCredits).toHaveLength(1);
       expect(replay.payment).toMatchObject({ order_state: 'PLACED', duplicate: true });
@@ -218,7 +223,7 @@ describe('payments API', () => {
       );
       const unknown = await webhook(paid(randomUUID(), '1050.0'));
 
-      expect(bodyOf<PaymentStatusResponseBody>(pending)).toEqual({
+      expect(bodyOf(paymentStatusResponseSchema, pending)).toEqual({
         status: 'PENDING',
         payment: null,
       });
@@ -271,7 +276,7 @@ describe('payments API', () => {
         .set('authorization', bearer(customerId))
         .send({ order_id: orderId });
       expect(res.status).toBe(200);
-      return bodyOf<KhaltiInitiateResponseBody>(res);
+      return bodyOf(khaltiInitiateResponseSchema, res);
     };
 
     const lookup = (customerId: string, pidx: string) =>
@@ -296,10 +301,10 @@ describe('payments API', () => {
       const { customerId, orderId } = await pendingOrder('KHALTI');
       const { pidx } = await initiate(customerId, orderId);
 
-      const beforePaying = bodyOf<PaymentStatusResponseBody>(await lookup(customerId, pidx));
+      const beforePaying = bodyOf(paymentStatusResponseSchema, await lookup(customerId, pidx));
       khalti.settle(pidx, 'Completed');
-      const afterPaying = bodyOf<PaymentStatusResponseBody>(await lookup(customerId, pidx));
-      const again = bodyOf<PaymentStatusResponseBody>(await lookup(customerId, pidx));
+      const afterPaying = bodyOf(paymentStatusResponseSchema, await lookup(customerId, pidx));
+      const again = bodyOf(paymentStatusResponseSchema, await lookup(customerId, pidx));
 
       expect(beforePaying).toEqual({ status: 'Initiated', payment: null });
       expect(afterPaying.payment).toMatchObject({

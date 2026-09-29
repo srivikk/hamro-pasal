@@ -2,6 +2,9 @@ import {
   esewaWebhookRequestSchema,
   khaltiLookupRequestSchema,
   paymentInitiateRequestSchema,
+  type EsewaInitiateResponseBody,
+  type KhaltiInitiateResponseBody,
+  type PaymentStatusResponseBody,
 } from '@hamro-pasal/shared-types';
 import { Router, type RequestHandler } from 'express';
 
@@ -9,12 +12,7 @@ import { authOf } from '../http/auth';
 import { parseInput } from '../http/validate';
 import type { EsewaService } from '../payments/esewa/esewa-service';
 import type { KhaltiService } from '../payments/khalti/khalti-service';
-import {
-  paymentView,
-  type EsewaInitiateResponseBody,
-  type KhaltiInitiateResponseBody,
-  type PaymentStatusResponseBody,
-} from './views';
+import { paymentView } from './views';
 
 export interface PaymentRouterDependencies {
   readonly esewa: EsewaService;

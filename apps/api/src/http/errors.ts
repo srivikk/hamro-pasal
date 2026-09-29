@@ -1,3 +1,4 @@
+import type { ErrorBody } from '@hamro-pasal/shared-types';
 import type { ErrorRequestHandler } from 'express';
 
 import { OrderNotFoundError, OrderNotPlaceableError } from '../checkout/checkout-service';
@@ -31,10 +32,6 @@ export class HttpError extends Error {
     super(message);
     this.name = 'HttpError';
   }
-}
-
-export interface ErrorBody {
-  error: { code: string; message: string; details?: unknown };
 }
 
 /** Maps domain errors to stable HTTP codes. Unknown errors become an opaque 500. */
@@ -113,7 +110,12 @@ export const errorHandler: ErrorRequestHandler = (error: unknown, _req, res, _ne
   if (httpError.status >= 500) {
     console.error(error);
   }
-  const body: ErrorBody = { error: { code: httpError.code, message: httpError.message } };
-  if (httpError.details !== undefined) body.error.details = httpError.details;
+  const body: ErrorBody = {
+    error: {
+      code: httpError.code,
+      message: httpError.message,
+      ...(httpError.details === undefined ? {} : { details: httpError.details }),
+    },
+  };
   res.status(httpError.status).json(body);
 };

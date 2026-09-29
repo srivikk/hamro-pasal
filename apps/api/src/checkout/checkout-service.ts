@@ -51,7 +51,7 @@ export class OrderNotFoundError extends Error {
 
 export interface CheckoutResult {
   readonly order: Order;
-  readonly reservation: { readonly id: string; readonly expiresAt: Date | null };
+  readonly reservation: { readonly id: string | null; readonly expiresAt: Date | null };
   /**
    * The raw 4-digit handoff code. Returned once; only its bcrypt hash is stored. A replayed
    * checkout rotates it, so the latest response always holds a valid code.
@@ -282,7 +282,7 @@ export class CheckoutService {
     return {
       order,
       reservation: {
-        id: order.reservation_id ?? '',
+        id: order.reservation_id,
         expiresAt: status?.reservation.expiresAt ?? null,
       },
       deliveryOtp,

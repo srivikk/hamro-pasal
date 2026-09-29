@@ -1,75 +1,14 @@
-import type {
-  FulfillmentMode,
-  Order,
-  OrderState,
-  PaymentMethod,
-  PaymentStatus,
-} from '@hamro-pasal/shared-types';
+import type { LockView, Order, OrderView, PaymentView } from '@hamro-pasal/shared-types';
 
 import type { LockStatusView } from '../checkout/checkout-service';
 import type { ConfirmedPayment } from '../payments/payment-confirmation';
 
-/* Response bodies of the public HTTP API: the contract the mobile client codes against. */
+/*
+ * Mappers from domain objects to the public response contracts. The contracts themselves (types
+ * and Zod schemas) live in @hamro-pasal/shared-types (src/api/responses.ts), shared with mobile.
+ */
 
-export interface OrderView {
-  id: string;
-  vendor_id: string;
-  state: OrderState;
-  payment_method: PaymentMethod;
-  payment_status: PaymentStatus;
-  fulfillment: FulfillmentMode;
-  subtotal_npr: number;
-  delivery_fee_npr: number;
-  total_npr: number;
-  created_at: string;
-}
-
-export interface LockView {
-  status: LockStatusView['status'];
-  ttl_ms: number;
-  expires_at: string | null;
-}
-
-export interface PaymentView {
-  order_id: string;
-  order_state: OrderState;
-  payment_status: PaymentStatus;
-  /** true when this confirmation repeated one that had already credited escrow. */
-  duplicate: boolean;
-}
-
-export interface CheckoutResponseBody {
-  order: OrderView;
-  reservation: { id: string; expires_at: string | null };
-  /** Raw 4-digit handoff OTP; shown to the customer, stored server-side only as a hash. */
-  delivery_otp: string | null;
-  replayed: boolean;
-}
-
-export interface LockStatusResponseBody {
-  order: OrderView;
-  lock: LockView;
-}
-
-export interface EsewaInitiateResponseBody {
-  payment_url: string;
-  method: 'POST';
-  fields: Record<string, string>;
-}
-
-export interface KhaltiInitiateResponseBody {
-  pidx: string;
-  payment_url: string;
-  expires_at: string | null;
-}
-
-export interface PaymentStatusResponseBody {
-  /** Gateway status as reported (eSewa: COMPLETE/PENDING/...; Khalti: Completed/Pending/...). */
-  status: string;
-  payment: PaymentView | null;
-}
-
-/** Public order representation: never exposes the OTP hash, gateway refs or commission. */
+/** Never exposes the OTP hash, gateway refs or commission. */
 export function orderView(order: Order): OrderView {
   return {
     id: order.id,

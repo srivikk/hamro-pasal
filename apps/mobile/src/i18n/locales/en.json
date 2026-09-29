@@ -1,15 +1,51 @@
 {
   "common": {
     "appName": "Hamro Pasal",
-    "price": "Rs. {{amount, localizedNumber}}"
+    "price": "Rs. {{amount, localizedNumber}}",
+    "retry": "Try again"
+  },
+  "tabs": {
+    "feed": "Shops",
+    "cart": "Cart",
+    "profile": "Profile"
   },
   "settings": {
     "language": "Language",
     "english": "English",
     "nepali": "नेपाली"
   },
+  "feed": {
+    "serviceableHeading": "Delivers to you",
+    "exploreFurtherHeading": "Explore Further",
+    "exploreFurtherHint": "These shops don't deliver to your location yet.",
+    "empty": "No shops deliver to your location yet.",
+    "loadError": "Couldn't load shops. Check your connection."
+  },
+  "vendor": {
+    "scope": {
+      "RADIUS_BOUND": "Delivers within {{radius, localizedNumber}} km",
+      "CITY_WIDE": "Delivers across {{palika}}",
+      "NATION_WIDE": "Delivers nationwide"
+    },
+    "distance": "{{distance, localizedNumber}} km away",
+    "deliveryFee": "Delivery Rs. {{amount, localizedNumber}}",
+    "minOrder": "Min. order Rs. {{amount, localizedNumber}}",
+    "unavailable": "Doesn't deliver to you"
+  },
   "cart": {
     "itemCount_one": "{{count, localizedNumber}} item",
-    "itemCount_other": "{{count, localizedNumber}} items"
+    "itemCount_other": "{{count, localizedNumber}} items",
+    "empty": "Your cart is empty",
+    "from": "From {{vendor}}",
+    "subtotal": "Subtotal",
+    "clear": "Clear cart",
+    "increase": "Add one {{name}}",
+    "decrease": "Remove one {{name}}"
+  },
+  "cartConflict": {
+    "title": "Start a new cart?",
+    "message": "Your cart has items from {{current}}. Adding items from {{next}} will clear it.",
+    "cancel": "Keep current cart",
+    "confirm": "Clear and add"
   }
 }

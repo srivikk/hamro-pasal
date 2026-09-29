@@ -1,15 +1,51 @@
 {
   "common": {
     "appName": "हाम्रो पसल",
-    "price": "रु. {{amount, localizedNumber}}"
+    "price": "रु. {{amount, localizedNumber}}",
+    "retry": "फेरि प्रयास गर्नुहोस्"
+  },
+  "tabs": {
+    "feed": "पसलहरू",
+    "cart": "कार्ट",
+    "profile": "प्रोफाइल"
   },
   "settings": {
     "language": "भाषा",
     "english": "English",
     "nepali": "नेपाली"
   },
+  "feed": {
+    "serviceableHeading": "तपाईंकहाँ डेलिभरी गर्ने पसलहरू",
+    "exploreFurtherHeading": "थप पसलहरू हेर्नुहोस्",
+    "exploreFurtherHint": "यी पसलहरूले अहिले तपाईंको स्थानमा डेलिभरी गर्दैनन्।",
+    "empty": "तपाईंको स्थानमा अहिले कुनै पसलले डेलिभरी गर्दैन।",
+    "loadError": "पसलहरू लोड गर्न सकिएन। इन्टरनेट जडान जाँच गर्नुहोस्।"
+  },
+  "vendor": {
+    "scope": {
+      "RADIUS_BOUND": "{{radius, localizedNumber}} कि.मी. भित्र डेलिभरी",
+      "CITY_WIDE": "{{palika}} भर डेलिभरी",
+      "NATION_WIDE": "देशभर डेलिभरी"
+    },
+    "distance": "{{distance, localizedNumber}} कि.मी. टाढा",
+    "deliveryFee": "डेलिभरी शुल्क रु. {{amount, localizedNumber}}",
+    "minOrder": "न्यूनतम अर्डर रु. {{amount, localizedNumber}}",
+    "unavailable": "तपाईंकहाँ डेलिभरी हुँदैन"
+  },
   "cart": {
     "itemCount_one": "{{count, localizedNumber}} वटा सामान",
-    "itemCount_other": "{{count, localizedNumber}} वटा सामान"
+    "itemCount_other": "{{count, localizedNumber}} वटा सामान",
+    "empty": "तपाईंको कार्ट खाली छ",
+    "from": "{{vendor}} बाट",
+    "subtotal": "जम्मा",
+    "clear": "कार्ट खाली गर्नुहोस्",
+    "increase": "एउटा {{name}} थप्नुहोस्",
+    "decrease": "एउटा {{name}} घटाउनुहोस्"
+  },
+  "cartConflict": {
+    "title": "नयाँ कार्ट सुरु गर्ने?",
+    "message": "तपाईंको कार्टमा {{current}} का सामानहरू छन्। {{next}} का सामान थप्दा हालको कार्ट खाली हुनेछ।",
+    "cancel": "हालको कार्ट राख्नुहोस्",
+    "confirm": "खाली गरेर थप्नुहोस्"
   }
 }

@@ -42,7 +42,7 @@ import {
 } from '../reviews/review-service';
 import { TopUpKeyReusedError, TopUpUnavailableError } from '../wallet/vendor-top-up-service';
 import { InvalidLedgerCursorError } from '../wallet/vendor-wallet-service';
-import { SmsDeliveryError } from '../sms/sms-gateway';
+import { SmsDeliveryError } from '@hamro-pasal/sms';
 import { InvalidGatewayCallbackError } from '../payments/esewa/esewa-service';
 import { PaymentGatewayError } from '../payments/gateway-http';
 import {

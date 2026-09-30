@@ -1,5 +1,6 @@
 import { createDatabase } from '@hamro-pasal/db';
 import { createIdempotentProducer, createKafka, DomainEventPublisher } from '@hamro-pasal/kafka';
+import { smsGatewayFromEnv } from '@hamro-pasal/sms';
 import { Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 
@@ -54,8 +55,9 @@ async function main(): Promise<void> {
     lifecycle.register(() => queue.close());
   }
 
-  // Kafka consumers: order state fan-out to the API's Socket.io rooms through Redis, and the 90 s
-  // vendor acceptance timer for every order that becomes PLACED.
+  // Kafka consumers: order state fan-out to the API's Socket.io rooms through Redis, the 90 s
+  // vendor acceptance timer for every order that becomes PLACED, and vendor SMS for
+  // notifications.broadcast (suspension, restore, SLA escalation).
   const redis = new Redis(env.REDIS_URL);
   lifecycle.register(async () => {
     await redis.quit();
@@ -63,6 +65,8 @@ async function main(): Promise<void> {
   const consumers = buildConsumers({
     redis,
     vendorAcceptanceTimers: new BullVendorAcceptanceTimers(queues.vendorAcceptance),
+    // SMS_PROVIDER=MOCK logs "[sms:mock] to +977…: <text>" instead of calling the provider.
+    sms: smsGatewayFromEnv(env),
   });
   if (consumers.length > 0) {
     const handlers = routeByTopic(consumers);

@@ -12,7 +12,7 @@ import { buildContainer, type ApiContainer } from '../../src/container';
 import { esewaHmacBase64, esewaSignatureMessage } from '../../src/payments/esewa/signature';
 import type { OtpStoreOptions } from '../../src/auth/otp-store';
 import type { FetchLike } from '../../src/payments/gateway-http';
-import { MockSmsGateway, type OutboundSms, type SmsGateway } from '../../src/sms/sms-gateway';
+import { MockSmsGateway, type OutboundSms, type SmsGateway } from '@hamro-pasal/sms';
 import { LocalEvidenceStorage } from '../../src/uploads/evidence-storage';
 import { testDatabase, testRedisPool } from './fixtures';
 

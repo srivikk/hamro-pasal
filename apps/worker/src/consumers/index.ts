@@ -1,4 +1,5 @@
 import type { KafkaJS } from '@hamro-pasal/kafka';
+import type { SmsGateway } from '@hamro-pasal/sms';
 import type { Redis } from 'ioredis';
 
 import {
@@ -7,16 +8,19 @@ import {
   RedisOrderRoomBroadcaster,
 } from './order-state-fanout';
 import type { KafkaConsumerDefinition } from './types';
+import { VENDOR_SMS_DEDUPE_PREFIX, vendorNotificationConsumer } from './vendor-notifications';
 import {
   vendorSlaSchedulerConsumer,
   type VendorAcceptanceTimerScheduler,
 } from './vendor-sla-scheduler';
 
 export interface ConsumerDeps {
-  /** Publishes Socket.io broadcasts and holds fan-out de-duplication keys. */
+  /** Publishes Socket.io broadcasts and holds fan-out / SMS de-duplication keys. */
   readonly redis: Redis;
   /** Schedules the 90 s vendor acceptance timers (BullMQ). */
   readonly vendorAcceptanceTimers: VendorAcceptanceTimerScheduler;
+  /** Sends vendor notification SMS (SMS_PROVIDER). */
+  readonly sms: SmsGateway;
 }
 
 /** Register Kafka topic handlers here. Several may share a topic (see routeByTopic). */
@@ -27,6 +31,10 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
       deduplicator: new RedisEventDeduplicator(deps.redis),
     }),
     vendorSlaSchedulerConsumer({ timers: deps.vendorAcceptanceTimers }),
+    vendorNotificationConsumer({
+      sms: deps.sms,
+      deduplicator: new RedisEventDeduplicator(deps.redis, VENDOR_SMS_DEDUPE_PREFIX),
+    }),
   ];
 }
 

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { createDatabase, type Database } from '@hamro-pasal/db';
 import type { ServerEnv, WalletTopUpMode } from '@hamro-pasal/shared-types';
+import { smsGatewayFromEnv, type SmsGateway } from '@hamro-pasal/sms';
 import { Redis } from 'ioredis';
 
 import type { ApiServices } from './app';
@@ -38,12 +39,6 @@ import { KhaltiClient, type KhaltiConfig } from './payments/khalti/khalti-client
 import { KhaltiService } from './payments/khalti/khalti-service';
 import { PaymentConfirmationService } from './payments/payment-confirmation';
 import { ReviewService } from './reviews/review-service';
-import {
-  AakashSmsGateway,
-  MockSmsGateway,
-  SparrowSmsGateway,
-  type SmsGateway,
-} from './sms/sms-gateway';
 import { LocalEvidenceStorage, type EvidenceStorage } from './uploads/evidence-storage';
 
 export interface ApiConfig {
@@ -152,37 +147,6 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
  */
 function otpPepper(accessTokenSecret: string): Buffer {
   return createHmac('sha256', accessTokenSecret).update('hamro-pasal:otp-digest:v1').digest();
-}
-
-/** The SMS adapter for SMS_PROVIDER (SPEC Nepal §4). */
-export function smsGatewayFromEnv(env: ServerEnv): SmsGateway {
-  switch (env.SMS_PROVIDER) {
-    case 'SPARROW':
-      return new SparrowSmsGateway({
-        token: required(env.SPARROW_SMS_TOKEN, 'SPARROW_SMS_TOKEN'),
-        from: required(env.SPARROW_SMS_FROM, 'SPARROW_SMS_FROM'),
-        apiUrl: required(env.SPARROW_SMS_API_URL, 'SPARROW_SMS_API_URL'),
-      });
-    case 'AAKASH':
-      return new AakashSmsGateway({
-        authToken: required(env.AAKASH_SMS_AUTH_TOKEN, 'AAKASH_SMS_AUTH_TOKEN'),
-        apiUrl: required(env.AAKASH_SMS_API_URL, 'AAKASH_SMS_API_URL'),
-      });
-    case 'MOCK':
-      // Development only (parseServerEnv refuses it in production): the code appears in the log.
-      return new MockSmsGateway((sms) => {
-        console.info(`[sms:mock] to ${sms.to}: ${sms.text}`);
-      });
-    case 'FIREBASE':
-      throw new Error(
-        'SMS_PROVIDER=FIREBASE cannot deliver server-generated OTP codes; use SPARROW, AAKASH or MOCK',
-      );
-  }
-}
-
-function required(value: string | undefined, name: string): string {
-  if (value === undefined) throw new Error(`${name} is required`);
-  return value;
 }
 
 export function buildContainerFromEnv(env: ServerEnv): ApiContainer {

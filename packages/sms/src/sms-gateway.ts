@@ -1,12 +1,14 @@
 import { isNepalPhone, normalizeNepalPhone } from '@hamro-pasal/shared-types';
 
-import type { FetchLike } from '../payments/gateway-http';
-
 /*
  * SMS / OTP gateway (SPEC: Nepal localizations §4): Sparrow SMS or Aakash SMS, every payload
  * addressed in strict +977 form. All adapters go through prepareOutboundSms, so no code path can
- * send to a non-Nepal or malformed number.
+ * send to a non-Nepal or malformed number. Shared by the API (login codes) and the worker
+ * (vendor notifications, Phase 13).
  */
+
+/** The subset of `fetch` the HTTP adapters use (tests inject a recording fake). */
+export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
 export interface SmsMessage {
   /** Any common Nepal format ("98XXXXXXXX", "+977-98..."); normalised before sending. */

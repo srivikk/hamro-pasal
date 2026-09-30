@@ -1,12 +1,12 @@
 import { InvalidNepalPhoneError, NEPAL_PHONE_REGEX } from '@hamro-pasal/shared-types';
 
-import type { FetchLike } from '../payments/gateway-http';
 import {
   AakashSmsGateway,
   MockSmsGateway,
   prepareOutboundSms,
   SmsDeliveryError,
   SparrowSmsGateway,
+  type FetchLike,
 } from './sms-gateway';
 
 function recordingFetch(body: unknown, status = 200) {

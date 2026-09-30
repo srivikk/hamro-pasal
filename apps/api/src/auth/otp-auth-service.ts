@@ -6,7 +6,7 @@ import {
 } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 
-import type { SmsGateway } from '../sms/sms-gateway';
+import type { SmsGateway } from '@hamro-pasal/sms';
 import { ACCESS_TOKEN, signAccessToken } from './access-token';
 import { generateOtpCode, type OtpStore } from './otp-store';
 import { InvalidRefreshTokenError, signRefreshToken, verifyRefreshToken } from './refresh-token';

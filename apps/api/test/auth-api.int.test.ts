@@ -13,7 +13,7 @@ import request from 'supertest';
 import { verifyAccessToken } from '../src/auth/access-token';
 import { otpKeys } from '../src/auth/otp-store';
 import { verifyRefreshToken } from '../src/auth/refresh-token';
-import { SmsDeliveryError, type OutboundSms, type SmsGateway } from '../src/sms/sms-gateway';
+import { SmsDeliveryError, type OutboundSms, type SmsGateway } from '@hamro-pasal/sms';
 import { createUser } from './support/fixtures';
 import {
   ACCESS_SECRET,

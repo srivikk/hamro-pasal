@@ -1,8 +1,8 @@
-# Hamro Pasal: State Handoff (Phases 0–9 complete)
+# Hamro Pasal: State Handoff (Phases 0–9.5 complete)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 9 (Double-Blind Reviews &
-Dispute Chat)**, on top of Phase 8 (Real-Time Order Tracking, Socket.io `/orders`), 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
+work without re-deriving it. It describes the tree at the end of **Phase 9.5 (Chat Persistence &
+Vendor Review Linkage)**, on top of Phase 9 (Double-Blind Reviews & Dispute Chat), 8 (Real-Time Order Tracking, Socket.io `/orders`), 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
 Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this file and the code disagree, **the code wins**. When anything disagrees with
 `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
 
@@ -22,8 +22,12 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 > 48 h pass), the API serves the `/chat` dispute namespace (Redis adapter, server-side PII filter) and
 > accepts dispute photos at `POST /api/uploads/dispute-evidence` (local disk stand-in for R2, 5 MB);
 > the app's review and upload mocks are deleted (§8C, §9.9, §9.10).
+> **Phase 9.5:** every `/chat` message is stored in `chat_messages` before it is broadcast, and an
+> order's first message opens its `disputes` row (an OPEN dispute stays reachable past 48 h); vendors
+> rate customers at `POST /api/vendors/orders/:id/reviews` with the same quarantine transaction (§8C).
 > **No live device run has happened yet** (§13). Still not built: the order lifecycle after PLACED,
-> persisted disputes/transcripts, R2, refund payouts, and refresh-token rotation/revocation.
+> reading the transcript back (history, admin), dispute resolution, R2, refund payouts, and
+> refresh-token rotation/revocation.
 >
 > **Next priority: the first live end-to-end device run** (§11 item 1), then the order lifecycle
 > routes, which will stream over `/orders` with no extra socket work.
@@ -55,18 +59,18 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                                                            |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · Phase 9 (uncommitted) |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                    |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                           |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                      |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                     |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                               |
-| Unit tests      | **758 passing** (`pnpm test`): shared-types 112, api 93, worker 18, kafka 7, db 7, mobile 521                                                                                                                                                                                                                                                                                    |
-| Integ. tests    | **214 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 153, worker 13, kafka 1. Run at the end of Phase 9 (the kafka publisher test timed out once when run in parallel with the worker suite, and passed alone)                                                                                                                                           |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 9                                                                                                                                                                                                                             |
-| Dev database    | Migrations 0000–0010 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                             |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · Phase 9.5 (uncommitted) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                     |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                            |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                       |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                      |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                |
+| Unit tests      | **759 passing** (`pnpm test`): shared-types 113, api 93, worker 18, kafka 7, db 7, mobile 521                                                                                                                                                                                                                                                                                                     |
+| Integ. tests    | **231 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 170, worker 13, kafka 1. Run at the end of Phase 9.5 (in Phase 9 the kafka publisher test once timed out in parallel with the worker suite; it passed alone, and in this run)                                                                                                                                        |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 9                                                                                                                                                                                                                                              |
+| Dev database    | Migrations 0000–0011 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                              |
 
 ### Root commands (`package.json`)
 
@@ -124,7 +128,7 @@ packages/shared-types/src          @hamro-pasal/shared-types (zod only, safe for
 packages/db/src                    @hamro-pasal/db: Drizzle schema, client, migrator, outbox writer
   schema/{columns,enums,users,vendors,orders,ledger,outbox,wallet,disputes,contract}.ts
   geo/ewkb.ts · outbox.ts · testing.ts (@hamro-pasal/db/testing) · scripts/{migrate,seed,database-url}.ts
-packages/db/drizzle/               0000–0010 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
+packages/db/drizzle/               0000–0011 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
 packages/kafka/src                 config.ts, producer.ts (DomainEventPublisher), index.ts
 apps/api/src                       Express 5 API
   app.ts (createApp) · container.ts (buildContainer / buildContainerFromEnv) · server.ts (HTTP + Socket.io)
@@ -247,6 +251,7 @@ src/test/       msw.ts · api-fixtures.ts · render.tsx · in-memory-mmkv.ts · 
 | `0008_order_addresses_and_refunds.sql`     | **Phase 6.** `order_addresses` table; `orders.refund_required` + `orders_refund_required_paid_check`                                                |
 | `0009_orders_placed_at.sql`                | **Phase 6.** `orders.placed_at`, hand-added backfill (`placed_at = created_at` for already-placed rows), `orders_placed_at_check`                   |
 | `0010_users_first_name_optional.sql`       | **Phase 7.** `users.first_name` nullable (OTP sign-up knows only the phone); `users_first_name_check` still rejects a blank name                    |
+| `0011_chat_messages.sql`                   | **Phase 9.5.** `chat_messages` table (dispute transcript): FKs to `disputes` and `users`, dedupe key, length/attachment/non-empty CHECKs, index     |
 
 **Staging rule:** drizzle-kit prompts interactively on renames, which fails in this non-TTY
 environment. Stage schema edits so a single `generate` only adds or only drops. Hand-write renames
@@ -289,10 +294,22 @@ hand-inserted between the generated statements (0009 does this).
 idempotency_key UNIQUE, order_id?)`, `ledger_entries(amount_npr <> 0)`. Journals balance to 0 at
   COMMIT (deferred triggers), need ≥ 2 postings, can only be posted in the creating transaction, and
   are append-only. Escrow balance ≥ 0.
-- `disputes(order_id, opened_by_user_id, reason, status, resolved_by_user_id?, resolved_at?)` and
-  `reviews(order_id, direction CUSTOMER_TO_VENDOR|VENDOR_TO_CUSTOMER, rating 1–5, comment?,
-is_published DEFAULT false, published_at, one per direction per order)`. Reviews are written by
-  `POST /api/reviews` (Phase 9, §8C); **`disputes` is still unused** (no migration was needed in Phase 9).
+- `reviews(order_id, direction CUSTOMER_TO_VENDOR|VENDOR_TO_CUSTOMER, rating 1–5, comment?,
+is_published DEFAULT false, published_at, one per direction per order)`. Written by
+  `POST /api/reviews` (customer, Phase 9) and `POST /api/vendors/orders/:id/reviews` (vendor, Phase
+  9.5), both through `ReviewService.submit` (§8C).
+- `disputes(order_id UNIQUE, opened_by_user_id, reason non-blank, status OPEN|REFUNDED_TO_CUSTOMER|RELEASED_TO_VENDOR,
+resolved_by_user_id?, resolved_at?)`, `disputes_resolution_check`: OPEN ⇔ no resolver and no
+  resolved_at. **Created by the order's first `/chat` message** (Phase 9.5; `reason` = that message,
+  or "Photo evidence submitted" for a photo-only one). Nothing resolves a dispute yet.
+- **`chat_messages`** (Phase 9.5, migration 0011): `id`, `dispute_id` → disputes (restrict),
+  `sender_user_id` → users (restrict), `client_id` (1–100 chars), `body` (≤ 2000), `attachments jsonb`
+  (array of `{url, content_type}`, ≤ 4), `created_at` (= the broadcast `sent_at`). `UNIQUE (dispute_id,
+sender_user_id, client_id)` dedupes retried sends; `chat_messages_not_empty_check` requires text or
+  an image; index `(dispute_id, created_at)` for transcript reads. Holds no names or phones (only the
+  sender's id). Append-only by convention (no code updates or deletes rows; no trigger enforces it).
+  Zod: `chatMessageRowSchema` (`shared-types/domain/entities.ts`), asserted in `contract.ts` and
+  parsed in `test/contract.int.test.ts`.
 - Money is `numeric(12,2)` read as JS `number`. Services compute in integer paisa
   (`apps/api/src/ledger/money.ts`). The mobile app does the same (`src/lib/money.ts`).
 
@@ -409,25 +426,26 @@ auth). `Infrastructure` now requires an `sms: SmsGateway` (tests inject `MockSms
 
 ### Implemented routes (the complete list)
 
-| Method & path                                              | Auth                          | Request                                                                                                                                          | Success              | Response schema                                                                                                                                                        | Used by mobile                                 |
-| ---------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `POST /api/auth/otp/send`                                  | **none**                      | `otpSendRequestSchema {phone: strict +9779XXXXXXXXX}`                                                                                            | 200                  | `otpSendResponseSchema {phone, expires_in_seconds: 120, resend_after_seconds: 60}`                                                                                     | `useSendOtp` (login screen, resend)            |
-| `POST /api/auth/otp/verify`                                | **none**                      | `otpVerifyRequestSchema {phone, code: 6 digits}`                                                                                                 | 200 (`no-store`)     | `authTokensResponseSchema {token_type, access_token, access_token_expires_in, refresh_token, refresh_token_expires_in, user{id, role, first_name\|null}, is_new_user}` | `useVerifyOtp` (code screen)                   |
-| `POST /api/auth/token/refresh`                             | **none** (the refresh JWT)    | `tokenRefreshRequestSchema {refresh_token}`                                                                                                      | 200 (`no-store`)     | `tokenRefreshResponseSchema {token_type, access_token, access_token_expires_in}`                                                                                       | `apiRequest` renewal (`refreshAccessToken`)    |
-| `GET /health`                                              | none                          | –                                                                                                                                                | 200 `{status:'ok'}`  | –                                                                                                                                                                      | no                                             |
-| `GET /api/vendors?lat=&lng=[&municipality_palika_string=]` | Bearer CUSTOMER               | `vendorFeedQuerySchema` (coordinates inside `NEPAL_BOUNDING_BOX`)                                                                                | 200                  | `feedResponseSchema {serviceable[], explore_further[]}` of `{vendor: FeedVendor, distance_km, serviceable}`                                                            | `useFeedQuery` (Shops tab)                     |
-| `GET /api/vendors/:id/products?lat=&lng=[&municipality_…]` | Bearer CUSTOMER               | `idParamSchema` + `vendorMenuQuerySchema`                                                                                                        | 200                  | `vendorMenuSchema {vendor, serviceable, products[{id, name, price_npr, in_stock}]}`                                                                                    | `useVendorMenuQuery` (vendor screen)           |
-| `POST /api/cart/checkout`                                  | Bearer CUSTOMER               | `checkoutRequestSchema {idempotency_key(8–100), vendor_id, payment_method, items[1–50]{product_id, quantity 1–99}, delivery_address (required)}` | 201 new / 200 replay | `checkoutResponseSchema {order: OrderView, reservation{id\|null, expires_at\|null}, delivery_otp\|null, replayed}`                                                     | `useCheckout` (sends the saved address)        |
-| `GET /api/cart/lock-status?order_id=`                      | Bearer CUSTOMER (owner)       | `lockStatusQuerySchema`                                                                                                                          | 200                  | `lockStatusResponseSchema {order, lock{status ACTIVE\|EXPIRED\|RELEASED, ttl_ms, expires_at}}`                                                                         | `useLockStatus` (5 s poll, checkout only)      |
-| `GET /api/orders/:id`                                      | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200                  | `orderDetailResponseSchema {order: OrderSnapshot}`                                                                                                                     | `useOrderQuery` → `fetchOrder` (no polling)    |
-| `POST /api/orders/:id/cancel`                              | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `cancelOrderResponseSchema {order_id, state:'CANCELED', refund_required}`                                                                                              | `useCancelOrder` → `cancelOrder`               |
-| `POST /api/payments/esewa/initiate`                        | Bearer CUSTOMER (owner)       | `paymentInitiateRequestSchema {order_id}`                                                                                                        | 200                  | `esewaInitiateResponseSchema {payment_url, method:'POST', fields}`                                                                                                     | `initiateEsewa`                                |
-| `POST /api/payments/esewa/webhook`                         | **none** (HMAC-authenticated) | `esewaWebhookRequestSchema {data: base64}`                                                                                                       | 200                  | `paymentStatusResponseSchema {status, payment: PaymentView\|null}`                                                                                                     | `confirmEsewa` (the app forwards the redirect) |
-| `POST /api/payments/khalti/initiate`                       | Bearer CUSTOMER (owner)       | `{order_id}`                                                                                                                                     | 200                  | `khaltiInitiateResponseSchema {pidx, payment_url, expires_at}`                                                                                                         | `initiateKhalti`                               |
-| `POST /api/payments/khalti/lookup`                         | Bearer CUSTOMER (pidx owner)  | `khaltiLookupRequestSchema {pidx}`                                                                                                               | 200                  | `paymentStatusResponseSchema`                                                                                                                                          | `lookupKhalti`                                 |
-| `POST /api/reviews`                                        | Bearer CUSTOMER (order owner) | `reviewSubmitRequestSchema {order_id, rating 1–5 int, feedback? ≤500 (trimmed, blank → null)}`                                                   | 201                  | `reviewSubmitResponseSchema {review: {id, order_id, direction, rating, feedback, status QUARANTINED\|PUBLISHED, published_at, created_at}}`                            | `submitReview` (`ReviewModal`)                 |
-| `POST /api/uploads/dispute-evidence`                       | Bearer CUSTOMER (order owner) | multipart: field `order_id` (`disputeEvidenceUploadFieldsSchema`) + part `file` (JPEG/PNG/WebP by magic bytes, ≤ 5 MB)                           | 201                  | `disputeEvidenceUploadResponseSchema {url, content_type}` (= a chat attachment)                                                                                        | `uploadDisputeEvidence` (dispute screen)       |
-| `GET /uploads/dispute-evidence/:order/:file`               | none (unguessable uuid names) | –                                                                                                                                                | 200                  | the stored image (`express.static`, `nosniff`); only mounted for `LocalEvidenceStorage`                                                                                | chat image bubbles                             |
+| Method & path                                              | Auth                           | Request                                                                                                                                          | Success              | Response schema                                                                                                                                                        | Used by mobile                                 |
+| ---------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `POST /api/auth/otp/send`                                  | **none**                       | `otpSendRequestSchema {phone: strict +9779XXXXXXXXX}`                                                                                            | 200                  | `otpSendResponseSchema {phone, expires_in_seconds: 120, resend_after_seconds: 60}`                                                                                     | `useSendOtp` (login screen, resend)            |
+| `POST /api/auth/otp/verify`                                | **none**                       | `otpVerifyRequestSchema {phone, code: 6 digits}`                                                                                                 | 200 (`no-store`)     | `authTokensResponseSchema {token_type, access_token, access_token_expires_in, refresh_token, refresh_token_expires_in, user{id, role, first_name\|null}, is_new_user}` | `useVerifyOtp` (code screen)                   |
+| `POST /api/auth/token/refresh`                             | **none** (the refresh JWT)     | `tokenRefreshRequestSchema {refresh_token}`                                                                                                      | 200 (`no-store`)     | `tokenRefreshResponseSchema {token_type, access_token, access_token_expires_in}`                                                                                       | `apiRequest` renewal (`refreshAccessToken`)    |
+| `GET /health`                                              | none                           | –                                                                                                                                                | 200 `{status:'ok'}`  | –                                                                                                                                                                      | no                                             |
+| `GET /api/vendors?lat=&lng=[&municipality_palika_string=]` | Bearer CUSTOMER                | `vendorFeedQuerySchema` (coordinates inside `NEPAL_BOUNDING_BOX`)                                                                                | 200                  | `feedResponseSchema {serviceable[], explore_further[]}` of `{vendor: FeedVendor, distance_km, serviceable}`                                                            | `useFeedQuery` (Shops tab)                     |
+| `GET /api/vendors/:id/products?lat=&lng=[&municipality_…]` | Bearer CUSTOMER                | `idParamSchema` + `vendorMenuQuerySchema`                                                                                                        | 200                  | `vendorMenuSchema {vendor, serviceable, products[{id, name, price_npr, in_stock}]}`                                                                                    | `useVendorMenuQuery` (vendor screen)           |
+| `POST /api/cart/checkout`                                  | Bearer CUSTOMER                | `checkoutRequestSchema {idempotency_key(8–100), vendor_id, payment_method, items[1–50]{product_id, quantity 1–99}, delivery_address (required)}` | 201 new / 200 replay | `checkoutResponseSchema {order: OrderView, reservation{id\|null, expires_at\|null}, delivery_otp\|null, replayed}`                                                     | `useCheckout` (sends the saved address)        |
+| `GET /api/cart/lock-status?order_id=`                      | Bearer CUSTOMER (owner)        | `lockStatusQuerySchema`                                                                                                                          | 200                  | `lockStatusResponseSchema {order, lock{status ACTIVE\|EXPIRED\|RELEASED, ttl_ms, expires_at}}`                                                                         | `useLockStatus` (5 s poll, checkout only)      |
+| `GET /api/orders/:id`                                      | Bearer CUSTOMER (owner)        | `idParamSchema`                                                                                                                                  | 200                  | `orderDetailResponseSchema {order: OrderSnapshot}`                                                                                                                     | `useOrderQuery` → `fetchOrder` (no polling)    |
+| `POST /api/orders/:id/cancel`                              | Bearer CUSTOMER (owner)        | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `cancelOrderResponseSchema {order_id, state:'CANCELED', refund_required}`                                                                                              | `useCancelOrder` → `cancelOrder`               |
+| `POST /api/payments/esewa/initiate`                        | Bearer CUSTOMER (owner)        | `paymentInitiateRequestSchema {order_id}`                                                                                                        | 200                  | `esewaInitiateResponseSchema {payment_url, method:'POST', fields}`                                                                                                     | `initiateEsewa`                                |
+| `POST /api/payments/esewa/webhook`                         | **none** (HMAC-authenticated)  | `esewaWebhookRequestSchema {data: base64}`                                                                                                       | 200                  | `paymentStatusResponseSchema {status, payment: PaymentView\|null}`                                                                                                     | `confirmEsewa` (the app forwards the redirect) |
+| `POST /api/payments/khalti/initiate`                       | Bearer CUSTOMER (owner)        | `{order_id}`                                                                                                                                     | 200                  | `khaltiInitiateResponseSchema {pidx, payment_url, expires_at}`                                                                                                         | `initiateKhalti`                               |
+| `POST /api/payments/khalti/lookup`                         | Bearer CUSTOMER (pidx owner)   | `khaltiLookupRequestSchema {pidx}`                                                                                                               | 200                  | `paymentStatusResponseSchema`                                                                                                                                          | `lookupKhalti`                                 |
+| `POST /api/reviews`                                        | Bearer CUSTOMER (order owner)  | `reviewSubmitRequestSchema {order_id, rating 1–5 int, feedback? ≤500 (trimmed, blank → null)}`                                                   | 201                  | `reviewSubmitResponseSchema {review: {id, order_id, direction, rating, feedback, status QUARANTINED\|PUBLISHED, published_at, created_at}}`                            | `submitReview` (`ReviewModal`)                 |
+| `POST /api/vendors/orders/:id/reviews`                     | Bearer VENDOR (order's vendor) | `idParamSchema` + `vendorReviewSubmitRequestSchema {rating 1–5 int, feedback? ≤500}`                                                             | 201                  | `reviewSubmitResponseSchema` (direction `VENDOR_TO_CUSTOMER`)                                                                                                          | no (no vendor app yet)                         |
+| `POST /api/uploads/dispute-evidence`                       | Bearer CUSTOMER (order owner)  | multipart: field `order_id` (`disputeEvidenceUploadFieldsSchema`) + part `file` (JPEG/PNG/WebP by magic bytes, ≤ 5 MB)                           | 201                  | `disputeEvidenceUploadResponseSchema {url, content_type}` (= a chat attachment)                                                                                        | `uploadDisputeEvidence` (dispute screen)       |
+| `GET /uploads/dispute-evidence/:order/:file`               | none (unguessable uuid names)  | –                                                                                                                                                | 200                  | the stored image (`express.static`, `nosniff`); only mounted for `LocalEvidenceStorage`                                                                                | chat image bubbles                             |
 
 - `OrderView = {id, vendor_id, state, payment_method, payment_status, fulfillment, subtotal_npr,
 delivery_fee_npr, total_npr, created_at}` (no OTP hash, gateway ref or commission).
@@ -518,14 +536,19 @@ routes) must call `enqueueOrderStateChanged(tx, fromState, updatedRow)`** in its
 
 No routes for: saved-address CRUD, profile (name) editing, logout/revocation, order state transitions after PLACED (vendor
 accept → PREPARING, dispatch, OUT_FOR_DELIVERY, arrival, DELIVERED), delivery-OTP verification,
-the vendor's side of reviews (the service supports it, no route), reading published reviews,
-persisted disputes (the `disputes` table is still unused) and chat transcripts, refunds, admin,
-vendor or driver apps, `/metrics`, rate limiting beyond the per-phone OTP cooldown. No push
+reading published reviews, reading the chat transcript back (no history on join, no admin view),
+dispute resolution (nothing moves a dispute out of OPEN or the order to `DISPUTED`), refunds, admin,
+vendor or driver apps (the vendor review route exists, but no vendor client), `/metrics`, rate limiting beyond the per-phone OTP cooldown. No push
 notifications. Worker consumers and timer handlers are placeholders.
 
-## 8C. Reviews, dispute chat `/chat` and evidence uploads (Phase 9)
+## 8C. Reviews, dispute chat `/chat` and evidence uploads (Phases 9 and 9.5)
 
-**Reviews (SPEC §6).** `apps/api/src/reviews/review-service.ts#ReviewService`, route `routes/reviews.ts`.
+**Reviews (SPEC §6).** `apps/api/src/reviews/review-service.ts#ReviewService`; routes
+`routes/reviews.ts` (customer, `POST /api/reviews`) and, since Phase 9.5, `routes/vendor-orders.ts`
+(vendor, `POST /api/vendors/orders/:id/reviews`, mounted before the customer catalogue under
+`/api/vendors` with `requireAuth(VENDOR)`). Both call the same `submit`, so the quarantine
+transaction is identical: a vendor review of an order the customer already reviewed publishes both
+(tested: the customer's review goes from hidden to `publicReview` in one request).
 
 - `submit({ orderId, direction, authorUserId, rating, feedback })`, one transaction under
   `SELECT … FOR UPDATE OF orders`: author = the order's customer (CUSTOMER_TO_VENDOR) or the vendor's
@@ -545,27 +568,47 @@ notifications. Worker consumers and timer handlers are placeholders.
   simultaneous customer + vendor submissions leave both quarantined).
 
 **Dispute access.** `disputes/dispute-service.ts#DisputeService.access(participant, orderId)`: the
-order's customer or the vendor's user while `state = DELIVERED` and `clock_timestamp() < delivered_at + 48 h`;
-`SUPER_ADMIN` always; anyone else (drivers included) `ORDER_NOT_FOUND`. `participantProfile(userId)` loads
-the **full** users row (last name and phone included) for the chat's sender field.
+order's customer or the vendor's user while `state = DELIVERED` and (`clock_timestamp() < delivered_at + 48 h`
+**or the order's dispute is OPEN**, Phase 9.5: an opened dispute outlives the window until resolved);
+`SUPER_ADMIN` always; anyone else (drivers included) `ORDER_NOT_FOUND`. The same rule gates evidence
+uploads. `participantProfile(userId)` loads the **full** users row (last name and phone included) for
+the chat's sender field.
+
+**Transcript (Phase 9.5).** `DisputeService.recordMessage({ orderId, senderUserId, clientId, body,
+attachments })`, one transaction:
+
+1. `INSERT INTO disputes … ON CONFLICT (order_id) DO NOTHING RETURNING` (opened_by = sender, reason =
+   the trimmed body or "Photo evidence submitted"), else read the existing dispute. Two simultaneous
+   first messages open exactly one dispute (tested 5×; mutation-checked: a plain insert fails it);
+2. `INSERT INTO chat_messages … ON CONFLICT (dispute_id, sender_user_id, client_id) DO NOTHING
+RETURNING`, else read the stored row: a retried send is stored once and gets the same id back.
+
+Returns `{ message, dispute, disputeOpened, replayed }`. Any participant's first message opens the
+dispute (customer, vendor or admin). The order state is **not** changed (it stays `DELIVERED`, which
+reviews and access rely on).
 
 **Socket.io `/chat`** (`realtime/chat-namespace.ts#serveChatNamespace`, attached by `attachRealtime`
 when `options.chat` is given, so it shares the `/orders` server, heartbeat and **Redis adapter**).
 Contract: `packages/shared-types/src/realtime/chat-socket.ts`.
 
-| Aspect    | Behaviour                                                                                                                                                                                                                                                                                                                                   |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Handshake | `realtime/socket-auth.ts#socketAuth` (shared with `/orders`): bad/missing/expired token → `UNAUTHENTICATED`; roles CUSTOMER, VENDOR, SUPER_ADMIN, else `FORBIDDEN`                                                                                                                                                                          |
-| Join      | `chat:join { order_id }` (ack optional) → `DisputeService.access` → room `dispute:{order_id}`; ack `{ ok: true, order_id }` or `{ ok: false, error: { code: VALIDATION_FAILED \| ORDER_NOT_FOUND \| DISPUTE_WINDOW_CLOSED \| INTERNAL_SERVER_ERROR } }`. Access is decided once per order per connection                                    |
-| Send      | `chat:new_message { client_id, order_id, body ≤ 2000, attachments ≤ 4 }` + ack. Anything else the client sends (sender, id, sent_at) is ignored. Same access rule (no join needed to send). Attachments must satisfy `EvidenceStorage.isEvidenceUrl(order, url)` (issued by the upload endpoint for that order)                             |
-| Broadcast | Server sets `id` (uuid), `sent_at` and `sender` = the sender's users row, then **`broadcastChatMessage` → `sanitizeChatMessage`**: `stripChatPii` deletes `last_name` / `phone_number` / `phone` at every depth, then the allowlist schema keeps `sender {id, first_name, role}` only. Emitted to the room; the ack carries the same object |
+| Aspect    | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Handshake | `realtime/socket-auth.ts#socketAuth` (shared with `/orders`): bad/missing/expired token → `UNAUTHENTICATED`; roles CUSTOMER, VENDOR, SUPER_ADMIN, else `FORBIDDEN`                                                                                                                                                                                                                                                                                                                  |
+| Join      | `chat:join { order_id }` (ack optional) → `DisputeService.access` → room `dispute:{order_id}`; ack `{ ok: true, order_id }` or `{ ok: false, error: { code: VALIDATION_FAILED \| ORDER_NOT_FOUND \| DISPUTE_WINDOW_CLOSED \| INTERNAL_SERVER_ERROR } }`. Access is decided once per order per connection                                                                                                                                                                            |
+| Send      | `chat:new_message { client_id, order_id, body ≤ 2000, attachments ≤ 4 }` + ack. Anything else the client sends (sender, id, sent_at) is ignored. Same access rule (no join needed to send). Attachments must satisfy `EvidenceStorage.isEvidenceUrl(order, url)` (issued by the upload endpoint for that order)                                                                                                                                                                     |
+| Broadcast | **Persisted first** (`recordMessage`; if that fails nothing is broadcast and the ack is `INTERNAL_SERVER_ERROR`). `id` = the `chat_messages.id`, `sent_at` = its `created_at`, `sender` = the sender's users row, then **`broadcastChatMessage` → `sanitizeChatMessage`**: `stripChatPii` deletes `last_name` / `phone_number` / `phone` at every depth, then the allowlist schema keeps `sender {id, first_name, role}` only. Emitted to the room; the ack carries the same object |
 
 - **Privacy tests:** `src/realtime/chat-namespace.test.ts` (in-process, raw payloads received by the
   other party, spoofed senders, admin without first name; mutation-checked: bypassing the filter fails 4
   tests) and `test/chat-realtime.int.test.ts` (two API instances on one Redis adapter, real DB rows with
   surnames and phones, customer on one instance, vendor on the other).
-- **Not persisted:** messages exist only in flight; there is no transcript table yet, and the `disputes`
-  row is never created. The chat stays open only while the 48 h window is (an admin can always join).
+- **Persistence tests** (`test/chat-realtime.int.test.ts`, "persistence"): the row exists with the
+  broadcast's id/time; first message opens the dispute, later ones (either party) join it; vendor-opened
+  and photo-only disputes; retried `client_id` stored once; simultaneous first messages → one dispute;
+  OPEN dispute reachable at 49 h and closed again once resolved; refused messages store nothing.
+  Mutation-checked: broadcasting without `recordMessage` fails 7 of them.
+- **Not read back yet:** the transcript is written, but no event or route returns it (a reopened chat
+  screen still starts empty; Super Admin has no view).
 
 **Evidence uploads (mock R2).** `uploads/evidence-storage.ts#LocalEvidenceStorage` writes
 `<UPLOADS_DIR>/dispute-evidence/<order>/<uuid>.<ext>` (default `UPLOADS_DIR` = `os.tmpdir()/uploads`, i.e.
@@ -1148,12 +1191,13 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 7. **Feed location from GPS** instead of the saved address / Thamel fallback.
 8. **Saved addresses** (`customer_addresses` CRUD) if the app should sync addresses across devices,
    and a profile screen to add the customer's name (`first_name` is null after OTP sign-up).
-9. **Disputes follow-up (Phase 9 built reviews, `/chat` and uploads, §8C):** persist chat messages
-   (a transcript table for Super Admin arbitration), create the `disputes` row on the first message and
-   keep an OPEN dispute's chat available past 48 h, move the order to `DISPUTED`, admin resolution
-   routes. Vendor review route (the service already supports `VENDOR_TO_CUSTOMER`), a read route for
-   published reviews, and optionally a BullMQ job that flips `is_published` after 48 h (reads already
-   treat such reviews as public).
+9. **Disputes follow-up (Phases 9/9.5 built reviews both ways, `/chat` with a persisted transcript,
+   dispute opening and uploads, §8C):** read the transcript back (history in the `chat:join` ack or a
+   `GET` route, so a reopened screen is not empty; a Super Admin transcript view), admin resolution
+   routes (`REFUNDED_TO_CUSTOMER` triggers the refund flow, `RELEASED_TO_VENDOR` unfreezes escrow),
+   decide whether an opened dispute moves the order to `DISPUTED` (reviews and access currently
+   require `DELIVERED`), a read route for published reviews, and optionally a BullMQ job that flips
+   `is_published` after 48 h (reads already treat such reviews as public).
 10. **Evidence storage:** replace `LocalEvidenceStorage` with Cloudflare R2 (presigned PUT or
     server-side put) behind the same `EvidenceStorage` interface, and add react-native-compressor on
     the device (SPEC infrastructure §6: WebP, 1200 px, < 300 KB) so large photos are not refused.
@@ -1246,6 +1290,19 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
     under `os.tmpdir()/uploads` (the prompt's `/tmp/uploads`, portable to Windows) and served by the
     API. Attachment URLs may be `http` for this local stand-in.
 
+- **Phase 9.5:**
+  - The transcript table is `chat_messages` keyed to `disputes` (not to orders): every message belongs
+    to a dispute, and the order's first message creates it. The prompt's event name `chat:message` is
+    the existing `chat:new_message` (SPEC implicit requirement 4 names that event).
+  - Messages are persisted **before** broadcasting; a failed write means no broadcast.
+  - Retries dedupe on `(dispute, sender, client_id)`; the retry is re-broadcast with the stored id and
+    clients drop the duplicate.
+  - Any participant (customer, vendor, admin) can open the dispute. The order state stays
+    `DELIVERED`.
+  - An OPEN dispute keeps the chat (and uploads) available after 48 h; resolution closes it again.
+  - The vendor review route is `/api/vendors/orders/:id/reviews`, mounted ahead of the customer
+    `/api/vendors` catalogue; it reuses `ReviewService.submit` unchanged.
+
 ## 13. Known gaps and risks
 
 - **No live end-to-end run** of the app against the API, and no live eSewa/Khalti sandbox session.
@@ -1261,8 +1318,11 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 - The device-side 60 s countdown starts when the device sees PLACED, the server's at `placed_at`;
   a device that learns of the placement late shows more time than the server allows. **Accepted by
   design** (§12): the server answers 422 and the app shows the "window has ended" toast.
-- **Dispute chat is not persisted:** messages sent while a party is offline are lost for them, and a
-  reopened screen starts empty. Super Admin has no transcript to arbitrate from yet (§11 item 9).
+- **The transcript is stored but never read back:** a party who was offline misses messages until
+  history is served, a reopened screen starts empty, and Super Admin has no transcript view yet
+  (§11 item 9). The data is in `chat_messages`.
+- **Disputes are opened but never resolved:** no route sets `REFUNDED_TO_CUSTOMER` /
+  `RELEASED_TO_VENDOR`, so an opened dispute keeps its chat open indefinitely.
 - **Evidence lives on the API host's disk** (`os.tmpdir()/uploads`): lost on redeploy, not shared
   between instances, and served without auth (unguessable names only). Development only until R2.
 - **Chat access is decided once per order per connection:** a socket that joined before the 48 h

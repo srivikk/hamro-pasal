@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { rm } from 'node:fs/promises';
 
-import { orders, users, vendors } from '@hamro-pasal/db';
+import { chatMessages, disputes, orders, users, vendors } from '@hamro-pasal/db';
 import {
   chatJoinAckSchema,
   chatMessageSchema,
@@ -280,5 +280,189 @@ describe('dispute chat (/chat)', () => {
     expect(ack.ok).toBe(true);
     expect(chatMessageSchema.parse(vendor.received[0]).attachments).toEqual([uploaded]);
     expectNoPii(vendor.received, pii);
+  });
+
+  describe('persistence (Phase 9.5)', () => {
+    async function disputesOf(orderId: string) {
+      return db().select().from(disputes).where(eq(disputes.order_id, orderId));
+    }
+
+    async function transcriptOf(orderId: string) {
+      const rows = await db()
+        .select({ message: chatMessages })
+        .from(chatMessages)
+        .innerJoin(disputes, eq(disputes.id, chatMessages.dispute_id))
+        .where(eq(disputes.order_id, orderId))
+        .orderBy(chatMessages.created_at);
+      return rows.map((row) => row.message);
+    }
+
+    it('stores the message before broadcasting it, under the stored id and time', async () => {
+      const { customerId, vendorUserId, orderId } = await dispute();
+      const customer = await participant(0, customerId, 'CUSTOMER');
+      const vendor = await participant(1, vendorUserId, 'VENDOR');
+      await join(vendor.socket, orderId);
+
+      const ack = await send(customer.socket, {
+        client_id: 'c-persist',
+        order_id: orderId,
+        body: '  The honey jar arrived broken.  ',
+      });
+      await until(() => vendor.received.length === 1);
+
+      const [row] = await transcriptOf(orderId);
+      expect(row).toMatchObject({
+        sender_user_id: customerId,
+        client_id: 'c-persist',
+        body: 'The honey jar arrived broken.',
+        attachments: [],
+      });
+      const broadcast = chatMessageSchema.parse(vendor.received[0]);
+      expect(broadcast.id).toBe(row?.id);
+      expect(broadcast.sent_at).toBe(row?.created_at.toISOString());
+      expect(ack).toEqual({ ok: true, message: vendor.received[0] });
+    });
+
+    it("the order's first message opens its dispute; later ones join it", async () => {
+      const { customerId, vendorUserId, orderId } = await dispute();
+      const customer = await participant(0, customerId, 'CUSTOMER');
+      const vendor = await participant(1, vendorUserId, 'VENDOR');
+      expect(await disputesOf(orderId)).toEqual([]);
+
+      await send(customer.socket, { client_id: 'c-1', order_id: orderId, body: 'Jar broken.' });
+      const opened = await disputesOf(orderId);
+      await send(vendor.socket, { client_id: 'v-1', order_id: orderId, body: 'Sorry! Photo?' });
+      await send(customer.socket, { client_id: 'c-2', order_id: orderId, body: 'Attached.' });
+
+      expect(opened).toHaveLength(1);
+      expect(opened[0]).toMatchObject({
+        order_id: orderId,
+        opened_by_user_id: customerId,
+        reason: 'Jar broken.',
+        status: 'OPEN',
+        resolved_by_user_id: null,
+        resolved_at: null,
+      });
+      expect(await disputesOf(orderId)).toEqual(opened);
+      const transcript = await transcriptOf(orderId);
+      expect(transcript.map((m) => [m.sender_user_id, m.body])).toEqual([
+        [customerId, 'Jar broken.'],
+        [vendorUserId, 'Sorry! Photo?'],
+        [customerId, 'Attached.'],
+      ]);
+      expect(new Set(transcript.map((m) => m.dispute_id))).toEqual(new Set([opened[0]?.id]));
+    });
+
+    it('a vendor can open the dispute too', async () => {
+      const { vendorUserId, orderId } = await dispute();
+      const vendor = await participant(1, vendorUserId, 'VENDOR');
+
+      await send(vendor.socket, { client_id: 'v-1', order_id: orderId, body: 'Customer refused.' });
+
+      expect(await disputesOf(orderId)).toMatchObject([
+        { opened_by_user_id: vendorUserId, reason: 'Customer refused.' },
+      ]);
+    });
+
+    it('a photo-only first message opens the dispute with a placeholder reason', async () => {
+      const { customerId, orderId } = await dispute();
+      const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+      const uploaded = bodyOf(
+        disputeEvidenceUploadResponseSchema,
+        await request(t.app)
+          .post('/api/uploads/dispute-evidence')
+          .set('authorization', bearer(customerId))
+          .field('order_id', orderId)
+          .attach('file', jpeg, { filename: 'jar.jpg', contentType: 'image/jpeg' }),
+      );
+      const customer = await participant(0, customerId, 'CUSTOMER');
+
+      await send(customer.socket, {
+        client_id: 'c-img',
+        order_id: orderId,
+        body: '',
+        attachments: [uploaded],
+      });
+
+      expect((await disputesOf(orderId))[0]?.reason).toBe('Photo evidence submitted');
+      expect((await transcriptOf(orderId))[0]?.attachments).toEqual([uploaded]);
+    });
+
+    it('stores a retried send (same client_id) once and acks the same message', async () => {
+      const { customerId, orderId } = await dispute();
+      const customer = await participant(0, customerId, 'CUSTOMER');
+      const payload = { client_id: 'c-retry', order_id: orderId, body: 'Hello?' };
+
+      const first = await send(customer.socket, payload);
+      const retried = await send(customer.socket, payload);
+
+      expect(await transcriptOf(orderId)).toHaveLength(1);
+      expect(first.ok && retried.ok && retried.message.id === first.message.id).toBe(true);
+    });
+
+    it('opens exactly one dispute when both parties send their first message at once', async () => {
+      for (let round = 0; round < 5; round++) {
+        const { customerId, vendorUserId, orderId } = await dispute();
+        const customer = await participant(0, customerId, 'CUSTOMER');
+        const vendor = await participant(1, vendorUserId, 'VENDOR');
+
+        const acks = await Promise.all([
+          send(customer.socket, { client_id: 'c', order_id: orderId, body: 'Broken.' }),
+          send(vendor.socket, { client_id: 'v', order_id: orderId, body: 'Refused.' }),
+        ]);
+
+        expect(acks.every((ack) => ack.ok)).toBe(true);
+        expect(await disputesOf(orderId)).toHaveLength(1);
+        expect(await transcriptOf(orderId)).toHaveLength(2);
+      }
+    });
+
+    it('keeps an OPEN dispute reachable after the 48 h window, until it is resolved', async () => {
+      const { customerId, vendorUserId, orderId } = await dispute(47);
+      const early = await participant(0, customerId, 'CUSTOMER');
+      await send(early.socket, { client_id: 'c-1', order_id: orderId, body: 'Opened in time.' });
+      await db()
+        .update(orders)
+        .set({ delivered_at: sql`now() - make_interval(hours => 49)` })
+        .where(eq(orders.id, orderId));
+
+      const customer = await participant(0, customerId, 'CUSTOMER');
+      const vendor = await participant(1, vendorUserId, 'VENDOR');
+
+      expect(await join(customer.socket, orderId)).toEqual({ ok: true, order_id: orderId });
+      expect(await join(vendor.socket, orderId)).toEqual({ ok: true, order_id: orderId });
+      expect(
+        await send(vendor.socket, { client_id: 'v-late', order_id: orderId, body: 'Refunding.' }),
+      ).toMatchObject({ ok: true });
+
+      const [open] = await disputesOf(orderId);
+      await db()
+        .update(disputes)
+        .set({
+          status: 'REFUNDED_TO_CUSTOMER',
+          resolved_at: new Date(),
+          resolved_by_user_id: customerId,
+        })
+        .where(eq(disputes.id, open?.id ?? ''));
+      const afterResolution = await participant(0, customerId, 'CUSTOMER');
+      expect(await join(afterResolution.socket, orderId)).toMatchObject({
+        ok: false,
+        error: { code: 'DISPUTE_WINDOW_CLOSED' },
+      });
+    });
+
+    it('stores nothing and opens nothing for refused messages', async () => {
+      const { orderId } = await dispute(48.1);
+      const outsider = await participant(0, await createUser(db()), 'CUSTOMER');
+      const late = await dispute(48.1);
+      const lateCustomer = await participant(0, late.customerId, 'CUSTOMER');
+
+      await send(outsider.socket, { client_id: 'x', order_id: orderId, body: 'hi' });
+      await send(lateCustomer.socket, { client_id: 'y', order_id: late.orderId, body: 'hi' });
+
+      expect(await disputesOf(orderId)).toEqual([]);
+      expect(await disputesOf(late.orderId)).toEqual([]);
+      expect(await transcriptOf(late.orderId)).toEqual([]);
+    });
   });
 });

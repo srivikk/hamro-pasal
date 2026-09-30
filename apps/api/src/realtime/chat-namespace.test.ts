@@ -9,6 +9,7 @@ import {
   type ChatJoinAck,
   type ChatMessage,
   type ChatSendAck,
+  type Dispute,
   type User,
   type UserRole,
 } from '@hamro-pasal/shared-types';
@@ -46,6 +47,17 @@ const AARAV = userRow('CUSTOMER', 'Aarav', 'Sharma', '+9779800000001');
 const RAM = userRow('VENDOR', 'Ram', 'Shrestha', '+9779800000011');
 const ADMIN = userRow('SUPER_ADMIN', null, 'Adhikari', '+9779800000099');
 const OUTSIDER = userRow('CUSTOMER', 'Sita', 'Karki', '+9779800000002');
+const DISPUTE: Dispute = {
+  id: randomUUID(),
+  order_id: ORDER_ID,
+  opened_by_user_id: AARAV.id,
+  reason: 'Broken jar',
+  status: 'OPEN',
+  resolved_by_user_id: null,
+  resolved_at: null,
+  created_at: new Date('2026-09-30T08:00:00.000Z'),
+  updated_at: new Date('2026-09-30T08:00:00.000Z'),
+};
 const USERS = new Map([AARAV, RAM, ADMIN, OUTSIDER].map((user) => [user.id, user]));
 
 const PII = ['last_name', 'phone_number', '"phone"', 'Sharma', 'Shrestha', 'Adhikari', '+97798'];
@@ -80,12 +92,27 @@ describe('/chat namespace', () => {
         disputes: {
           access: fakeAccess,
           participantProfile: (userId) => Promise.resolve(USERS.get(userId) ?? null),
+          // In-memory stand-in for the transcript (persistence is covered by the integration test).
+          recordMessage: (input) =>
+            Promise.resolve({
+              message: {
+                id: randomUUID(),
+                dispute_id: DISPUTE.id,
+                sender_user_id: input.senderUserId,
+                client_id: input.clientId,
+                body: input.body,
+                attachments: [...input.attachments],
+                created_at: sentAt,
+              },
+              dispute: DISPUTE,
+              disputeOpened: false,
+              replayed: false,
+            }),
         },
         evidence: {
           isEvidenceUrl: (orderId, candidate) =>
             candidate.startsWith(`http://localhost:4000/uploads/dispute-evidence/${orderId}/`),
         },
-        now: () => sentAt,
       },
     });
     await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));

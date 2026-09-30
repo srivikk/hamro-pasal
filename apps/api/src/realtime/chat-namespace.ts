@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import {
   CHAT_SOCKET_EVENTS,
   chatJoinRequestSchema,
@@ -37,10 +35,8 @@ export type ChatNamespace = Namespace<
 
 export interface ChatNamespaceOptions {
   readonly accessTokenSecret: string;
-  readonly disputes: Pick<DisputeService, 'access' | 'participantProfile'>;
+  readonly disputes: Pick<DisputeService, 'access' | 'participantProfile' | 'recordMessage'>;
   readonly evidence: Pick<EvidenceStorage, 'isEvidenceUrl'>;
-  /** Tests only: the server clock stamped on messages. */
-  readonly now?: () => Date;
 }
 
 /** Customers, the order's vendor and Super Admins (arbitration) take part in dispute chats. */
@@ -73,12 +69,14 @@ const ACCESS_ERRORS = {
  *   - `chat:join { order_id }` (ack optional): joins `dispute:{order_id}` if the caller is the
  *     order's customer or vendor inside the 48 h window after delivery, or a Super Admin;
  *   - `chat:new_message { client_id, order_id, body, attachments }` (ack): the same access rule;
- *     attachments must be evidence uploaded for that order. The server sets the id, time and
- *     sender (from its own users row, then privacy-filtered), broadcasts to the room, and acks
- *     `{ ok: true, message }` with exactly what was broadcast.
+ *     attachments must be evidence uploaded for that order. The message is first PERSISTED
+ *     (chat_messages; the order's first message also opens its disputes row), then broadcast with
+ *     the stored id and time and the sender from the server's own users row (privacy-filtered),
+ *     and acked `{ ok: true, message }` with exactly what was broadcast. If storing fails, nothing
+ *     is broadcast. A retried send (same client_id) is stored once and re-broadcast with the same id,
+ *     which clients deduplicate.
  */
 export function serveChatNamespace(chat: ChatNamespace, options: ChatNamespaceOptions): void {
-  const now = options.now ?? (() => new Date());
   chat.use(
     socketAuth(
       options.accessTokenSecret,
@@ -163,14 +161,22 @@ export function serveChatNamespace(chat: ChatNamespace, options: ChatNamespaceOp
           profile = null;
           return { ok: false, error: { code: 'ORDER_NOT_FOUND', message: 'Unknown sender' } };
         }
-        const message = broadcastChatMessage(chat, {
-          id: randomUUID(),
-          client_id: clientId,
-          order_id: orderId,
-          sender, // the full users row: the privacy filter in broadcastChatMessage reduces it
+        // The transcript is written before anyone sees the message.
+        const { message: stored } = await options.disputes.recordMessage({
+          orderId,
+          senderUserId: participant.userId,
+          clientId,
           body,
           attachments,
-          sent_at: now().toISOString(),
+        });
+        const message = broadcastChatMessage(chat, {
+          id: stored.id,
+          client_id: stored.client_id,
+          order_id: orderId,
+          sender, // the full users row: the privacy filter in broadcastChatMessage reduces it
+          body: stored.body,
+          attachments: stored.attachments,
+          sent_at: stored.created_at.toISOString(),
         });
         return { ok: true, message };
       };

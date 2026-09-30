@@ -21,6 +21,7 @@ import {
   vendorFulfillmentModeSchema,
   vendorStatusSchema,
 } from './enums';
+import { MAX_CHAT_ATTACHMENTS, MAX_CHAT_MESSAGE_LENGTH } from '../realtime/chat-socket';
 
 /*
  * Persisted row shapes. Field names mirror the Postgres columns (snake_case, as in SPEC.md).
@@ -236,6 +237,29 @@ export const disputeSchema = z.strictObject({
   updated_at: z.date(),
 });
 export type Dispute = z.infer<typeof disputeSchema>;
+
+/** An image attached to a dispute chat message, as stored (a chat attachment). */
+export const storedChatAttachmentSchema = z.strictObject({
+  url: z.url({ protocol: /^https?$/ }),
+  content_type: z.string().regex(/^image\/[a-z0-9.+-]+$/),
+});
+export type StoredChatAttachment = z.infer<typeof storedChatAttachmentSchema>;
+
+/**
+ * One persisted dispute chat message (the transcript Super Admin arbitrates from). The sender is a
+ * reference only: names are joined in, and privacy-filtered, when a message is broadcast.
+ */
+export const chatMessageRowSchema = z.strictObject({
+  id: z.uuid(),
+  dispute_id: z.uuid(),
+  sender_user_id: z.uuid(),
+  /** The sending device's id for the message; unique per sender and dispute (retries dedupe). */
+  client_id: z.string().min(1).max(100),
+  body: z.string().max(MAX_CHAT_MESSAGE_LENGTH),
+  attachments: z.array(storedChatAttachmentSchema).max(MAX_CHAT_ATTACHMENTS),
+  created_at: z.date(),
+});
+export type ChatMessageRow = z.infer<typeof chatMessageRowSchema>;
 
 /** Double-blind: quarantined (`is_published = false`) until both sides submit or 48h elapse. */
 export const reviewSchema = z.strictObject({

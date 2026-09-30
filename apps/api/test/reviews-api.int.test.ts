@@ -354,4 +354,145 @@ describe('reviews API', () => {
       expect(errorOf(afterWindow).code).toBe('COD_NOT_AVAILABLE');
     });
   });
+
+  describe('POST /api/vendors/orders/:id/reviews (Phase 9.5)', () => {
+    function vendorPost(vendorUserId: string, orderId: string, body: Record<string, unknown>) {
+      return request(t.app)
+        .post(`/api/vendors/orders/${orderId}/reviews`)
+        .set('authorization', bearer(vendorUserId, 'VENDOR'))
+        .send(body);
+    }
+
+    it("un-quarantines the customer's pending review, publishing both", async () => {
+      const { customerId, vendorUserId, orderId } = await deliveredOrder();
+      const customerSide = bodyOf(
+        reviewSubmitResponseSchema,
+        await review(customerId, { order_id: orderId, rating: 5, feedback: 'Great saag' }),
+      );
+      expect(customerSide.review.status).toBe('QUARANTINED');
+      await expect(
+        t.container.reviews.publicReview(orderId, 'CUSTOMER_TO_VENDOR'),
+      ).resolves.toBeNull();
+
+      const res = await vendorPost(vendorUserId, orderId, {
+        rating: 2,
+        feedback: '  Nobody answered the door.  ',
+      });
+
+      expect(res.status).toBe(201);
+      const vendorSide = bodyOf(reviewSubmitResponseSchema, res).review;
+      expect(vendorSide).toMatchObject({
+        order_id: orderId,
+        direction: 'VENDOR_TO_CUSTOMER',
+        rating: 2,
+        feedback: 'Nobody answered the door.',
+        status: 'PUBLISHED',
+      });
+      const rows = await rowsOf(orderId);
+      expect(rows.map((row) => [row.direction, row.is_published]).sort()).toEqual([
+        ['CUSTOMER_TO_VENDOR', true],
+        ['VENDOR_TO_CUSTOMER', true],
+      ]);
+      expect(rows[0]?.published_at?.getTime()).toBe(rows[1]?.published_at?.getTime());
+      expect(vendorSide.published_at).toBe(rows[0]?.published_at?.toISOString());
+      // The customer's review, hidden a moment ago, is now public.
+      await expect(
+        t.container.reviews.publicReview(orderId, 'CUSTOMER_TO_VENDOR'),
+      ).resolves.toMatchObject({ id: customerSide.review.id, rating: 5, is_published: true });
+    });
+
+    it('is quarantined when the vendor reviews first, and published by the customer', async () => {
+      const { customerId, vendorUserId, orderId } = await deliveredOrder();
+
+      const first = bodyOf(
+        reviewSubmitResponseSchema,
+        await vendorPost(vendorUserId, orderId, { rating: 4 }),
+      );
+      expect(first.review).toMatchObject({ status: 'QUARANTINED', feedback: null });
+
+      const second = bodyOf(
+        reviewSubmitResponseSchema,
+        await review(customerId, { order_id: orderId, rating: 5 }),
+      );
+      expect(second.review.status).toBe('PUBLISHED');
+      expect((await rowsOf(orderId)).every((row) => row.is_published)).toBe(true);
+    });
+
+    it("answers 404 for another vendor's order", async () => {
+      const { orderId } = await deliveredOrder();
+      const otherVendorId = await createVendor(db());
+      const [other] = await db()
+        .select({ userId: vendors.user_id })
+        .from(vendors)
+        .where(eq(vendors.id, otherVendorId));
+
+      const res = await vendorPost(other?.userId ?? '', orderId, { rating: 1 });
+
+      expect(res.status).toBe(404);
+      expect(errorOf(res).code).toBe('ORDER_NOT_FOUND');
+      expect(await rowsOf(orderId)).toEqual([]);
+    });
+
+    it('applies the same rules: delivered only, once, inside 48 h', async () => {
+      const once = await deliveredOrder();
+      const late = await deliveredOrder(48.1);
+      const pending = await deliveredOrder();
+      await db()
+        .update(orders)
+        .set({ state: 'OUT_FOR_DELIVERY', delivered_at: null })
+        .where(eq(orders.id, pending.orderId));
+
+      await vendorPost(once.vendorUserId, once.orderId, { rating: 3 });
+      const again = await vendorPost(once.vendorUserId, once.orderId, { rating: 3 });
+      const afterWindow = await vendorPost(late.vendorUserId, late.orderId, { rating: 3 });
+      const notDelivered = await vendorPost(pending.vendorUserId, pending.orderId, { rating: 3 });
+
+      expect(again.status).toBe(409);
+      expect(errorOf(again).code).toBe('REVIEW_ALREADY_SUBMITTED');
+      expect(afterWindow.status).toBe(422);
+      expect(errorOf(afterWindow).code).toBe('REVIEW_WINDOW_CLOSED');
+      expect(notDelivered.status).toBe(409);
+      expect(errorOf(notDelivered)).toMatchObject({
+        code: 'ORDER_STATE_CONFLICT',
+        details: { state: 'OUT_FOR_DELIVERY' },
+      });
+    });
+
+    it.each([
+      ['rating 6', { rating: 6 }],
+      ['an order_id in the body', { rating: 4, order_id: randomUUID() }],
+      ['feedback over 500 characters', { rating: 4, feedback: 'a'.repeat(501) }],
+    ])('rejects %s (400)', async (_label, body) => {
+      const { vendorUserId, orderId } = await deliveredOrder();
+
+      const res = await vendorPost(vendorUserId, orderId, body);
+
+      expect(res.status).toBe(400);
+      expect(errorOf(res).code).toBe('VALIDATION_FAILED');
+    });
+
+    it('rejects a malformed order id (400)', async () => {
+      const { vendorUserId } = await deliveredOrder();
+
+      const res = await vendorPost(vendorUserId, 'not-a-uuid', { rating: 4 });
+
+      expect(res.status).toBe(400);
+    });
+
+    it('needs a vendor access token', async () => {
+      const { customerId, orderId } = await deliveredOrder();
+
+      const anonymous = await request(t.app)
+        .post(`/api/vendors/orders/${orderId}/reviews`)
+        .send({ rating: 4 });
+      const asCustomer = await request(t.app)
+        .post(`/api/vendors/orders/${orderId}/reviews`)
+        .set('authorization', bearer(customerId))
+        .send({ rating: 4 });
+
+      expect(anonymous.status).toBe(401);
+      expect(asCustomer.status).toBe(403);
+      expect(await rowsOf(orderId)).toEqual([]);
+    });
+  });
 });

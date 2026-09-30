@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   customerAddressSchema,
+  chatMessageRowSchema,
   disputeSchema,
   ledgerAccountSchema,
   ledgerEntrySchema,
@@ -20,6 +21,7 @@ import { eq } from 'drizzle-orm';
 import { createDatabase, type Database } from '../src/client';
 import {
   customerAddresses,
+  chatMessages,
   disputes,
   ledgerAccounts,
   ledgerEntries,
@@ -183,6 +185,20 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
         .values({ order_id: order.id, opened_by_user_id: customer.id, reason: 'Item missing' })
         .returning(),
     );
+    const chatMessage = one(
+      await db
+        .insert(chatMessages)
+        .values({
+          dispute_id: dispute.id,
+          sender_user_id: customer.id,
+          client_id: 'client-1',
+          body: 'The honey jar arrived broken.',
+          attachments: [
+            { url: 'https://cdn.hamropasal.test/evidence/jar.webp', content_type: 'image/webp' },
+          ],
+        })
+        .returning(),
+    );
     const review = one(
       await db
         .insert(reviews)
@@ -252,6 +268,13 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
         await read(db.select().from(disputes).where(eq(disputes.id, dispute.id))),
       ),
     ).toBeDefined();
+    expect(
+      chatMessageRowSchema.parse(
+        await read(db.select().from(chatMessages).where(eq(chatMessages.id, chatMessage.id))),
+      ).attachments,
+    ).toEqual([
+      { url: 'https://cdn.hamropasal.test/evidence/jar.webp', content_type: 'image/webp' },
+    ]);
     expect(
       reviewSchema.parse(await read(db.select().from(reviews).where(eq(reviews.id, review.id)))),
     ).toBeDefined();

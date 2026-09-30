@@ -1,8 +1,10 @@
 import { sql } from 'drizzle-orm';
+import type { StoredChatAttachment } from '@hamro-pasal/shared-types';
 import {
   boolean,
   check,
   index,
+  jsonb,
   pgTable,
   smallint,
   text,
@@ -41,6 +43,48 @@ export const disputes = pgTable(
     check(
       'disputes_resolution_check',
       sql`(${t.status} = 'OPEN') = (${t.resolved_at} IS NULL AND ${t.resolved_by_user_id} IS NULL)`,
+    ),
+  ],
+);
+
+/**
+ * The dispute chat transcript (SPEC Super Admin flow 3: arbitration reviews the in-app text/photo
+ * chat). Written by the /chat namespace before a message is broadcast. Append-only by convention:
+ * nothing updates or deletes messages.
+ */
+export const chatMessages = pgTable(
+  'chat_messages',
+  {
+    id: primaryId(),
+    dispute_id: uuid()
+      .notNull()
+      .references(() => disputes.id, { onDelete: 'restrict' }),
+    sender_user_id: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    client_id: text().notNull(),
+    body: text().notNull(),
+    attachments: jsonb().$type<StoredChatAttachment[]>().notNull(),
+    created_at: createdAt(),
+  },
+  (t) => [
+    // A retried send (same device id) is stored once.
+    unique('chat_messages_dispute_sender_client_key').on(
+      t.dispute_id,
+      t.sender_user_id,
+      t.client_id,
+    ),
+    index('chat_messages_dispute_id_created_at_idx').on(t.dispute_id, t.created_at),
+    check('chat_messages_client_id_check', sql`length(${t.client_id}) BETWEEN 1 AND 100`),
+    check('chat_messages_body_check', sql`length(${t.body}) <= 2000`),
+    check(
+      'chat_messages_attachments_check',
+      sql`jsonb_typeof(${t.attachments}) = 'array' AND jsonb_array_length(${t.attachments}) <= 4`,
+    ),
+    // Text, an image, or both: never an empty message.
+    check(
+      'chat_messages_not_empty_check',
+      sql`btrim(${t.body}) <> '' OR jsonb_array_length(${t.attachments}) > 0`,
     ),
   ],
 );

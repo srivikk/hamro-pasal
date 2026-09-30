@@ -16,6 +16,7 @@ import { ordersRouter } from './routes/orders';
 import { paymentsRouter } from './routes/payments';
 import { reviewsRouter } from './routes/reviews';
 import { uploadsRouter } from './routes/uploads';
+import { vendorOrdersRouter } from './routes/vendor-orders';
 import { vendorsRouter } from './routes/vendors';
 import { LocalEvidenceStorage, type EvidenceStorage } from './uploads/evidence-storage';
 
@@ -46,6 +47,12 @@ export function createApp(services?: ApiServices): Express {
   if (services !== undefined) {
     const customerAuth = requireAuth(services.accessTokenSecret, ['CUSTOMER']);
     app.use('/api/auth', authRouter(services.auth));
+    // Before the customer catalogue under /api/vendors, which would otherwise claim these paths.
+    app.use(
+      '/api/vendors/orders',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorOrdersRouter(services.reviews),
+    );
     app.use('/api/vendors', customerAuth, vendorsRouter(services.catalog));
     app.use('/api/cart', customerAuth, cartRouter(services.checkout));
     app.use('/api/orders', customerAuth, ordersRouter(services.orders));

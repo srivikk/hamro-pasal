@@ -78,6 +78,13 @@
       "when": 1790708064185,
       "tag": "0010_users_first_name_optional",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790756119016,
+      "tag": "0011_chat_messages",
+      "breakpoints": true
     }
   ]
 }

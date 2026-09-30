@@ -7,6 +7,7 @@ import {
   otpSendRequestSchema,
   otpVerifyRequestSchema,
   reviewSubmitRequestSchema,
+  vendorReviewSubmitRequestSchema,
   tokenRefreshRequestSchema,
   vendorFeedQuerySchema,
 } from './requests';
@@ -173,5 +174,20 @@ describe('reviewSubmitRequestSchema', () => {
       reviewSubmitRequestSchema.safeParse({ order_id: orderId, rating: 4, is_published: true })
         .success,
     ).toBe(false);
+  });
+});
+
+describe('vendorReviewSubmitRequestSchema', () => {
+  it('takes the rating and feedback only (the order comes from the path)', () => {
+    expect(vendorReviewSubmitRequestSchema.parse({ rating: 2, feedback: '  Not home.  ' })).toEqual(
+      {
+        rating: 2,
+        feedback: 'Not home.',
+      },
+    );
+    expect(
+      vendorReviewSubmitRequestSchema.safeParse({ rating: 2, order_id: randomUUID() }).success,
+    ).toBe(false);
+    expect(vendorReviewSubmitRequestSchema.safeParse({ rating: 0 }).success).toBe(false);
   });
 });

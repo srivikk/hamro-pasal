@@ -136,3 +136,10 @@ export type ReviewSubmission = z.output<typeof reviewSubmitRequestSchema>;
 export const disputeEvidenceUploadFieldsSchema = z.strictObject({
   order_id: z.uuid(),
 });
+
+/**
+ * POST /api/vendors/orders/:id/reviews (SPEC §6): the vendor's 1-5 rating of the order's
+ * customer, with the same optional feedback rules as the customer's review.
+ */
+export const vendorReviewSubmitRequestSchema = reviewSubmitRequestSchema.omit({ order_id: true });
+export type VendorReviewSubmitRequest = z.input<typeof vendorReviewSubmitRequestSchema>;

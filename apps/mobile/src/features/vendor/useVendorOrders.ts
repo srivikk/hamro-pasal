@@ -2,22 +2,29 @@ import {
   ORDER_SOCKET_EVENTS,
   orderStateUpdateSchema,
   vendorSubscribeAckSchema,
+  type DeliveryConfirmedResponseBody,
   type VendorOrderDecisionResponseBody,
+  type VendorOrderDispatchResponseBody,
   type VendorOrderView,
 } from '@hamro-pasal/shared-types';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { z } from 'zod';
 
 import { ApiError } from '../../api/http';
 import { retryTransientFailures } from '../../api/query-client';
 import {
+  CANCELLATION_WINDOW_OPEN,
   decideVendorOrder,
+  deliverVendorOrder,
+  dispatchVendorOrder,
   fetchVendorOrders,
   type VendorOrderDecision,
 } from '../../api/vendor-orders';
 import { createOrdersSocket, reconnectDelayMs, type SocketFactory } from '../../services/socket';
 import { useToastStore } from '../../store/useToastStore';
+import { deliveryErrorMessage, isStaleDeliveryError } from '../delivery/delivery-errors';
 
 export const vendorOrdersQueryKey = ['vendor', 'orders'] as const;
 
@@ -101,7 +108,19 @@ function applyDecision(queryClient: QueryClient, result: VendorOrderDecisionResp
   queryClient.setQueryData<VendorOrderView[]>(vendorOrdersQueryKey, (orders) =>
     orders
       ?.map((order) => (order.id === result.order_id ? { ...order, state: result.state } : order))
-      .filter((order) => order.state === 'PLACED' || order.state === 'PREPARING'),
+      .filter(isOnVendorDashboard),
+  );
+}
+
+/**
+ * The orders the server lists for the vendor: new, being packed, and the shop's own deliveries on
+ * the road (a fleet order out for delivery is the rider's).
+ */
+export function isOnVendorDashboard(order: VendorOrderView): boolean {
+  return (
+    order.state === 'PLACED' ||
+    order.state === 'PREPARING' ||
+    (order.state === 'OUT_FOR_DELIVERY' && order.fulfillment === 'SELF_DELIVERY')
   );
 }
 
@@ -173,4 +192,119 @@ export function useVendorOrderDecisions() {
 
   /** Ids of orders the vendor has answered (the request may still be in flight). */
   return { decide: mutation.mutate, acknowledged };
+}
+
+const windowOpenDetailsSchema = z.object({ retry_after_seconds: z.number().int().positive() });
+
+/** Patches one order's state in the cached list and drops it if the vendor no longer sees it. */
+function patchState(
+  queryClient: QueryClient,
+  orderId: string,
+  state: VendorOrderView['state'],
+): void {
+  queryClient.setQueryData<VendorOrderView[]>(vendorOrdersQueryKey, (orders) =>
+    orders
+      ?.map((order) => (order.id === orderId ? { ...order, state } : order))
+      .filter(isOnVendorDashboard),
+  );
+}
+
+/**
+ * Dispatch (vendor flow step 8): PREPARING → OUT_FOR_DELIVERY. A SELF_DELIVERY order stays on the
+ * dashboard with the handoff code field; a fleet order leaves it (the rider has it). Inside the
+ * customer's 60 s window the server answers 422 CANCELLATION_WINDOW_OPEN, shown with the seconds
+ * left; nothing is retried automatically.
+ */
+export function useVendorDispatch() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const toast = useToastStore((store) => store.show);
+
+  const mutation = useMutation<VendorOrderDispatchResponseBody, unknown, string>({
+    mutationKey: ['vendor', 'order-dispatch'],
+    mutationFn: dispatchVendorOrder,
+    retry: false,
+    onSuccess: (result) => {
+      const order = queryClient
+        .getQueryData<VendorOrderView[]>(vendorOrdersQueryKey)
+        ?.find((candidate) => candidate.id === result.order_id);
+      patchState(queryClient, result.order_id, result.state);
+      toast(
+        t(
+          order?.fulfillment === 'SELF_DELIVERY'
+            ? 'vendorDashboard.dispatched'
+            : 'vendorDashboard.dispatchedFleet',
+        ),
+        'success',
+      );
+    },
+    onError: (error) => {
+      if (error instanceof ApiError && error.code === CANCELLATION_WINDOW_OPEN) {
+        const details = windowOpenDetailsSchema.safeParse(error.details);
+        toast(
+          t('vendorDashboard.windowOpen', {
+            seconds: details.success ? details.data.retry_after_seconds : 60,
+          }),
+          'error',
+        );
+        return;
+      }
+      const stale =
+        error instanceof ApiError &&
+        (error.code === 'ORDER_STATE_CONFLICT' || error.code === 'ORDER_NOT_FOUND');
+      toast(t(stale ? 'vendorDashboard.movedOn' : 'vendorDashboard.dispatchFailed'), 'error');
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: vendorOrdersQueryKey });
+    },
+  });
+
+  return {
+    dispatch: mutation.mutate,
+    /** The order being dispatched right now, if any. */
+    pendingOrderId: mutation.isPending ? mutation.variables : null,
+  };
+}
+
+export interface VendorDeliverInput {
+  readonly orderId: string;
+  readonly otp: string;
+}
+
+/**
+ * The shop's own handoff of a SELF_DELIVERY order (vendor flow step 9), with the rider's rules:
+ * success removes the order; a wrong code or a lockout keeps it and says why; an order that moved
+ * on is removed. Never retried automatically: a retry of a wrong code is another attempt.
+ */
+export function useVendorDelivery() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const toast = useToastStore((store) => store.show);
+
+  const mutation = useMutation<DeliveryConfirmedResponseBody, unknown, VendorDeliverInput>({
+    mutationKey: ['vendor', 'order-deliver'],
+    mutationFn: ({ orderId, otp }) => deliverVendorOrder(orderId, otp),
+    retry: false,
+    onSuccess: (result) => {
+      patchState(queryClient, result.order_id, result.state);
+      toast(t('delivery.delivered'), 'success');
+    },
+    onError: (error, { orderId }) => {
+      toast(deliveryErrorMessage(error, t), 'error');
+      if (isStaleDeliveryError(error)) {
+        queryClient.setQueryData<VendorOrderView[]>(vendorOrdersQueryKey, (orders) =>
+          orders?.filter((order) => order.id !== orderId),
+        );
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: vendorOrdersQueryKey });
+    },
+  });
+
+  return {
+    deliver: mutation.mutate,
+    /** The order whose code is being checked right now, if any. */
+    pendingOrderId: mutation.isPending ? mutation.variables.orderId : null,
+  };
 }

@@ -1,11 +1,10 @@
-import { DELIVERY_OTP_LENGTH, type DriverOrderView } from '@hamro-pasal/shared-types';
-import { useState } from 'react';
-import { Text, TextInput, View } from 'react-native';
+import type { DriverOrderView } from '@hamro-pasal/shared-types';
+import { Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { Button } from '../../components/Button';
+import { CashToCollect } from '../delivery/CashToCollect';
+import { DeliveryOtpForm } from '../delivery/DeliveryOtpForm';
 import { vendorOrderCode } from '../vendor/VendorOrderCard';
-import { isCompleteDeliveryOtp, sanitizeDeliveryOtpInput } from './delivery-otp-input';
 
 export interface DriverOrderCardProps {
   order: DriverOrderView;
@@ -21,17 +20,7 @@ export interface DriverOrderCardProps {
  */
 export function DriverOrderCard({ order, submitting, onDeliver }: DriverOrderCardProps) {
   const { t } = useTranslation();
-  const [code, setCode] = useState('');
   const address = order.delivery_address;
-  const cod = order.payment_method === 'COD' && order.payment_status !== 'PAID';
-  const canSubmit = isCompleteDeliveryOtp(code) && !submitting;
-
-  const submit = (): void => {
-    if (!canSubmit) return;
-    onDeliver(code, () => {
-      setCode('');
-    });
-  };
 
   return (
     <View className="gap-3 rounded-2xl bg-white p-4" testID={`driver-order-${order.id}`}>
@@ -73,43 +62,8 @@ export function DriverOrderCard({ order, submitting, onDeliver }: DriverOrderCar
         ))}
       </View>
 
-      <Text
-        className={`text-base font-semibold ${cod ? 'text-red-700' : 'text-neutral-700'}`}
-        testID={`driver-cash-${order.id}`}
-      >
-        {cod
-          ? t('driverDashboard.collectCash', { amount: order.total_npr })
-          : t('driverDashboard.prepaid')}
-      </Text>
-
-      <View className="gap-2">
-        <Text className="text-sm font-medium text-neutral-700">
-          {t('driverDashboard.codeLabel')}
-        </Text>
-        <TextInput
-          testID={`delivery-otp-${order.id}`}
-          accessibilityLabel={t('driverDashboard.codeLabel')}
-          value={code}
-          onChangeText={(text) => {
-            setCode(sanitizeDeliveryOtpInput(text));
-          }}
-          onSubmitEditing={submit}
-          keyboardType="number-pad"
-          inputMode="numeric"
-          autoComplete="off"
-          autoCorrect={false}
-          maxLength={DELIVERY_OTP_LENGTH}
-          editable={!submitting}
-          placeholder={t('driverDashboard.codePlaceholder')}
-          className="rounded-xl border border-neutral-300 bg-white px-3 py-3 text-center text-2xl tracking-[8px] text-neutral-900"
-        />
-        <Button
-          label={submitting ? t('driverDashboard.checking') : t('driverDashboard.deliver')}
-          disabled={!canSubmit}
-          onPress={submit}
-          testID={`deliver-${order.id}`}
-        />
-      </View>
+      <CashToCollect order={order} />
+      <DeliveryOtpForm orderId={order.id} submitting={submitting} onSubmit={onDeliver} />
     </View>
   );
 }

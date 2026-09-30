@@ -6,6 +6,8 @@ import { useSignOut } from '../../src/api/auth';
 import { Button } from '../../src/components/Button';
 import {
   isAlarmRinging,
+  useVendorDelivery,
+  useVendorDispatch,
   useVendorOrderDecisions,
   useVendorOrdersQuery,
   useVendorOrdersRealtime,
@@ -14,10 +16,12 @@ import { useVendorAlarm } from '../../src/features/vendor/vendor-alarm';
 import { VendorOrderCard } from '../../src/features/vendor/VendorOrderCard';
 
 /**
- * Vendor flow steps 6–7: the shop's incoming orders. A new order arrives over Socket.io `/orders`
+ * Vendor flow steps 6–9: the shop's incoming orders. A new order arrives over Socket.io `/orders`
  * (the shop's room), the alarm loops at full volume until the vendor presses Accept or Reject on
- * every waiting order, and accepted orders stay listed as Preparing. If the vendor does not answer
- * within 90 s the backend escalates to an IVR call / SMS.
+ * every waiting order, and accepted orders stay listed as Preparing with a Dispatch button (refused
+ * until the customer's 60 s cancellation window has closed). The shop's own deliveries then stay
+ * listed as Out for delivery, where the customer's 4-digit code is typed at the door. If the vendor
+ * does not answer a new order within 90 s the backend escalates to an IVR call / SMS.
  */
 export default function VendorDashboardScreen() {
   const { t } = useTranslation();
@@ -25,12 +29,15 @@ export default function VendorDashboardScreen() {
   const query = useVendorOrdersQuery();
   useVendorOrdersRealtime(true);
   const { decide, acknowledged } = useVendorOrderDecisions();
+  const { dispatch, pendingOrderId: dispatchingId } = useVendorDispatch();
+  const { deliver, pendingOrderId: deliveringId } = useVendorDelivery();
   const ringing = isAlarmRinging(query.data, acknowledged);
   useVendorAlarm(ringing);
 
   const orders = query.data ?? [];
   const waiting = orders.filter((order) => order.state === 'PLACED');
   const preparing = orders.filter((order) => order.state === 'PREPARING');
+  const onTheRoad = orders.filter((order) => order.state === 'OUT_FOR_DELIVERY');
   const header = (
     <Stack.Screen options={{ headerShown: true, title: t('vendorDashboard.title') }} />
   );
@@ -64,6 +71,14 @@ export default function VendorDashboardScreen() {
       onReject={() => {
         decide({ orderId: order.id, decision: 'reject' });
       }}
+      dispatching={dispatchingId === order.id}
+      onDispatch={() => {
+        dispatch(order.id);
+      }}
+      delivering={deliveringId === order.id}
+      onDeliver={(otp, onRejected) => {
+        deliver({ orderId: order.id, otp }, { onError: onRejected });
+      }}
     />
   );
 
@@ -71,6 +86,7 @@ export default function VendorDashboardScreen() {
     <ScrollView
       className="flex-1 bg-neutral-50"
       contentContainerStyle={{ padding: 16, gap: 16 }}
+      keyboardShouldPersistTaps="handled"
       refreshControl={
         <RefreshControl refreshing={query.isRefetching} onRefresh={() => void query.refetch()} />
       }
@@ -103,6 +119,15 @@ export default function VendorDashboardScreen() {
             {t('vendorDashboard.preparing')}
           </Text>
           {preparing.map(card)}
+        </View>
+      ) : null}
+
+      {onTheRoad.length > 0 ? (
+        <View className="gap-3">
+          <Text className="text-lg font-bold text-neutral-900">
+            {t('vendorDashboard.outForDelivery')}
+          </Text>
+          {onTheRoad.map(card)}
         </View>
       ) : null}
 

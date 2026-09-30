@@ -260,7 +260,10 @@ export const vendorOrderSchema = orderViewSchema.extend({
 });
 export type VendorOrderView = z.infer<typeof vendorOrderSchema>;
 
-/** GET /api/vendors/orders: the vendor's open orders (PLACED, then PREPARING), oldest first. */
+/**
+ * GET /api/vendors/orders: the vendor's open orders (PLACED, then PREPARING, then its own
+ * SELF_DELIVERY orders OUT_FOR_DELIVERY), oldest first within each.
+ */
 export const vendorOrderListResponseSchema = z.strictObject({
   orders: z.array(vendorOrderSchema),
 });
@@ -314,13 +317,16 @@ export const driverOrderListResponseSchema = z.strictObject({
 });
 export type DriverOrderListResponseBody = z.infer<typeof driverOrderListResponseSchema>;
 
-/** POST /api/driver/orders/:id/deliver: the code matched; the order is DELIVERED and settled. */
-export const driverDeliverResponseSchema = z.strictObject({
+/**
+ * POST /api/driver/orders/:id/deliver and /api/vendors/orders/:id/deliver: the code matched; the
+ * order is DELIVERED and settled.
+ */
+export const deliveryConfirmedResponseSchema = z.strictObject({
   order_id: z.uuid(),
   state: z.literal('DELIVERED'),
   delivered_at: z.iso.datetime(),
 });
-export type DriverDeliverResponseBody = z.infer<typeof driverDeliverResponseSchema>;
+export type DeliveryConfirmedResponseBody = z.infer<typeof deliveryConfirmedResponseSchema>;
 
 /*
  * OTP authentication (SPEC implicit requirement 3).

@@ -4,7 +4,7 @@ import {
   cancelOrderResponseSchema,
   errorBodySchema,
   checkoutResponseSchema,
-  driverDeliverResponseSchema,
+  deliveryConfirmedResponseSchema,
   driverOrderListResponseSchema,
   feedResponseSchema,
   lockStatusResponseSchema,
@@ -311,11 +311,11 @@ describe('dispatch and driver schemas', () => {
       delivered_at: '2026-09-30T10:30:00.000Z',
     };
 
-    expect(driverDeliverResponseSchema.parse(body)).toEqual(body);
+    expect(deliveryConfirmedResponseSchema.parse(body)).toEqual(body);
     expect(
-      driverDeliverResponseSchema.safeParse({ ...body, state: 'OUT_FOR_DELIVERY' }).success,
+      deliveryConfirmedResponseSchema.safeParse({ ...body, state: 'OUT_FOR_DELIVERY' }).success,
     ).toBe(false);
-    expect(driverDeliverResponseSchema.safeParse({ ...body, delivered_at: null }).success).toBe(
+    expect(deliveryConfirmedResponseSchema.safeParse({ ...body, delivered_at: null }).success).toBe(
       false,
     );
   });

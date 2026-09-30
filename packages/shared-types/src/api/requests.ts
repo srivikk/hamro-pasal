@@ -149,10 +149,11 @@ export const vendorReviewSubmitRequestSchema = reviewSubmitRequestSchema.omit({ 
 export type VendorReviewSubmitRequest = z.input<typeof vendorReviewSubmitRequestSchema>;
 
 /**
- * POST /api/driver/orders/:id/deliver (driver flow step 5): the 4-digit code the customer shows
+ * POST /api/driver/orders/:id/deliver (driver flow step 5) and /api/vendors/orders/:id/deliver
+ * (vendor flow step 9, SELF_DELIVERY orders): the 4-digit code the customer shows
  * at the door, as ASCII digits (leading zeros kept, hence a string).
  */
-export const driverDeliverRequestSchema = z.strictObject({
+export const deliveryOtpRequestSchema = z.strictObject({
   delivery_otp: z.string().length(DELIVERY_OTP_LENGTH).regex(/^\d+$/, 'Must be ASCII digits'),
 });
-export type DriverDeliverRequest = z.input<typeof driverDeliverRequestSchema>;
+export type DeliveryOtpRequest = z.input<typeof deliveryOtpRequestSchema>;

@@ -28,11 +28,12 @@ import {
   DeliveryOtpLockedError,
   InvalidDeliveryOtpError,
   OrderNotDeliverableError,
-} from '../orders/driver-order-service';
+} from '../orders/delivery-handoff';
 import {
   CancellationWindowOpenError,
   OrderDecisionConflictError,
   VendorAccountNotFoundError,
+  WrongFulfillmentModeError,
 } from '../orders/vendor-order-service';
 import {
   OrderNotReviewableError,
@@ -112,6 +113,11 @@ export function toHttpError(error: unknown): HttpError {
   if (error instanceof CancellationWindowOpenError) {
     return new HttpError(422, 'CANCELLATION_WINDOW_OPEN', error.message, {
       retry_after_seconds: error.retryAfterSeconds,
+    });
+  }
+  if (error instanceof WrongFulfillmentModeError) {
+    return new HttpError(409, 'WRONG_FULFILLMENT_MODE', error.message, {
+      fulfillment: error.fulfillment,
     });
   }
   if (error instanceof OrderNotDeliverableError) {

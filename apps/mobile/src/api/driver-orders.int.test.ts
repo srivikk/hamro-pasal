@@ -16,8 +16,8 @@ import {
   TEST_ACCESS_TOKEN,
   type CapturedRequest,
 } from '../test/msw';
+import { DELIVERY_ERROR_CODES } from './delivery';
 import {
-  DELIVERY_ERROR_CODES,
   deliverDriverOrder,
   DRIVER_ORDERS_PATH,
   driverDeliverPath,
@@ -59,7 +59,7 @@ describe('GET /api/driver/orders', () => {
 });
 
 describe('POST /api/driver/orders/:id/deliver', () => {
-  it('posts exactly { delivery_otp } and parses driverDeliverResponseSchema', async () => {
+  it('posts exactly { delivery_otp } and parses deliveryConfirmedResponseSchema', async () => {
     const received: CapturedRequest[] = [];
     server.use(
       http.post(apiUrl(driverDeliverPath(NEW_ORDER_ID)), async ({ request }) => {

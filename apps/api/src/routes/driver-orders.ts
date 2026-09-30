@@ -1,7 +1,6 @@
 import {
-  driverDeliverRequestSchema,
+  deliveryOtpRequestSchema,
   idParamSchema,
-  type DriverDeliverResponseBody,
   type DriverOrderListResponseBody,
 } from '@hamro-pasal/shared-types';
 import { Router } from 'express';
@@ -9,7 +8,7 @@ import { Router } from 'express';
 import { authOf } from '../http/auth';
 import { parseInput } from '../http/validate';
 import type { DriverOrderService } from '../orders/driver-order-service';
-import { driverOrderView } from './views';
+import { deliveryConfirmedBody, driverOrderView } from './views';
 
 /** Mounted at /api/driver/orders behind requireAuth(DRIVER): the platform rider's side. */
 export function driverOrdersRouter(driverOrders: DriverOrderService): Router {
@@ -32,17 +31,9 @@ export function driverOrdersRouter(driverOrders: DriverOrderService): Router {
    */
   router.post('/:id/deliver', async (req, res) => {
     const { id } = parseInput(idParamSchema, { ...req.params });
-    const { delivery_otp } = parseInput(driverDeliverRequestSchema, req.body);
+    const { delivery_otp } = parseInput(deliveryOtpRequestSchema, req.body);
     const { order } = await driverOrders.deliver(authOf(req).userId, id, delivery_otp);
-    if (order.state !== 'DELIVERED' || order.delivered_at === null) {
-      throw new Error(`Order ${order.id} delivery left it in ${order.state}`);
-    }
-    const body: DriverDeliverResponseBody = {
-      order_id: order.id,
-      state: order.state,
-      delivered_at: order.delivered_at.toISOString(),
-    };
-    res.json(body);
+    res.json(deliveryConfirmedBody(order));
   });
 
   return router;

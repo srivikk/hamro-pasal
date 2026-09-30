@@ -126,10 +126,13 @@ describe('vendors API', () => {
         palika: POKHARA,
         location: await pointAtDistance(db(), CUSTOMER, 20_000),
       });
+      // Another Palika's CITY_WIDE shop. Not on the Kathmandu point the other suites use for their
+      // vendors: explore_further is capped at FEED_SECTION_LIMIT and sorted by distance, and a
+      // shared database with 100+ vendors at that exact distance could push this one past the cap.
       const otherCity = await createVendor(db(), {
         deliveryScope: 'CITY_WIDE',
         palika: 'Kathmandu Metropolitan City',
-        location: kathmandu,
+        location: await pointAtDistance(db(), CUSTOMER, 60_000),
       });
 
       const inPokhara = bodyOf(

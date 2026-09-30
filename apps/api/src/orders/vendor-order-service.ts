@@ -8,15 +8,17 @@ import {
 } from '@hamro-pasal/db';
 import {
   ORDER_CANCELLATION_WINDOW_SECONDS,
+  type FulfillmentMode,
   type Order,
   type OrderAddress,
   type OrderItem,
   type OrderState,
 } from '@hamro-pasal/shared-types';
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 
 import { OrderNotFoundError } from '../checkout/checkout-service';
 import type { InventoryLockService } from '../inventory/inventory-lock-service';
+import type { DeliveryHandoff, DeliveryResult } from './delivery-handoff';
 import { enqueueOrderStateChanged } from './order-events';
 import { cancelPlacedOrder, releaseLingeringHold } from './order-service';
 
@@ -58,8 +60,21 @@ export class CancellationWindowOpenError extends Error {
   }
 }
 
-/** Orders the dashboard lists: waiting for a decision, and accepted ones being packed. */
-export const VENDOR_OPEN_ORDER_STATES = ['PLACED', 'PREPARING'] as const satisfies OrderState[];
+/**
+ * The vendor asked to hand over an order its own staff do not carry: a PLATFORM_FLEET /
+ * EMERGENCY_FLEET order is delivered (and its code checked) by the platform rider.
+ */
+export class WrongFulfillmentModeError extends Error {
+  constructor(
+    readonly orderId: string,
+    readonly fulfillment: FulfillmentMode,
+  ) {
+    super(
+      `Order ${orderId} is ${fulfillment}; only SELF_DELIVERY orders are handed over by the vendor`,
+    );
+    this.name = 'WrongFulfillmentModeError';
+  }
+}
 
 /** A safety cap on the dashboard list; a shop with more open orders than this has other problems. */
 export const VENDOR_OPEN_ORDERS_LIMIT = 100;
@@ -85,6 +100,7 @@ export class VendorOrderService {
   constructor(
     private readonly db: Database,
     private readonly locks: InventoryLockService,
+    private readonly handoff: DeliveryHandoff,
   ) {}
 
   /** The vendor the user runs, or null (the `vendor:subscribe` socket rule). */
@@ -96,7 +112,12 @@ export class VendorOrderService {
     return row?.id ?? null;
   }
 
-  /** GET /api/vendors/orders: open orders, PLACED before PREPARING, oldest placement first. */
+  /**
+   * GET /api/vendors/orders: open orders (PLACED, then PREPARING, then the shop's own deliveries
+   * OUT_FOR_DELIVERY), oldest placement first within each. A SELF_DELIVERY order on the road stays
+   * listed because its customer code is checked on the vendor's device; a fleet order out for
+   * delivery is the rider's and leaves the list.
+   */
   async listOpen(vendorUserId: string): Promise<VendorOrder[]> {
     const vendorId = await this.vendorIdForUser(vendorUserId);
     if (vendorId === null) throw new VendorAccountNotFoundError(vendorUserId);
@@ -104,7 +125,18 @@ export class VendorOrderService {
     const open = await this.db
       .select()
       .from(orders)
-      .where(and(eq(orders.vendor_id, vendorId), inArray(orders.state, VENDOR_OPEN_ORDER_STATES)))
+      .where(
+        and(
+          eq(orders.vendor_id, vendorId),
+          or(
+            inArray(orders.state, ['PLACED', 'PREPARING']),
+            and(
+              eq(orders.state, 'OUT_FOR_DELIVERY'),
+              eq(orders.fulfillment_locked, 'SELF_DELIVERY'),
+            ),
+          ),
+        ),
+      )
       .orderBy(asc(orders.placed_at), asc(orders.id))
       .limit(VENDOR_OPEN_ORDERS_LIMIT);
     if (open.length === 0) return [];
@@ -119,12 +151,9 @@ export class VendorOrderService {
       this.db.select().from(orderAddresses).where(inArray(orderAddresses.order_id, ids)),
     ]);
 
-    // New orders first: they are the ones ringing.
-    const placedFirst = [
-      ...open.filter((order) => order.state === 'PLACED'),
-      ...open.filter((order) => order.state !== 'PLACED'),
-    ];
-    return placedFirst.map((order) => ({
+    // New orders first: they are the ones ringing. The sort is stable, so placement order stays.
+    const ranked = [...open].sort((a, b) => dashboardRank(a) - dashboardRank(b));
+    return ranked.map((order) => ({
       order,
       items: items.filter((item) => item.order_id === order.id),
       address: addresses.find((address) => address.order_id === order.id) ?? null,
@@ -215,6 +244,26 @@ export class VendorOrderService {
     });
   }
 
+  /**
+   * POST /api/vendors/orders/:id/deliver (vendor flow step 9): the shop's own staff hand over a
+   * SELF_DELIVERY order with the customer's code. Exactly the rider's handoff (`DeliveryHandoff`:
+   * bcrypt check, 5-try Redis lockout, DELIVERED + hash erased + escrow settled in one commit), with
+   * no rider recorded. A fleet order is refused with 409 before any code is checked (it is the
+   * platform rider's to deliver). Repeating a successful delivery answers the same success.
+   */
+  async deliver(vendorUserId: string, orderId: string, otp: string): Promise<DeliveryResult> {
+    const result = await this.db.transaction(async (tx) => {
+      const order = await this.lockVendorOrder(tx, vendorUserId, orderId);
+      if (order.fulfillment_locked !== 'SELF_DELIVERY') {
+        throw new WrongFulfillmentModeError(orderId, order.fulfillment_locked);
+      }
+      if (order.state === 'DELIVERED') return { order, replayed: true };
+      return { order: await this.handoff.handOver(tx, order, otp, null), replayed: false };
+    });
+    await this.handoff.afterCommit(result);
+    return result;
+  }
+
   /** The order row, locked `FOR UPDATE`, if the user runs its vendor; otherwise 404. */
   private async lockVendorOrder(
     tx: Transaction,
@@ -229,5 +278,17 @@ export class VendorOrderService {
       .for('update', { of: orders });
     if (row === undefined) throw new OrderNotFoundError(orderId);
     return row.order;
+  }
+}
+
+/** Dashboard order: new (ringing) first, then being packed, then on the road. */
+function dashboardRank(order: Order): number {
+  switch (order.state) {
+    case 'PLACED':
+      return 0;
+    case 'PREPARING':
+      return 1;
+    default:
+      return 2;
   }
 }

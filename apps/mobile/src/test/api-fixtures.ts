@@ -2,7 +2,7 @@ import {
   authTokensResponseSchema,
   chatMessageSchema,
   disputeEvidenceUploadResponseSchema,
-  driverDeliverResponseSchema,
+  deliveryConfirmedResponseSchema,
   driverOrderListResponseSchema,
   reviewSubmitResponseSchema,
   cancelOrderResponseSchema,
@@ -18,7 +18,7 @@ import {
   type AuthTokensResponseBody,
   type ChatMessage,
   type DisputeEvidenceUploadResponseBody,
-  type DriverDeliverResponseBody,
+  type DeliveryConfirmedResponseBody,
   type DriverOrderView,
   type ReviewView,
   type CancelOrderResponseBody,
@@ -392,8 +392,8 @@ export function driverOrderList(orders: DriverOrderView[]) {
 }
 
 /** POST /api/driver/orders/:id/deliver 200 body. */
-export function driverDelivered(orderId: string): DriverDeliverResponseBody {
-  return driverDeliverResponseSchema.parse({
+export function driverDelivered(orderId: string): DeliveryConfirmedResponseBody {
+  return deliveryConfirmedResponseSchema.parse({
     order_id: orderId,
     state: 'DELIVERED',
     delivered_at: '2026-09-30T10:45:00.000Z',

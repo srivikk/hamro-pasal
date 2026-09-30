@@ -25,6 +25,7 @@ import {
   DeliveryOtpAttempts,
   type DeliveryOtpAttemptOptions,
 } from './orders/delivery-otp-attempts';
+import { DeliveryHandoff } from './orders/delivery-handoff';
 import { DriverOrderService } from './orders/driver-order-service';
 import { OrderService } from './orders/order-service';
 import { VendorOrderService } from './orders/vendor-order-service';
@@ -103,6 +104,11 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
   const settlement = new SettlementService(infra.db, new LedgerService());
   const confirmation = new PaymentConfirmationService(infra.db, settlement, checkout);
   const khaltiClient = new KhaltiClient(config.khalti, infra.fetch);
+  // One handoff (and one Redis counter per order) for the rider's and the vendor's deliveries.
+  const handoff = new DeliveryHandoff(
+    settlement,
+    new DeliveryOtpAttempts(infra.redisPool, infra.deliveryOtpOptions),
+  );
   const otps = new OtpStore(infra.redisPool, otpPepper(config.accessTokenSecret), infra.otpOptions);
 
   return {
@@ -117,12 +123,8 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     catalog: new CatalogService(infra.db),
     checkout,
     orders: new OrderService(infra.db, locks),
-    vendorOrders: new VendorOrderService(infra.db, locks),
-    driverOrders: new DriverOrderService(
-      infra.db,
-      settlement,
-      new DeliveryOtpAttempts(infra.redisPool, infra.deliveryOtpOptions),
-    ),
+    vendorOrders: new VendorOrderService(infra.db, locks, handoff),
+    driverOrders: new DriverOrderService(infra.db, handoff),
     esewa: new EsewaService(infra.db, checkout, confirmation, config.esewa),
     khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),
     reviews: new ReviewService(infra.db),

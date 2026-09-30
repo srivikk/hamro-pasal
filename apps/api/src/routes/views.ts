@@ -1,4 +1,5 @@
 import type {
+  DeliveryConfirmedResponseBody,
   DriverOrderView,
   FeedEntry,
   FeedResponse,
@@ -133,6 +134,18 @@ export function vendorOrderView({ order, items, address }: VendorOrder): VendorO
     placed_at: order.placed_at.toISOString(),
     delivery_address: orderAddressView(address),
     items: items.map(orderItemView),
+  };
+}
+
+/** A handoff that went through (rider or vendor): the order is DELIVERED at `delivered_at`. */
+export function deliveryConfirmedBody(order: Order): DeliveryConfirmedResponseBody {
+  if (order.state !== 'DELIVERED' || order.delivered_at === null) {
+    throw new Error(`Order ${order.id} delivery left it in ${order.state}`);
+  }
+  return {
+    order_id: order.id,
+    state: order.state,
+    delivered_at: order.delivered_at.toISOString(),
   };
 }
 

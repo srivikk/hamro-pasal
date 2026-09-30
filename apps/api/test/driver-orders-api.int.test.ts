@@ -4,7 +4,7 @@ import { ledgerTransactions, orders } from '@hamro-pasal/db';
 import {
   checkoutResponseSchema,
   DELIVERY_OTP_LOCKOUT_SECONDS,
-  driverDeliverResponseSchema,
+  deliveryConfirmedResponseSchema,
   driverOrderListResponseSchema,
   esewaInitiateResponseSchema,
   orderDetailResponseSchema,
@@ -162,7 +162,7 @@ describe('driver orders API', () => {
       const res = await deliver(s.driverId, orderId, otp);
 
       expect(res.status).toBe(200);
-      const body = bodyOf(driverDeliverResponseSchema, res);
+      const body = bodyOf(deliveryConfirmedResponseSchema, res);
       const row = await rowOf(orderId);
       expect(body).toEqual({
         order_id: orderId,

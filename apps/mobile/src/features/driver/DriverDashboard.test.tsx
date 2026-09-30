@@ -82,7 +82,7 @@ describe('driver dashboard: the list', () => {
     expect(screen.getByText('Pick up from Patan Organic Store')).toBeOnTheScreen();
     expect(screen.getByText('Ward 26, Thamel, Kathmandu Metropolitan City')).toBeOnTheScreen();
     expect(screen.getByText('2 × Wai Wai Noodles (carton of 30)')).toBeOnTheScreen();
-    expect(screen.getByTestId(`driver-cash-${NEW_ORDER_ID}`)).toHaveTextContent(
+    expect(screen.getByTestId(`delivery-cash-${NEW_ORDER_ID}`)).toHaveTextContent(
       'Collect Rs. 2400 in cash',
     );
     expect(screen.getByText('Open gig')).toBeOnTheScreen();
@@ -93,7 +93,7 @@ describe('driver dashboard: the list', () => {
 
     await renderDashboard();
 
-    expect(screen.getByTestId(`driver-cash-${NEW_ORDER_ID}`)).toHaveTextContent(
+    expect(screen.getByTestId(`delivery-cash-${NEW_ORDER_ID}`)).toHaveTextContent(
       'Paid online. Collect nothing.',
     );
   });
@@ -123,7 +123,7 @@ describe('driver dashboard: the list', () => {
   it('renders Nepali digits under ne', async () => {
     await renderDashboard('ne');
 
-    expect(screen.getByTestId(`driver-cash-${NEW_ORDER_ID}`)).toHaveTextContent(
+    expect(screen.getByTestId(`delivery-cash-${NEW_ORDER_ID}`)).toHaveTextContent(
       'रु. २४०० नगद लिनुहोस्',
     );
   });
@@ -270,7 +270,7 @@ describe('driver dashboard: confirming the handoff (TanStack mutation)', () => {
     await waitFor(() => {
       expect(card(NEW_ORDER_ID)).not.toBeOnTheScreen();
     });
-    expect(toast()?.message).toBe('This order is no longer yours to deliver.');
+    expect(toast()?.message).toBe("This order can't be delivered from here any more.");
   });
 
   it('keeps the order and the chance to retry when the network fails', async () => {

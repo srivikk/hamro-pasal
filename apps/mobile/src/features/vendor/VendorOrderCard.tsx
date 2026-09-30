@@ -3,6 +3,8 @@ import { Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '../../components/Button';
+import { CashToCollect } from '../delivery/CashToCollect';
+import { DeliveryOtpForm } from '../delivery/DeliveryOtpForm';
 
 /** Short, human-readable order reference: the last 6 characters of the id (as the customer sees). */
 export function vendorOrderCode(orderId: string): string {
@@ -15,15 +17,33 @@ export interface VendorOrderCardProps {
   answered: boolean;
   onAccept: () => void;
   onReject: () => void;
+  /** The dispatch request for this order is in flight. */
+  dispatching: boolean;
+  onDispatch: () => void;
+  /** The customer's code for this order is being checked. */
+  delivering: boolean;
+  /** Sends the typed code; `onRejected` clears the field. */
+  onDeliver: (otp: string, onRejected: () => void) => void;
 }
 
 /**
  * One order on the dashboard: what to pack, where it goes and how it is paid. A PLACED order has
- * the Accept / Reject buttons (vendor flow step 7); an accepted one is shown as Preparing.
+ * the Accept / Reject buttons (vendor flow step 7); a PREPARING one has Dispatch (step 8); a
+ * SELF_DELIVERY order out for delivery has the customer's 4-digit code field (step 9).
  */
-export function VendorOrderCard({ order, answered, onAccept, onReject }: VendorOrderCardProps) {
+export function VendorOrderCard({
+  order,
+  answered,
+  onAccept,
+  onReject,
+  dispatching,
+  onDispatch,
+  delivering,
+  onDeliver,
+}: VendorOrderCardProps) {
   const { t } = useTranslation();
   const waiting = order.state === 'PLACED';
+  const handOver = order.state === 'OUT_FOR_DELIVERY' && order.fulfillment === 'SELF_DELIVERY';
   const address = order.delivery_address;
 
   return (
@@ -86,6 +106,23 @@ export function VendorOrderCard({ order, answered, onAccept, onReject }: VendorO
             />
           </View>
         </View>
+      ) : null}
+
+      {order.state === 'PREPARING' ? (
+        <Button
+          label={dispatching ? t('vendorDashboard.dispatching') : t('vendorDashboard.dispatch')}
+          disabled={dispatching}
+          onPress={onDispatch}
+          testID={`dispatch-${order.id}`}
+        />
+      ) : null}
+
+      {handOver ? (
+        <>
+          <Text className="text-sm text-neutral-600">{t('vendorDashboard.handoffHint')}</Text>
+          <CashToCollect order={order} />
+          <DeliveryOtpForm orderId={order.id} submitting={delivering} onSubmit={onDeliver} />
+        </>
       ) : null}
     </View>
   );

@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { NEPAL_BOUNDING_BOX } from '../nepal/geo';
 import {
   checkoutRequestSchema,
-  driverDeliverRequestSchema,
+  deliveryOtpRequestSchema,
   idParamSchema,
   otpSendRequestSchema,
   otpVerifyRequestSchema,
@@ -193,15 +193,15 @@ describe('vendorReviewSubmitRequestSchema', () => {
   });
 });
 
-describe('driverDeliverRequestSchema', () => {
+describe('deliveryOtpRequestSchema', () => {
   it('accepts exactly four ASCII digits, leading zeros kept', () => {
-    expect(driverDeliverRequestSchema.parse({ delivery_otp: '0042' })).toEqual({
+    expect(deliveryOtpRequestSchema.parse({ delivery_otp: '0042' })).toEqual({
       delivery_otp: '0042',
     });
   });
 
   it('refuses other lengths, non-digits, Devanagari digits, numbers and extra fields', () => {
-    const parse = (body: unknown) => driverDeliverRequestSchema.safeParse(body).success;
+    const parse = (body: unknown) => deliveryOtpRequestSchema.safeParse(body).success;
 
     expect(parse({ delivery_otp: '123' })).toBe(false);
     expect(parse({ delivery_otp: '12345' })).toBe(false);

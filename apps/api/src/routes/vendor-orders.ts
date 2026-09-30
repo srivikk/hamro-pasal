@@ -1,4 +1,5 @@
 import {
+  deliveryOtpRequestSchema,
   idParamSchema,
   vendorReviewSubmitRequestSchema,
   type ReviewSubmitResponseBody,
@@ -12,7 +13,7 @@ import { authOf } from '../http/auth';
 import { parseInput } from '../http/validate';
 import type { VendorDecisionResult, VendorOrderService } from '../orders/vendor-order-service';
 import type { ReviewService } from '../reviews/review-service';
-import { reviewView, vendorOrderView } from './views';
+import { deliveryConfirmedBody, reviewView, vendorOrderView } from './views';
 
 export interface VendorOrdersRouterServices {
   readonly reviews: ReviewService;
@@ -62,6 +63,18 @@ export function vendorOrdersRouter({ reviews, vendorOrders }: VendorOrdersRouter
     }
     const body: VendorOrderDispatchResponseBody = { order_id: order.id, state: order.state };
     res.json(body);
+  });
+
+  /**
+   * Vendor flow step 9: the shop's own staff hand over a SELF_DELIVERY order with the customer's
+   * 4-digit code (the rider's rules: 401 INVALID_OTP, 429 after five wrong codes). A fleet order is
+   * 409 WRONG_FULFILLMENT_MODE: the platform rider delivers it.
+   */
+  router.post('/:id/deliver', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const { delivery_otp } = parseInput(deliveryOtpRequestSchema, req.body);
+    const { order } = await vendorOrders.deliver(authOf(req).userId, id, delivery_otp);
+    res.json(deliveryConfirmedBody(order));
   });
 
   /**

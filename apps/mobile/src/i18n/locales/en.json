@@ -313,5 +313,26 @@
     "rejectedRefund": "Order rejected. The customer's payment will be refunded.",
     "noLongerWaiting": "This order is no longer waiting for you.",
     "decisionFailed": "Couldn't send your answer. Please try again."
+  },
+  "driverDashboard": {
+    "title": "Deliveries",
+    "loadError": "Couldn't load your deliveries. Check your connection.",
+    "empty": "No orders out for delivery right now. Pull down to refresh.",
+    "mine": "Your delivery",
+    "unclaimed": "Open gig",
+    "pickup": "Pick up from {{shop}}",
+    "collectCash": "Collect Rs. {{amount, localizedNumber}} in cash",
+    "prepaid": "Paid online. Collect nothing.",
+    "codeLabel": "Customer's delivery code",
+    "codePlaceholder": "4-digit code",
+    "deliver": "Confirm delivery",
+    "checking": "Checking…",
+    "delivered": "Delivered. Thank you!",
+    "wrongCode": "Wrong code. Attempts left: {{count, localizedNumber}}.",
+    "wrongCodeNoCount": "Wrong code. Ask the customer to check it.",
+    "locked": "Too many wrong codes. Try again in {{minutes, localizedNumber}} min.",
+    "incompleteCode": "Enter the 4-digit code.",
+    "noLongerYours": "This order is no longer yours to deliver.",
+    "failed": "Couldn't confirm the delivery. Check your connection and try again."
   }
 }

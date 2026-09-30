@@ -136,8 +136,14 @@ export const orderSchema = z.strictObject({
   payment_status: paymentStatusSchema,
   /** eSewa transaction_uuid or Khalti pidx. Unique per gateway, and always null for COD. */
   payment_gateway_ref: nonEmptyTextSchema.nullable(),
-  /** bcrypt hash of the 4-digit handoff OTP. The raw OTP is never stored. */
-  delivery_otp: z.string().regex(/^\$2[aby]\$/, 'Must be a bcrypt hash'),
+  /**
+   * bcrypt hash of the 4-digit handoff OTP. The raw OTP is never stored. Cleared (null) when the
+   * order is DELIVERED, so a used code can never be replayed.
+   */
+  delivery_otp: z
+    .string()
+    .regex(/^\$2[aby]\$/, 'Must be a bcrypt hash')
+    .nullable(),
   /** Set when the order becomes PLACED; anchors the 60 s cancellation window. */
   placed_at: z.date().nullable(),
   delivered_at: z.date().nullable(),

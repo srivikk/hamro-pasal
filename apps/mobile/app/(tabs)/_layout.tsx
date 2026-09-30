@@ -11,10 +11,11 @@ export default function TabsLayout() {
   const { t } = useTranslation();
   const locale = useAuthStore((state) => state.locale);
   const itemCount = useItemCount();
-  const isVendor = useAuthStore((state) => selectHasSession(state) && state.role === 'VENDOR');
+  const role = useAuthStore((state) => (selectHasSession(state) ? state.role : null));
 
-  // A vendor signing in (or relaunching) lands on the order dashboard, not the customer shop.
-  if (isVendor) return <Redirect href="/dashboard" />;
+  // A vendor or rider signing in (or relaunching) lands on their dashboard, not the customer shop.
+  if (role === 'VENDOR') return <Redirect href="/dashboard" />;
+  if (role === 'DRIVER') return <Redirect href="/driver/dashboard" />;
 
   return (
     <Tabs

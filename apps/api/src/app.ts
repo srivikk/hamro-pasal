@@ -6,6 +6,7 @@ import type { CheckoutService } from './checkout/checkout-service';
 import type { DisputeService } from './disputes/dispute-service';
 import { requireAuth } from './http/auth';
 import { errorHandler, HttpError } from './http/errors';
+import type { DriverOrderService } from './orders/driver-order-service';
 import type { OrderService } from './orders/order-service';
 import type { VendorOrderService } from './orders/vendor-order-service';
 import type { EsewaService } from './payments/esewa/esewa-service';
@@ -13,6 +14,7 @@ import type { KhaltiService } from './payments/khalti/khalti-service';
 import type { ReviewService } from './reviews/review-service';
 import { authRouter } from './routes/auth';
 import { cartRouter } from './routes/cart';
+import { driverOrdersRouter } from './routes/driver-orders';
 import { orderChatRouter } from './routes/order-chat';
 import { ordersRouter } from './routes/orders';
 import { paymentsRouter } from './routes/payments';
@@ -29,6 +31,7 @@ export interface ApiServices {
   readonly checkout: CheckoutService;
   readonly orders: OrderService;
   readonly vendorOrders: VendorOrderService;
+  readonly driverOrders: DriverOrderService;
   readonly esewa: EsewaService;
   readonly khalti: KhaltiService;
   readonly reviews: ReviewService;
@@ -57,6 +60,11 @@ export function createApp(services?: ApiServices): Express {
       vendorOrdersRouter({ reviews: services.reviews, vendorOrders: services.vendorOrders }),
     );
     app.use('/api/vendors', customerAuth, vendorsRouter(services.catalog));
+    app.use(
+      '/api/driver/orders',
+      requireAuth(services.accessTokenSecret, ['DRIVER']),
+      driverOrdersRouter(services.driverOrders),
+    );
     app.use('/api/cart', customerAuth, cartRouter(services.checkout));
     // Before the customer-only orders router: vendors and admins read dispute transcripts too.
     app.use(

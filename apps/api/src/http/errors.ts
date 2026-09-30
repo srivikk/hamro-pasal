@@ -25,6 +25,12 @@ import { toNpr } from '../ledger/money';
 import { SettlementNotAllowedError } from '../ledger/settlement-service';
 import { CancellationWindowExpiredError, OrderNotCancelableError } from '../orders/order-service';
 import {
+  DeliveryOtpLockedError,
+  InvalidDeliveryOtpError,
+  OrderNotDeliverableError,
+} from '../orders/driver-order-service';
+import {
+  CancellationWindowOpenError,
   OrderDecisionConflictError,
   VendorAccountNotFoundError,
 } from '../orders/vendor-order-service';
@@ -102,6 +108,24 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof OrderDecisionConflictError) {
     return new HttpError(409, 'ORDER_STATE_CONFLICT', error.message, { state: error.state });
+  }
+  if (error instanceof CancellationWindowOpenError) {
+    return new HttpError(422, 'CANCELLATION_WINDOW_OPEN', error.message, {
+      retry_after_seconds: error.retryAfterSeconds,
+    });
+  }
+  if (error instanceof OrderNotDeliverableError) {
+    return new HttpError(409, 'ORDER_STATE_CONFLICT', error.message, { state: error.state });
+  }
+  if (error instanceof InvalidDeliveryOtpError) {
+    return new HttpError(401, 'INVALID_OTP', 'The delivery code is incorrect', {
+      attempts_remaining: error.attemptsRemaining,
+    });
+  }
+  if (error instanceof DeliveryOtpLockedError) {
+    return new HttpError(429, 'DELIVERY_OTP_LOCKED', error.message, {
+      retry_after_seconds: error.retryAfterSeconds,
+    });
   }
   if (error instanceof OrderNotReviewableError) {
     return new HttpError(409, 'ORDER_STATE_CONFLICT', error.message, { state: error.state });

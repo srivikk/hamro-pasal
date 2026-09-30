@@ -3,6 +3,7 @@ import {
   vendorReviewSubmitRequestSchema,
   type ReviewSubmitResponseBody,
   type VendorOrderDecisionResponseBody,
+  type VendorOrderDispatchResponseBody,
   type VendorOrderListResponseBody,
 } from '@hamro-pasal/shared-types';
 import { Router } from 'express';
@@ -47,6 +48,20 @@ export function vendorOrdersRouter({ reviews, vendorOrders }: VendorOrdersRouter
   router.post('/:id/reject', async (req, res) => {
     const { id } = parseInput(idParamSchema, { ...req.params });
     res.json(decisionBody(await vendorOrders.reject(authOf(req).userId, id)));
+  });
+
+  /**
+   * Vendor flow step 8: the packed order leaves the shop (PREPARING → OUT_FOR_DELIVERY). Refused
+   * with 422 CANCELLATION_WINDOW_OPEN while the customer's 60 s window is still running.
+   */
+  router.post('/:id/dispatch', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const { order } = await vendorOrders.dispatch(authOf(req).userId, id);
+    if (order.state !== 'OUT_FOR_DELIVERY') {
+      throw new Error(`Order ${order.id} dispatch left it in ${order.state}`);
+    }
+    const body: VendorOrderDispatchResponseBody = { order_id: order.id, state: order.state };
+    res.json(body);
   });
 
   /**

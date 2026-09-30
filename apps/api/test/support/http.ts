@@ -63,6 +63,7 @@ export function buildTestApp(
     lockTtlMs?: number;
     sms?: SmsGateway & { readonly sent: readonly OutboundSms[] };
     otpOptions?: OtpStoreOptions;
+    deliveryOtpLockoutMs?: number;
     uploadsDir?: string;
   } = {},
 ): TestApp {
@@ -91,6 +92,9 @@ export function buildTestApp(
       ...(options.khaltiFetch === undefined ? {} : { fetch: options.khaltiFetch }),
       ...(options.lockTtlMs === undefined ? {} : { lockOptions: { ttlMs: options.lockTtlMs } }),
       ...(options.otpOptions === undefined ? {} : { otpOptions: options.otpOptions }),
+      ...(options.deliveryOtpLockoutMs === undefined
+        ? {}
+        : { deliveryOtpOptions: { lockoutMs: options.deliveryOtpLockoutMs } }),
       sms,
       evidence: new LocalEvidenceStorage(
         options.uploadsDir ?? TEST_UPLOADS_DIR,

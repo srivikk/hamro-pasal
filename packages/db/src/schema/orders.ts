@@ -41,7 +41,8 @@ export const orders = pgTable(
     payment_method: paymentMethodEnum().notNull(),
     payment_status: paymentStatusEnum().notNull().default('PENDING'),
     payment_gateway_ref: text(),
-    delivery_otp: text().notNull(),
+    /** bcrypt hash; cleared at DELIVERED so a used code cannot be replayed. */
+    delivery_otp: text(),
     /** When the order became PLACED (COD accepted or payment confirmed). Starts the 60 s window. */
     placed_at: timestamp({ withTimezone: true, mode: 'date' }),
     delivered_at: timestamp({ withTimezone: true, mode: 'date' }),
@@ -75,6 +76,11 @@ export const orders = pgTable(
     ),
     // SPEC: delivery_otp is stored as a bcrypt hash only, never the raw 4-digit code.
     check('orders_delivery_otp_bcrypt_check', sql`${t.delivery_otp} ~ '^\\$2[aby]\\$'`),
+    // The handoff code is erased only by the delivery that used it: until then it must exist.
+    check(
+      'orders_delivery_otp_present_check',
+      sql`${t.delivery_otp} IS NOT NULL OR ${t.state} IN ('DELIVERED', 'DISPUTED')`,
+    ),
     // placed_at is stamped exactly when the order leaves PENDING_PAYMENT for PLACED. Only an
     // order still paying, or one that FAILED before it was ever placed, can lack it.
     check(

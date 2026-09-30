@@ -277,11 +277,15 @@ export class CheckoutService {
     }
     let deliveryOtp: string | null = null;
     if (OTP_ROTATABLE_STATES.has(order.state)) {
-      deliveryOtp = generateDeliveryOtp();
-      await this.db
+      const candidate = generateDeliveryOtp();
+      // Re-checked in the UPDATE: a delivery that commits meanwhile erased the hash for good, and
+      // a new one must not be written onto the delivered order.
+      const rotated = await this.db
         .update(orders)
-        .set({ delivery_otp: await hashDeliveryOtp(deliveryOtp) })
-        .where(eq(orders.id, order.id));
+        .set({ delivery_otp: await hashDeliveryOtp(candidate) })
+        .where(and(eq(orders.id, order.id), inArray(orders.state, [...OTP_ROTATABLE_STATES])))
+        .returning({ id: orders.id });
+      deliveryOtp = rotated.length > 0 ? candidate : null;
     }
     const status =
       order.reservation_id === null

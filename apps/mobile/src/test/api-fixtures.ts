@@ -2,6 +2,8 @@ import {
   authTokensResponseSchema,
   chatMessageSchema,
   disputeEvidenceUploadResponseSchema,
+  driverDeliverResponseSchema,
+  driverOrderListResponseSchema,
   reviewSubmitResponseSchema,
   cancelOrderResponseSchema,
   checkoutResponseSchema,
@@ -16,6 +18,8 @@ import {
   type AuthTokensResponseBody,
   type ChatMessage,
   type DisputeEvidenceUploadResponseBody,
+  type DriverDeliverResponseBody,
+  type DriverOrderView,
   type ReviewView,
   type CancelOrderResponseBody,
   type CheckoutResponseBody,
@@ -343,5 +347,55 @@ export function vendorDecision(
     order_id: orderId,
     state,
     refund_required: refundRequired,
+  });
+}
+
+/* ---------- Driver orders (GET /api/driver/orders, POST …/:id/deliver) ---------- */
+
+/** A COD fleet order out for delivery, as the rider's dashboard receives it. */
+export function driverOrder(overrides: Partial<DriverOrderView> = {}): DriverOrderView {
+  const [order] = driverOrderListResponseSchema.parse({
+    orders: [
+      {
+        ...orderView({
+          id: NEW_ORDER_ID,
+          state: 'OUT_FOR_DELIVERY',
+          payment_method: 'COD',
+          fulfillment: 'PLATFORM_FLEET',
+        }),
+        vendor_business_name: 'Patan Organic Store',
+        delivery_address: {
+          province_id: THAMEL_ADDRESS.province_id,
+          district_string: THAMEL_ADDRESS.district_string,
+          municipality_palika_string: THAMEL_ADDRESS.municipality_palika_string,
+          ward_number: THAMEL_ADDRESS.ward_number,
+          tole_locality: THAMEL_ADDRESS.tole_locality,
+          landmark: THAMEL_ADDRESS.landmark,
+          exact_lat: THAMEL_ADDRESS.exact_lat,
+          exact_lng: THAMEL_ADDRESS.exact_lng,
+        },
+        items: [
+          { product_id: NOODLES.id, product_name: NOODLES.name, unit_price_npr: 600, quantity: 2 },
+        ],
+        assigned_to_me: false,
+        ...overrides,
+      },
+    ],
+  }).orders;
+  if (order === undefined) throw new Error('unreachable');
+  return order;
+}
+
+/** GET /api/driver/orders 200 body. */
+export function driverOrderList(orders: DriverOrderView[]) {
+  return driverOrderListResponseSchema.parse({ orders });
+}
+
+/** POST /api/driver/orders/:id/deliver 200 body. */
+export function driverDelivered(orderId: string): DriverDeliverResponseBody {
+  return driverDeliverResponseSchema.parse({
+    order_id: orderId,
+    state: 'DELIVERED',
+    delivered_at: '2026-09-30T10:45:00.000Z',
   });
 }

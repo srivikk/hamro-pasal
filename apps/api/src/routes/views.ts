@@ -1,4 +1,5 @@
 import type {
+  DriverOrderView,
   FeedEntry,
   FeedResponse,
   FeedVendor,
@@ -19,6 +20,7 @@ import type {
   VendorMenu as CatalogMenu,
 } from '../catalog/catalog-service';
 import type { LockStatusView } from '../checkout/checkout-service';
+import type { DriverOrder } from '../orders/driver-order-service';
 import type { OrderDetail } from '../orders/order-service';
 import type { VendorOrder } from '../orders/vendor-order-service';
 import type { ConfirmedPayment } from '../payments/payment-confirmation';
@@ -131,6 +133,24 @@ export function vendorOrderView({ order, items, address }: VendorOrder): VendorO
     placed_at: order.placed_at.toISOString(),
     delivery_address: orderAddressView(address),
     items: items.map(orderItemView),
+  };
+}
+
+/** The rider's order: pickup shop, drop-off address and contents, never the customer's identity. */
+export function driverOrderView(
+  { order, vendorBusinessName, items, address }: DriverOrder,
+  driverUserId: string,
+): DriverOrderView {
+  if (order.state !== 'OUT_FOR_DELIVERY') {
+    throw new Error(`Order ${order.id} is ${order.state}, not out for delivery`);
+  }
+  return {
+    ...orderView(order),
+    state: order.state,
+    vendor_business_name: vendorBusinessName,
+    delivery_address: orderAddressView(address),
+    items: items.map(orderItemView),
+    assigned_to_me: order.driver_user_id === driverUserId,
   };
 }
 

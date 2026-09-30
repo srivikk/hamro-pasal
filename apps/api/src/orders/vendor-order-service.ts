@@ -6,8 +6,14 @@ import {
   type Database,
   type Transaction,
 } from '@hamro-pasal/db';
-import type { Order, OrderAddress, OrderItem, OrderState } from '@hamro-pasal/shared-types';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import {
+  ORDER_CANCELLATION_WINDOW_SECONDS,
+  type Order,
+  type OrderAddress,
+  type OrderItem,
+  type OrderState,
+} from '@hamro-pasal/shared-types';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { OrderNotFoundError } from '../checkout/checkout-service';
 import type { InventoryLockService } from '../inventory/inventory-lock-service';
@@ -22,7 +28,7 @@ export class VendorAccountNotFoundError extends Error {
   }
 }
 
-export type VendorDecision = 'accept' | 'reject';
+export type VendorDecision = 'accept' | 'reject' | 'dispatch';
 
 /** The order is not waiting for the vendor (already accepted, canceled, delivered, ...). */
 export class OrderDecisionConflictError extends Error {
@@ -33,6 +39,22 @@ export class OrderDecisionConflictError extends Error {
   ) {
     super(`Order ${orderId} cannot be ${decision}ed in state ${state}`);
     this.name = 'OrderDecisionConflictError';
+  }
+}
+
+/**
+ * Dispatch was asked while the customer's 60 s cancellation window is still open. Once out for
+ * delivery an order can no longer be canceled, so dispatching early would cut the window short.
+ */
+export class CancellationWindowOpenError extends Error {
+  constructor(
+    readonly orderId: string,
+    readonly retryAfterSeconds: number,
+  ) {
+    super(
+      `Order ${orderId} cannot be dispatched during the customer's ${String(ORDER_CANCELLATION_WINDOW_SECONDS)} s cancellation window`,
+    );
+    this.name = 'CancellationWindowOpenError';
   }
 }
 
@@ -149,6 +171,48 @@ export class VendorOrderService {
     });
     if (!result.replayed) await releaseLingeringHold(this.locks, result.order);
     return result;
+  }
+
+  /**
+   * POST /api/vendors/orders/:id/dispatch (vendor flow step 8): PREPARING → OUT_FOR_DELIVERY, with
+   * `order.state_changed` in the same commit. Refused (422) until `placed_at + 60 s` on the
+   * database clock: the customer's unskippable cancellation window is never shortened by the
+   * vendor. Dispatching an order already out for delivery answers the same success.
+   */
+  dispatch(vendorUserId: string, orderId: string): Promise<VendorDecisionResult> {
+    return this.db.transaction(async (tx) => {
+      const order = await this.lockVendorOrder(tx, vendorUserId, orderId);
+      if (order.state === 'OUT_FOR_DELIVERY') return { order, replayed: true };
+      if (order.state !== 'PREPARING')
+        throw new OrderDecisionConflictError(orderId, 'dispatch', order.state);
+
+      // Same clock and boundary as the customer's cancel (open while elapsed <= 60 s), read after
+      // the row lock is held, so a cancel and a dispatch can never both succeed.
+      const [window] = await tx
+        .select({
+          remaining:
+            sql<number>`ceil(extract(epoch from ${orders.placed_at} + make_interval(secs => ${ORDER_CANCELLATION_WINDOW_SECONDS}) - clock_timestamp()))`.mapWith(
+              Number,
+            ),
+          open: sql<boolean>`clock_timestamp() - ${orders.placed_at} <= make_interval(secs => ${ORDER_CANCELLATION_WINDOW_SECONDS})`.mapWith(
+            Boolean,
+          ),
+        })
+        .from(orders)
+        .where(eq(orders.id, orderId));
+      if (window?.open !== false) {
+        throw new CancellationWindowOpenError(orderId, Math.max(1, window?.remaining ?? 1));
+      }
+
+      const [dispatched] = await tx
+        .update(orders)
+        .set({ state: 'OUT_FOR_DELIVERY' })
+        .where(eq(orders.id, orderId))
+        .returning();
+      if (dispatched === undefined) throw new Error(`Order ${orderId} disappeared during dispatch`);
+      await enqueueOrderStateChanged(tx, order.state, dispatched);
+      return { order: dispatched, replayed: false };
+    });
   }
 
   /** The order row, locked `FOR UPDATE`, if the user runs its vendor; otherwise 404. */

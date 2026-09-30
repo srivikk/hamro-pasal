@@ -278,6 +278,50 @@ export const vendorOrderDecisionResponseSchema = z.strictObject({
 });
 export type VendorOrderDecisionResponseBody = z.infer<typeof vendorOrderDecisionResponseSchema>;
 
+/**
+ * POST /api/vendors/orders/:id/dispatch (vendor flow step 8): PREPARING → OUT_FOR_DELIVERY.
+ * Repeating it returns the same body.
+ */
+export const vendorOrderDispatchResponseSchema = z.strictObject({
+  order_id: z.uuid(),
+  state: z.literal('OUT_FOR_DELIVERY'),
+});
+export type VendorOrderDispatchResponseBody = z.infer<typeof vendorOrderDispatchResponseSchema>;
+
+/*
+ * Delivery partner (platform fleet) flow, steps 3–5.
+ */
+
+/**
+ * An order out for delivery, as the rider sees it: the shop it comes from, where it goes, what is
+ * in it and how it is paid (for COD, `total_npr` is the cash to collect). Never the OTP hash,
+ * gateway refs, commission, or the customer's name or phone.
+ */
+export const driverOrderSchema = orderViewSchema.extend({
+  state: z.literal('OUT_FOR_DELIVERY'),
+  vendor_business_name: z.string().min(1),
+  /** Null only for orders created before checkout required an address. */
+  delivery_address: orderAddressViewSchema.nullable(),
+  items: z.array(orderItemViewSchema).min(1),
+  /** true once this rider is recorded on the order; false for an unclaimed fleet gig. */
+  assigned_to_me: z.boolean(),
+});
+export type DriverOrderView = z.infer<typeof driverOrderSchema>;
+
+/** GET /api/driver/orders: fleet orders OUT_FOR_DELIVERY that are this rider's or unclaimed. */
+export const driverOrderListResponseSchema = z.strictObject({
+  orders: z.array(driverOrderSchema),
+});
+export type DriverOrderListResponseBody = z.infer<typeof driverOrderListResponseSchema>;
+
+/** POST /api/driver/orders/:id/deliver: the code matched; the order is DELIVERED and settled. */
+export const driverDeliverResponseSchema = z.strictObject({
+  order_id: z.uuid(),
+  state: z.literal('DELIVERED'),
+  delivered_at: z.iso.datetime(),
+});
+export type DriverDeliverResponseBody = z.infer<typeof driverDeliverResponseSchema>;
+
 /*
  * OTP authentication (SPEC implicit requirement 3).
  */

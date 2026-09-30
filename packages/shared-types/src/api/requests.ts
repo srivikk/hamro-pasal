@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-import { MAX_REVIEW_FEEDBACK_LENGTH, OTP_CODE_LENGTH } from '../domain/constants';
+import {
+  DELIVERY_OTP_LENGTH,
+  MAX_REVIEW_FEEDBACK_LENGTH,
+  OTP_CODE_LENGTH,
+} from '../domain/constants';
 import { nepalPhoneSchema } from '../domain/entities';
 import { paymentMethodSchema } from '../domain/enums';
 import { nepalAddressInputSchema } from '../localization/address';
@@ -143,3 +147,12 @@ export const disputeEvidenceUploadFieldsSchema = z.strictObject({
  */
 export const vendorReviewSubmitRequestSchema = reviewSubmitRequestSchema.omit({ order_id: true });
 export type VendorReviewSubmitRequest = z.input<typeof vendorReviewSubmitRequestSchema>;
+
+/**
+ * POST /api/driver/orders/:id/deliver (driver flow step 5): the 4-digit code the customer shows
+ * at the door, as ASCII digits (leading zeros kept, hence a string).
+ */
+export const driverDeliverRequestSchema = z.strictObject({
+  delivery_otp: z.string().length(DELIVERY_OTP_LENGTH).regex(/^\d+$/, 'Must be ASCII digits'),
+});
+export type DriverDeliverRequest = z.input<typeof driverDeliverRequestSchema>;

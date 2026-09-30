@@ -21,6 +21,11 @@ import {
 import { DrizzleStockReader } from './inventory/stock-reader';
 import { LedgerService } from './ledger/ledger-service';
 import { SettlementService } from './ledger/settlement-service';
+import {
+  DeliveryOtpAttempts,
+  type DeliveryOtpAttemptOptions,
+} from './orders/delivery-otp-attempts';
+import { DriverOrderService } from './orders/driver-order-service';
 import { OrderService } from './orders/order-service';
 import { VendorOrderService } from './orders/vendor-order-service';
 import { EsewaService, type EsewaConfig } from './payments/esewa/esewa-service';
@@ -54,6 +59,8 @@ export interface Infrastructure {
   readonly sms: SmsGateway;
   /** Tests only: shorter OTP windows. Production uses the shared-types constants. */
   readonly otpOptions?: OtpStoreOptions;
+  /** Tests only: a shorter delivery-code lockout. Production uses the shared-types constant. */
+  readonly deliveryOtpOptions?: DeliveryOtpAttemptOptions;
   /** Where dispute evidence images are stored (local disk until Cloudflare R2 is wired). */
   readonly evidence: EvidenceStorage;
 }
@@ -111,6 +118,11 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     checkout,
     orders: new OrderService(infra.db, locks),
     vendorOrders: new VendorOrderService(infra.db, locks),
+    driverOrders: new DriverOrderService(
+      infra.db,
+      settlement,
+      new DeliveryOtpAttempts(infra.redisPool, infra.deliveryOtpOptions),
+    ),
     esewa: new EsewaService(infra.db, checkout, confirmation, config.esewa),
     khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),
     reviews: new ReviewService(infra.db),

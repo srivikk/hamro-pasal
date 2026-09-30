@@ -21,6 +21,9 @@ export class ApiError extends Error {
 }
 
 /** Client-side codes for failures that never produced a server error body. */
+/** The API's 401 code for a missing, invalid or expired access token (`requireAuth`). */
+const TOKEN_REFUSED_CODE = 'UNAUTHENTICATED';
+
 export const CLIENT_ERROR_CODES = {
   /** No access token in memory: the request was not sent. */
   notSignedIn: 'NOT_SIGNED_IN',
@@ -186,8 +189,11 @@ async function runRefresh(): Promise<string | null> {
  * access token as `Authorization: Bearer` and renew it transparently:
  *   - no access token in memory but a refresh token in encrypted MMKV (e.g. after a relaunch):
  *     refresh first;
- *   - a 401 answer: refresh once (shared with concurrent callers) and replay the request with the
- *     new token. If the refresh is refused, the user is signed out and the 401 surfaces.
+ *   - a 401 UNAUTHENTICATED answer (the token was refused): refresh once (shared with concurrent
+ *     callers) and replay the request with the new token. If the refresh is refused, the user is
+ *     signed out and the 401 surfaces. A 401 with any other code is the endpoint's own answer
+ *     (e.g. INVALID_OTP for a wrong delivery code) and surfaces at once: replaying it would count
+ *     a second wrong attempt.
  */
 export async function apiRequest<T>(request: ApiRequest<T>): Promise<T> {
   if (request.authenticated === false) return send(request, null);
@@ -199,7 +205,9 @@ export async function apiRequest<T>(request: ApiRequest<T>): Promise<T> {
   try {
     return await send(request, token);
   } catch (error) {
-    if (!(error instanceof ApiError) || error.status !== 401) throw error;
+    if (!(error instanceof ApiError) || error.status !== 401 || error.code !== TOKEN_REFUSED_CODE) {
+      throw error;
+    }
     // Another request may already have renewed the token while this one was in flight.
     const current = useAuthStore.getState().accessToken;
     token = current !== null && current !== token ? current : await refreshAccessToken();

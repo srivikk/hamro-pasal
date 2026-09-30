@@ -9,6 +9,7 @@ import {
   orderStateChangedPayloadSchema,
   paymentStatusResponseSchema,
   vendorOrderDecisionResponseSchema,
+  vendorOrderDispatchResponseSchema,
   vendorOrderListResponseSchema,
 } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
@@ -332,6 +333,131 @@ describe('vendor orders API', () => {
       expect(state).toBe(accept.status === 200 ? 'PREPARING' : 'CANCELED');
       expect(await stockOf(db(), productId)).toBe(state === 'CANCELED' ? 10 : 8);
       expect(await transitions(order.id)).toHaveLength(3); // created, placed, one decision
+    });
+  });
+
+  describe('POST /api/vendors/orders/:id/dispatch', () => {
+    const dispatch = (userId: string, orderId: string, role: 'VENDOR' | 'CUSTOMER' = 'VENDOR') =>
+      request(t.app)
+        .post(`/api/vendors/orders/${orderId}/dispatch`)
+        .set('authorization', bearer(userId, role));
+
+    /** A COD order accepted by the vendor (PREPARING), placed `placedSecondsAgo` ago. */
+    async function preparingOrder(placedSecondsAgo: number) {
+      const s = await setup(10);
+      const order = await checkout(s.customerId, s.vendorId, s.productId);
+      expect((await decide(s.vendorUserId, order.id, 'accept')).status).toBe(200);
+      await backdatePlacement(db(), order.id, placedSecondsAgo);
+      return { ...s, orderId: order.id };
+    }
+
+    it('moves a PREPARING order out for delivery once the 60 s window has closed', async () => {
+      const s = await preparingOrder(61);
+
+      const res = await dispatch(s.vendorUserId, s.orderId);
+
+      expect(res.status).toBe(200);
+      expect(bodyOf(vendorOrderDispatchResponseSchema, res)).toEqual({
+        order_id: s.orderId,
+        state: 'OUT_FOR_DELIVERY',
+      });
+      expect((await rowOf(s.orderId))?.state).toBe('OUT_FOR_DELIVERY');
+      expect((await transitions(s.orderId)).at(-1)).toEqual(['PREPARING', 'OUT_FOR_DELIVERY']);
+    });
+
+    it("refuses to dispatch inside the customer's window (422) and changes nothing", async () => {
+      const s = await preparingOrder(59);
+
+      const res = await dispatch(s.vendorUserId, s.orderId);
+
+      expect(res.status).toBe(422);
+      const error = errorOf(res);
+      expect(error.code).toBe('CANCELLATION_WINDOW_OPEN');
+      const retryAfter = (error.details as { retry_after_seconds: number }).retry_after_seconds;
+      expect(retryAfter).toBeGreaterThanOrEqual(1);
+      expect(retryAfter).toBeLessThanOrEqual(2);
+      expect((await rowOf(s.orderId))?.state).toBe('PREPARING');
+      // The customer can still cancel: the vendor did not cut the window short.
+      expect((await cancel(s.customerId, s.orderId)).status).toBe(200);
+    });
+
+    it('reports the full wait for an order accepted the moment it was placed', async () => {
+      const s = await preparingOrder(0);
+
+      const res = await dispatch(s.vendorUserId, s.orderId);
+
+      expect(res.status).toBe(422);
+      const retryAfter = (errorOf(res).details as { retry_after_seconds: number })
+        .retry_after_seconds;
+      expect(retryAfter).toBeGreaterThan(55);
+      expect(retryAfter).toBeLessThanOrEqual(60);
+    });
+
+    it('closes cancellation for the customer once dispatched', async () => {
+      const s = await preparingOrder(61);
+      await dispatch(s.vendorUserId, s.orderId);
+
+      const res = await cancel(s.customerId, s.orderId);
+
+      expect(res.status).toBe(409);
+      expect(errorOf(res).details).toEqual({ state: 'OUT_FOR_DELIVERY' });
+    });
+
+    it('answers a repeated dispatch with the same body and no second event', async () => {
+      const s = await preparingOrder(61);
+
+      const first = await dispatch(s.vendorUserId, s.orderId);
+      const again = await dispatch(s.vendorUserId, s.orderId);
+
+      expect(again.status).toBe(200);
+      expect(again.body).toEqual(first.body);
+      const dispatches = (await transitions(s.orderId)).filter(
+        ([, to]) => to === 'OUT_FOR_DELIVERY',
+      );
+      expect(dispatches).toHaveLength(1);
+    });
+
+    it('dispatches once when asked 5 times at once', async () => {
+      const s = await preparingOrder(61);
+
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () => dispatch(s.vendorUserId, s.orderId)),
+      );
+
+      expect(results.map((res) => res.status)).toEqual([200, 200, 200, 200, 200]);
+      const dispatches = (await transitions(s.orderId)).filter(
+        ([, to]) => to === 'OUT_FOR_DELIVERY',
+      );
+      expect(dispatches).toHaveLength(1);
+    });
+
+    it('refuses an order that was not accepted, or was canceled, with 409', async () => {
+      const s = await setup(10);
+      const placed = await checkout(s.customerId, s.vendorId, s.productId);
+      await backdatePlacement(db(), placed.id, 61);
+      const canceled = await checkout(s.customerId, s.vendorId, s.productId);
+      await decide(s.vendorUserId, canceled.id, 'reject');
+
+      const placedRes = await dispatch(s.vendorUserId, placed.id);
+      const canceledRes = await dispatch(s.vendorUserId, canceled.id);
+
+      expect(placedRes.status).toBe(409);
+      expect(errorOf(placedRes).details).toEqual({ state: 'PLACED' });
+      expect(canceledRes.status).toBe(409);
+      expect(errorOf(canceledRes).details).toEqual({ state: 'CANCELED' });
+    });
+
+    it("answers 404 for another vendor's order and 403 for a customer", async () => {
+      const s = await preparingOrder(61);
+      const other = await setup(1);
+
+      const foreign = await dispatch(other.vendorUserId, s.orderId);
+      const customer = await dispatch(s.customerId, s.orderId, 'CUSTOMER');
+
+      expect(foreign.status).toBe(404);
+      expect(errorOf(foreign).code).toBe('ORDER_NOT_FOUND');
+      expect(customer.status).toBe(403);
+      expect((await rowOf(s.orderId))?.state).toBe('PREPARING');
     });
   });
 

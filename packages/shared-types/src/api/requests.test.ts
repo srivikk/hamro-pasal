@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { NEPAL_BOUNDING_BOX } from '../nepal/geo';
 import {
   checkoutRequestSchema,
+  driverDeliverRequestSchema,
   idParamSchema,
   otpSendRequestSchema,
   otpVerifyRequestSchema,
@@ -189,5 +190,25 @@ describe('vendorReviewSubmitRequestSchema', () => {
       vendorReviewSubmitRequestSchema.safeParse({ rating: 2, order_id: randomUUID() }).success,
     ).toBe(false);
     expect(vendorReviewSubmitRequestSchema.safeParse({ rating: 0 }).success).toBe(false);
+  });
+});
+
+describe('driverDeliverRequestSchema', () => {
+  it('accepts exactly four ASCII digits, leading zeros kept', () => {
+    expect(driverDeliverRequestSchema.parse({ delivery_otp: '0042' })).toEqual({
+      delivery_otp: '0042',
+    });
+  });
+
+  it('refuses other lengths, non-digits, Devanagari digits, numbers and extra fields', () => {
+    const parse = (body: unknown) => driverDeliverRequestSchema.safeParse(body).success;
+
+    expect(parse({ delivery_otp: '123' })).toBe(false);
+    expect(parse({ delivery_otp: '12345' })).toBe(false);
+    expect(parse({ delivery_otp: '12a4' })).toBe(false);
+    expect(parse({ delivery_otp: '१२३४' })).toBe(false);
+    expect(parse({ delivery_otp: 1234 })).toBe(false);
+    expect(parse({})).toBe(false);
+    expect(parse({ delivery_otp: '1234', driver_id: randomUUID() })).toBe(false);
   });
 });

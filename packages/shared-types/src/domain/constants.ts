@@ -46,6 +46,15 @@ export const OTP_TTL_SECONDS = 120;
 export const OTP_RESEND_COOLDOWN_SECONDS = 60;
 export const OTP_MAX_VERIFY_ATTEMPTS = 5;
 
+/*
+ * Delivery handoff (customer journey 10, driver flow step 5): the customer shows a 4-digit code
+ * and the rider types it in. DELIVERY_OTP_MAX_ATTEMPTS wrong codes for one order lock it for
+ * DELIVERY_OTP_LOCKOUT_SECONDS, so the 10 000 possible codes cannot be tried at the door.
+ */
+export const DELIVERY_OTP_LENGTH = 4;
+export const DELIVERY_OTP_MAX_ATTEMPTS = 5;
+export const DELIVERY_OTP_LOCKOUT_SECONDS = 15 * 60;
+
 /** SPEC implicit requirement 3: 15-minute access tokens and 7-day refresh tokens. */
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;

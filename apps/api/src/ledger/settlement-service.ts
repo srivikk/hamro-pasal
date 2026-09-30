@@ -63,31 +63,51 @@ export class SettlementService {
    */
   settleOrder(orderId: string): Promise<SettlementResult> {
     return this.db.transaction(async (tx) => {
-      const order = await lockOrder(tx, orderId);
-      if (order.state !== 'DELIVERED') {
-        throw new SettlementNotAllowedError(orderId, `cannot settle in state ${order.state}`);
-      }
-      if (order.payment_method !== 'COD' && order.payment_status !== 'PAID') {
-        throw new SettlementNotAllowedError(orderId, 'prepaid funds were never captured');
-      }
-
-      if (order.payment_method === 'COD' && order.payment_status === 'PENDING') {
-        // Cash changed hands at the doorstep (SPEC delivery flow step 5).
-        await tx.update(orders).set({ payment_status: 'PAID' }).where(eq(orders.id, orderId));
-      }
-
-      const postings = planSettlement(order);
-      if (postings.length === 0) {
-        return { status: 'nothing_to_post' } as const;
-      }
-      return this.ledger.post(tx, {
-        kind: 'ORDER_SETTLEMENT',
-        idempotencyKey: `order-settlement:${orderId}`,
-        orderId,
-        description: `${order.payment_method} / ${order.fulfillment_locked} settlement`,
-        postings,
-      });
+      const { result } = await this.settleOrderInTransaction(tx, await lockOrder(tx, orderId));
+      return result;
     });
+  }
+
+  /**
+   * Settlement inside the caller's transaction, which must already hold the order row lock and
+   * have moved it to DELIVERED (the driver's OTP handoff does both in one commit). Returns the
+   * order as it is after settlement: a COD order becomes PAID here.
+   */
+  async settleOrderInTransaction(
+    tx: Transaction,
+    order: Order,
+  ): Promise<{ readonly result: SettlementResult; readonly order: Order }> {
+    if (order.state !== 'DELIVERED') {
+      throw new SettlementNotAllowedError(order.id, `cannot settle in state ${order.state}`);
+    }
+    if (order.payment_method !== 'COD' && order.payment_status !== 'PAID') {
+      throw new SettlementNotAllowedError(order.id, 'prepaid funds were never captured');
+    }
+
+    let settled = order;
+    if (order.payment_method === 'COD' && order.payment_status === 'PENDING') {
+      // Cash changed hands at the doorstep (SPEC delivery flow step 5).
+      const [paid] = await tx
+        .update(orders)
+        .set({ payment_status: 'PAID' })
+        .where(eq(orders.id, order.id))
+        .returning();
+      if (paid === undefined) throw new SettlementNotAllowedError(order.id, 'order not found');
+      settled = paid;
+    }
+
+    const postings = planSettlement(order);
+    if (postings.length === 0) {
+      return { result: { status: 'nothing_to_post' }, order: settled };
+    }
+    const result = await this.ledger.post(tx, {
+      kind: 'ORDER_SETTLEMENT',
+      idempotencyKey: `order-settlement:${order.id}`,
+      orderId: order.id,
+      description: `${order.payment_method} / ${order.fulfillment_locked} settlement`,
+      postings,
+    });
+    return { result, order: settled };
   }
 }
 

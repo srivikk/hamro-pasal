@@ -4,6 +4,8 @@ import {
   cancelOrderResponseSchema,
   errorBodySchema,
   checkoutResponseSchema,
+  driverDeliverResponseSchema,
+  driverOrderListResponseSchema,
   feedResponseSchema,
   lockStatusResponseSchema,
   orderDetailResponseSchema,
@@ -11,6 +13,7 @@ import {
   tokenRefreshResponseSchema,
   vendorMenuSchema,
   vendorOrderDecisionResponseSchema,
+  vendorOrderDispatchResponseSchema,
   vendorOrderListResponseSchema,
 } from './responses';
 
@@ -253,6 +256,66 @@ describe('token refresh schemas', () => {
 
     expect(tokenRefreshResponseSchema.parse(body)).toEqual(body);
     expect(tokenRefreshResponseSchema.safeParse({ ...body, refresh_token: 'x.y.z' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('dispatch and driver schemas', () => {
+  const driverOrder = {
+    ...order,
+    state: 'OUT_FOR_DELIVERY',
+    payment_method: 'COD',
+    fulfillment: 'PLATFORM_FLEET',
+    vendor_business_name: 'Patan Organic Store',
+    delivery_address: null,
+    items: [
+      {
+        product_id: randomUUID(),
+        product_name: 'Local Honey 500g',
+        unit_price_npr: 900,
+        quantity: 1,
+      },
+    ],
+    assigned_to_me: false,
+  };
+
+  it('accept only OUT_FOR_DELIVERY as a dispatch result', () => {
+    const body = { order_id: randomUUID(), state: 'OUT_FOR_DELIVERY' };
+
+    expect(vendorOrderDispatchResponseSchema.parse(body)).toEqual(body);
+    expect(
+      vendorOrderDispatchResponseSchema.safeParse({ ...body, state: 'PREPARING' }).success,
+    ).toBe(false);
+  });
+
+  it('list orders out for delivery without the customer or the OTP hash', () => {
+    const parse = (overrides: Record<string, unknown>) =>
+      driverOrderListResponseSchema.safeParse({ orders: [{ ...driverOrder, ...overrides }] })
+        .success;
+
+    expect(driverOrderListResponseSchema.parse({ orders: [driverOrder] })).toEqual({
+      orders: [driverOrder],
+    });
+    expect(parse({ state: 'PREPARING' })).toBe(false);
+    expect(parse({ customer_id: randomUUID() })).toBe(false);
+    expect(parse({ customer_phone: '+9779800000001' })).toBe(false);
+    expect(parse({ delivery_otp: '$2b$10$abc' })).toBe(false);
+    expect(parse({ items: [] })).toBe(false);
+  });
+
+  it('accept a delivery only as DELIVERED with its time', () => {
+    const body = {
+      order_id: randomUUID(),
+      state: 'DELIVERED',
+      delivered_at: '2026-09-30T10:30:00.000Z',
+    };
+
+    expect(driverDeliverResponseSchema.parse(body)).toEqual(body);
+    expect(
+      driverDeliverResponseSchema.safeParse({ ...body, state: 'OUT_FOR_DELIVERY' }).success,
+    ).toBe(false);
+    expect(driverDeliverResponseSchema.safeParse({ ...body, delivered_at: null }).success).toBe(
       false,
     );
   });

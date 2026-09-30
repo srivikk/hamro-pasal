@@ -14,6 +14,7 @@ TOPICS=(
   "payment.reconciliation:4"
   "ledger.mutations:4"
   "notifications.broadcast:2"
+  "notifications.dlq:2"
 )
 
 for entry in "${TOPICS[@]}"; do

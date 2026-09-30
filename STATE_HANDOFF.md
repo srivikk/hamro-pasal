@@ -1,8 +1,8 @@
-# Hamro Pasal: State Handoff (Phases 0–13 complete)
+# Hamro Pasal: State Handoff (Phases 0–14 complete)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 13 (Notification Worker &
-SMS Dispatch)**, on top of Phase 12.5 (Application-Layer Suspension & Top-Ups), 12 (Vendor Wallet &
+work without re-deriving it. It describes the tree at the end of **Phase 14 (Worker Resiliency & IVR
+Escalation)**, on top of Phase 13 (Notification Worker & SMS Dispatch), 12.5 (Application-Layer Suspension & Top-Ups), 12 (Vendor Wallet &
 Debt Reconciliation), 11.5 (Vendor Dispatch UI & Self-Delivery Handoff), 11 (Driver Handoff & OTP Verification), 10 (Vendor Order Management & Audio Alarms), 9.6 (Chat Transcript Read-Back), 9.5 (Chat Persistence & Vendor Review Linkage), 9 (Double-Blind Reviews & Dispute Chat), 8 (Real-Time Order Tracking, Socket.io `/orders`), 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
 Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this file and the code disagree, **the code wins**. When anything disagrees with
 `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
@@ -75,8 +75,17 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 > package, **`@hamro-pasal/sms`**, so the API (login codes) and the worker use the same Sparrow /
 > Aakash / Mock code and the same `SMS_PROVIDER` switch; `MOCK` logs `[sms:mock] to +977…: <text>`
 > and makes no network call (§8G).
-> **No live device run has happened yet** (§13). Still not built: the IVR **voice** call of the
-> escalation, gig assignment / "Picked Up" / "Reached Location", the ghost-customer timer,
+> **Phase 14:** the notification consumer is wrapped in a **dead-letter queue**: a message that
+> fails its first attempt and 3 retries (1 s / 2 s / 4 s backoff) is copied byte for byte to the new
+> Kafka topic **`notifications.dlq`** (with `dlq_*` headers), its offset is committed and the
+> partition moves on; an unparseable envelope goes there at once. A **stale-order guard** reads the
+> order's current state before an escalation is sent and silently drops it unless the order is
+> still PLACED. The escalation now also places an **IVR call** concurrently with the SMS, through a
+> new shared package **`@hamro-pasal/ivr`**: only a MOCK adapter exists (`IVR_PROVIDER=MOCK` logs
+> `[ivr:mock] Calling +977…: "You have a pending order…"`; the default `DISABLED` places no call)
+> (§8H).
+> **No live device run has happened yet** (§13). Still not built: a real IVR provider (Twilio Voice
+> or a Nepal SIP trunk; only the mock exists), gig assignment / "Picked Up" / "Reached Location", the ghost-customer timer,
 > dispute resolution and an admin client, R2, refund payouts,
 > and refresh-token rotation/revocation.
 >
@@ -111,18 +120,18 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · `2ae9633` P10 · `e2cb61d` P11 · `5f3fc9a` P11.5 · `81d45ba` P12 · Phases 12.5 and 13 (uncommitted)           |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Unit tests      | **986 passing** (`pnpm test`): shared-types 138, api 78, worker 60, sms 21, kafka 7, db 7, mobile 675 (end of Phase 13; the 15 SMS adapter tests moved from api to sms)                                                                                                                                                                                                                                                                                                                                                  |
-| Integ. tests    | **368 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 286, worker 34, kafka 1 (end of Phase 13). One unexplained `driver-orders-api` failure in the first full Phase 12.5 run; not reproduced in 4 later full runs and 6 runs of the delivery files (the error was not captured). Earlier flakes: once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**: its other-Palika vendor now has its own location. |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 9                                                                                                                                                                                                                                                                                                                                                                     |
-| Dev database    | Migrations 0000–0013 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · `2ae9633` P10 · `e2cb61d` P11 · `5f3fc9a` P11.5 · `81d45ba` P12 · `76b1d7f` P12.5 · `6aa0f73` P13 · Phase 14 (uncommitted) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Unit tests      | **1015 passing** (`pnpm test`): shared-types 139, api 78, worker 81, sms 21, ivr 7, kafka 7, db 7, mobile 675 (end of Phase 14)                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Integ. tests    | **374 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 286, worker 40, kafka 1 (end of Phase 14). One unexplained `driver-orders-api` failure in the first full Phase 12.5 run; not reproduced in 4 later full runs and 6 runs of the delivery files (the error was not captured). Earlier flakes: once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**: its other-Palika vendor now has its own location.               |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 9                                                                                                                                                                                                                                                                                                                                                                                   |
+| Dev database    | Migrations 0000–0013 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 ### Root commands (`package.json`)
 
@@ -185,6 +194,9 @@ packages/kafka/src                 config.ts, producer.ts (DomainEventPublisher)
 packages/sms/src                   @hamro-pasal/sms (Phase 13, server-only; moved from apps/api/src/sms):
   sms-gateway.ts                   Sparrow / Aakash / Mock adapters (strict +977 via prepareOutboundSms), SmsDeliveryError
   from-env.ts                      smsGatewayFromEnv(env, { mockLog?, fetch? }) picks one by SMS_PROVIDER; mockSmsLogLine
+packages/ivr/src                   @hamro-pasal/ivr (Phase 14, server-only; used by the worker):
+  ivr-gateway.ts                   IvrGateway, MockIvrGateway (strict +977 via prepareOutboundCall), IvrCallError
+  from-env.ts                      ivrGatewayFromEnv(env, { mockLog? }): MOCK → MockIvrGateway, DISABLED → null; mockIvrLogLine
 apps/api/src                       Express 5 API
   app.ts (createApp) · container.ts (buildContainer / buildContainerFromEnv) · server.ts (HTTP + Socket.io)
   realtime/orders-namespace.ts     attachRealtime: Socket.io /orders (JWT handshake, ownership-checked rooms, Redis adapter)
@@ -211,8 +223,10 @@ apps/api/test/                     *.int.test.ts (auth-api, cart-api, checkout-c
 apps/worker/src                    main.ts, lifecycle.ts, outbox/ (OutboxRelay), queues/, config/, infra/,
                                    consumers/ (buildConsumers + routeByTopic; order-state-fanout.ts: Kafka order.lifecycle →
                                    Redis → /orders rooms; vendor-sla-scheduler.ts: PLACED → 90 s BullMQ timer;
-                                   vendor-notifications.ts: Kafka notifications.broadcast → vendor SMS, Phase 13),
-                                   notifications/vendor-sms.ts (SMS templates, Phase 13),
+                                   vendor-notifications.ts: Kafka notifications.broadcast → vendor SMS + IVR, Phases 13/14;
+                                   dead-letter.ts: withDeadLetter retries + notifications.dlq, Phase 14),
+                                   notifications/vendor-sms.ts (SMS templates, Phase 13), vendor-ivr.ts (IVR script,
+                                   Phase 14), order-state-reader.ts (stale-order guard's DB read, Phase 14),
                                    sla/vendor-escalation.ts (VendorEscalationService, Phase 10)
 apps/worker/test/                  outbox-relay, queues, order-state-fanout, vendor-sla, vendor-debt-reconciliation,
                                    vendor-notifications (*.int.test.ts)
@@ -268,7 +282,9 @@ src/test/       msw.ts · api-fixtures.ts · render.tsx · in-memory-mmkv.ts · 
 - Use `KAFKA_BROKERS=127.0.0.1:9092`, not `localhost`: on Windows/macOS `localhost` resolves to `::1`
   first and librdkafka stalls about 2 s per connection.
 - Topics: `order.lifecycle` (4), `payment.reconciliation` (4), `ledger.mutations` (4),
-  `notifications.broadcast` (2). Auto-create is disabled.
+  `notifications.broadcast` (2), `notifications.dlq` (2, Phase 14). Auto-create is disabled. A broker
+  created before Phase 14 lacks the DLQ topic: run `pnpm infra:up` (or `docker compose run --rm
+kafka-init`) once, or dead-lettering fails and the message is redelivered instead.
 - Root `.env` passes `parseServerEnv`. Never print or commit `.env` values. The API has still not
   been started live against a device. **The dev `.env` has `SMS_PROVIDER=SPARROW`**: signing in sends
   a real, billed SMS. For local work set `SMS_PROVIDER=MOCK`; the API then prints
@@ -417,23 +433,25 @@ EWKB (`geo/ewkb.ts`), because Drizzle 0.45's built-in `geometry()` ignores `srid
   | `order.canceled_refund_due`  | `payment.reconciliation`  | order_id       | **Phase 6.** Cancellation of a PAID order ("ORDER_CANCELED_REFUND_DUE"). Payload: order/vendor/customer ids, ESEWA\|KHALTI, gateway ref, `refund_amount_npr` (subtotal + delivery fee), `canceled_at`                                                                                                                                                                                                                                                                                 |
   | `order.state_changed`        | `order.lifecycle`         | order_id       | **Phase 8.** Every change of `orders.state`, in the same transaction (`enqueueOrderStateChanged`). Payload: order/customer/vendor ids, `from_state` (null on creation), `to_state`, `payment_status`, `refund_required`, `placed_at`, `delivered_at`, `changed_at` (= the row's `updated_at`)                                                                                                                                                                                         |
   | `ledger.mutated`             | `ledger.mutations`        | transaction_id | every journal                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-  | `vendor.escalation.required` | `notifications.broadcast` | order_id       | **Phase 10.** The worker's 90 s timer found the order still PLACED. Payload: order/vendor ids, `vendor_phone` (+977, for the IVR call/SMS), `placed_at`, `sla_seconds` (90), `escalated_at`. At most one per order (partial unique index, migration 0012). **Phase 13: SMS to the vendor** (IVR voice call not built).                                                                                                                                                                |
+  | `vendor.escalation.required` | `notifications.broadcast` | order_id       | **Phase 10.** The worker's 90 s timer found the order still PLACED. Payload: order/vendor ids, `vendor_phone` (+977, for the IVR call/SMS), `placed_at`, `sla_seconds` (90), `escalated_at`. At most one per order (partial unique index, migration 0012). **Phase 13: SMS to the vendor; Phase 14: plus an IVR call (mock), both only while the order is still PLACED.**                                                                                                             |
   | `vendor.suspended_for_debt`  | `notifications.broadcast` | vendor_id      | **Phases 12 / 12.5.** A vendor crossed the suspension limit: written by the API's `WalletService` in the transaction of the posting that crossed it (Phase 12.5), or by the nightly `VENDOR_DEBT_RECONCILIATION` after the limit was tightened (Phase 12). Payload: `vendor_id`, `vendor_phone` (+977), `previous_status` (never SUSPENDED), `wallet_balance_npr` (< 0), `suspension_limit_npr`, `suspended_at`. Once per transition into SUSPENDED. **Phase 13: SMS to the vendor.** |
   | `vendor.restored`            | `notifications.broadcast` | vendor_id      | **Phase 12.5.** A debt-suspended vendor's balance is back to 0 or more (top-up or payout); `WalletService` restored `status_before_debt_suspension`. Payload: `vendor_id`, `vendor_phone`, `restored_status` (never SUSPENDED), `wallet_balance_npr` (≥ 0), `transaction_id` (the clearing journal), `restored_at`. **Phase 13: SMS to the vendor.**                                                                                                                                  |
 
 - Consumers (`apps/worker/src/consumers/index.ts#buildConsumers`, one handler per topic, group
   `KAFKA_CONSUMER_GROUP_ID`):
 
-  | Consumer                                             | Topic                     | Acts on                                                                      | Does                                                                                                                                                                                                                                                                                                                             |
-  | ---------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `order-state-fanout.ts#orderStateFanoutConsumer`     | `order.lifecycle`         | `order.state_changed`                                                        | Broadcasts `order:state_update` (`orderStateUpdateFromEvent`) to the rooms of `orderStateUpdateRooms`: `order:{order_id}`, plus `vendor:{vendor_id}` once the order was placed (`placed_at` not null; Phase 10), namespace `/orders`, via `@socket.io/redis-emitter` (key `SOCKET_IO_REDIS_KEY`). Other event types are ignored. |
-  | `vendor-sla-scheduler.ts#vendorSlaSchedulerConsumer` | `order.lifecycle`         | `order.state_changed` to PLACED                                              | **Phase 10.** Schedules the `vendor-acceptance-timeout` job (id = order id, idempotent) with delay `vendorAcceptanceDelayMs(placed_at, now)` = what is left of 90 s from `placed_at` (0 if already past). Throws (redelivery) if Redis refuses.                                                                                  |
-  | `vendor-notifications.ts#vendorNotificationConsumer` | `notifications.broadcast` | `vendor.suspended_for_debt`, `vendor.restored`, `vendor.escalation.required` | **Phase 13.** Renders the template (`notifications/vendor-sms.ts`) and sends it to `vendor_phone` through the `SMS_PROVIDER` adapter. Dedupe `SET notifications:sms:seen:{event_id} 1 EX 86400 NX`; a provider failure releases the claim and throws (redelivery). §8G.                                                          |
+  | Consumer                                             | Topic                     | Acts on                                                                      | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+  | ---------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `order-state-fanout.ts#orderStateFanoutConsumer`     | `order.lifecycle`         | `order.state_changed`                                                        | Broadcasts `order:state_update` (`orderStateUpdateFromEvent`) to the rooms of `orderStateUpdateRooms`: `order:{order_id}`, plus `vendor:{vendor_id}` once the order was placed (`placed_at` not null; Phase 10), namespace `/orders`, via `@socket.io/redis-emitter` (key `SOCKET_IO_REDIS_KEY`). Other event types are ignored.                                                                                                                                                                                                |
+  | `vendor-sla-scheduler.ts#vendorSlaSchedulerConsumer` | `order.lifecycle`         | `order.state_changed` to PLACED                                              | **Phase 10.** Schedules the `vendor-acceptance-timeout` job (id = order id, idempotent) with delay `vendorAcceptanceDelayMs(placed_at, now)` = what is left of 90 s from `placed_at` (0 if already past). Throws (redelivery) if Redis refuses.                                                                                                                                                                                                                                                                                 |
+  | `vendor-notifications.ts#vendorNotificationConsumer` | `notifications.broadcast` | `vendor.suspended_for_debt`, `vendor.restored`, `vendor.escalation.required` | **Phase 13.** Renders the template (`notifications/vendor-sms.ts`) and sends it to `vendor_phone` through the `SMS_PROVIDER` adapter; an escalation also places an IVR call (`IVR_PROVIDER`) concurrently, after the stale-order guard found the order still PLACED (Phase 14). Dedupe per channel (`notifications:sms:seen:` / `notifications:ivr:seen:{event_id}`); a failure releases that channel's claim and throws. **Wrapped in `withDeadLetter`** (Phase 14): 3 in-process retries, then `notifications.dlq`. §8G, §8H. |
   - **Dedupe:** `SET fanout:orders:seen:{event_id} 1 EX 86400 NX` before broadcasting; a redelivery is
     skipped. If the broadcast fails the claim is deleted and the handler throws, so Kafka redelivers.
   - **Publish errors are not swallowed:** the emitter calls `redis.publish` without awaiting it;
     `RedisOrderRoomBroadcaster` hands it a wrapper that collects those promises and awaits them.
-  - An invalid envelope is logged and skipped (a poison message would otherwise block the partition).
+  - An invalid envelope is logged and skipped on `order.lifecycle` (a poison message would otherwise
+    block the partition). On `notifications.broadcast` it is dead-lettered to `notifications.dlq`
+    instead (Phase 14, §8H); the `order.lifecycle` consumers have no DLQ yet.
   - **Several consumers may share a topic (Phase 10):** `routeByTopic` builds one Kafka handler per
     topic that runs its consumers in registration order (fan-out, then the SLA scheduler). If any
     throws, the message fails and is redelivered to all of them, so each must be idempotent.
@@ -639,8 +657,98 @@ No routes for: saved-address CRUD, profile (name) editing, logout/revocation, or
 (gig assignment, "Picked Up", "Reached Location", "Delivery Failed"), "Accept with Modifications",
 reading published reviews, dispute resolution (nothing moves a dispute out of OPEN or the order to `DISPUTED`), refunds, admin,
 a driver app, `/metrics`, rate limiting beyond the per-phone OTP cooldown. No push notifications. The
-escalation's SMS is sent (Phase 13) but its IVR **voice call** is not; the ghost-customer and
+escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
+(Phase 14; no Twilio / SIP trunk adapter); no DLQ replay tool; the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8H. Worker resiliency: dead-letter queue, stale-order guard, IVR call (Phase 14)
+
+Infrastructure §1 (Kafka, SMS fan-out, the 90 s escalation) and §6 (IVR escalation). Code:
+`apps/worker/src/consumers/{dead-letter,vendor-notifications,index}.ts`,
+`apps/worker/src/notifications/{order-state-reader,vendor-ivr}.ts`, `packages/ivr`.
+
+```
+Kafka notifications.broadcast ──▶ withDeadLetter( vendorNotificationConsumer )
+  attempt 1 ─ fail ─▶ 1 s ─▶ retry 1 ─ fail ─▶ 2 s ─▶ retry 2 ─ fail ─▶ 4 s ─▶ retry 3 ─ fail
+     └─▶ producer.send(notifications.dlq, same key + value, original headers + dlq_*) ─▶ return
+         (eachMessage resolves → offset committed → next message on the partition)
+  PoisonMessageError (unparseable envelope) ─▶ straight to notifications.dlq (1 attempt)
+  DLQ publish fails ─▶ error propagates ─▶ offset NOT committed ─▶ Kafka redelivers (never dropped)
+
+vendor.escalation.required ─▶ SELECT state FROM orders WHERE id = order_id
+  state ≠ PLACED (accepted, rejected, canceled, dispatched) or no row ─▶ return
+      (no SMS, no call, no claim, no DLQ)
+  PLACED ─▶ Promise.allSettled([ SMS (SMS_PROVIDER), IVR call (IVR_PROVIDER) ])
+```
+
+**Dead-letter queue** (`withDeadLetter(consumer, { name, deadLetterTopic, publisher, maxRetries?,
+retryDelayMs?, sleep?, now?, onDeadLettered? })`):
+
+- Retries are **in-process** (the handler is re-run inside the same `eachMessage`), not Kafka
+  redeliveries: this gives real backoff and a deterministic count. `DEAD_LETTER_MAX_RETRIES = 3`,
+  `defaultRetryDelayMs` = 1 s, 2 s, 4 s (the partition waits ~7 s per failing message; the other
+  partition keeps flowing). A worker crash mid-retries restarts the count at the redelivery.
+- The dead letter: topic `KAFKA_TOPICS.NOTIFICATIONS_DLQ = 'notifications.dlq'` (2 partitions,
+  `infra/kafka/create-topics.sh`), **key and value byte for byte** (a replay can republish it
+  unchanged, and a poison pill is preserved as it arrived), the original headers (`event_id`,
+  `event_type`, `event_version`) plus `dlq_source_topic`, `dlq_source_partition`,
+  `dlq_source_offset`, `dlq_consumer` (`vendor-notifications`), `dlq_attempts` (4, or 1 for a
+  poison pill), `dlq_error_name`, `dlq_error_message` (≤ 1000 chars), `dlq_failed_at`.
+- Published through the worker's existing idempotent producer (`KafkaDeadLetterPublisher`), then one
+  JSON line is logged: `{"notification":"dead_lettered","consumer",…,"attempts","error"}`.
+- `PoisonMessageError`: thrown by the consumer for an envelope that fails `domainEventSchema`
+  (replacing Phase 13's log-and-skip on this topic); never retried.
+- Only `notifications.broadcast` is wrapped. `order.lifecycle` keeps its Phase 8/10 behaviour
+  (invalid envelopes skipped, other failures redelivered by Kafka without limit). Nothing consumes
+  `notifications.dlq` yet (inspect it with `kafka-console-consumer.sh --property print.headers=true`).
+
+**Stale-order guard.** For `vendor.escalation.required` only, `DatabaseOrderStateReader.currentState`
+reads `orders.state` (plain read, no lock) **on every attempt**, before any claim. Anything but
+`PLACED` (or a missing order) returns silently without notifying. This closes the Phase 13 gap where
+a consumer backlog could text a vendor about an order already answered. A small window remains
+between the read and the provider call (not locked on purpose: holding the order row lock across
+an SMS/IVR HTTP call would block the vendor's accept).
+
+**IVR call** (`@hamro-pasal/ivr`):
+
+- `IvrGateway.call({ to, script })`; every adapter goes through `prepareOutboundCall` (strict
+  `+9779XXXXXXXXX` via `normalizeNepalPhone`, script 1–500 chars). `ivrGatewayFromEnv(env)`:
+  `IVR_PROVIDER=MOCK` → `MockIvrGateway`, which prints (console.info, no network)
+  `[ivr:mock] Calling +9779800000011: "You have a pending order on Hamro Pasal. Order 4 F A 5 B 6 has waited over 90 seconds. Open the app now to accept or reject it."`;
+  `DISABLED` (the default) → `null`, so escalations are SMS only.
+- `IVR_PROVIDER` (`parseServerEnv`, enum `MOCK | DISABLED`, default `DISABLED`): **MOCK is refused
+  with `NODE_ENV=production`**. No real provider exists: Twilio Voice / a SIP trunk is one more
+  adapter and enum value. A local `.env` needs `IVR_PROVIDER=MOCK` to see the log line.
+- Script (`notifications/vendor-ivr.ts#vendorEscalationCall`): the dashboard's order code spelled
+  out one character at a time for text-to-speech; the SLA seconds come from the event.
+- SMS and call run **concurrently** (`Promise.allSettled`), each with its own Redis claim
+  (`notifications:ivr:seen:{event_id}`, 24 h). If one fails, only its claim is released and the
+  handler throws (an `AggregateError` if both fail), so a retry repeats only the failed channel
+  (tested: IVR down → the retry calls without texting again). A dead-lettered event has its failed
+  channel unclaimed, so a future replay would deliver it.
+- After a call the worker logs `{"notification":"ivr.placed",…,"provider"}` (no phone, no script).
+
+**Tests.**
+
+- `src/consumers/dead-letter.test.ts` (7): pass-through, success on the 3rd retry (4 attempts,
+  delays 1/2/4 s, no DLQ), DLQ after the 3rd retry with the exact record, poison at once, failed
+  publish propagates, header truncation, default backoff.
+- `src/consumers/vendor-notifications.test.ts` (21): the Phase 13 cases, poison →
+  `PoisonMessageError`, SMS + call for a PLACED order, call started while the SMS is in flight,
+  guard for PREPARING / CANCELED / OUT_FOR_DELIVERY / unknown (no claim), re-check on retry,
+  per-channel claims, both failing, DISABLED, the MOCK log line. Also
+  `src/notifications/vendor-ivr.test.ts` (3), `packages/ivr/src/ivr.test.ts` (7),
+  `server-env.test.ts` (+1).
+- `test/vendor-notifications.int.test.ts` (10, **real Postgres rows + OutboxRelay + Kafka + Redis**,
+  with a second consumer reading the real `notifications.dlq`): 4 × Sparrow 503 → exactly 4
+  attempts, the event in the DLQ byte for byte with its headers, the next message on the same
+  partition texted, no further attempt; 3 × 503 → texted on the 4th attempt, nothing
+  dead-lettered; a poison pill → DLQ at once (attempts 1) and the next message processed; an order
+  moved to PREPARING or CANCELED after the timer wrote the event → no SMS, no call, no DLQ; a
+  PLACED order → SMS + mock call.
+- Mutation-checked: removing the guard (2 integration + 5 unit tests fail), `<` instead of `<=` for
+  the retry count (2 + 2), rethrowing instead of committing after the DLQ publish (2 + 3),
+  retrying poison pills (1 + 1).
 
 ## 8G. Vendor notification SMS (Phase 13)
 
@@ -1731,9 +1839,9 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
    "Reached Location", the
    8 min ghost-customer timer, and driver access to `/orders`. Each transition calls
    `enqueueOrderStateChanged` in its transaction; the vendor room already receives every update.
-   Vendor follow-ups: ~~the IVR/SMS consumer of `vendor.escalation.required`~~ (the SMS is done in
-   Phase 13; the **IVR voice call** via Twilio Voice / a SIP trunk is still to do, e.g. as a second
-   consumer on `notifications.broadcast`), SPEC's **3-minute acceptance window**
+   Vendor follow-ups: ~~the IVR/SMS consumer of `vendor.escalation.required`~~ (SMS in Phase 13,
+   mock IVR call in Phase 14; still to do: a **real IVR adapter** in `@hamro-pasal/ivr`, Twilio
+   Voice or a Nepal SIP trunk, plus a DLQ replay tool and a DLQ for `order.lifecycle`), SPEC's **3-minute acceptance window**
    (auto-reject? not specified), "Accept with Modifications" (partial fulfilment + partial refund),
    Vendor Acceptance Rate (< 85 % penalises feed ranking), refusing decisions from a SUSPENDED
    vendor, background alarm (push with a data-only payload, expo-audio background plugin).
@@ -1880,6 +1988,25 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
     the limit.
   - Texts are English ASCII (single GSM-7 segment, cheapest); the IVR voice call is out of scope.
 
+- **Phase 14:**
+  - "3 retries" = 1 attempt + 3 retries (4 calls), retried **in-process** with 1/2/4 s backoff, not
+    counted across Kafka redeliveries (Redis counters per offset would survive a crash but add
+    state; bounded blocking of one partition was preferred).
+  - The dead letter keeps the original key, value and headers and adds `dlq_*` headers, instead of
+    wrapping the event in a new JSON envelope, so it can be replayed unchanged.
+  - Unparseable envelopes on `notifications.broadcast` now go to the DLQ (one attempt) instead of
+    being logged and skipped: they are poison pills too, and the copy is kept.
+  - If the DLQ publish fails, the offset is not committed (the message is redelivered) rather than
+    being dropped.
+  - Only the notification consumer is wrapped (the prompt's scope); `order.lifecycle` is unchanged.
+  - The stale-order guard reads without a row lock and drops a missing order too; it runs on every
+    retry, before any claim.
+  - `IVR_PROVIDER` is `MOCK | DISABLED` with default `DISABLED` (so existing and production
+    configs still parse); MOCK is refused in production like the SMS and top-up mocks. No real
+    provider was added (not requested).
+  - SMS and IVR each have their own Redis claim, so a retry after one channel failed does not
+    repeat the other.
+
 - **Phase 12.5:**
   - **The wallet trigger stays** (asked; user chose, SPEC §5): the application-layer `WalletService`
     runs on top of it instead of replacing it. The prompt's "migration to drop it" was not written.
@@ -1979,16 +2106,22 @@ CANCELLATION_WINDOW_OPEN` with the seconds left.
 - **Refunds are flagged, never paid:** `refund_required` + `order.canceled_refund_due` have no
   consumer, yet the app tells the customer "Escrow refund initiated"; `PAID_AFTER_SESSION_EXPIRED`
   orders are not even flagged.
-- ~~**The IVR/SMS call is not made**~~ **Only the SMS half of the escalation exists (Phase 13):** the
-  vendor gets an SMS after 90 s, but no IVR voice call is placed.
+- **The escalation's voice call is a mock (Phase 14):** the vendor gets an SMS after 90 s, and
+  `IVR_PROVIDER=MOCK` only logs the call; production (`DISABLED`) places no call until a real
+  Twilio Voice / SIP trunk adapter is written.
+- **Phase 14:** nothing reads `notifications.dlq` (no alert, no replay tool). A failing message
+  holds its partition for ~7 s of backoff, so a long provider outage drains the backlog into the
+  DLQ at about one message per 7 s per partition. The retry count restarts if the worker crashes
+  mid-retries. The stale-order guard reads without a lock, so an accept landing between the read
+  and the provider call can still be followed by the SMS/call. `order.lifecycle` consumers still
+  have no DLQ (a permanent failure there blocks the partition).
 - **The alarm only rings in the foreground.** A vendor whose app is backgrounded or killed hears
   nothing (no push, no background playback plugin); only the 90 s escalation SMS reaches them.
 - **Phase 13:** notification SMS are at-most-once on a crash (the Redis claim is taken before
   sending, so a worker dying mid-send loses that SMS) and at-least-once on a provider timeout (the
-  provider may have sent it before the timeout; the retry sends again). A permanent provider
-  failure (bad credentials) blocks the `notifications.broadcast` partition with endless redelivery,
-  as for the other consumers. Escalation SMS are not checked for staleness: a backlog could text a
-  vendor about an order already answered. SMS text is English only (the vendor's app language is
+  provider may have sent it before the timeout; the retry sends again). ~~A permanent provider
+  failure blocks the partition~~ (Phase 14: dead-lettered after 3 retries). ~~Escalation SMS are
+  not checked for staleness~~ (Phase 14: stale-order guard). SMS text is English only (the vendor's app language is
   not known on the server). A new consumer group position starts at the latest offset, so events
   written before the worker first subscribes to `notifications.broadcast` are not texted.
 - **SPEC's 3-minute vendor acceptance window is not enforced:** an unanswered order stays PLACED

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@hamro-pasal/db": "workspace:*",
+    "@hamro-pasal/ivr": "workspace:*",
     "@hamro-pasal/kafka": "workspace:*",
     "@hamro-pasal/shared-types": "workspace:*",
     "@hamro-pasal/sms": "workspace:*",

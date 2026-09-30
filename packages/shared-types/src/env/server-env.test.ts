@@ -116,4 +116,11 @@ describe('parseServerEnv', () => {
     );
     expectInvalid({ ...validEnv, WALLET_TOP_UP_MODE: 'FREE' }, 'WALLET_TOP_UP_MODE');
   });
+
+  it('disables IVR calls by default and allows the MOCK IVR outside production only', () => {
+    expect(parseServerEnv(validEnv).IVR_PROVIDER).toBe('DISABLED');
+    expect(parseServerEnv({ ...validEnv, IVR_PROVIDER: 'MOCK' }).IVR_PROVIDER).toBe('MOCK');
+    expectInvalid({ ...validEnv, IVR_PROVIDER: 'MOCK', NODE_ENV: 'production' }, 'IVR_PROVIDER');
+    expectInvalid({ ...validEnv, IVR_PROVIDER: 'TWILIO' }, 'IVR_PROVIDER');
+  });
 });

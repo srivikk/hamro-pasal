@@ -19,6 +19,14 @@ export type SmsProvider = (typeof smsProviders)[number];
 export const walletTopUpModes = ['MOCK', 'DISABLED'] as const;
 export type WalletTopUpMode = (typeof walletTopUpModes)[number];
 
+/**
+ * IVR voice calls for the 90 s vendor escalation (infrastructure §6: Twilio Voice or a Nepal SIP
+ * trunk). No real provider is wired yet: MOCK logs each call instead of placing it and is refused
+ * in production; DISABLED (the default) places no call, so the escalation is SMS only.
+ */
+export const ivrProviders = ['MOCK', 'DISABLED'] as const;
+export type IvrProvider = (typeof ivrProviders)[number];
+
 export const kafkaSaslMechanisms = ['plain', 'scram-sha-256', 'scram-sha-512'] as const;
 export type KafkaSaslMechanism = (typeof kafkaSaslMechanisms)[number];
 
@@ -103,6 +111,9 @@ export const serverEnvSchema = z
     FIREBASE_CLIENT_EMAIL: z.email().optional(),
     FIREBASE_PRIVATE_KEY: optionalNonEmpty,
 
+    // IVR voice calls for the vendor escalation (Phase 14, read by the worker)
+    IVR_PROVIDER: z.enum(ivrProviders).default('DISABLED'),
+
     // Dispute evidence uploads. Cloudflare R2 is not wired yet: the API stores files on local disk
     // (default <os tmpdir>/uploads, i.e. /tmp/uploads on Linux/macOS) and serves them under
     // /uploads. The public base URL defaults to http://localhost:<API_PORT>/uploads; set it to the
@@ -139,6 +150,14 @@ export const serverEnvSchema = z
         code: 'custom',
         path: ['WALLET_TOP_UP_MODE'],
         message: 'MOCK credits wallets without a payment; it is not allowed in production',
+      });
+    }
+
+    if (env.IVR_PROVIDER === 'MOCK' && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['IVR_PROVIDER'],
+        message: 'MOCK only logs calls; it is not allowed in production',
       });
     }
 

@@ -17,6 +17,11 @@ export const KAFKA_TOPICS = {
   PAYMENT_RECONCILIATION: 'payment.reconciliation',
   LEDGER_MUTATIONS: 'ledger.mutations',
   NOTIFICATIONS_BROADCAST: 'notifications.broadcast',
+  /**
+   * Dead letters of `notifications.broadcast` (Phase 14): messages the worker could not process
+   * after its retries, copied byte for byte with `dlq_*` headers. No domain event is routed here.
+   */
+  NOTIFICATIONS_DLQ: 'notifications.dlq',
 } as const;
 export type KafkaTopic = (typeof KAFKA_TOPICS)[keyof typeof KAFKA_TOPICS];
 

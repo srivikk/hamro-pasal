@@ -1,14 +1,22 @@
+import type { IvrGateway } from '@hamro-pasal/ivr';
 import type { KafkaJS } from '@hamro-pasal/kafka';
+import { KAFKA_TOPICS } from '@hamro-pasal/shared-types';
 import type { SmsGateway } from '@hamro-pasal/sms';
 import type { Redis } from 'ioredis';
 
+import type { OrderStateReader } from '../notifications/order-state-reader';
+import { withDeadLetter, type DeadLetterPublisher } from './dead-letter';
 import {
   orderStateFanoutConsumer,
   RedisEventDeduplicator,
   RedisOrderRoomBroadcaster,
 } from './order-state-fanout';
 import type { KafkaConsumerDefinition } from './types';
-import { VENDOR_SMS_DEDUPE_PREFIX, vendorNotificationConsumer } from './vendor-notifications';
+import {
+  VENDOR_IVR_DEDUPE_PREFIX,
+  VENDOR_SMS_DEDUPE_PREFIX,
+  vendorNotificationConsumer,
+} from './vendor-notifications';
 import {
   vendorSlaSchedulerConsumer,
   type VendorAcceptanceTimerScheduler,
@@ -21,6 +29,12 @@ export interface ConsumerDeps {
   readonly vendorAcceptanceTimers: VendorAcceptanceTimerScheduler;
   /** Sends vendor notification SMS (SMS_PROVIDER). */
   readonly sms: SmsGateway;
+  /** Places the escalation's voice call (IVR_PROVIDER); null when DISABLED. */
+  readonly ivr: IvrGateway | null;
+  /** Current order state, for the escalation's stale-order guard. */
+  readonly orders: OrderStateReader;
+  /** Writes `notifications.dlq` (the worker's idempotent producer). */
+  readonly deadLetters: DeadLetterPublisher;
 }
 
 /** Register Kafka topic handlers here. Several may share a topic (see routeByTopic). */
@@ -31,10 +45,21 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
       deduplicator: new RedisEventDeduplicator(deps.redis),
     }),
     vendorSlaSchedulerConsumer({ timers: deps.vendorAcceptanceTimers }),
-    vendorNotificationConsumer({
-      sms: deps.sms,
-      deduplicator: new RedisEventDeduplicator(deps.redis, VENDOR_SMS_DEDUPE_PREFIX),
-    }),
+    // 1 attempt + 3 retries, then notifications.dlq and the partition moves on (Phase 14).
+    withDeadLetter(
+      vendorNotificationConsumer({
+        sms: deps.sms,
+        smsDeduplicator: new RedisEventDeduplicator(deps.redis, VENDOR_SMS_DEDUPE_PREFIX),
+        ivr: deps.ivr,
+        ivrDeduplicator: new RedisEventDeduplicator(deps.redis, VENDOR_IVR_DEDUPE_PREFIX),
+        orders: deps.orders,
+      }),
+      {
+        name: 'vendor-notifications',
+        deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
+        publisher: deps.deadLetters,
+      },
+    ),
   ];
 }
 

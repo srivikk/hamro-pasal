@@ -1,4 +1,5 @@
 import { createDatabase } from '@hamro-pasal/db';
+import { ivrGatewayFromEnv } from '@hamro-pasal/ivr';
 import { createIdempotentProducer, createKafka, DomainEventPublisher } from '@hamro-pasal/kafka';
 import { smsGatewayFromEnv } from '@hamro-pasal/sms';
 import { Worker } from 'bullmq';
@@ -6,9 +7,11 @@ import { Redis } from 'ioredis';
 
 import { loadEnv } from './config/env';
 import { buildConsumers, routeByTopic } from './consumers';
+import { KafkaDeadLetterPublisher } from './consumers/dead-letter';
 import { BullVendorAcceptanceTimers } from './consumers/vendor-sla-scheduler';
 import { buildBullConnection } from './infra/redis';
 import { Lifecycle } from './lifecycle';
+import { DatabaseOrderStateReader } from './notifications/order-state-reader';
 import { OutboxRelay } from './outbox/outbox-relay';
 import { allTimerQueues, createTimerQueues, registerMidnightJobs } from './queues/definitions';
 import { createProcessors, createTimerHandlers } from './queues/processors';
@@ -57,7 +60,8 @@ async function main(): Promise<void> {
 
   // Kafka consumers: order state fan-out to the API's Socket.io rooms through Redis, the 90 s
   // vendor acceptance timer for every order that becomes PLACED, and vendor SMS for
-  // notifications.broadcast (suspension, restore, SLA escalation).
+  // notifications.broadcast (suspension, restore, SLA escalation + IVR call; failures go to
+  // notifications.dlq after 3 retries).
   const redis = new Redis(env.REDIS_URL);
   lifecycle.register(async () => {
     await redis.quit();
@@ -67,6 +71,10 @@ async function main(): Promise<void> {
     vendorAcceptanceTimers: new BullVendorAcceptanceTimers(queues.vendorAcceptance),
     // SMS_PROVIDER=MOCK logs "[sms:mock] to +977…: <text>" instead of calling the provider.
     sms: smsGatewayFromEnv(env),
+    // IVR_PROVIDER=MOCK logs "[ivr:mock] Calling +977…" for escalations; DISABLED places no call.
+    ivr: ivrGatewayFromEnv(env),
+    orders: new DatabaseOrderStateReader(db),
+    deadLetters: new KafkaDeadLetterPublisher(producer),
   });
   if (consumers.length > 0) {
     const handlers = routeByTopic(consumers);

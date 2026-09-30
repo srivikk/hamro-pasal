@@ -25,6 +25,10 @@ import { toNpr } from '../ledger/money';
 import { SettlementNotAllowedError } from '../ledger/settlement-service';
 import { CancellationWindowExpiredError, OrderNotCancelableError } from '../orders/order-service';
 import {
+  OrderDecisionConflictError,
+  VendorAccountNotFoundError,
+} from '../orders/vendor-order-service';
+import {
   OrderNotReviewableError,
   ReviewAlreadySubmittedError,
   ReviewWindowClosedError,
@@ -87,13 +91,16 @@ export function toHttpError(error: unknown): HttpError {
   if (error instanceof SmsDeliveryError) {
     return new HttpError(502, 'SMS_DELIVERY_FAILED', 'The code could not be sent; try again');
   }
-  if (error instanceof VendorNotFoundError) {
+  if (error instanceof VendorNotFoundError || error instanceof VendorAccountNotFoundError) {
     return new HttpError(404, 'VENDOR_NOT_FOUND', 'Vendor not found');
   }
   if (error instanceof CancellationWindowExpiredError) {
     return new HttpError(422, 'CANCELLATION_WINDOW_EXPIRED', error.message);
   }
   if (error instanceof OrderNotCancelableError) {
+    return new HttpError(409, 'ORDER_STATE_CONFLICT', error.message, { state: error.state });
+  }
+  if (error instanceof OrderDecisionConflictError) {
     return new HttpError(409, 'ORDER_STATE_CONFLICT', error.message, { state: error.state });
   }
   if (error instanceof OrderNotReviewableError) {

@@ -11,8 +11,11 @@ import {
 } from './order-state-fanout';
 
 const orderId = randomUUID();
+const vendorId = randomUUID();
 
-function stateChanged(overrides: { to_state?: OrderState; event_id?: string } = {}): DomainEvent {
+function stateChanged(
+  overrides: { to_state?: OrderState; event_id?: string; placed_at?: string | null } = {},
+): DomainEvent {
   return {
     event_id: overrides.event_id ?? randomUUID(),
     event_type: 'order.state_changed',
@@ -22,12 +25,13 @@ function stateChanged(overrides: { to_state?: OrderState; event_id?: string } = 
     payload: {
       order_id: orderId,
       customer_id: randomUUID(),
-      vendor_id: randomUUID(),
+      vendor_id: vendorId,
       from_state: 'PLACED',
       to_state: overrides.to_state ?? 'CANCELED',
       payment_status: 'PENDING',
       refund_required: false,
-      placed_at: '2026-09-30T09:59:30.000Z',
+      placed_at:
+        overrides.placed_at === undefined ? '2026-09-30T09:59:30.000Z' : overrides.placed_at,
       delivered_at: null,
       changed_at: '2026-09-30T10:00:00.000Z',
     },
@@ -53,15 +57,17 @@ function message(value: string | null, offset = '0'): KafkaJS.EachMessagePayload
 
 class RecordingBroadcaster implements OrderRoomBroadcaster {
   readonly sent: OrderStateUpdate[] = [];
+  readonly rooms: (readonly string[])[] = [];
   failNext: Error | null = null;
 
-  broadcast(update: OrderStateUpdate): Promise<void> {
+  broadcast(update: OrderStateUpdate, rooms: readonly string[]): Promise<void> {
     if (this.failNext !== null) {
       const error = this.failNext;
       this.failNext = null;
       return Promise.reject(error);
     }
     this.sent.push(update);
+    this.rooms.push(rooms);
     return Promise.resolve();
   }
 }
@@ -114,6 +120,24 @@ describe('orderStateFanoutConsumer', () => {
         changed_at: '2026-09-30T10:00:00.000Z',
       },
     ]);
+  });
+
+  it("sends a placed order's updates to its room and its vendor's room (Phase 10)", async () => {
+    const { consumer, broadcaster } = setup();
+
+    await consumer.handle(message(JSON.stringify(stateChanged({ to_state: 'PREPARING' }))));
+
+    expect(broadcaster.rooms).toEqual([[`order:${orderId}`, `vendor:${vendorId}`]]);
+  });
+
+  it('keeps an order that was never placed away from the vendor room', async () => {
+    const { consumer, broadcaster } = setup();
+
+    await consumer.handle(
+      message(JSON.stringify(stateChanged({ to_state: 'PENDING_PAYMENT', placed_at: null }))),
+    );
+
+    expect(broadcaster.rooms).toEqual([[`order:${orderId}`]]);
   });
 
   it('broadcasts a redelivered event only once (dedupe on event_id)', async () => {
@@ -197,9 +221,27 @@ describe('RedisOrderRoomBroadcaster', () => {
       },
     };
 
-    await new RedisOrderRoomBroadcaster(redis, 'test-key').broadcast(update);
+    await new RedisOrderRoomBroadcaster(redis, 'test-key').broadcast(update, [`order:${orderId}`]);
 
     expect(channels).toEqual([`test-key#/orders#order:${orderId}#`]);
+  });
+
+  it('publishes one message for several rooms (the adapter delivers it once per socket)', async () => {
+    const channels: string[] = [];
+    const redis = {
+      publish: (channel: string) => {
+        channels.push(channel);
+        return Promise.resolve(1);
+      },
+    };
+
+    await new RedisOrderRoomBroadcaster(redis, 'test-key').broadcast(update, [
+      `order:${orderId}`,
+      `vendor:${vendorId}`,
+    ]);
+
+    // With more than one room the emitter uses the namespace channel and lists the rooms inside.
+    expect(channels).toEqual(['test-key#/orders#']);
   });
 
   it('uses the key the API adapter subscribes with by default', async () => {
@@ -211,7 +253,7 @@ describe('RedisOrderRoomBroadcaster', () => {
       },
     };
 
-    await new RedisOrderRoomBroadcaster(redis).broadcast(update);
+    await new RedisOrderRoomBroadcaster(redis).broadcast(update, [`order:${orderId}`]);
 
     expect(channels).toEqual([`hamro-pasal:socket.io#/orders#order:${orderId}#`]);
   });
@@ -219,8 +261,8 @@ describe('RedisOrderRoomBroadcaster', () => {
   it('rejects when Redis refuses the publish (the emitter alone would swallow it)', async () => {
     const redis = { publish: () => Promise.reject(new Error('connection lost')) };
 
-    await expect(new RedisOrderRoomBroadcaster(redis).broadcast(update)).rejects.toThrow(
-      'connection lost',
-    );
+    await expect(
+      new RedisOrderRoomBroadcaster(redis).broadcast(update, [`order:${orderId}`]),
+    ).rejects.toThrow('connection lost');
   });
 });

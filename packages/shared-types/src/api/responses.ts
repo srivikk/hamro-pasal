@@ -243,6 +243,42 @@ export const cancelOrderResponseSchema = z.strictObject({
 export type CancelOrderResponseBody = z.infer<typeof cancelOrderResponseSchema>;
 
 /*
+ * Vendor order management (vendor flow steps 6–8).
+ */
+
+/**
+ * One of the vendor's orders, as the dashboard shows it: what to pack and where it goes. Like the
+ * other views it never exposes the OTP hash, gateway refs or commission, and it carries no customer
+ * name or phone.
+ */
+export const vendorOrderSchema = orderViewSchema.extend({
+  /** When the order became PLACED: the alarm and the 90 s escalation run from here. */
+  placed_at: z.iso.datetime(),
+  /** Null only for orders created before checkout required an address. */
+  delivery_address: orderAddressViewSchema.nullable(),
+  items: z.array(orderItemViewSchema).min(1),
+});
+export type VendorOrderView = z.infer<typeof vendorOrderSchema>;
+
+/** GET /api/vendors/orders: the vendor's open orders (PLACED, then PREPARING), oldest first. */
+export const vendorOrderListResponseSchema = z.strictObject({
+  orders: z.array(vendorOrderSchema),
+});
+export type VendorOrderListResponseBody = z.infer<typeof vendorOrderListResponseSchema>;
+
+/**
+ * POST /api/vendors/orders/:id/accept (→ PREPARING) and …/reject (→ CANCELED). Repeating a
+ * decision returns the same body.
+ */
+export const vendorOrderDecisionResponseSchema = z.strictObject({
+  order_id: z.uuid(),
+  state: z.enum(['PREPARING', 'CANCELED']),
+  /** true when a rejected order was prepaid (PAID): its escrow is refunded asynchronously. */
+  refund_required: z.boolean(),
+});
+export type VendorOrderDecisionResponseBody = z.infer<typeof vendorOrderDecisionResponseSchema>;
+
+/*
  * OTP authentication (SPEC implicit requirement 3).
  */
 

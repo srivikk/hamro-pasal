@@ -18,6 +18,7 @@ const redisSub = redisPub.duplicate();
 const realtime = attachRealtime(httpServer, {
   accessTokenSecret: container.accessTokenSecret,
   orders: container.orders,
+  vendors: container.vendorOrders,
   redis: { pub: redisPub, sub: redisSub },
   chat: { disputes: container.disputes, evidence: container.evidence },
 });

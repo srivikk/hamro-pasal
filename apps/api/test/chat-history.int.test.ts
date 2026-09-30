@@ -212,6 +212,7 @@ describe('GET /api/orders/:id/chat', () => {
     const realtime: RealtimeServer = attachRealtime(httpServer, {
       accessTokenSecret: ACCESS_SECRET,
       orders: t.container.orders,
+      vendors: t.container.vendorOrders,
       chat: { disputes: t.container.disputes, evidence: t.container.evidence },
     });
     await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));

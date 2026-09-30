@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { nepalPhoneSchema } from '../domain/entities';
 import {
   fulfillmentModeSchema,
   ledgerAccountTypeSchema,
@@ -82,6 +83,22 @@ export const orderStateChangedPayloadSchema = z.strictObject({
   changed_at: z.iso.datetime(),
 });
 
+/**
+ * Vendor flow step 6 (infrastructure §1, §6): an order has sat in PLACED for 90 s without the
+ * vendor accepting or rejecting it. The IVR/SMS escalation (Twilio Voice or a Nepal SIP trunk,
+ * plus an SMS) consumes it and calls the vendor. Written at most once per order.
+ */
+export const vendorEscalationRequiredPayloadSchema = z.strictObject({
+  order_id: z.uuid(),
+  vendor_id: z.uuid(),
+  /** The vendor's +977 business number: where the call and the SMS go. */
+  vendor_phone: nepalPhoneSchema,
+  placed_at: z.iso.datetime(),
+  /** The acceptance threshold that was missed, in seconds. */
+  sla_seconds: z.number().int().positive(),
+  escalated_at: z.iso.datetime(),
+});
+
 /** A balanced journal transaction was posted. One posting per affected account line. */
 export const ledgerMutatedPayloadSchema = z.strictObject({
   transaction_id: z.uuid(),
@@ -129,6 +146,10 @@ export const orderStateChangedEventSchema = envelope(
   orderStateChangedPayloadSchema,
 );
 export const ledgerMutatedEventSchema = envelope('ledger.mutated', ledgerMutatedPayloadSchema);
+export const vendorEscalationRequiredEventSchema = envelope(
+  'vendor.escalation.required',
+  vendorEscalationRequiredPayloadSchema,
+);
 
 export const domainEventSchema = z.discriminatedUnion('event_type', [
   orderLockedEventSchema,
@@ -136,6 +157,7 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   orderCanceledRefundDueEventSchema,
   orderStateChangedEventSchema,
   ledgerMutatedEventSchema,
+  vendorEscalationRequiredEventSchema,
 ]);
 
 export type OrderLockedEvent = z.infer<typeof orderLockedEventSchema>;
@@ -143,6 +165,7 @@ export type OrderPlacedEvent = z.infer<typeof orderPlacedEventSchema>;
 export type OrderStateChangedEvent = z.infer<typeof orderStateChangedEventSchema>;
 export type OrderCanceledRefundDueEvent = z.infer<typeof orderCanceledRefundDueEventSchema>;
 export type LedgerMutatedEvent = z.infer<typeof ledgerMutatedEventSchema>;
+export type VendorEscalationRequiredEvent = z.infer<typeof vendorEscalationRequiredEventSchema>;
 export type DomainEvent = z.infer<typeof domainEventSchema>;
 export type DomainEventType = DomainEvent['event_type'];
 export type DomainEventPayload<T extends DomainEventType> = Extract<
@@ -156,4 +179,5 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'order.canceled_refund_due': KAFKA_TOPICS.PAYMENT_RECONCILIATION,
   'order.state_changed': KAFKA_TOPICS.ORDER_LIFECYCLE,
   'ledger.mutated': KAFKA_TOPICS.LEDGER_MUTATIONS,
+  'vendor.escalation.required': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
 };

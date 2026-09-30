@@ -9,12 +9,18 @@ import {
   orderStateChangedPayloadSchema,
   orderStateUpdateFromEvent,
   orderStateUpdateSchema,
+  orderStateUpdateRooms,
   orderSubscribeAckSchema,
   paymentStatusResponseSchema,
   SOCKET_IO_REDIS_KEY,
+  vendorOrderDecisionResponseSchema,
+  vendorRoom,
+  vendorSubscribeAckSchema,
+  type UserRole,
   type OrderStateChangedEvent,
   type OrderStateUpdate,
   type OrderSubscribeAck,
+  type VendorSubscribeAck,
 } from '@hamro-pasal/shared-types';
 import { Emitter } from '@socket.io/redis-emitter';
 import { Redis } from 'ioredis';
@@ -32,6 +38,7 @@ import {
   DELIVERY_ADDRESS,
   outboxFor,
   testRedisUrl,
+  vendorUserIdOf,
 } from './support/fixtures';
 import {
   ACCESS_SECRET,
@@ -105,6 +112,14 @@ describe('real-time order tracking', () => {
       .post(`/api/orders/${orderId}/cancel`)
       .set('authorization', bearer(customerId));
     expect(res.status).toBe(200);
+  }
+
+  async function vendorDecision(vendorId: string, orderId: string, decision: 'accept' | 'reject') {
+    const res = await request(t.app)
+      .post(`/api/vendors/orders/${orderId}/${decision}`)
+      .set('authorization', bearer(await vendorUserIdOf(db(), vendorId), 'VENDOR'));
+    expect(res.status).toBe(200);
+    return bodyOf(vendorOrderDecisionResponseSchema, res);
   }
 
   /** The order's `order.state_changed` events as [from, to] pairs, in commit order. */
@@ -202,6 +217,36 @@ describe('real-time order tracking', () => {
       expect(canceled?.payload).toMatchObject({ payment_status: 'PAID', refund_required: true });
     });
 
+    it('vendor accept (PREPARING) and a later customer cancel inside the window', async () => {
+      const { customerId, vendorId, productId } = await setup();
+      const order = await checkout(customerId, vendorId, productId, 'COD');
+
+      await vendorDecision(vendorId, order.id, 'accept');
+      await vendorDecision(vendorId, order.id, 'accept'); // a repeat announces nothing new
+      await cancel(customerId, order.id);
+
+      expect(await transitions(order.id)).toEqual([
+        [null, 'PENDING_PAYMENT'],
+        ['PENDING_PAYMENT', 'PLACED'],
+        ['PLACED', 'PREPARING'],
+        ['PREPARING', 'CANCELED'],
+      ]);
+    });
+
+    it('vendor reject of a prepaid order (refund_required travels with the update)', async () => {
+      const { customerId, vendorId, productId } = await setup();
+      const order = await checkout(customerId, vendorId, productId, 'ESEWA');
+      await payEsewa(t, customerId, order.id);
+
+      await vendorDecision(vendorId, order.id, 'reject');
+
+      expect((await transitions(order.id)).at(-1)).toEqual(['PLACED', 'CANCELED']);
+      const [rejected] = (await stateChangedEvents(order.id)).filter(
+        (event) => event.payload.to_state === 'CANCELED',
+      );
+      expect(rejected?.payload).toMatchObject({ payment_status: 'PAID', refund_required: true });
+    });
+
     it('payment after the lock expired (FAILED)', async () => {
       const short = buildTestApp({ lockTtlMs: 1_500 });
       try {
@@ -261,6 +306,7 @@ describe('real-time order tracking', () => {
       realtime = attachRealtime(httpServer, {
         accessTokenSecret: ACCESS_SECRET,
         orders: t.container.orders,
+        vendors: t.container.vendorOrders,
         redis: { pub, sub, key },
       });
       await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
@@ -273,7 +319,7 @@ describe('real-time order tracking', () => {
       await Promise.all([pub.quit(), sub.quit(), emitterRedis.quit()]);
     });
 
-    function token(userId: string, role: 'CUSTOMER' | 'VENDOR' = 'CUSTOMER'): string {
+    function token(userId: string, role: UserRole = 'CUSTOMER'): string {
       return signAccessToken({ userId, role }, ACCESS_SECRET);
     }
 
@@ -319,12 +365,21 @@ describe('real-time order tracking', () => {
       return orderSubscribeAckSchema.parse(ack);
     }
 
-    /** Publishes into a room exactly as the worker does (another process, via Redis). */
-    function publishFromWorker(update: OrderStateUpdate): void {
-      new Emitter(emitterRedis, { key })
-        .of('/orders')
-        .to(`order:${update.order_id}`)
-        .emit('order:state_update', update);
+    /** Publishes into rooms exactly as the worker does (another process, via Redis). */
+    function publishFromWorker(
+      update: OrderStateUpdate,
+      rooms: string[] = [`order:${update.order_id}`],
+    ): void {
+      new Emitter(emitterRedis, { key }).of('/orders').to(rooms).emit('order:state_update', update);
+    }
+
+    async function vendorSubscribe(socket: ClientSocket): Promise<VendorSubscribeAck> {
+      const ack: unknown = await socket.timeout(5_000).emitWithAck('vendor:subscribe', {});
+      return vendorSubscribeAckSchema.parse(ack);
+    }
+
+    async function vendorSocket(vendorId: string) {
+      return connected({ token: token(await vendorUserIdOf(db(), vendorId), 'VENDOR') });
     }
 
     function update(orderId: string, state: OrderStateUpdate['state']): OrderStateUpdate {
@@ -382,12 +437,15 @@ describe('real-time order tracking', () => {
       });
     });
 
-    it('refuses roles other than CUSTOMER', async () => {
-      await expect(refusal({ token: token(randomUUID(), 'VENDOR') })).resolves.toEqual({
-        message: 'FORBIDDEN',
-        code: 'FORBIDDEN',
-      });
-    });
+    it.each<UserRole>(['DRIVER', 'SUPER_ADMIN'])(
+      'refuses roles other than CUSTOMER and VENDOR (%s)',
+      async (role) => {
+        await expect(refusal({ token: token(randomUUID(), role) })).resolves.toEqual({
+          message: 'FORBIDDEN',
+          code: 'FORBIDDEN',
+        });
+      },
+    );
 
     it('joins the owner to order:{id}, where worker broadcasts reach them', async () => {
       const { customerId, vendorId, productId } = await setup();
@@ -498,6 +556,83 @@ describe('real-time order tracking', () => {
       publishFromWorker(update(order.id, 'OUT_FOR_DELIVERY'));
       await until(() => again.updates.length === 1);
       expect(again.updates[0]?.state).toBe('OUT_FOR_DELIVERY');
+    });
+
+    describe('vendor room (Phase 10)', () => {
+      it("joins a vendor to its own shop's room, where every placed order reaches it", async () => {
+        const { customerId, vendorId, productId } = await setup();
+        const vendor = await vendorSocket(vendorId);
+        const otherVendor = await vendorSocket((await setup()).vendorId);
+        await expect(vendorSubscribe(vendor.socket)).resolves.toEqual({
+          ok: true,
+          vendor_id: vendorId,
+        });
+        await vendorSubscribe(otherVendor.socket);
+
+        const order = await checkout(customerId, vendorId, productId, 'COD');
+        const placed = (await stateChangedEvents(order.id)).find(
+          (event) => event.payload.to_state === 'PLACED',
+        );
+        if (placed === undefined) throw new Error('no PLACED event in the outbox');
+        // Exactly what the worker fan-out does with the committed row.
+        publishFromWorker(orderStateUpdateFromEvent(placed), orderStateUpdateRooms(placed));
+
+        await until(() => vendor.updates.length === 1);
+        expect(vendor.updates[0]).toMatchObject({ order_id: order.id, state: 'PLACED' });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(otherVendor.updates).toEqual([]);
+      });
+
+      it('an accept reaches both the tracking customer and the vendor room', async () => {
+        const { customerId, vendorId, productId } = await setup();
+        const order = await checkout(customerId, vendorId, productId, 'COD');
+        const customer = await connected({ token: token(customerId) });
+        await subscribe(customer.socket, { order_id: order.id });
+        const vendor = await vendorSocket(vendorId);
+        await vendorSubscribe(vendor.socket);
+
+        await vendorDecision(vendorId, order.id, 'accept');
+        const accepted = (await stateChangedEvents(order.id)).find(
+          (event) => event.payload.to_state === 'PREPARING',
+        );
+        if (accepted === undefined) throw new Error('no PREPARING event in the outbox');
+        expect(orderStateUpdateRooms(accepted)).toEqual([
+          `order:${order.id}`,
+          vendorRoom(vendorId),
+        ]);
+        publishFromWorker(orderStateUpdateFromEvent(accepted), orderStateUpdateRooms(accepted));
+
+        await until(() => customer.updates.length === 1 && vendor.updates.length === 1);
+        expect(customer.updates[0]?.state).toBe('PREPARING');
+        expect(vendor.updates[0]?.state).toBe('PREPARING');
+      });
+
+      it('refuses the vendor room to customers and to vendor accounts without a shop', async () => {
+        const customer = await connected({ token: token(await createUser(db())) });
+        const shopless = await connected({
+          token: token(await createUser(db(), 'VENDOR'), 'VENDOR'),
+        });
+
+        await expect(vendorSubscribe(customer.socket)).resolves.toMatchObject({
+          ok: false,
+          error: { code: 'FORBIDDEN' },
+        });
+        await expect(vendorSubscribe(shopless.socket)).resolves.toMatchObject({
+          ok: false,
+          error: { code: 'VENDOR_NOT_FOUND' },
+        });
+      });
+
+      it('keeps order rooms customer-only: a vendor cannot join its own order by id', async () => {
+        const { customerId, vendorId, productId } = await setup();
+        const order = await checkout(customerId, vendorId, productId, 'COD');
+        const vendor = await vendorSocket(vendorId);
+
+        await expect(subscribe(vendor.socket, { order_id: order.id })).resolves.toMatchObject({
+          ok: false,
+          error: { code: 'ORDER_NOT_FOUND' },
+        });
+      });
     });
   });
 });

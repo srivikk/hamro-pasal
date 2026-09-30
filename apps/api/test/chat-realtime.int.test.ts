@@ -58,6 +58,7 @@ describe('dispute chat (/chat)', () => {
       const realtime = attachRealtime(httpServer, {
         accessTokenSecret: ACCESS_SECRET,
         orders: t.container.orders,
+        vendors: t.container.vendorOrders,
         redis: { pub, sub, key },
         chat: { disputes: t.container.disputes, evidence: t.container.evidence },
       });

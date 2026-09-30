@@ -13,10 +13,11 @@ import {
 import { Queue, type ConnectionOptions, type JobsOptions } from 'bullmq';
 
 /*
- * Queue contracts and the producer-side helpers (schedule / cancel). The API will call these
- * when an order is placed (90 s vendor timer) or a rider taps "Unable to Contact" (8 min ghost
- * timer). Each timer's job id is the order id, so scheduling is idempotent per order and a
- * vendor acceptance / customer appearance cancels it by id.
+ * Queue contracts and the producer-side helpers (schedule / cancel). The 90 s vendor timer is
+ * scheduled by the worker's own Kafka consumer when an order becomes PLACED
+ * (consumers/vendor-sla-scheduler.ts); the 8 min ghost timer will be scheduled when a rider taps
+ * "Unable to Contact". Each timer's job id is the order id, so scheduling is idempotent per order
+ * and a vendor acceptance / customer appearance can cancel it by id.
  */
 
 /** Keep finished jobs briefly for inspection, and failures for a week of forensics. */
@@ -48,24 +49,40 @@ export function allTimerQueues(queues: TimerQueues): Queue[] {
   return [queues.vendorAcceptance, queues.ghostCustomer, queues.midnight];
 }
 
-export function vendorAcceptanceTimeoutOptions(orderId: string): JobsOptions {
-  return { jobId: orderId, delay: VENDOR_ACCEPTANCE_TIMEOUT_MS, attempts: 3, ...RETENTION };
+export function vendorAcceptanceTimeoutOptions(
+  orderId: string,
+  delayMs: number = VENDOR_ACCEPTANCE_TIMEOUT_MS,
+): JobsOptions {
+  return { jobId: orderId, delay: delayMs, attempts: 3, ...RETENTION };
 }
 
 export function ghostCustomerTimerOptions(orderId: string): JobsOptions {
   return { jobId: orderId, delay: GHOST_CUSTOMER_TIMER_MS, attempts: 3, ...RETENTION };
 }
 
-/** SPEC vendor flow step 6: fires 90 s after the order alarm unless the vendor interacts. */
+/**
+ * SPEC vendor flow step 6: fires 90 s after the order alarm unless the vendor interacts. `delayMs`
+ * is what is left of the 90 s when the timer is scheduled late (see vendorAcceptanceDelayMs).
+ */
 export async function scheduleVendorAcceptanceTimeout(
   queue: Queue<VendorAcceptanceTimeoutJob>,
   data: VendorAcceptanceTimeoutJob,
+  delayMs: number = VENDOR_ACCEPTANCE_TIMEOUT_MS,
 ): Promise<void> {
   await queue.add(
     JOB_QUEUES.VENDOR_ACCEPTANCE_TIMEOUT,
     data,
-    vendorAcceptanceTimeoutOptions(data.order_id),
+    vendorAcceptanceTimeoutOptions(data.order_id, delayMs),
   );
+}
+
+/**
+ * Milliseconds until the 90 s acceptance deadline of an order placed at `placedAt`, never
+ * negative. The deadline is anchored on the order's `placed_at` (when the alarm started), not on
+ * when the worker heard about it, so outbox/Kafka lag does not stretch the SLA.
+ */
+export function vendorAcceptanceDelayMs(placedAt: Date, now: Date): number {
+  return Math.max(0, placedAt.getTime() + VENDOR_ACCEPTANCE_TIMEOUT_MS - now.getTime());
 }
 
 /** Vendor interacted in time. Returns false if the timer already fired or never existed. */

@@ -27,6 +27,10 @@ jest.mock('react-native-webview', () =>
   jest.requireActual<Record<string, unknown>>('./src/test/mock-webview'),
 );
 
+// expo-audio's player is native. The stand-in records every player and playback call
+// (src/test/fake-audio.ts), so the vendor alarm tests can assert play / pause / seekTo.
+jest.mock('expo-audio', () => jest.requireActual<Record<string, unknown>>('./src/test/fake-audio'));
+
 // Icon fonts load asynchronously and re-render the icon when ready, outside any test's act().
 // A plain view keeps renders deterministic; no test depends on the glyph.
 jest.mock('@expo/vector-icons/Ionicons', () => {

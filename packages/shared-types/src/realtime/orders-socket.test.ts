@@ -5,11 +5,14 @@ import {
   ORDER_SOCKET_EVENTS,
   orderRoom,
   orderStateUpdateFromEvent,
+  orderStateUpdateRooms,
   orderStateUpdateSchema,
   orderSubscribeAckSchema,
   orderSubscribeRequestSchema,
   ORDERS_NAMESPACE,
   SOCKET_PING_INTERVAL_MS,
+  vendorRoom,
+  vendorSubscribeAckSchema,
 } from './orders-socket';
 
 const orderId = randomUUID();
@@ -91,5 +94,56 @@ describe('/orders socket contract', () => {
         error: { code: 'ORDER_NOT_FOUND', message: 'x' },
       }).success,
     ).toBe(true);
+  });
+});
+
+describe('vendor room (Phase 10)', () => {
+  const vendorId = randomUUID();
+
+  function parsed(overrides: Record<string, unknown>) {
+    const event = domainEventSchema.parse(stateChanged({ vendor_id: vendorId, ...overrides }));
+    if (event.event_type !== 'order.state_changed') throw new Error('unexpected event');
+    return event;
+  }
+
+  it('names one room per vendor', () => {
+    expect(vendorRoom(vendorId)).toBe(`vendor:${vendorId}`);
+    expect(ORDER_SOCKET_EVENTS.vendorSubscribe).toBe('vendor:subscribe');
+  });
+
+  it("sends placed orders to the order's room and the vendor's room", () => {
+    const placed = parsed({ from_state: 'PENDING_PAYMENT', to_state: 'PLACED' });
+    const canceled = parsed({ from_state: 'PREPARING', to_state: 'CANCELED' });
+
+    expect(orderStateUpdateRooms(placed)).toEqual([orderRoom(orderId), vendorRoom(vendorId)]);
+    expect(orderStateUpdateRooms(canceled)).toEqual([orderRoom(orderId), vendorRoom(vendorId)]);
+  });
+
+  it('keeps orders that were never placed away from the vendor', () => {
+    const created = parsed({ from_state: null, to_state: 'PENDING_PAYMENT', placed_at: null });
+    const paidTooLate = parsed({
+      from_state: 'PENDING_PAYMENT',
+      to_state: 'FAILED',
+      payment_status: 'PAID',
+      placed_at: null,
+    });
+
+    expect(orderStateUpdateRooms(created)).toEqual([orderRoom(orderId)]);
+    expect(orderStateUpdateRooms(paidTooLate)).toEqual([orderRoom(orderId)]);
+  });
+
+  it('validates vendor:subscribe acks strictly', () => {
+    expect(vendorSubscribeAckSchema.parse({ ok: true, vendor_id: vendorId }).ok).toBe(true);
+    expect(
+      vendorSubscribeAckSchema.safeParse({ ok: false, error: { code: 'FORBIDDEN', message: 'x' } })
+        .success,
+    ).toBe(true);
+    expect(
+      vendorSubscribeAckSchema.safeParse({
+        ok: false,
+        error: { code: 'ORDER_NOT_FOUND', message: 'x' },
+      }).success,
+    ).toBe(false);
+    expect(vendorSubscribeAckSchema.safeParse({ ok: true, vendor_id: 'nope' }).success).toBe(false);
   });
 });

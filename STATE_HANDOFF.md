@@ -1,8 +1,8 @@
-# Hamro Pasal: State Handoff (Phases 0–9.6 complete)
+# Hamro Pasal: State Handoff (Phases 0–10 complete)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 9.6 (Chat Transcript
-Read-Back)**, on top of Phase 9.5 (Chat Persistence & Vendor Review Linkage), 9 (Double-Blind Reviews & Dispute Chat), 8 (Real-Time Order Tracking, Socket.io `/orders`), 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
+work without re-deriving it. It describes the tree at the end of **Phase 10 (Vendor Order
+Management & Audio Alarms)**, on top of Phase 9.6 (Chat Transcript Read-Back), 9.5 (Chat Persistence & Vendor Review Linkage), 9 (Double-Blind Reviews & Dispute Chat), 8 (Real-Time Order Tracking, Socket.io `/orders`), 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
 Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this file and the code disagree, **the code wins**. When anything disagrees with
 `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
 
@@ -28,11 +28,21 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 > **Phase 9.6:** `GET /api/orders/:id/chat` returns the transcript (customer, vendor or admin; same
 > privacy filter as the broadcast), and the dispute screen hydrates from it while the socket
 > connects, refetching after every re-join (§8C, §9.10).
-> **No live device run has happened yet** (§13). Still not built: the order lifecycle after PLACED,
-> dispute resolution and an admin client, R2, refund payouts, and refresh-token rotation/revocation.
+> **Phase 10:** vendors accept (PLACED → PREPARING) or reject (→ CANCELED, stock back, escrow refund
+> flag for prepaid) at `POST /api/vendors/orders/:id/accept|reject` and list open orders at
+> `GET /api/vendors/orders`. Every order that becomes PLACED gets a BullMQ timer at `placed_at + 90 s`
+> (scheduled by a worker Kafka consumer of the PLACED outbox event); if the order is still PLACED
+> then, the worker writes `vendor.escalation.required` (topic `notifications.broadcast`) for the
+> IVR/SMS fallback. Vendors join a `vendor:{id}` room on `/orders`; the app routes a VENDOR to a
+> dashboard (`app/(vendor)/dashboard.tsx`) whose `expo-audio` alarm loops at full volume until each
+> new order is accepted or rejected (§8D, §9.13). A vendor may accept at once; the customer can still
+> cancel a PREPARING order inside the 60 s window (user decision, §12).
+> **No live device run has happened yet** (§13). Still not built: the IVR/SMS consumer of the
+> escalation, dispatch → delivery transitions, dispute resolution and an admin client, R2, refund
+> payouts, and refresh-token rotation/revocation.
 >
-> **Next priority: the first live end-to-end device run** (§11 item 1), then the order lifecycle
-> routes, which will stream over `/orders` with no extra socket work.
+> **Next priority: the first live end-to-end device run** (§11 item 1), now including a vendor device
+> on the dashboard, then the rest of the order lifecycle (dispatch, delivery OTP, settlement).
 
 ---
 
@@ -61,18 +71,18 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                              |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · Phase 9.6 (uncommitted) |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                      |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                             |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                        |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                       |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                 |
-| Unit tests      | **774 passing** (`pnpm test`): shared-types 113, api 93, worker 18, kafka 7, db 7, mobile 536                                                                                                                                                                                                                                                                                                                      |
-| Integ. tests    | **239 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 178, worker 13, kafka 1. Run at the end of Phase 9.6. Flakes seen: once in Phase 9 the kafka publisher test timed out beside the worker suite; once in Phase 9.6 one `vendors-api` test failed in the full parallel run (not reproduced alone or in a full API re-run).                                                               |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 9                                                                                                                                                                                                                                                               |
-| Dev database    | Migrations 0000–0011 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                               |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · Phase 10 (uncommitted) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                             |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                        |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                       |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                 |
+| Unit tests      | **851 passing** (`pnpm test`): shared-types 122, api 93, worker 34, kafka 7, db 7, mobile 588 (end of Phase 10)                                                                                                                                                                                                                                                                                                                    |
+| Integ. tests    | **272 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 201, worker 23, kafka 1. Run at the end of Phase 10. Flakes seen: once in Phase 9 the kafka publisher test timed out beside the worker suite; once in Phase 9.6 one `vendors-api` test failed in the full parallel run (not reproduced alone or in a full API re-run).                                                                                |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 9                                                                                                                                                                                                                                                                               |
+| Dev database    | Migrations 0000–0012 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                               |
 
 ### Root commands (`package.json`)
 
@@ -144,6 +154,8 @@ apps/api/src                       Express 5 API
   orders/order-service.ts          OrderService (order detail, cancellation, isCustomerOrder), CancellationWindowExpiredError,
                                    OrderNotCancelableError
   orders/order-events.ts           enqueueOrderStateChanged: the one way every state change reaches the outbox
+  orders/vendor-order-service.ts   VendorOrderService (Phase 10: listOpen, accept, reject, vendorIdForUser),
+                                   OrderDecisionConflictError, VendorAccountNotFoundError
   config/env.ts · http/{auth,errors,validate}.ts · infra/{pg-errors,redis-mutex,redis-pool}.ts
   inventory/{inventory-lock-service,stock-reader,errors}.ts
   ledger/{ledger-service,money,settlement-plan,settlement-service}.ts
@@ -154,8 +166,10 @@ apps/api/scripts/mint-dev-token.ts
 apps/api/test/                     *.int.test.ts (auth-api, cart-api, checkout-claim, inventory-concurrency, ledger-settlement,
                                    mint-dev-token, orders-api, orders-realtime, payments-api, vendors-api) + global-setup.ts + support/
 apps/worker/src                    main.ts, lifecycle.ts, outbox/ (OutboxRelay), queues/, config/, infra/,
-                                   consumers/ (buildConsumers; order-state-fanout.ts: Kafka order.lifecycle → Redis → /orders rooms)
-apps/worker/test/                  outbox-relay, queues, order-state-fanout (*.int.test.ts)
+                                   consumers/ (buildConsumers + routeByTopic; order-state-fanout.ts: Kafka order.lifecycle →
+                                   Redis → /orders rooms; vendor-sla-scheduler.ts: PLACED → 90 s BullMQ timer),
+                                   sla/vendor-escalation.ts (VendorEscalationService, Phase 10)
+apps/worker/test/                  outbox-relay, queues, order-state-fanout, vendor-sla (*.int.test.ts)
 ```
 
 ### Mobile workspace (`apps/mobile`, `@hamro-pasal/mobile`)
@@ -178,6 +192,9 @@ app/(tabs)/profile.tsx    account (sign in / sign out) + language + __DEV__ toke
 app/vendor/[id].tsx       vendor menu (GET /api/vendors/:id/products)
 app/order/[id]/index.tsx  order tracking (GET /api/orders/:id once + Socket.io /orders live updates), 60 s cancel, OTP, dispute button
 app/order/[id]/dispute.tsx  dispute chat (Socket.io /chat scaffold)
+app/(vendor)/_layout.tsx    Phase 10: vendor-only group (non-vendors are redirected to /)
+app/(vendor)/dashboard.tsx  Phase 10: incoming orders, Accept / Reject, looping expo-audio alarm
+assets/sounds/vendor-alarm.wav   1.2 s two-tone alarm loop (generated, 22.05 kHz mono PCM, 53 KB)
 
 src/api/        http.ts (apiRequest with token renewal, refreshAccessToken, onSessionExpired, ApiError)
                 auth.ts (sendOtp, verifyOtp, useSendOtp, useVerifyOtp, useSignOut, AUTH_ERROR_CODES) · mutations.ts (useCheckout, NO_DELIVERY_ADDRESS) · queries.ts (useLockStatus)
@@ -188,7 +205,7 @@ src/services/   socket.ts (createAuthenticatedSocket: shared token lifecycle; cr
 src/store/      useAuthStore · useCartStore · useCheckoutStore · useOrderStore · useDeliveryOtpStore
                 useAddressStore · useReviewStore · useToastStore
 src/storage/    app-mmkv.ts (plain) · secure-mmkv.ts (AES-256) · encryption-key.ts · mmkv-state-storage.ts
-src/features/   address/ auth/ cart/ checkout/ dispute/ feed/ location/ menu/ order/ payment/ review/ territory/
+src/features/   address/ auth/ cart/ checkout/ dispute/ feed/ location/ menu/ order/ payment/ review/ territory/ vendor/
                 (location/customer-location.ts: useCustomerLocation, THAMEL_FALLBACK_LOCATION;
                 auth/login-form.ts: toNepalPhone, sanitizeOtpInput, leaveSignIn; auth/useSessionExpiryHandler.ts)
 src/components/ Button, VendorCard, ReplaceCartModal, PaymentWebViewModal, AddressFormModal, ReviewModal, Toast
@@ -254,6 +271,7 @@ src/test/       msw.ts · api-fixtures.ts · render.tsx · in-memory-mmkv.ts · 
 | `0009_orders_placed_at.sql`                | **Phase 6.** `orders.placed_at`, hand-added backfill (`placed_at = created_at` for already-placed rows), `orders_placed_at_check`                   |
 | `0010_users_first_name_optional.sql`       | **Phase 7.** `users.first_name` nullable (OTP sign-up knows only the phone); `users_first_name_check` still rejects a blank name                    |
 | `0011_chat_messages.sql`                   | **Phase 9.5.** `chat_messages` table (dispute transcript): FKs to `disputes` and `users`, dedupe key, length/attachment/non-empty CHECKs, index     |
+| `0012_vendor_escalation_index.sql`         | **Phase 10.** Partial unique index `outbox_events_vendor_escalation_uidx` on `aggregate_id` WHERE `event_type = 'vendor.escalation.required'`       |
 
 **Staging rule:** drizzle-kit prompts interactively on renames, which fails in this non-TTY
 environment. Stage schema edits so a single `generate` only adds or only drops. Hand-write renames
@@ -341,25 +359,30 @@ EWKB (`geo/ewkb.ts`), because Drizzle 0.45's built-in `geometry()` ignores `srid
 - Producer: `@confluentinc/kafka-javascript`, `{ 'enable.idempotence': true, acks: -1 }`.
 - Events and topics:
 
-  | `event_type`                | Topic                    | Aggregate      | Emitted by                                                                                                                                                                                                                                                                                    |
-  | --------------------------- | ------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `order.locked`              | `order.lifecycle`        | reservation_id | checkout                                                                                                                                                                                                                                                                                      |
-  | `order.placed`              | `order.lifecycle`        | order_id       | lock claim (PLACED)                                                                                                                                                                                                                                                                           |
-  | `order.canceled_refund_due` | `payment.reconciliation` | order_id       | **Phase 6.** Cancellation of a PAID order ("ORDER_CANCELED_REFUND_DUE"). Payload: order/vendor/customer ids, ESEWA\|KHALTI, gateway ref, `refund_amount_npr` (subtotal + delivery fee), `canceled_at`                                                                                         |
-  | `order.state_changed`       | `order.lifecycle`        | order_id       | **Phase 8.** Every change of `orders.state`, in the same transaction (`enqueueOrderStateChanged`). Payload: order/customer/vendor ids, `from_state` (null on creation), `to_state`, `payment_status`, `refund_required`, `placed_at`, `delivered_at`, `changed_at` (= the row's `updated_at`) |
-  | `ledger.mutated`            | `ledger.mutations`       | transaction_id | every journal                                                                                                                                                                                                                                                                                 |
+  | `event_type`                 | Topic                     | Aggregate      | Emitted by                                                                                                                                                                                                                                                                                    |
+  | ---------------------------- | ------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `order.locked`               | `order.lifecycle`         | reservation_id | checkout                                                                                                                                                                                                                                                                                      |
+  | `order.placed`               | `order.lifecycle`         | order_id       | lock claim (PLACED)                                                                                                                                                                                                                                                                           |
+  | `order.canceled_refund_due`  | `payment.reconciliation`  | order_id       | **Phase 6.** Cancellation of a PAID order ("ORDER_CANCELED_REFUND_DUE"). Payload: order/vendor/customer ids, ESEWA\|KHALTI, gateway ref, `refund_amount_npr` (subtotal + delivery fee), `canceled_at`                                                                                         |
+  | `order.state_changed`        | `order.lifecycle`         | order_id       | **Phase 8.** Every change of `orders.state`, in the same transaction (`enqueueOrderStateChanged`). Payload: order/customer/vendor ids, `from_state` (null on creation), `to_state`, `payment_status`, `refund_required`, `placed_at`, `delivered_at`, `changed_at` (= the row's `updated_at`) |
+  | `ledger.mutated`             | `ledger.mutations`        | transaction_id | every journal                                                                                                                                                                                                                                                                                 |
+  | `vendor.escalation.required` | `notifications.broadcast` | order_id       | **Phase 10.** The worker's 90 s timer found the order still PLACED. Payload: order/vendor ids, `vendor_phone` (+977, for the IVR call/SMS), `placed_at`, `sla_seconds` (90), `escalated_at`. At most one per order (partial unique index, migration 0012). **No consumer yet.**               |
 
 - Consumers (`apps/worker/src/consumers/index.ts#buildConsumers`, one handler per topic, group
   `KAFKA_CONSUMER_GROUP_ID`):
 
-  | Consumer                                         | Topic             | Acts on               | Does                                                                                                                                                                                                       |
-  | ------------------------------------------------ | ----------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `order-state-fanout.ts#orderStateFanoutConsumer` | `order.lifecycle` | `order.state_changed` | Broadcasts `order:state_update` (`orderStateUpdateFromEvent`) to room `order:{order_id}` of namespace `/orders` via `@socket.io/redis-emitter` (key `SOCKET_IO_REDIS_KEY`). Other event types are ignored. |
+  | Consumer                                             | Topic             | Acts on                         | Does                                                                                                                                                                                                                                                                                                                             |
+  | ---------------------------------------------------- | ----------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `order-state-fanout.ts#orderStateFanoutConsumer`     | `order.lifecycle` | `order.state_changed`           | Broadcasts `order:state_update` (`orderStateUpdateFromEvent`) to the rooms of `orderStateUpdateRooms`: `order:{order_id}`, plus `vendor:{vendor_id}` once the order was placed (`placed_at` not null; Phase 10), namespace `/orders`, via `@socket.io/redis-emitter` (key `SOCKET_IO_REDIS_KEY`). Other event types are ignored. |
+  | `vendor-sla-scheduler.ts#vendorSlaSchedulerConsumer` | `order.lifecycle` | `order.state_changed` to PLACED | **Phase 10.** Schedules the `vendor-acceptance-timeout` job (id = order id, idempotent) with delay `vendorAcceptanceDelayMs(placed_at, now)` = what is left of 90 s from `placed_at` (0 if already past). Throws (redelivery) if Redis refuses.                                                                                  |
   - **Dedupe:** `SET fanout:orders:seen:{event_id} 1 EX 86400 NX` before broadcasting; a redelivery is
     skipped. If the broadcast fails the claim is deleted and the handler throws, so Kafka redelivers.
   - **Publish errors are not swallowed:** the emitter calls `redis.publish` without awaiting it;
     `RedisOrderRoomBroadcaster` hands it a wrapper that collects those promises and awaits them.
   - An invalid envelope is logged and skipped (a poison message would otherwise block the partition).
+  - **Several consumers may share a topic (Phase 10):** `routeByTopic` builds one Kafka handler per
+    topic that runs its consumers in registration order (fan-out, then the SLA scheduler). If any
+    throws, the message fails and is redelivered to all of them, so each must be idempotent.
   - Nothing acts on `order.canceled_refund_due` yet (no refund is issued). A canceled COD order now
     emits `order.state_changed`, but no vendor app or notification consumes it (§13).
 
@@ -381,8 +404,10 @@ EWKB (`geo/ewkb.ts`), because Drizzle 0.45's built-in `geometry()` ignores `srid
   wallet (may suspend); COD fleet debits the driver. Keys `payment-capture:<order>`,
   `order-settlement:<order>`. **Nothing triggers settlement yet** (no DELIVERED transition route).
 - BullMQ (`apps/worker/src/queues/`): `vendor-acceptance-timeout` (90 s), `ghost-customer-timer`
-  (8 min), `midnight-maintenance` (cron `0 0 * * *`, Asia/Kathmandu). Handlers are **placeholders
-  that log**; the API does not enqueue any timer yet.
+  (8 min), `midnight-maintenance` (cron `0 0 * * *`, Asia/Kathmandu). **Phase 10: the 90 s timer is
+  live** (scheduled by the worker's `vendor-sla-scheduler` consumer, handled by
+  `createTimerHandlers` → `VendorEscalationService`, §8D). The ghost-customer and midnight handlers
+  are still **placeholders that log**. The API enqueues nothing itself.
 
 ## 7. eSewa ePay v2 and Khalti rules (backend)
 
@@ -428,27 +453,30 @@ auth). `Infrastructure` now requires an `sms: SmsGateway` (tests inject `MockSms
 
 ### Implemented routes (the complete list)
 
-| Method & path                                              | Auth                                                          | Request                                                                                                                                          | Success              | Response schema                                                                                                                                                        | Used by mobile                                 |
-| ---------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `POST /api/auth/otp/send`                                  | **none**                                                      | `otpSendRequestSchema {phone: strict +9779XXXXXXXXX}`                                                                                            | 200                  | `otpSendResponseSchema {phone, expires_in_seconds: 120, resend_after_seconds: 60}`                                                                                     | `useSendOtp` (login screen, resend)            |
-| `POST /api/auth/otp/verify`                                | **none**                                                      | `otpVerifyRequestSchema {phone, code: 6 digits}`                                                                                                 | 200 (`no-store`)     | `authTokensResponseSchema {token_type, access_token, access_token_expires_in, refresh_token, refresh_token_expires_in, user{id, role, first_name\|null}, is_new_user}` | `useVerifyOtp` (code screen)                   |
-| `POST /api/auth/token/refresh`                             | **none** (the refresh JWT)                                    | `tokenRefreshRequestSchema {refresh_token}`                                                                                                      | 200 (`no-store`)     | `tokenRefreshResponseSchema {token_type, access_token, access_token_expires_in}`                                                                                       | `apiRequest` renewal (`refreshAccessToken`)    |
-| `GET /health`                                              | none                                                          | –                                                                                                                                                | 200 `{status:'ok'}`  | –                                                                                                                                                                      | no                                             |
-| `GET /api/vendors?lat=&lng=[&municipality_palika_string=]` | Bearer CUSTOMER                                               | `vendorFeedQuerySchema` (coordinates inside `NEPAL_BOUNDING_BOX`)                                                                                | 200                  | `feedResponseSchema {serviceable[], explore_further[]}` of `{vendor: FeedVendor, distance_km, serviceable}`                                                            | `useFeedQuery` (Shops tab)                     |
-| `GET /api/vendors/:id/products?lat=&lng=[&municipality_…]` | Bearer CUSTOMER                                               | `idParamSchema` + `vendorMenuQuerySchema`                                                                                                        | 200                  | `vendorMenuSchema {vendor, serviceable, products[{id, name, price_npr, in_stock}]}`                                                                                    | `useVendorMenuQuery` (vendor screen)           |
-| `POST /api/cart/checkout`                                  | Bearer CUSTOMER                                               | `checkoutRequestSchema {idempotency_key(8–100), vendor_id, payment_method, items[1–50]{product_id, quantity 1–99}, delivery_address (required)}` | 201 new / 200 replay | `checkoutResponseSchema {order: OrderView, reservation{id\|null, expires_at\|null}, delivery_otp\|null, replayed}`                                                     | `useCheckout` (sends the saved address)        |
-| `GET /api/cart/lock-status?order_id=`                      | Bearer CUSTOMER (owner)                                       | `lockStatusQuerySchema`                                                                                                                          | 200                  | `lockStatusResponseSchema {order, lock{status ACTIVE\|EXPIRED\|RELEASED, ttl_ms, expires_at}}`                                                                         | `useLockStatus` (5 s poll, checkout only)      |
-| `GET /api/orders/:id`                                      | Bearer CUSTOMER (owner)                                       | `idParamSchema`                                                                                                                                  | 200                  | `orderDetailResponseSchema {order: OrderSnapshot}`                                                                                                                     | `useOrderQuery` → `fetchOrder` (no polling)    |
-| `POST /api/orders/:id/cancel`                              | Bearer CUSTOMER (owner)                                       | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `cancelOrderResponseSchema {order_id, state:'CANCELED', refund_required}`                                                                                              | `useCancelOrder` → `cancelOrder`               |
-| `POST /api/payments/esewa/initiate`                        | Bearer CUSTOMER (owner)                                       | `paymentInitiateRequestSchema {order_id}`                                                                                                        | 200                  | `esewaInitiateResponseSchema {payment_url, method:'POST', fields}`                                                                                                     | `initiateEsewa`                                |
-| `POST /api/payments/esewa/webhook`                         | **none** (HMAC-authenticated)                                 | `esewaWebhookRequestSchema {data: base64}`                                                                                                       | 200                  | `paymentStatusResponseSchema {status, payment: PaymentView\|null}`                                                                                                     | `confirmEsewa` (the app forwards the redirect) |
-| `POST /api/payments/khalti/initiate`                       | Bearer CUSTOMER (owner)                                       | `{order_id}`                                                                                                                                     | 200                  | `khaltiInitiateResponseSchema {pidx, payment_url, expires_at}`                                                                                                         | `initiateKhalti`                               |
-| `POST /api/payments/khalti/lookup`                         | Bearer CUSTOMER (pidx owner)                                  | `khaltiLookupRequestSchema {pidx}`                                                                                                               | 200                  | `paymentStatusResponseSchema`                                                                                                                                          | `lookupKhalti`                                 |
-| `POST /api/reviews`                                        | Bearer CUSTOMER (order owner)                                 | `reviewSubmitRequestSchema {order_id, rating 1–5 int, feedback? ≤500 (trimmed, blank → null)}`                                                   | 201                  | `reviewSubmitResponseSchema {review: {id, order_id, direction, rating, feedback, status QUARANTINED\|PUBLISHED, published_at, created_at}}`                            | `submitReview` (`ReviewModal`)                 |
-| `POST /api/vendors/orders/:id/reviews`                     | Bearer VENDOR (order's vendor)                                | `idParamSchema` + `vendorReviewSubmitRequestSchema {rating 1–5 int, feedback? ≤500}`                                                             | 201                  | `reviewSubmitResponseSchema` (direction `VENDOR_TO_CUSTOMER`)                                                                                                          | no (no vendor app yet)                         |
-| `POST /api/uploads/dispute-evidence`                       | Bearer CUSTOMER (order owner)                                 | multipart: field `order_id` (`disputeEvidenceUploadFieldsSchema`) + part `file` (JPEG/PNG/WebP by magic bytes, ≤ 5 MB)                           | 201                  | `disputeEvidenceUploadResponseSchema {url, content_type}` (= a chat attachment)                                                                                        | `uploadDisputeEvidence` (dispute screen)       |
-| `GET /api/orders/:id/chat`                                 | Bearer CUSTOMER, VENDOR or SUPER_ADMIN (order party or admin) | `idParamSchema`                                                                                                                                  | 200 (`no-store`)     | `chatHistoryResponseSchema {messages: ChatMessage[]}` oldest first; senders `{id, first_name, role}` only; empty without a dispute                                     | `fetchChatHistory` (dispute screen)            |
-| `GET /uploads/dispute-evidence/:order/:file`               | none (unguessable uuid names)                                 | –                                                                                                                                                | 200                  | the stored image (`express.static`, `nosniff`); only mounted for `LocalEvidenceStorage`                                                                                | chat image bubbles                             |
+| Method & path                                              | Auth                                                          | Request                                                                                                                                          | Success              | Response schema                                                                                                                                                         | Used by mobile                                 |
+| ---------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `POST /api/auth/otp/send`                                  | **none**                                                      | `otpSendRequestSchema {phone: strict +9779XXXXXXXXX}`                                                                                            | 200                  | `otpSendResponseSchema {phone, expires_in_seconds: 120, resend_after_seconds: 60}`                                                                                      | `useSendOtp` (login screen, resend)            |
+| `POST /api/auth/otp/verify`                                | **none**                                                      | `otpVerifyRequestSchema {phone, code: 6 digits}`                                                                                                 | 200 (`no-store`)     | `authTokensResponseSchema {token_type, access_token, access_token_expires_in, refresh_token, refresh_token_expires_in, user{id, role, first_name\|null}, is_new_user}`  | `useVerifyOtp` (code screen)                   |
+| `POST /api/auth/token/refresh`                             | **none** (the refresh JWT)                                    | `tokenRefreshRequestSchema {refresh_token}`                                                                                                      | 200 (`no-store`)     | `tokenRefreshResponseSchema {token_type, access_token, access_token_expires_in}`                                                                                        | `apiRequest` renewal (`refreshAccessToken`)    |
+| `GET /health`                                              | none                                                          | –                                                                                                                                                | 200 `{status:'ok'}`  | –                                                                                                                                                                       | no                                             |
+| `GET /api/vendors?lat=&lng=[&municipality_palika_string=]` | Bearer CUSTOMER                                               | `vendorFeedQuerySchema` (coordinates inside `NEPAL_BOUNDING_BOX`)                                                                                | 200                  | `feedResponseSchema {serviceable[], explore_further[]}` of `{vendor: FeedVendor, distance_km, serviceable}`                                                             | `useFeedQuery` (Shops tab)                     |
+| `GET /api/vendors/:id/products?lat=&lng=[&municipality_…]` | Bearer CUSTOMER                                               | `idParamSchema` + `vendorMenuQuerySchema`                                                                                                        | 200                  | `vendorMenuSchema {vendor, serviceable, products[{id, name, price_npr, in_stock}]}`                                                                                     | `useVendorMenuQuery` (vendor screen)           |
+| `POST /api/cart/checkout`                                  | Bearer CUSTOMER                                               | `checkoutRequestSchema {idempotency_key(8–100), vendor_id, payment_method, items[1–50]{product_id, quantity 1–99}, delivery_address (required)}` | 201 new / 200 replay | `checkoutResponseSchema {order: OrderView, reservation{id\|null, expires_at\|null}, delivery_otp\|null, replayed}`                                                      | `useCheckout` (sends the saved address)        |
+| `GET /api/cart/lock-status?order_id=`                      | Bearer CUSTOMER (owner)                                       | `lockStatusQuerySchema`                                                                                                                          | 200                  | `lockStatusResponseSchema {order, lock{status ACTIVE\|EXPIRED\|RELEASED, ttl_ms, expires_at}}`                                                                          | `useLockStatus` (5 s poll, checkout only)      |
+| `GET /api/orders/:id`                                      | Bearer CUSTOMER (owner)                                       | `idParamSchema`                                                                                                                                  | 200                  | `orderDetailResponseSchema {order: OrderSnapshot}`                                                                                                                      | `useOrderQuery` → `fetchOrder` (no polling)    |
+| `POST /api/orders/:id/cancel`                              | Bearer CUSTOMER (owner)                                       | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `cancelOrderResponseSchema {order_id, state:'CANCELED', refund_required}`                                                                                               | `useCancelOrder` → `cancelOrder`               |
+| `POST /api/payments/esewa/initiate`                        | Bearer CUSTOMER (owner)                                       | `paymentInitiateRequestSchema {order_id}`                                                                                                        | 200                  | `esewaInitiateResponseSchema {payment_url, method:'POST', fields}`                                                                                                      | `initiateEsewa`                                |
+| `POST /api/payments/esewa/webhook`                         | **none** (HMAC-authenticated)                                 | `esewaWebhookRequestSchema {data: base64}`                                                                                                       | 200                  | `paymentStatusResponseSchema {status, payment: PaymentView\|null}`                                                                                                      | `confirmEsewa` (the app forwards the redirect) |
+| `POST /api/payments/khalti/initiate`                       | Bearer CUSTOMER (owner)                                       | `{order_id}`                                                                                                                                     | 200                  | `khaltiInitiateResponseSchema {pidx, payment_url, expires_at}`                                                                                                          | `initiateKhalti`                               |
+| `POST /api/payments/khalti/lookup`                         | Bearer CUSTOMER (pidx owner)                                  | `khaltiLookupRequestSchema {pidx}`                                                                                                               | 200                  | `paymentStatusResponseSchema`                                                                                                                                           | `lookupKhalti`                                 |
+| `POST /api/reviews`                                        | Bearer CUSTOMER (order owner)                                 | `reviewSubmitRequestSchema {order_id, rating 1–5 int, feedback? ≤500 (trimmed, blank → null)}`                                                   | 201                  | `reviewSubmitResponseSchema {review: {id, order_id, direction, rating, feedback, status QUARANTINED\|PUBLISHED, published_at, created_at}}`                             | `submitReview` (`ReviewModal`)                 |
+| `POST /api/vendors/orders/:id/reviews`                     | Bearer VENDOR (order's vendor)                                | `idParamSchema` + `vendorReviewSubmitRequestSchema {rating 1–5 int, feedback? ≤500}`                                                             | 201                  | `reviewSubmitResponseSchema` (direction `VENDOR_TO_CUSTOMER`)                                                                                                           | no                                             |
+| `GET /api/vendors/orders`                                  | Bearer VENDOR                                                 | –                                                                                                                                                | 200 (`no-store`)     | `vendorOrderListResponseSchema {orders: VendorOrderView[]}` PLACED first, then PREPARING, oldest placement first, max 100; `404 VENDOR_NOT_FOUND` for a shopless vendor | `fetchVendorOrders` (vendor dashboard)         |
+| `POST /api/vendors/orders/:id/accept`                      | Bearer VENDOR (order's vendor)                                | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `vendorOrderDecisionResponseSchema {order_id, state:'PREPARING', refund_required}`                                                                                      | `decideVendorOrder` (Accept)                   |
+| `POST /api/vendors/orders/:id/reject`                      | Bearer VENDOR (order's vendor)                                | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `vendorOrderDecisionResponseSchema {order_id, state:'CANCELED', refund_required}`                                                                                       | `decideVendorOrder` (Reject)                   |
+| `POST /api/uploads/dispute-evidence`                       | Bearer CUSTOMER (order owner)                                 | multipart: field `order_id` (`disputeEvidenceUploadFieldsSchema`) + part `file` (JPEG/PNG/WebP by magic bytes, ≤ 5 MB)                           | 201                  | `disputeEvidenceUploadResponseSchema {url, content_type}` (= a chat attachment)                                                                                         | `uploadDisputeEvidence` (dispute screen)       |
+| `GET /api/orders/:id/chat`                                 | Bearer CUSTOMER, VENDOR or SUPER_ADMIN (order party or admin) | `idParamSchema`                                                                                                                                  | 200 (`no-store`)     | `chatHistoryResponseSchema {messages: ChatMessage[]}` oldest first; senders `{id, first_name, role}` only; empty without a dispute                                      | `fetchChatHistory` (dispute screen)            |
+| `GET /uploads/dispute-evidence/:order/:file`               | none (unguessable uuid names)                                 | –                                                                                                                                                | 200                  | the stored image (`express.static`, `nosniff`); only mounted for `LocalEvidenceStorage`                                                                                 | chat image bubbles                             |
 
 - `OrderView = {id, vendor_id, state, payment_method, payment_status, fulfillment, subtotal_npr,
 delivery_fee_npr, total_npr, created_at}` (no OTP hash, gateway ref or commission).
@@ -459,6 +487,8 @@ quantity}]}`. `delivery_address` is null only for orders created before checkout
 min_order_value, base_delivery_fee_npr, fulfillment_mode, location{x: lng, y: lat}}` (no phone,
   wallet or commission; the schema is strict).
 - `PaymentView = {order_id, order_state, payment_status, duplicate}`.
+- `VendorOrderView = OrderView + {placed_at (non-null), delivery_address|null, items[]}` (Phase 10): no
+  `customer_id`, name or phone (strict schema).
 
 **Feed / menu behaviour (SPEC §2, `catalog/catalog-service.ts`).** One SQL query over LIVE vendors
 computes `ST_Distance(vendor::geography, customer::geography)` (WGS 84 spheroid) and `serviceable`:
@@ -489,13 +519,16 @@ transaction under `SELECT … FOR UPDATE`:
 
 1. not found or not the caller's → `404 ORDER_NOT_FOUND` (ids cannot be probed);
 2. already CANCELED → 200 with the same body (idempotent; also after the window);
-3. state ≠ PLACED → `409 ORDER_STATE_CONFLICT` (`details.state`). A PENDING_PAYMENT order is **not**
-   cancelable: a payment arriving after such a cancel would be captured with no refund flag;
+3. state not PLACED **or PREPARING** → `409 ORDER_STATE_CONFLICT` (`details.state`). PREPARING is
+   cancelable since Phase 10: a vendor may accept at once, but that does not shorten the customer's
+   unskippable window. A PENDING_PAYMENT order is **not** cancelable: a payment arriving after such a
+   cancel would be captured with no refund flag;
 4. `clock_timestamp() - placed_at <= 60 s` (database clock, measured after the row lock is held),
    else `422 CANCELLATION_WINDOW_EXPIRED`. Anchored on **`placed_at`**, so time spent paying on a
    gateway does not count;
 5. stock added back per `order_items`, state → CANCELED;
 6. `payment_status = 'PAID'` → `refund_required = true` and `order.canceled_refund_due` enqueued.
+   Steps 5–6 are `order-service.ts#cancelPlacedOrder(tx, order)`, shared with the vendor's reject.
    After commit, any leftover reservation is released. Verified at 59 s / 61 s, with a prepaid order
    checked out 300 s earlier but placed 50 s earlier (succeeds), and with 5 concurrent cancels
    (stock restored once, one event).
@@ -527,21 +560,75 @@ Only these code paths change `orders.state`, and each writes `order.state_change
 transaction (Phase 8), which `/orders` streams to the app (§8B). **Any new transition (the lifecycle
 routes) must call `enqueueOrderStateChanged(tx, fromState, updatedRow)`** in its transaction.
 
-| From → to                          | Where                                        | Trigger                                    | Outbox event today                                                              |
-| ---------------------------------- | -------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
-| (new) → PENDING_PAYMENT            | `CheckoutService.checkout`                   | `POST /api/cart/checkout`                  | `order.state_changed` (from null) + `order.locked` (aggregate = reservation_id) |
-| PENDING_PAYMENT → PLACED           | `CheckoutService.claim` (sets `placed_at`)   | COD checkout, eSewa webhook, Khalti lookup | `order.state_changed` + `order.placed`                                          |
-| PENDING_PAYMENT → FAILED           | `PaymentConfirmationService.placeIfPending`  | paid after the 600 s lock expired          | `order.state_changed` (update + event in one transaction)                       |
-| PLACED → CANCELED                  | `OrderService.cancel`                        | `POST /api/orders/:id/cancel` (≤ 60 s)     | `order.state_changed` always; plus `order.canceled_refund_due` if PAID          |
-| PLACED → PREPARING → … → DELIVERED | **no code path** (tests set states directly) | –                                          | –                                                                               |
+| From → to                     | Where                                        | Trigger                                    | Outbox event today                                                              |
+| ----------------------------- | -------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
+| (new) → PENDING_PAYMENT       | `CheckoutService.checkout`                   | `POST /api/cart/checkout`                  | `order.state_changed` (from null) + `order.locked` (aggregate = reservation_id) |
+| PENDING_PAYMENT → PLACED      | `CheckoutService.claim` (sets `placed_at`)   | COD checkout, eSewa webhook, Khalti lookup | `order.state_changed` + `order.placed`                                          |
+| PENDING_PAYMENT → FAILED      | `PaymentConfirmationService.placeIfPending`  | paid after the 600 s lock expired          | `order.state_changed` (update + event in one transaction)                       |
+| PLACED / PREPARING → CANCELED | `OrderService.cancel`                        | `POST /api/orders/:id/cancel` (≤ 60 s)     | `order.state_changed` always; plus `order.canceled_refund_due` if PAID          |
+| PLACED → PREPARING            | `VendorOrderService.accept` (Phase 10)       | `POST /api/vendors/orders/:id/accept`      | `order.state_changed`                                                           |
+| PLACED → CANCELED             | `VendorOrderService.reject` (Phase 10)       | `POST /api/vendors/orders/:id/reject`      | `order.state_changed` always; plus `order.canceled_refund_due` if PAID          |
+| PREPARING → … → DELIVERED     | **no code path** (tests set states directly) | –                                          | –                                                                               |
 
 ### Not implemented (backend)
 
-No routes for: saved-address CRUD, profile (name) editing, logout/revocation, order state transitions after PLACED (vendor
-accept → PREPARING, dispatch, OUT_FOR_DELIVERY, arrival, DELIVERED), delivery-OTP verification,
+No routes for: saved-address CRUD, profile (name) editing, logout/revocation, order state transitions after PREPARING
+(dispatch, OUT_FOR_DELIVERY, arrival, DELIVERED), "Accept with Modifications", delivery-OTP verification,
 reading published reviews, dispute resolution (nothing moves a dispute out of OPEN or the order to `DISPUTED`), refunds, admin,
-vendor or driver apps (the vendor review route exists, but no vendor client), `/metrics`, rate limiting beyond the per-phone OTP cooldown. No push
-notifications. Worker consumers and timer handlers are placeholders.
+a driver app, `/metrics`, rate limiting beyond the per-phone OTP cooldown. No push notifications. No consumer
+of `vendor.escalation.required` (the IVR/SMS call itself); the ghost-customer and midnight timers are placeholders.
+
+## 8D. Vendor order management and the 90-second SLA (Phase 10)
+
+SPEC vendor flow steps 6–7 and infrastructure §1/§6. Code: `apps/api/src/orders/vendor-order-service.ts`,
+`routes/vendor-orders.ts`; worker `consumers/vendor-sla-scheduler.ts`, `sla/vendor-escalation.ts`.
+
+**Ownership.** Every vendor route addresses the order through its vendor: `orders ⋈ vendors ON
+vendors.user_id = caller`, locked `FOR UPDATE OF orders`. Another vendor's order and unknown ids are
+`404 ORDER_NOT_FOUND`; customers/drivers get 403 at `requireAuth(VENDOR)`.
+
+| Decision | Allowed from | Effect (one transaction)                                                                                                                                                     | Repeat / conflict                                                                                    |
+| -------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| accept   | PLACED       | state → PREPARING, `order.state_changed`. Stock untouched (decremented at placement)                                                                                         | PREPARING → 200 same body (no new event); anything else → `409 ORDER_STATE_CONFLICT` `details.state` |
+| reject   | PLACED       | `cancelPlacedOrder`: stock back, state → CANCELED, `order.state_changed`; PAID → `refund_required` + `order.canceled_refund_due`; lingering Redis hold released after commit | CANCELED (by either side) → 200 same body; PREPARING etc. → 409                                      |
+
+- No time limit on either decision (the 60 s window is the customer's only; SPEC's 3-minute vendor
+  acceptance window is **not enforced**, §13). Tested: concurrent accepts → one event; concurrent
+  rejects → stock and refund once; simultaneous accept + reject → exactly one wins.
+
+**The 90 s SLA.**
+
+```
+order → PLACED ──(same tx)──▶ outbox order.state_changed ──relay──▶ Kafka order.lifecycle
+  ──worker vendor-sla-scheduler──▶ BullMQ vendor-acceptance-timeout (jobId = order id,
+     delay = placed_at + 90 s − now, ≥ 0)
+  ──fires──▶ VendorEscalationService.escalateIfUnanswered (tx, order row FOR UPDATE):
+       state ≠ PLACED            → NOT_PENDING (vendor answered / customer canceled)
+       escalation row exists     → ALREADY_ESCALATED (retried job)
+       else                      → outbox vendor.escalation.required (notifications.broadcast)
+```
+
+- Scheduling from the outbox event (not from the API after its commit) means a crash cannot lose the
+  timer. The delay is anchored on `placed_at`, so relay/Kafka lag does not stretch the SLA (the
+  worker's clock vs the DB clock is assumed NTP-close).
+- Accept/reject take the same row lock as the escalation, so a decision at 89.9 s and the timer
+  cannot both win. The timer is **not cancelled** on accept; it fires and finds the order no longer
+  PLACED (the `cancelVendorAcceptanceTimeout` helper exists but is unused).
+- "No app interaction" is read as "no decision": opening the dashboard without answering does not
+  stop the escalation.
+- Tests (`apps/worker/test/vendor-sla.int.test.ts`, real Postgres + BullMQ, 10): escalation payload,
+  NOT_PENDING for PREPARING/CANCELED/unknown, 5 concurrent + retried runs → one row, DB refuses a
+  second row, job scheduled at placed_at + 90 s (and once per redelivery), overdue job fires at once,
+  accepted-before-due → nothing, unanswered → escalated. No test waits 90 s (backdated
+  `placed_at`, `job.promote()`). Mutation-checked: escalating regardless of state, dropping the
+  already-escalated check, and anchoring on receipt instead of `placed_at` each fail a test.
+
+**Vendor room on `/orders`.** `ALLOWED_ROLES` is now CUSTOMER + VENDOR. `vendor:subscribe` (no payload,
+ack `vendorSubscribeAckSchema`) joins `vendor:{vendorId}` for the caller's own shop: `FORBIDDEN` for
+non-vendors, `VENDOR_NOT_FOUND` for a shopless vendor. Order rooms stay customer-only (a vendor's
+`orders:subscribe` gets `ORDER_NOT_FOUND`). The worker fans every placed order's
+`order:state_update` to both rooms (`orderStateUpdateRooms`); the redis-emitter publishes one message
+for several rooms. Tested in `test/orders-realtime.int.test.ts` ("vendor room", 4).
 
 ## 8C. Reviews, dispute chat `/chat` and evidence uploads (Phases 9 and 9.5)
 
@@ -862,17 +949,18 @@ fingerprint includes it, and the territory gate reads the shared `NEPAL_BOUNDING
 
 ### 9.0 Screen inventory (exact current UI)
 
-| Route                 | File                         | Session needed    | Server calls                                                                                                | What the user sees                                                                                                                                                                     |
-| --------------------- | ---------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/` (Shops tab)       | `app/(tabs)/index.tsx`       | yes               | `GET /api/vendors` (saved-address pin or Thamel)                                                            | "Delivers to you" + desaturated "Explore Further" (carts disabled); loading; "Sign in to see the shops near you." when signed out; retry on other errors                               |
-| `/vendor/[id]`        | `app/vendor/[id].tsx`        | yes               | `GET /api/vendors/:id/products`                                                                             | products with price and stock; add to cart (single-vendor, replace prompt); browse-only banner if not serviceable; "This shop isn't available."                                        |
-| `/cart` (Cart tab)    | `app/(tabs)/cart.tsx`        | only to check out | `POST /api/cart/checkout`, lock-status poll, eSewa/Khalti initiate + confirm                                | lines, +/-, summary (platform fee Rs. 0), MOV check, delivery address card, payment picker, **"Proceed to Checkout" or "Sign in to Checkout"**, reservation countdown, payment WebView |
-| `/profile` (tab)      | `app/(tabs)/profile.tsx`     | no                | –                                                                                                           | account (Sign in / Sign out), language EN/NE, `__DEV__` token paste and territory simulator                                                                                            |
-| `/login`              | `app/login.tsx`              | no                | `POST /api/auth/otp/send`                                                                                   | +977 prefix, number field, validation and cooldown messages                                                                                                                            |
-| `/verify-otp`         | `app/verify-otp.tsx`         | no                | `POST /api/auth/otp/verify`, `…/otp/send` (resend)                                                          | 6-digit field, per-error messages, resend countdown, "Change number"; on success toast + back to the caller                                                                            |
-| `/order/[id]`         | `app/order/[id]/index.tsx`   | yes               | `GET /api/orders/:id`, Socket.io `/orders`, `POST /api/orders/:id/cancel`                                   | order code and total, 60 s cancel countdown + button, delivery OTP badge, discrete tracker, dispute button (48 h after delivery)                                                       |
-| `/order/[id]/dispute` | `app/order/[id]/dispute.tsx` | yes               | `GET /api/orders/:id/chat`, Socket.io `/chat` (join + send with acks), `POST /api/uploads/dispute-evidence` | earlier messages (transcript) + live chat (first names only), photo attach (≤ 5 MB), closed/unavailable notice when the server refuses the join                                        |
-| (root overlays)       | `app/_layout.tsx`            | –                 | lock-status (via `CheckoutSessionWatcher`), `POST /api/reviews`                                             | territory gate (topmost), replace-cart modal, review prompt, toasts, session-expiry handler                                                                                            |
+| Route                 | File                         | Session needed    | Server calls                                                                                                          | What the user sees                                                                                                                                                                     |
+| --------------------- | ---------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/` (Shops tab)       | `app/(tabs)/index.tsx`       | yes               | `GET /api/vendors` (saved-address pin or Thamel)                                                                      | "Delivers to you" + desaturated "Explore Further" (carts disabled); loading; "Sign in to see the shops near you." when signed out; retry on other errors                               |
+| `/vendor/[id]`        | `app/vendor/[id].tsx`        | yes               | `GET /api/vendors/:id/products`                                                                                       | products with price and stock; add to cart (single-vendor, replace prompt); browse-only banner if not serviceable; "This shop isn't available."                                        |
+| `/cart` (Cart tab)    | `app/(tabs)/cart.tsx`        | only to check out | `POST /api/cart/checkout`, lock-status poll, eSewa/Khalti initiate + confirm                                          | lines, +/-, summary (platform fee Rs. 0), MOV check, delivery address card, payment picker, **"Proceed to Checkout" or "Sign in to Checkout"**, reservation countdown, payment WebView |
+| `/profile` (tab)      | `app/(tabs)/profile.tsx`     | no                | –                                                                                                                     | account (Sign in / Sign out), language EN/NE, `__DEV__` token paste and territory simulator                                                                                            |
+| `/login`              | `app/login.tsx`              | no                | `POST /api/auth/otp/send`                                                                                             | +977 prefix, number field, validation and cooldown messages                                                                                                                            |
+| `/verify-otp`         | `app/verify-otp.tsx`         | no                | `POST /api/auth/otp/verify`, `…/otp/send` (resend)                                                                    | 6-digit field, per-error messages, resend countdown, "Change number"; on success toast + back to the caller                                                                            |
+| `/order/[id]`         | `app/order/[id]/index.tsx`   | yes               | `GET /api/orders/:id`, Socket.io `/orders`, `POST /api/orders/:id/cancel`                                             | order code and total, 60 s cancel countdown + button, delivery OTP badge, discrete tracker, dispute button (48 h after delivery)                                                       |
+| `/order/[id]/dispute` | `app/order/[id]/dispute.tsx` | yes               | `GET /api/orders/:id/chat`, Socket.io `/chat` (join + send with acks), `POST /api/uploads/dispute-evidence`           | earlier messages (transcript) + live chat (first names only), photo attach (≤ 5 MB), closed/unavailable notice when the server refuses the join                                        |
+| `/dashboard` (vendor) | `app/(vendor)/dashboard.tsx` | yes (VENDOR)      | `GET /api/vendors/orders`, Socket.io `/orders` (`vendor:subscribe`), `POST /api/vendors/orders/:id/accept` / `reject` | new orders (items, total, payment, ward/tole/palika) with Accept / Reject, Preparing list, red alarm banner + looping expo-audio alarm while any order waits, sign out (Phase 10)      |
+| (root overlays)       | `app/_layout.tsx`            | –                 | lock-status (via `CheckoutSessionWatcher`), `POST /api/reviews`                                                       | territory gate (topmost), replace-cart modal, review prompt, toasts, session-expiry handler                                                                                            |
 
 ### 9.1 Storage
 
@@ -889,7 +977,7 @@ fails**. Each store has a `create*Store(storage)` factory for tests plus an app-
 
 | Store                                                                 | Key / version                              | Persisted                                                                                                                   | Memory only                            | Status                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `useAuthStore`                                                        | `hamro-pasal.auth` v1 (secure)             | `refreshToken`, `locale` ('en' \| 'ne')                                                                                     | **`accessToken`** (SPEC: memory only)  | `setSession` on OTP verify; `setAccessToken` on refresh (and by the `__DEV__` token paste); `clearSession` on sign-out or a refused refresh. `selectHasSession` = either token present.                                                                                                                                                                                                             |
+| `useAuthStore`                                                        | `hamro-pasal.auth` **v2** (secure)         | `refreshToken`, `role` (Phase 10), `locale` ('en' \| 'ne')                                                                  | **`accessToken`** (SPEC: memory only)  | `setSession` on OTP verify; `setAccessToken` on refresh (and by the `__DEV__` token paste); `clearSession` on sign-out or a refused refresh. `selectHasSession` = either token present.                                                                                                                                                                                                             |
 | `useCartStore`                                                        | `hamro-pasal.cart` v2 (app)                | `vendor {id, name, deliveryFeeNpr, minOrderValueNpr}`, `lines[{productId, name, unitPriceNpr, quantity}]`                   | `pendingAddition`                      | **Single-vendor** (SPEC edge case 4) with a replace prompt (`ReplaceCartModal`). Limits from shared-types (99 per line, 50 lines). Prices are display-only; the server re-prices.                                                                                                                                                                                                                   |
 | `useCheckoutStore`                                                    | `hamro-pasal.checkout` v1 (app)            | `session {orderId, reservationId, expiresAt, orderState, paymentMethod, totalNpr}`, `attempt {idempotencyKey, fingerprint}` | `deliveryOtp`, `sessionExpired`        | One idempotency key per **checkout fingerprint = vendor + method + sorted items + delivery address** (Phase 6 added the address), reused across retries and relaunches. `startSession`, `applyLockStatus`, `applyPaymentView`, `setOrderState`, `expireSession`, `endSession`. A stored v1 fingerprint without the address no longer matches, so the first checkout after upgrade gets a fresh key. |
 | `useOrderStore`                                                       | `hamro-pasal.orders` v2 (app)              | `orders[id] {orderId, placedAt, deliveredAt, state, paymentMethod, totalNpr}`, capped at 20                                 | –                                      | `placedAt` = when the device saw PLACED (60 s countdown anchor); `deliveredAt` = when it first saw DELIVERED (48 h dispute anchor). **Deliberately device clocks** (§9.6, §12): the server's `placed_at`/`delivered_at` arrive with `GET /api/orders/:id` but are not used for the UI timers.                                                                                                       |
@@ -1181,6 +1269,48 @@ first_name|null, role }` allowlist), so a server regression would still not rend
 - FlatList screens that update asynchronously use fake timers (`VirtualizedList` renders on a 50 ms
   timer that otherwise triggers `act()` warnings).
 
+### 9.13 Vendor dashboard and the incoming-order alarm (Phase 10)
+
+- **Role routing.** `useAuthStore.role` is read from the access token's `role` claim
+  (`src/lib/access-token-role.ts`, base64url decode, **no signature check**: the role only picks
+  screens, the API authorises every call) on `setSession` and on every `setAccessToken` (a refresh
+  carries the role as the server now sees it; an unreadable token keeps the known role). It is
+  persisted (store v2; a v1 slice migrates with `role: null` until the next token), never without a
+  refresh token, and cleared on sign-out. `app/(tabs)/_layout.tsx` redirects a signed-in VENDOR to
+  `/dashboard`; `app/(vendor)/_layout.tsx` redirects everyone else to `/`. So a vendor lands on the
+  dashboard after OTP sign-in (the code screen's `router.back()` returns into the tabs, which
+  redirect) and after a relaunch.
+- **Data.** `useVendorOrdersQuery` (`['vendor','orders']`, `staleTime: 0`,
+  `retryTransientFailures`) → `GET /api/vendors/orders`. `useVendorOrdersRealtime` opens
+  `createOrdersSocket()` (same token lifecycle, §9.3), emits `vendor:subscribe` on every connect
+  (10 s ack; timeout/INTERNAL retried on the backoff schedule, FORBIDDEN/VENDOR_NOT_FOUND never),
+  refetches after each join and on every valid `order:state_update` (a new order's items are not in
+  the update, so it refetches rather than patches).
+- **Decisions.** `useVendorOrderDecisions`: pressing Accept/Reject adds the order to an
+  `acknowledged` set at once (`onMutate`) and sends the POST. Success patches the cache (PREPARING
+  stays listed, CANCELED is removed) and toasts; a network/5xx failure **withdraws** the
+  acknowledgement (the alarm rings again) with "Couldn't send your answer"; `409`/`404` (the customer
+  canceled, or another device answered) keeps it silent with "no longer waiting". The list is
+  refetched after every decision.
+- **Alarm** (`src/features/vendor/vendor-alarm.ts`): **`expo-audio` ~57.0.5**, not `expo-av`
+  (`expo-av`'s last release, 16.0.8, targets SDK 54; SDK 57 bundles `expo-audio`). `createVendorAlarm`
+  sets the audio mode (`playsInSilentMode: true`, `interruptionMode: 'doNotMix'`), lazily creates one
+  player for `assets/sounds/vendor-alarm.wav` with `loop = true`, `volume = 1`; `start()` → `play()`
+  (idempotent), `stop()` → `pause()` + `seekTo(0)`, `release()` → `remove()`. `useVendorAlarm(ringing)`
+  owns one per mount. **ringing = some order is PLACED and not acknowledged** (`isAlarmRinging`), so it
+  loops until every waiting order is answered, restarts if an answer fails, and stops by itself when
+  the customer cancels. Leaving the screen frees the player. **Foreground only**: no background
+  playback plugin, no push (§13).
+- **Tests:** `vendor-alarm.test.ts` (11, fake player: loop/volume/play/pause/seekTo/remove),
+  `VendorDashboard.test.tsx` (14, msw + FakeSocket: room join, alarm on socket arrival, Accept/Reject
+  silence it before the server answers, two orders, failure resumes, 409 stays silent, customer
+  cancel, unmount), `VendorRouting.test.tsx` (9), `api/vendor-orders.int.test.ts` (5), auth store role
+  (6) and token decoding (6). `jest.setup.ts` mocks `expo-audio` globally with
+  `src/test/fake-audio.ts` (default volume 0.5, so a test proves the app sets 1). Mutation-checked:
+  no loop, no pause on stop, no acknowledgement on press, no resume on failure each fail tests.
+- **Customer side:** `canCancel` / the order screen's `windowOpen` accept PLACED **or PREPARING**
+  inside the 60 s window (`isCancelableState`), matching the server.
+
 ## 10. Mock inventory (what the app still fakes)
 
 Phase 6.5 removed every catalogue, order and cancellation mock. What remains:
@@ -1206,13 +1336,17 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 2. **Session hardening:** refresh-token rotation (a new refresh token per refresh, old `jti` burned)
    with a Redis/Postgres denylist, `POST /api/auth/logout` revoking the `jti`, and per-IP rate
    limiting on `/api/auth/*` (only the per-phone cooldown exists).
-3. **Order lifecycle** (vendor accept → PREPARING, dispatch, OUT_FOR_DELIVERY, arrival, delivery-OTP
-   verification → DELIVERED + `delivered_at` + settlement) with BullMQ timers (90 s acceptance/IVR,
-   8 min ghost customer). Each transition calls `enqueueOrderStateChanged` in its transaction and is
-   then streamed to the app by `/orders` with no further socket work (§8B); vendor/driver access to
-   `/orders` rooms needs the role and ownership checks widened.
-4. **Cancellation follow-ups:** tell the vendor about cancellations (`order.state_changed` now exists
-   for every cancel, but nothing delivers it to a vendor); decide how the 60 s window interacts with a vendor accepting within it.
+3. **Order lifecycle, rest** (Phase 10 built accept/reject and the 90 s timer): dispatch,
+   OUT_FOR_DELIVERY, arrival, delivery-OTP verification → DELIVERED + `delivered_at` + settlement, the
+   8 min ghost-customer timer, and driver access to `/orders`. Each transition calls
+   `enqueueOrderStateChanged` in its transaction; the vendor room already receives every update.
+   Vendor follow-ups: the **IVR/SMS consumer** of `vendor.escalation.required` (Twilio Voice / SIP
+   trunk + Sparrow/Aakash SMS, on `notifications.broadcast`), SPEC's **3-minute acceptance window**
+   (auto-reject? not specified), "Accept with Modifications" (partial fulfilment + partial refund),
+   Vendor Acceptance Rate (< 85 % penalises feed ranking), refusing decisions from a SUSPENDED
+   vendor, background alarm (push with a data-only payload, expo-audio background plugin).
+4. **Cancellation follow-ups:** the vendor dashboard now hears customer cancellations (vendor room);
+   no push reaches a vendor whose app is closed. The 60 s window vs early accept is decided (§12).
 5. **Refunds:** a worker consumer for `order.canceled_refund_due` (eSewa/Khalti refund APIs + a ledger
    journal out of SYSTEM_ESCROW), and the same for `PAID_AFTER_SESSION_EXPIRED` (which should also set
    `refund_required`). The app already tells the customer "Escrow refund initiated".
@@ -1297,7 +1431,8 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
   - Fan-out runs in the worker (Kafka consumer + `@socket.io/redis-emitter`), not in the API; the API
     only serves sockets. Both share `SOCKET_IO_REDIS_KEY`.
   - WebSocket-only transport on server and client (no sticky sessions needed).
-  - Only CUSTOMERs may connect to `/orders` for now, mirroring the REST routes.
+  - Only CUSTOMERs may connect to `/orders` for now, mirroring the REST routes. (Phase 10 admits
+    VENDORs too, for their shop room only; §8D.)
   - Room membership is checked once, at subscribe; the token only at the handshake.
   - The client refetches once after every successful subscribe instead of polling.
   - `/chat` got the same client token lifecycle now (`createAuthenticatedSocket`), before its server
@@ -1342,6 +1477,28 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
   - The app fetches on mount in parallel with the socket and refetches after each re-join (not on
     the first join, which would duplicate the mount request).
 
+- **Phase 10:**
+  - **Early accept vs the 60 s window (asked; user chose):** a vendor may accept immediately
+    (PLACED → PREPARING); the customer can still cancel a PREPARING order until `placed_at + 60 s`
+    (server and app). Rejected alternatives: blocking Accept for 60 s, or letting Accept close the
+    window.
+  - **`expo-audio` instead of the requested `expo-av`:** `expo-av` is not available for Expo SDK 57
+    (last release targets SDK 54). The prompt's `playSoundAsync`/`stopAsync` map to expo-audio's
+    `play()` and `pause()` + `seekTo(0)`; tests assert those.
+  - The 90 s timer is scheduled by a **worker Kafka consumer of the PLACED outbox event**, not by the
+    API after commit (crash-safe), and anchored on `placed_at`.
+  - The escalation is an outbox event `vendor.escalation.required` on `notifications.broadcast`
+    (the prompt's name), at most once per order (checked under the order row lock, backed by a partial
+    unique index). It carries the vendor's phone for the IVR/SMS consumer.
+  - Reject shares the customer cancellation's transaction body (`cancelPlacedOrder`): stock back,
+    refund flag + `order.canceled_refund_due` for PAID orders. Rejecting an already canceled order
+    answers 200.
+  - Vendors get a shop room `vendor:{id}` on `/orders` (not per-order rooms); the fan-out sends
+    placed orders' updates there. The dashboard refetches on each update.
+  - The app learns the role from the access token claim (unverified, UI routing only) and persists it.
+  - The alarm rings while any PLACED order is unanswered; pressing either button silences it before
+    the server answers; a failed answer makes it ring again.
+
 ## 13. Known gaps and risks
 
 - **No live end-to-end run** of the app against the API, and no live eSewa/Khalti sandbox session.
@@ -1351,8 +1508,15 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 - **Refunds are flagged, never paid:** `refund_required` + `order.canceled_refund_due` have no
   consumer, yet the app tells the customer "Escrow refund initiated"; `PAID_AFTER_SESSION_EXPIRED`
   orders are not even flagged.
-- **Nobody tells the vendor about a canceled COD order:** it now emits `order.state_changed`, but
-  there is no vendor app, push notification or consumer acting on it for the vendor.
+- **The IVR/SMS call is not made:** `vendor.escalation.required` is written but nothing consumes it.
+- **The alarm only rings in the foreground.** A vendor whose app is backgrounded or killed hears
+  nothing (no push, no background playback plugin); only the 90 s escalation (once consumed) reaches
+  them.
+- **SPEC's 3-minute vendor acceptance window is not enforced:** an unanswered order stays PLACED
+  indefinitely after the 90 s escalation. A SUSPENDED vendor can still accept/reject.
+- **Reject has no confirmation step:** one tap cancels the customer's order.
+- The dashboard lists at most 100 open orders and refetches the whole list on every update.
+- The 90 s delay is computed with the worker's clock against the DB's `placed_at` (assumes NTP).
 - **Checkout accepts an address outside the vendor's delivery area.**
 - The device-side 60 s countdown starts when the device sees PLACED, the server's at `placed_at`;
   a device that learns of the placement late shows more time than the server allows. **Accepted by
@@ -1376,7 +1540,8 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 - **Rate limiting is per phone only**: one IP can request codes for many numbers (SMS cost) and try
   codes across many numbers. Per-IP limits are backlog item 3.
 - **`.env` uses Sparrow**: local sign-ins send real SMS unless `SMS_PROVIDER=MOCK`.
-- A vendor or driver signing in on the customer app gets a token for their real role and sees 403s.
+- A driver (or admin) signing in on the app gets a token for their real role and sees 403s on the
+  customer screens (vendors are routed to their dashboard since Phase 10).
 - The `__DEV__` token paste has no refresh token, so it lapses after 15 min (then the Feed shows its
   sign-in prompt).
 - The Nepali sign-in strings have not been reviewed by a native speaker.

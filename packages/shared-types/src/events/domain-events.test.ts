@@ -107,3 +107,39 @@ describe('order.canceled_refund_due', () => {
     expect(parse({ refund_amount_npr: 0 })).toBe(false);
   });
 });
+
+describe('vendor.escalation.required', () => {
+  const payload = {
+    order_id: randomUUID(),
+    vendor_id: randomUUID(),
+    vendor_phone: '+9779800000011',
+    placed_at: '2026-09-30T10:00:00.000Z',
+    sla_seconds: 90,
+    escalated_at: '2026-09-30T10:01:30.000Z',
+  };
+
+  it('is a valid domain event routed to the notification fan-out topic', () => {
+    const event = domainEventSchema.parse({
+      ...base,
+      event_type: 'vendor.escalation.required',
+      payload,
+    });
+
+    expect(event.event_type).toBe('vendor.escalation.required');
+    expect(DOMAIN_EVENT_TOPICS['vendor.escalation.required']).toBe('notifications.broadcast');
+  });
+
+  it('only carries a strict +977 number for the IVR call and SMS', () => {
+    const parse = (overrides: Record<string, unknown>) =>
+      domainEventSchema.safeParse({
+        ...base,
+        event_type: 'vendor.escalation.required',
+        payload: { ...payload, ...overrides },
+      }).success;
+
+    expect(parse({ vendor_phone: '9800000011' })).toBe(false);
+    expect(parse({ vendor_phone: '+15551234567' })).toBe(false);
+    expect(parse({ sla_seconds: 0 })).toBe(false);
+    expect(parse({ customer_phone: '+9779800000001' })).toBe(false);
+  });
+});

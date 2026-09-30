@@ -85,6 +85,13 @@
       "when": 1790756119016,
       "tag": "0011_chat_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790762140167,
+      "tag": "0012_vendor_escalation_index",
+      "breakpoints": true
     }
   ]
 }

@@ -239,21 +239,24 @@ describe('orders API', () => {
       expect(bodyOf(cancelOrderResponseSchema, res).state).toBe('CANCELED');
     });
 
-    it('refuses orders that are not PLACED', async () => {
+    it('refuses orders that are not PLACED or PREPARING', async () => {
       const { customerId, vendorId, productId } = await setup();
       const pending = await checkout(customerId, vendorId, productId, 'ESEWA');
-      const preparing = await checkout(customerId, vendorId, productId, 'COD');
-      await db().update(orders).set({ state: 'PREPARING' }).where(eq(orders.id, preparing.id));
+      const dispatched = await checkout(customerId, vendorId, productId, 'COD');
+      await db()
+        .update(orders)
+        .set({ state: 'OUT_FOR_DELIVERY' })
+        .where(eq(orders.id, dispatched.id));
 
       const pendingRes = await cancel(customerId, pending.id);
-      const preparingRes = await cancel(customerId, preparing.id);
+      const dispatchedRes = await cancel(customerId, dispatched.id);
 
-      for (const res of [pendingRes, preparingRes]) {
+      for (const res of [pendingRes, dispatchedRes]) {
         expect(res.status).toBe(409);
         expect(errorOf(res).code).toBe('ORDER_STATE_CONFLICT');
       }
       expect((await stateOf(pending.id))?.state).toBe('PENDING_PAYMENT');
-      expect((await stateOf(preparing.id))?.state).toBe('PREPARING');
+      expect((await stateOf(dispatched.id))?.state).toBe('OUT_FOR_DELIVERY');
     });
 
     it("hides other customers' orders and requires a customer token", async () => {

@@ -294,5 +294,24 @@
     "signedInStatus": "You're signed in.",
     "signedOutStatus": "Sign in to order from shops near you.",
     "sessionExpired": "Your session has ended. Please sign in again."
+  },
+  "vendorDashboard": {
+    "title": "Incoming orders",
+    "loadError": "Couldn't load your orders. Check your connection.",
+    "empty": "No open orders right now. New orders will ring here.",
+    "alarm": "New order! Accept or reject it to stop the alarm.",
+    "newOrders": "New orders",
+    "preparing": "Preparing",
+    "item": "{{quantity, localizedNumber}} × {{name}}",
+    "address": "Ward {{ward, localizedNumber}}, {{tole}}, {{palika}}",
+    "noAddress": "No delivery address on this order.",
+    "accept": "Accept",
+    "reject": "Reject",
+    "sending": "Sending…",
+    "accepted": "Order accepted. Start preparing it.",
+    "rejected": "Order rejected.",
+    "rejectedRefund": "Order rejected. The customer's payment will be refunded.",
+    "noLongerWaiting": "This order is no longer waiting for you.",
+    "decisionFailed": "Couldn't send your answer. Please try again."
   }
 }

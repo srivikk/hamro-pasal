@@ -1,6 +1,7 @@
 import { mmkvStateStorage, type MmkvEngine } from '../storage/mmkv-state-storage';
 import { getSecureStorage } from '../storage/secure-mmkv';
 import type * as InMemoryMmkvModule from '../test/in-memory-mmkv';
+import { accessTokenFor } from '../test/access-tokens';
 import { InMemoryMmkv } from '../test/in-memory-mmkv';
 import { AUTH_STORE_KEY, AUTH_STORE_VERSION, createAuthStore, useAuthStore } from './useAuthStore';
 
@@ -42,7 +43,7 @@ describe('auth store persistence (Zustand + MMKV)', () => {
 
     expect(store.getState().accessToken).toBe(SESSION.accessToken);
     expect(readPersisted(engine)).toEqual({
-      state: { refreshToken: SESSION.refreshToken, locale: 'ne' },
+      state: { refreshToken: SESSION.refreshToken, role: null, locale: 'ne' },
       version: AUTH_STORE_VERSION,
     });
     expect(engine.getString(AUTH_STORE_KEY)).not.toContain(SESSION.accessToken);
@@ -86,7 +87,7 @@ describe('auth store persistence (Zustand + MMKV)', () => {
 
     expect(store.getState()).toMatchObject({ accessToken: null, refreshToken: null, locale: 'ne' });
     expect(readPersisted(engine)).toEqual({
-      state: { refreshToken: null, locale: 'ne' },
+      state: { refreshToken: null, role: null, locale: 'ne' },
       version: AUTH_STORE_VERSION,
     });
     expect(createAuthStore(mmkvStateStorage(engine)).getState().refreshToken).toBeNull();
@@ -129,8 +130,92 @@ describe('auth store persistence (Zustand + MMKV)', () => {
     useAuthStore.getState().setSession(SESSION);
 
     expect(readPersisted(getSecureStorage())).toEqual({
-      state: { refreshToken: SESSION.refreshToken, locale: 'en' },
+      state: { refreshToken: SESSION.refreshToken, role: null, locale: 'en' },
       version: AUTH_STORE_VERSION,
+    });
+  });
+});
+
+describe('account role (Phase 10: vendor dashboard routing)', () => {
+  let engine: InMemoryMmkv;
+
+  beforeEach(() => {
+    engine = new InMemoryMmkv();
+  });
+
+  it("reads the role from the access token's claim when the session starts", () => {
+    const store = createAuthStore(mmkvStateStorage(engine));
+
+    store.getState().setSession({ accessToken: accessTokenFor('VENDOR'), refreshToken: 'r.jwt' });
+
+    expect(store.getState().role).toBe('VENDOR');
+    expect(readPersisted(engine)).toMatchObject({ state: { role: 'VENDOR' } });
+  });
+
+  it('keeps the role across a relaunch, before the first refresh', () => {
+    const first = createAuthStore(mmkvStateStorage(engine));
+    first.getState().setSession({ accessToken: accessTokenFor('VENDOR'), refreshToken: 'r.jwt' });
+
+    const relaunched = createAuthStore(mmkvStateStorage(engine));
+
+    expect(relaunched.getState()).toMatchObject({
+      accessToken: null,
+      refreshToken: 'r.jwt',
+      role: 'VENDOR',
+    });
+  });
+
+  it('follows the role of each refreshed token (a role change applies at the next refresh)', () => {
+    const store = createAuthStore(mmkvStateStorage(engine));
+    store.getState().setSession({ accessToken: accessTokenFor('CUSTOMER'), refreshToken: 'r.jwt' });
+
+    store.getState().setAccessToken(accessTokenFor('VENDOR'));
+
+    expect(store.getState().role).toBe('VENDOR');
+  });
+
+  it('keeps the known role when a token cannot be read, and forgets it on sign-out', () => {
+    const store = createAuthStore(mmkvStateStorage(engine));
+    store.getState().setSession({ accessToken: accessTokenFor('VENDOR'), refreshToken: 'r.jwt' });
+
+    store.getState().setAccessToken('not-a-jwt');
+    expect(store.getState().role).toBe('VENDOR');
+
+    store.getState().clearSession();
+    expect(store.getState().role).toBeNull();
+    expect(readPersisted(engine)).toMatchObject({ state: { role: null } });
+  });
+
+  it('never restores a role without a refresh token, nor an unknown role', () => {
+    engine.set(
+      AUTH_STORE_KEY,
+      JSON.stringify({
+        state: { refreshToken: null, role: 'VENDOR', locale: 'en' },
+        version: AUTH_STORE_VERSION,
+      }),
+    );
+    expect(createAuthStore(mmkvStateStorage(engine)).getState().role).toBeNull();
+
+    engine.set(
+      AUTH_STORE_KEY,
+      JSON.stringify({
+        state: { refreshToken: 'r.jwt', role: 'OWNER', locale: 'en' },
+        version: AUTH_STORE_VERSION,
+      }),
+    );
+    expect(createAuthStore(mmkvStateStorage(engine)).getState().role).toBeNull();
+  });
+
+  it('migrates a v1 session (no role) without signing the user out', () => {
+    engine.set(
+      AUTH_STORE_KEY,
+      JSON.stringify({ state: { refreshToken: 'v1.refresh', locale: 'ne' }, version: 1 }),
+    );
+
+    expect(createAuthStore(mmkvStateStorage(engine)).getState()).toMatchObject({
+      refreshToken: 'v1.refresh',
+      role: null,
+      locale: 'ne',
     });
   });
 });

@@ -7,6 +7,7 @@ import type { DisputeService } from './disputes/dispute-service';
 import { requireAuth } from './http/auth';
 import { errorHandler, HttpError } from './http/errors';
 import type { OrderService } from './orders/order-service';
+import type { VendorOrderService } from './orders/vendor-order-service';
 import type { EsewaService } from './payments/esewa/esewa-service';
 import type { KhaltiService } from './payments/khalti/khalti-service';
 import type { ReviewService } from './reviews/review-service';
@@ -27,6 +28,7 @@ export interface ApiServices {
   readonly catalog: CatalogService;
   readonly checkout: CheckoutService;
   readonly orders: OrderService;
+  readonly vendorOrders: VendorOrderService;
   readonly esewa: EsewaService;
   readonly khalti: KhaltiService;
   readonly reviews: ReviewService;
@@ -52,7 +54,7 @@ export function createApp(services?: ApiServices): Express {
     app.use(
       '/api/vendors/orders',
       requireAuth(services.accessTokenSecret, ['VENDOR']),
-      vendorOrdersRouter(services.reviews),
+      vendorOrdersRouter({ reviews: services.reviews, vendorOrders: services.vendorOrders }),
     );
     app.use('/api/vendors', customerAuth, vendorsRouter(services.catalog));
     app.use('/api/cart', customerAuth, cartRouter(services.checkout));

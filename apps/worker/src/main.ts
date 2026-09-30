@@ -4,12 +4,14 @@ import { Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 
 import { loadEnv } from './config/env';
-import { buildConsumers } from './consumers';
+import { buildConsumers, routeByTopic } from './consumers';
+import { BullVendorAcceptanceTimers } from './consumers/vendor-sla-scheduler';
 import { buildBullConnection } from './infra/redis';
 import { Lifecycle } from './lifecycle';
 import { OutboxRelay } from './outbox/outbox-relay';
 import { allTimerQueues, createTimerQueues, registerMidnightJobs } from './queues/definitions';
-import { createProcessors, pendingImplementationHandlers } from './queues/processors';
+import { createProcessors, createTimerHandlers } from './queues/processors';
+import { VendorEscalationService } from './sla/vendor-escalation';
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -30,7 +32,9 @@ async function main(): Promise<void> {
   const connection = buildBullConnection(env.REDIS_URL);
   const queues = createTimerQueues(connection);
   await registerMidnightJobs(queues.midnight);
-  const processors = createProcessors(pendingImplementationHandlers);
+  const processors = createProcessors(
+    createTimerHandlers({ escalation: new VendorEscalationService(db) }),
+  );
   const workers = [
     new Worker(queues.vendorAcceptance.name, processors.vendorAcceptance, { connection }),
     new Worker(queues.ghostCustomer.name, processors.ghostCustomer, { connection }),
@@ -46,14 +50,18 @@ async function main(): Promise<void> {
     lifecycle.register(() => queue.close());
   }
 
-  // Kafka consumers (order state fan-out to the API's Socket.io rooms through Redis)
+  // Kafka consumers: order state fan-out to the API's Socket.io rooms through Redis, and the 90 s
+  // vendor acceptance timer for every order that becomes PLACED.
   const redis = new Redis(env.REDIS_URL);
   lifecycle.register(async () => {
     await redis.quit();
   });
-  const consumers = buildConsumers({ redis });
+  const consumers = buildConsumers({
+    redis,
+    vendorAcceptanceTimers: new BullVendorAcceptanceTimers(queues.vendorAcceptance),
+  });
   if (consumers.length > 0) {
-    const handlers = new Map(consumers.map((c) => [c.topic, c.handle]));
+    const handlers = routeByTopic(consumers);
     const consumer = kafka.consumer({ kafkaJS: { groupId: env.KAFKA_CONSUMER_GROUP_ID } });
     await consumer.connect();
     lifecycle.register(() => consumer.disconnect());

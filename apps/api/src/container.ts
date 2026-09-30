@@ -22,6 +22,7 @@ import { DrizzleStockReader } from './inventory/stock-reader';
 import { LedgerService } from './ledger/ledger-service';
 import { SettlementService } from './ledger/settlement-service';
 import { OrderService } from './orders/order-service';
+import { VendorOrderService } from './orders/vendor-order-service';
 import { EsewaService, type EsewaConfig } from './payments/esewa/esewa-service';
 import type { FetchLike } from './payments/gateway-http';
 import { KhaltiClient, type KhaltiConfig } from './payments/khalti/khalti-client';
@@ -109,6 +110,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     catalog: new CatalogService(infra.db),
     checkout,
     orders: new OrderService(infra.db, locks),
+    vendorOrders: new VendorOrderService(infra.db, locks),
     esewa: new EsewaService(infra.db, checkout, confirmation, config.esewa),
     khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),
     reviews: new ReviewService(infra.db),

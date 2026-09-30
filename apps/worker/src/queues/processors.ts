@@ -8,6 +8,8 @@ import {
 } from '@hamro-pasal/shared-types';
 import type { Job } from 'bullmq';
 
+import type { VendorEscalationService } from '../sla/vendor-escalation';
+
 /**
  * What each timer does when it fires. The business actions (IVR/SMS escalation, ghost-customer
  * push/IVR, subscription downgrades) belong to later phases and are injected here, so the
@@ -30,6 +32,27 @@ export function createProcessors(handlers: TimerHandlers) {
     },
     midnight: async (job: Job): Promise<void> => {
       await handlers.runMidnightTask(midnightMaintenanceJobSchema.parse(job.data).task);
+    },
+  };
+}
+
+/**
+ * The handlers the worker runs. The 90 s vendor acceptance timeout is live (Phase 10): it writes
+ * `vendor.escalation.required` for an order still PLACED. The ghost-customer and midnight handlers
+ * are still placeholders.
+ */
+export function createTimerHandlers(deps: {
+  readonly escalation: Pick<VendorEscalationService, 'escalateIfUnanswered'>;
+}): TimerHandlers {
+  return {
+    ...pendingImplementationHandlers,
+    onVendorAcceptanceTimeout: async (job) => {
+      const outcome = await deps.escalation.escalateIfUnanswered(job);
+      if (outcome === 'ESCALATED') {
+        console.warn(
+          `[worker] order ${job.order_id} unanswered for 90 s: IVR/SMS escalation requested`,
+        );
+      }
     },
   };
 }

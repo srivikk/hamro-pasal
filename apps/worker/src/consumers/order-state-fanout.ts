@@ -2,9 +2,9 @@ import {
   domainEventSchema,
   KAFKA_TOPICS,
   ORDER_SOCKET_EVENTS,
-  orderRoom,
   ORDERS_NAMESPACE,
   orderStateUpdateFromEvent,
+  orderStateUpdateRooms,
   SOCKET_IO_REDIS_KEY,
   type DomainEvent,
   type OrderStateUpdate,
@@ -19,9 +19,12 @@ interface OrdersEmitEvents {
   'order:state_update': (update: OrderStateUpdate) => void;
 }
 
-/** Delivers one order update to every socket in that order's room, on any API instance. */
+/**
+ * Delivers one order update to every socket in the given rooms (the order's own room and its
+ * vendor's room), on any API instance. A socket in several of them receives it once.
+ */
 export interface OrderRoomBroadcaster {
-  broadcast(update: OrderStateUpdate): Promise<void>;
+  broadcast(update: OrderStateUpdate, rooms: readonly string[]): Promise<void>;
 }
 
 /** The one Redis command the broadcaster needs (an ioredis client satisfies it). */
@@ -32,7 +35,7 @@ export interface RedisPublisher {
 /**
  * Publishes into the API's Socket.io rooms through Redis (`@socket.io/redis-emitter`). The API's
  * `@socket.io/redis-adapter` subscribes to the same channels (same `key`) and forwards each
- * message to the sockets in `order:{id}` it holds locally.
+ * message to the sockets in `order:{id}` / `vendor:{id}` it holds locally.
  *
  * The emitter fires `publish` without waiting for it; the wrapper below keeps those promises so a
  * Redis failure fails the Kafka message (and it is retried) instead of being lost silently.
@@ -43,7 +46,7 @@ export class RedisOrderRoomBroadcaster implements OrderRoomBroadcaster {
     private readonly key: string = SOCKET_IO_REDIS_KEY,
   ) {}
 
-  async broadcast(update: OrderStateUpdate): Promise<void> {
+  async broadcast(update: OrderStateUpdate, rooms: readonly string[]): Promise<void> {
     const pending: Promise<unknown>[] = [];
     const client = {
       publish: (channel: string, message: string | Buffer): void => {
@@ -52,7 +55,7 @@ export class RedisOrderRoomBroadcaster implements OrderRoomBroadcaster {
     };
     new Emitter<OrdersEmitEvents>(client, { key: this.key })
       .of(ORDERS_NAMESPACE)
-      .to(orderRoom(update.order_id))
+      .to([...rooms])
       .emit(ORDER_SOCKET_EVENTS.stateUpdate, update);
     await Promise.all(pending);
   }
@@ -113,8 +116,9 @@ export function parseDomainEventMessage(value: Buffer | null): DomainEvent | nul
 
 /**
  * Kafka `order.lifecycle` → Socket.io `/orders`: every `order.state_changed` event is broadcast as
- * `order:state_update` to the `order:{order_id}` room. Other lifecycle events are ignored, and a
- * redelivered event (same event_id) is broadcast only once.
+ * `order:state_update` to the `order:{order_id}` room and, once the order was placed, to the
+ * `vendor:{vendor_id}` room (the vendor dashboard, Phase 10). Other lifecycle events are ignored,
+ * and a redelivered event (same event_id) is broadcast only once.
  */
 export function orderStateFanoutConsumer(deps: OrderStateFanoutDeps): KafkaConsumerDefinition {
   const onInvalid =
@@ -135,7 +139,10 @@ export function orderStateFanoutConsumer(deps: OrderStateFanoutDeps): KafkaConsu
       if (event.event_type !== 'order.state_changed') return;
       if (!(await deps.deduplicator.claim(event.event_id))) return;
       try {
-        await deps.broadcaster.broadcast(orderStateUpdateFromEvent(event));
+        await deps.broadcaster.broadcast(
+          orderStateUpdateFromEvent(event),
+          orderStateUpdateRooms(event),
+        );
       } catch (error: unknown) {
         await deps.deduplicator.release(event.event_id).catch(() => undefined);
         throw error;

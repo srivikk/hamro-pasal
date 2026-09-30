@@ -1,5 +1,15 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, jsonb, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import {
+  check,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 /**
  * Transactional outbox. Domain events are inserted in the same DB transaction as the state change
@@ -23,6 +33,10 @@ export const outboxEvents = pgTable(
     index('outbox_events_unpublished_idx')
       .on(t.occurred_at, t.id)
       .where(sql`${t.published_at} IS NULL`),
+    // Phase 10: at most one 90 s IVR/SMS escalation per order, and the worker's lookup for it.
+    uniqueIndex('outbox_events_vendor_escalation_uidx')
+      .on(t.aggregate_id)
+      .where(sql`${t.event_type} = 'vendor.escalation.required'`),
     check('outbox_events_publish_attempts_check', sql`${t.publish_attempts} >= 0`),
   ],
 );

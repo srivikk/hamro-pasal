@@ -8,15 +8,18 @@ import {
   orderSubscribeRequestSchema,
   SOCKET_IO_REDIS_KEY,
   SOCKET_PING_INTERVAL_MS,
+  vendorRoom,
   type OrderStateUpdate,
   type OrderSubscribeAck,
   type UserRole,
+  type VendorSubscribeAck,
 } from '@hamro-pasal/shared-types';
 import { createAdapter } from '@socket.io/redis-adapter';
 import type { Redis } from 'ioredis';
 import { Server, type Namespace } from 'socket.io';
 
 import type { OrderService } from '../orders/order-service';
+import type { VendorOrderService } from '../orders/vendor-order-service';
 import {
   serveChatNamespace,
   type ChatNamespace,
@@ -32,6 +35,7 @@ export interface OrdersServerToClientEvents {
 export interface OrdersClientToServerEvents {
   'orders:subscribe': (payload: unknown, ack?: unknown) => void;
   'orders:unsubscribe': (payload: unknown) => void;
+  'vendor:subscribe': (payload: unknown, ack?: unknown) => void;
 }
 
 export type OrdersSocketData = AuthenticatedSocketData;
@@ -52,6 +56,8 @@ export type OrdersNamespace = Namespace<
 export interface RealtimeOptions {
   readonly accessTokenSecret: string;
   readonly orders: Pick<OrderService, 'isCustomerOrder'>;
+  /** Finds the vendor a VENDOR user runs, for `vendor:subscribe`. */
+  readonly vendors: Pick<VendorOrderService, 'vendorIdForUser'>;
   /**
    * Redis pub/sub connections for `@socket.io/redis-adapter` (horizontal clustering, and how the
    * worker's emitter reaches these sockets). `sub` must be a dedicated connection. Without it,
@@ -71,8 +77,11 @@ export interface RealtimeServer {
   close(): Promise<void>;
 }
 
-/** Only customers track orders in this app (the REST routes apply the same rule). */
-const ALLOWED_ROLES: readonly UserRole[] = ['CUSTOMER'];
+/**
+ * Customers track their own orders; vendors follow their shop's incoming orders (vendor flow
+ * step 6). The REST routes apply the same split.
+ */
+const ALLOWED_ROLES: readonly UserRole[] = ['CUSTOMER', 'VENDOR'];
 
 /**
  * Attaches Socket.io to the API's HTTP server and serves the `/orders` namespace
@@ -82,7 +91,9 @@ const ALLOWED_ROLES: readonly UserRole[] = ['CUSTOMER'];
  *   - the handshake must carry a valid access token in `auth.token` (same HS256 contract as
  *     `Authorization: Bearer`), otherwise the connection is refused with `UNAUTHENTICATED`;
  *   - `orders:subscribe { order_id }` joins `order:{id}` only if the caller owns the order. Anyone
- *     else gets ORDER_NOT_FOUND, exactly like GET /api/orders/:id, so ids cannot be probed.
+ *     else gets ORDER_NOT_FOUND, exactly like GET /api/orders/:id, so ids cannot be probed;
+ *   - `vendor:subscribe` (vendors only) joins `vendor:{id}` of the caller's own shop, where the
+ *     worker broadcasts every update of that shop's placed orders (new orders included).
  */
 export function attachRealtime(httpServer: HttpServer, options: RealtimeOptions): RealtimeServer {
   const io: OrdersServer = new Server(httpServer, {
@@ -133,6 +144,37 @@ export function attachRealtime(httpServer: HttpServer, options: RealtimeOptions)
         },
         (error: unknown) => {
           console.error('[api] orders:subscribe failed', error);
+          reply({
+            ok: false,
+            error: { code: 'INTERNAL_SERVER_ERROR', message: 'Please try again' },
+          });
+        },
+      );
+    });
+
+    socket.on(ORDER_SOCKET_EVENTS.vendorSubscribe, (_payload, ack) => {
+      if (typeof ack !== 'function') return; // the ack is part of the contract
+      const reply = (response: VendorSubscribeAck): void => {
+        (ack as (response: VendorSubscribeAck) => void)(response);
+      };
+      if (socket.data.role !== 'VENDOR') {
+        reply({
+          ok: false,
+          error: { code: 'FORBIDDEN', message: 'Only vendors have a shop room' },
+        });
+        return;
+      }
+      options.vendors.vendorIdForUser(socket.data.userId).then(
+        async (vendorId) => {
+          if (vendorId === null) {
+            reply({ ok: false, error: { code: 'VENDOR_NOT_FOUND', message: 'Vendor not found' } });
+            return;
+          }
+          await socket.join(vendorRoom(vendorId));
+          reply({ ok: true, vendor_id: vendorId });
+        },
+        (error: unknown) => {
+          console.error('[api] vendor:subscribe failed', error);
           reply({
             ok: false,
             error: { code: 'INTERNAL_SERVER_ERROR', message: 'Please try again' },

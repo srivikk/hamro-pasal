@@ -5,9 +5,10 @@ import type { Job } from 'bullmq';
 import {
   ghostCustomerTimerOptions,
   midnightSchedulerId,
+  vendorAcceptanceDelayMs,
   vendorAcceptanceTimeoutOptions,
 } from './definitions';
-import { createProcessors, type TimerHandlers } from './processors';
+import { createProcessors, createTimerHandlers, type TimerHandlers } from './processors';
 
 const job = (data: unknown) => ({ data }) as Job;
 
@@ -73,5 +74,57 @@ describe('processors', () => {
     await expect(processors.midnight(job({ task: 'DROP_TABLES' }))).rejects.toThrow();
     expect(mocks.onVendorAcceptanceTimeout).not.toHaveBeenCalled();
     expect(mocks.runMidnightTask).not.toHaveBeenCalled();
+  });
+});
+
+describe('vendor acceptance deadline (Phase 10)', () => {
+  const placedAt = new Date('2026-09-30T10:00:00.000Z');
+  const at = (seconds: number) => new Date(placedAt.getTime() + seconds * 1000);
+
+  it('fires 90 s after placement, however late the worker hears about it', () => {
+    expect(vendorAcceptanceDelayMs(placedAt, at(0))).toBe(90_000);
+    expect(vendorAcceptanceDelayMs(placedAt, at(2.5))).toBe(87_500);
+    expect(vendorAcceptanceDelayMs(placedAt, at(89))).toBe(1_000);
+  });
+
+  it('fires at once when the deadline has already passed (worker was down)', () => {
+    expect(vendorAcceptanceDelayMs(placedAt, at(90))).toBe(0);
+    expect(vendorAcceptanceDelayMs(placedAt, at(600))).toBe(0);
+  });
+
+  it('keeps an explicit delay in the job options', () => {
+    const orderId = randomUUID();
+
+    expect(vendorAcceptanceTimeoutOptions(orderId, 1_000)).toMatchObject({
+      jobId: orderId,
+      delay: 1_000,
+    });
+  });
+});
+
+describe('createTimerHandlers', () => {
+  it('runs the escalation for a fired vendor acceptance timer', async () => {
+    const escalateIfUnanswered = jest.fn().mockResolvedValue('ESCALATED');
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const vendorJob = { order_id: randomUUID(), vendor_id: randomUUID() };
+
+    await createTimerHandlers({ escalation: { escalateIfUnanswered } }).onVendorAcceptanceTimeout(
+      vendorJob,
+    );
+
+    expect(escalateIfUnanswered).toHaveBeenCalledWith(vendorJob);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(vendorJob.order_id));
+    warn.mockRestore();
+  });
+
+  it('fails the job when the escalation cannot be written (BullMQ retries it)', async () => {
+    const escalateIfUnanswered = jest.fn().mockRejectedValue(new Error('database down'));
+
+    await expect(
+      createTimerHandlers({ escalation: { escalateIfUnanswered } }).onVendorAcceptanceTimeout({
+        order_id: randomUUID(),
+        vendor_id: randomUUID(),
+      }),
+    ).rejects.toThrow('database down');
   });
 });

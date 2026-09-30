@@ -97,6 +97,13 @@ export async function createVendor(db: Database, options: VendorFixture = {}): P
   ).id;
 }
 
+/** The user who runs a vendor (the subject of that vendor's access tokens). */
+export async function vendorUserIdOf(db: Database, vendorId: string): Promise<string> {
+  return one(
+    await db.select({ userId: vendors.user_id }).from(vendors).where(eq(vendors.id, vendorId)),
+  ).userId;
+}
+
 /**
  * The point exactly `distanceM` metres (geodesic, WGS 84 spheroid) from `origin` along
  * `azimuthDeg`, computed by PostGIS ST_Project, the same geometry model ST_DWithin uses.

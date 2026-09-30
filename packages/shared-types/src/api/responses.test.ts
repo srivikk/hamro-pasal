@@ -10,6 +10,8 @@ import {
   paymentStatusResponseSchema,
   tokenRefreshResponseSchema,
   vendorMenuSchema,
+  vendorOrderDecisionResponseSchema,
+  vendorOrderListResponseSchema,
 } from './responses';
 
 const order = {
@@ -197,6 +199,51 @@ describe('order detail and cancellation schemas', () => {
 
     expect(cancelOrderResponseSchema.parse(body)).toEqual(body);
     expect(cancelOrderResponseSchema.safeParse({ ...body, state: 'PLACED' }).success).toBe(false);
+  });
+});
+
+describe('vendor order schemas', () => {
+  const vendorOrder = {
+    ...order,
+    state: 'PLACED',
+    payment_method: 'COD',
+    placed_at: '2026-09-30T10:00:00.000Z',
+    delivery_address: null,
+    items: [
+      { product_id: randomUUID(), product_name: 'Ilam Tea 500g', unit_price_npr: 450, quantity: 1 },
+    ],
+  };
+
+  it('accept a list of placed orders with their items', () => {
+    const body = { orders: [vendorOrder] };
+
+    expect(vendorOrderListResponseSchema.parse(body)).toEqual(body);
+    expect(vendorOrderListResponseSchema.parse({ orders: [] })).toEqual({ orders: [] });
+  });
+
+  it('never expose the customer, the OTP hash or an unplaced order', () => {
+    const parse = (overrides: Record<string, unknown>) =>
+      vendorOrderListResponseSchema.safeParse({ orders: [{ ...vendorOrder, ...overrides }] })
+        .success;
+
+    expect(parse({ customer_id: randomUUID() })).toBe(false);
+    expect(parse({ customer_phone: '+9779800000001' })).toBe(false);
+    expect(parse({ delivery_otp: '$2b$10$abc' })).toBe(false);
+    expect(parse({ placed_at: null })).toBe(false);
+    expect(parse({ items: [] })).toBe(false);
+  });
+
+  it('accept only PREPARING or CANCELED as a decision', () => {
+    const body = { order_id: randomUUID(), state: 'PREPARING', refund_required: false };
+
+    expect(vendorOrderDecisionResponseSchema.parse(body)).toEqual(body);
+    expect(
+      vendorOrderDecisionResponseSchema.parse({ ...body, state: 'CANCELED', refund_required: true })
+        .state,
+    ).toBe('CANCELED');
+    expect(vendorOrderDecisionResponseSchema.safeParse({ ...body, state: 'PLACED' }).success).toBe(
+      false,
+    );
   });
 });
 

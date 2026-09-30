@@ -201,15 +201,15 @@ describe('60-second cancellation window', () => {
     expect(cancelButton()).toBeNull();
   });
 
-  it('shows the server state when it refuses for another reason (the vendor moved on)', async () => {
+  it('shows the server state when it refuses for another reason (the order moved on)', async () => {
     serveCancel(() =>
-      HttpResponse.json(errorBody('ORDER_STATE_CONFLICT', { state: 'PREPARING' }), {
+      HttpResponse.json(errorBody('ORDER_STATE_CONFLICT', { state: 'OUT_FOR_DELIVERY' }), {
         status: 409,
       }),
     );
     placeOrder(NOW);
     await renderScreen();
-    serverState('PREPARING');
+    serverState('OUT_FOR_DELIVERY');
 
     fireEvent.press(screen.getByRole('button', { name: 'Cancel Order' }));
     await advance(CANCEL_LATENCY_MS);
@@ -218,7 +218,7 @@ describe('60-second cancellation window', () => {
       message: "Couldn't cancel the order. Please try again.",
       tone: 'error',
     });
-    expect(useOrderStore.getState().orders[ORDER_ID]?.state).toBe('PREPARING');
+    expect(useOrderStore.getState().orders[ORDER_ID]?.state).toBe('OUT_FOR_DELIVERY');
     expect(cancelButton()).toBeNull();
   });
 
@@ -246,9 +246,21 @@ describe('60-second cancellation window', () => {
     expect(cancelButton()).toBeNull();
   });
 
-  it('offers no cancellation for an order the vendor already moved on', async () => {
-    placeOrder(NOW, 'PREPARING');
+  it('keeps the window open when the vendor accepts early (Phase 10: it is unskippable)', async () => {
+    placeOrder(NOW - 20_000, 'PREPARING');
     serverState('PREPARING');
+    await renderScreen();
+
+    expect(countdown()).toHaveTextContent('You can cancel this order for 00:40');
+    expect(cancelButton()).toBeOnTheScreen();
+    expect(stepLabel('Preparing: in progress')).toBeOnTheScreen();
+    await advance(40_000);
+    expect(cancelButton()).toBeNull();
+  });
+
+  it('offers no cancellation for an order already out for delivery', async () => {
+    placeOrder(NOW, 'OUT_FOR_DELIVERY');
+    serverState('OUT_FOR_DELIVERY');
     await renderScreen();
 
     expect(cancelButton()).toBeNull();

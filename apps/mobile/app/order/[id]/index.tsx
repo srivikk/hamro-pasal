@@ -4,7 +4,10 @@ import { useTranslation } from 'react-i18next';
 
 import { Button } from '../../../src/components/Button';
 import { CancellationPanel } from '../../../src/features/order/CancellationPanel';
-import { displayedOrderState } from '../../../src/features/order/cancellation-window';
+import {
+  displayedOrderState,
+  isCancelableState,
+} from '../../../src/features/order/cancellation-window';
 import { postDeliveryDeadline } from '../../../src/features/dispute/dispute-window';
 import { DeliveryOtpBadge } from '../../../src/features/order/DeliveryOtpBadge';
 import {
@@ -62,7 +65,7 @@ export default function OrderTrackingScreen() {
     );
   }
 
-  const windowOpen = order.state === 'PLACED' && remainingMs > 0;
+  const windowOpen = isCancelableState(order.state) && remainingMs > 0;
   const shownState = displayedOrderState(order.state, windowOpen);
   const terminal = isTerminalOrderState(order.state);
 

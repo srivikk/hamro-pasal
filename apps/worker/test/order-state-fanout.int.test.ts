@@ -81,12 +81,12 @@ describe('order state fan-out (Kafka → Redis room)', () => {
     const broadcaster = new RedisOrderRoomBroadcaster(redis, key);
     const fanout = orderStateFanoutConsumer({
       broadcaster: {
-        broadcast: (update) => {
+        broadcast: (update, rooms) => {
           if (failNextBroadcast) {
             failNextBroadcast = false;
             return Promise.reject(new Error('simulated Redis outage'));
           }
-          return broadcaster.broadcast(update);
+          return broadcaster.broadcast(update, rooms);
         },
       },
       deduplicator: new RedisEventDeduplicator(redis, `test:${randomUUID()}:seen:`),

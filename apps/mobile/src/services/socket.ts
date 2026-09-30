@@ -214,7 +214,7 @@ export function createChatSocket(factory: SocketFactory = io): ChatConnection {
   return { socket: chat, close };
 }
 
-/* ---------- /orders: real-time order state (customer journey 9) ---------- */
+/* ---------- /orders: real-time order state (customer journey 9, vendor flow step 6) ---------- */
 
 /** Events the server emits. Payloads are `unknown` until validated (orderStateUpdateSchema). */
 export interface OrdersServerToClientEvents {
@@ -224,6 +224,8 @@ export interface OrdersServerToClientEvents {
 export interface OrdersClientToServerEvents {
   'orders:subscribe': (payload: OrderSubscribeRequest, ack: (response: unknown) => void) => void;
   'orders:unsubscribe': (payload: OrderSubscribeRequest) => void;
+  /** Vendors only: join the shop's room (the ack is `vendorSubscribeAckSchema`). */
+  'vendor:subscribe': (payload: Record<string, never>, ack: (response: unknown) => void) => void;
 }
 
 export type OrdersSocket = Socket<OrdersServerToClientEvents, OrdersClientToServerEvents>;

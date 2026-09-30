@@ -10,6 +10,7 @@ import type {
   Review,
   ReviewView,
   VendorMenu,
+  VendorOrderView,
 } from '@hamro-pasal/shared-types';
 
 import type {
@@ -19,6 +20,7 @@ import type {
 } from '../catalog/catalog-service';
 import type { LockStatusView } from '../checkout/checkout-service';
 import type { OrderDetail } from '../orders/order-service';
+import type { VendorOrder } from '../orders/vendor-order-service';
 import type { ConfirmedPayment } from '../payments/payment-confirmation';
 
 /*
@@ -114,25 +116,45 @@ export function orderSnapshotView({ order, items, address }: OrderDetail): Order
     refund_required: order.refund_required,
     placed_at: order.placed_at?.toISOString() ?? null,
     delivered_at: order.delivered_at?.toISOString() ?? null,
-    delivery_address:
-      address === null
-        ? null
-        : {
-            province_id: address.province_id,
-            district_string: address.district_string,
-            municipality_palika_string: address.municipality_palika_string,
-            ward_number: address.ward_number,
-            tole_locality: address.tole_locality,
-            landmark: address.landmark,
-            exact_lat: address.exact_lat,
-            exact_lng: address.exact_lng,
-          },
-    items: items.map((item) => ({
-      product_id: item.product_id,
-      product_name: item.product_name,
-      unit_price_npr: item.unit_price_npr,
-      quantity: item.quantity,
-    })),
+    delivery_address: orderAddressView(address),
+    items: items.map(orderItemView),
+  };
+}
+
+/** The vendor dashboard's order: what to pack and where, never the customer's identity. */
+export function vendorOrderView({ order, items, address }: VendorOrder): VendorOrderView {
+  if (order.placed_at === null) {
+    throw new Error(`Order ${order.id} is ${order.state} but was never placed`);
+  }
+  return {
+    ...orderView(order),
+    placed_at: order.placed_at.toISOString(),
+    delivery_address: orderAddressView(address),
+    items: items.map(orderItemView),
+  };
+}
+
+function orderAddressView(address: OrderDetail['address']): OrderSnapshotView['delivery_address'] {
+  return address === null
+    ? null
+    : {
+        province_id: address.province_id,
+        district_string: address.district_string,
+        municipality_palika_string: address.municipality_palika_string,
+        ward_number: address.ward_number,
+        tole_locality: address.tole_locality,
+        landmark: address.landmark,
+        exact_lat: address.exact_lat,
+        exact_lng: address.exact_lng,
+      };
+}
+
+function orderItemView(item: OrderDetail['items'][number]): OrderSnapshotView['items'][number] {
+  return {
+    product_id: item.product_id,
+    product_name: item.product_name,
+    unit_price_npr: item.unit_price_npr,
+    quantity: item.quantity,
   };
 }
 

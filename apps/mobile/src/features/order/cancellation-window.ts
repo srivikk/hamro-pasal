@@ -12,9 +12,17 @@ export function cancellationRemainingMs(placedAtMs: number | null, nowMs: number
   return Math.min(CANCELLATION_WINDOW_MS, Math.max(0, placedAtMs + CANCELLATION_WINDOW_MS - nowMs));
 }
 
-/** Cancellation is offered only for a PLACED order inside its window. */
+/**
+ * Cancellation is offered inside the window while the order is PLACED, or PREPARING because the
+ * vendor accepted early: an early accept does not shorten the customer's window (the server
+ * applies the same rule).
+ */
+export function isCancelableState(state: OrderState): boolean {
+  return state === 'PLACED' || state === 'PREPARING';
+}
+
 export function canCancel(state: OrderState, placedAtMs: number | null, nowMs: number): boolean {
-  return state === 'PLACED' && cancellationRemainingMs(placedAtMs, nowMs) > 0;
+  return isCancelableState(state) && cancellationRemainingMs(placedAtMs, nowMs) > 0;
 }
 
 /**

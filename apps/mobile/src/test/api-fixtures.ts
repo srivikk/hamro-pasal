@@ -11,6 +11,8 @@ import {
   orderDetailResponseSchema,
   otpSendResponseSchema,
   vendorMenuSchema,
+  vendorOrderDecisionResponseSchema,
+  vendorOrderListResponseSchema,
   type AuthTokensResponseBody,
   type ChatMessage,
   type DisputeEvidenceUploadResponseBody,
@@ -26,6 +28,8 @@ import {
   type OtpSendResponseBody,
   type OrderView,
   type VendorMenu,
+  type VendorOrderDecisionResponseBody,
+  type VendorOrderView,
 } from '@hamro-pasal/shared-types';
 
 import type { CartProduct, CartVendor } from '../store/useCartStore';
@@ -287,5 +291,57 @@ export function serverChatMessage(overrides: Partial<ChatMessage> = {}): ChatMes
     attachments: [],
     sent_at: '2026-09-30T10:00:00.000Z',
     ...overrides,
+  });
+}
+
+/* ---------- Vendor orders (GET /api/vendors/orders, POST …/:id/accept | reject) ---------- */
+
+export const NEW_ORDER_ID = '3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b';
+export const SECOND_ORDER_ID = '4f5a6b7c-8d9e-4f0a-9b1c-2d3e4f5a6b7c';
+
+/** A PLACED COD order as the vendor dashboard receives it (no customer identity). */
+export function vendorOrder(overrides: Partial<VendorOrderView> = {}): VendorOrderView {
+  const [order] = vendorOrderListResponseSchema.parse({
+    orders: [
+      {
+        ...orderView({ id: NEW_ORDER_ID, state: 'PLACED', payment_method: 'COD' }),
+        placed_at: '2026-09-30T10:00:00.000Z',
+        delivery_address: {
+          province_id: THAMEL_ADDRESS.province_id,
+          district_string: THAMEL_ADDRESS.district_string,
+          municipality_palika_string: THAMEL_ADDRESS.municipality_palika_string,
+          ward_number: THAMEL_ADDRESS.ward_number,
+          tole_locality: THAMEL_ADDRESS.tole_locality,
+          landmark: THAMEL_ADDRESS.landmark,
+          exact_lat: THAMEL_ADDRESS.exact_lat,
+          exact_lng: THAMEL_ADDRESS.exact_lng,
+        },
+        items: [
+          { product_id: NOODLES.id, product_name: NOODLES.name, unit_price_npr: 600, quantity: 2 },
+          { product_id: RICE.id, product_name: RICE.name, unit_price_npr: 1150, quantity: 1 },
+        ],
+        ...overrides,
+      },
+    ],
+  }).orders;
+  if (order === undefined) throw new Error('unreachable');
+  return order;
+}
+
+/** GET /api/vendors/orders 200 body. */
+export function vendorOrderList(orders: VendorOrderView[]) {
+  return vendorOrderListResponseSchema.parse({ orders });
+}
+
+/** POST /api/vendors/orders/:id/accept | reject 200 body. */
+export function vendorDecision(
+  orderId: string,
+  state: 'PREPARING' | 'CANCELED',
+  refundRequired = false,
+): VendorOrderDecisionResponseBody {
+  return vendorOrderDecisionResponseSchema.parse({
+    order_id: orderId,
+    state,
+    refund_required: refundRequired,
   });
 }

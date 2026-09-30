@@ -88,6 +88,7 @@ describe('/chat namespace', () => {
     realtime = attachRealtime(httpServer, {
       accessTokenSecret: SECRET,
       orders: { isCustomerOrder: () => Promise.resolve(false) },
+      vendors: { vendorIdForUser: () => Promise.resolve(null) },
       chat: {
         disputes: {
           access: fakeAccess,

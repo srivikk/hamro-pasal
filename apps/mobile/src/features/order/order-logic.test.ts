@@ -36,7 +36,10 @@ describe('cancellation window (SPEC journey step 8)', () => {
   it('allows cancelling only a PLACED order inside the window', () => {
     expect(canCancel('PLACED', PLACED_AT, PLACED_AT + 59_999)).toBe(true);
     expect(canCancel('PLACED', PLACED_AT, PLACED_AT + 60_000)).toBe(false);
-    expect(canCancel('PREPARING', PLACED_AT, PLACED_AT + 1_000)).toBe(false);
+    // The vendor accepted early: the customer's window is not shortened (Phase 10).
+    expect(canCancel('PREPARING', PLACED_AT, PLACED_AT + 1_000)).toBe(true);
+    expect(canCancel('PREPARING', PLACED_AT, PLACED_AT + 60_000)).toBe(false);
+    expect(canCancel('OUT_FOR_DELIVERY', PLACED_AT, PLACED_AT + 1_000)).toBe(false);
     expect(canCancel('CANCELED', PLACED_AT, PLACED_AT + 1_000)).toBe(false);
   });
 

@@ -91,7 +91,8 @@ function ClosedNotice({ message }: { message: string }) {
 
 function DisputeChat({ orderId }: { orderId: string }) {
   const { t } = useTranslation();
-  const { thread, connection, unavailable, send, retry } = useDisputeChat(orderId);
+  const { thread, connection, unavailable, send, retry, historyStatus, retryHistory } =
+    useDisputeChat(orderId);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [attaching, setAttaching] = useState(false);
@@ -144,13 +145,27 @@ function DisputeChat({ orderId }: { orderId: string }) {
         </Text>
       )}
       <Text className="px-4 pt-3 text-xs text-neutral-500">{t('dispute.privacy')}</Text>
+      {historyStatus === 'failed' ? (
+        <View
+          className="mx-4 mt-2 flex-row items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2"
+          testID="chat-history-failed"
+        >
+          <Text className="flex-1 text-xs text-red-800">{t('dispute.historyFailed')}</Text>
+          <Pressable accessibilityRole="button" onPress={retryHistory} hitSlop={8}>
+            <Text className="text-xs font-semibold text-red-800">{t('dispute.historyRetry')}</Text>
+          </Pressable>
+        </View>
+      ) : null}
       <FlatList
         data={thread}
-        keyExtractor={(entry) => entry.message.client_id ?? entry.message.id}
+        // Own messages keep their device id, so the local copy and the server's share one cell.
+        keyExtractor={(entry) =>
+          entry.mine ? (entry.message.client_id ?? entry.message.id) : entry.message.id
+        }
         contentContainerStyle={{ paddingVertical: 12, flexGrow: 1 }}
         ListEmptyComponent={
-          <Text className="px-6 py-8 text-center text-sm text-neutral-600">
-            {t('dispute.empty')}
+          <Text className="px-6 py-8 text-center text-sm text-neutral-600" testID="chat-empty">
+            {t(historyStatus === 'loading' ? 'dispute.historyLoading' : 'dispute.empty')}
           </Text>
         }
         renderItem={({ item }) => (

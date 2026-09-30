@@ -1,6 +1,10 @@
 import { chatJoinAckSchema, chatSendAckSchema, userRoleSchema } from '@hamro-pasal/shared-types';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { randomUUID } from 'expo-crypto';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import { chatHistoryQueryKey, fetchChatHistory } from '../../api/chat';
+import { retryTransientFailures } from '../../api/query-client';
 
 import {
   CHAT_ACK_TIMEOUT_MS,
@@ -29,6 +33,48 @@ export interface ThreadMessage {
 }
 
 export type ChatConnection = 'connecting' | 'connected' | 'reconnecting';
+
+/** The transcript read-back (GET /api/orders/:id/chat). */
+export type ChatHistoryStatus = 'loading' | 'ready' | 'failed';
+
+/**
+ * The thread shown on screen: the server transcript first, then anything live (received over the
+ * socket or sent from this device) that the transcript does not contain yet, in time order. A
+ * message present in both (same server id, or our own message by client_id) appears once, as the
+ * server's copy.
+ */
+export function mergeThread(
+  history: readonly ChatMessage[],
+  live: readonly ThreadMessage[],
+  selfId: string,
+): ThreadMessage[] {
+  const merged: ThreadMessage[] = history.map((message) => {
+    const mine = message.sender.id === selfId;
+    return { message, mine, status: mine ? 'sent' : 'received' };
+  });
+  const ids = new Set(history.map((message) => message.id));
+  const ownClientIds = new Set(
+    history.flatMap((message) =>
+      message.sender.id === selfId && message.client_id !== null ? [message.client_id] : [],
+    ),
+  );
+  for (const entry of live) {
+    if (ids.has(entry.message.id)) continue;
+    if (
+      entry.mine &&
+      entry.message.client_id !== null &&
+      ownClientIds.has(entry.message.client_id)
+    ) {
+      continue;
+    }
+    merged.push(entry);
+  }
+  // Stable: equal timestamps keep transcript-then-live order.
+  return merged
+    .map((entry, index) => ({ entry, index, at: Date.parse(entry.message.sent_at) }))
+    .sort((a, b) => a.at - b.at || a.index - b.index)
+    .map(({ entry }) => entry);
+}
 
 /** Why the server refused to let this user into the order's dispute (final: never retried). */
 export type ChatUnavailable = 'DISPUTE_WINDOW_CLOSED' | 'ORDER_NOT_FOUND';
@@ -81,6 +127,9 @@ function upsert(
 
 /**
  * Live dispute thread for an order over the Socket.io `/chat` namespace:
+ *   - on mount, the transcript (GET /api/orders/:id/chat, TanStack Query) is fetched while the
+ *     socket connects, and refetched after every re-join, so messages sent while this device was
+ *     offline appear too;
  *   - joins `chat:join { order_id }` on every (re)connect; a timed-out or INTERNAL_SERVER_ERROR ack
  *     is retried on the backoff schedule, a refusal (window closed, not your order) is final;
  *   - a sent message is "Sending…" until the server's ack, which carries the message exactly as it
@@ -90,7 +139,15 @@ function upsert(
 export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
   const token = useAuthStore((state) => state.accessToken);
   const self = useMemo(() => chatUserFromToken(token), [token]);
-  const [thread, setThread] = useState<ThreadMessage[]>([]);
+  const queryClient = useQueryClient();
+  const history = useQuery({
+    queryKey: chatHistoryQueryKey(orderId),
+    queryFn: () => fetchChatHistory(orderId),
+    retry: retryTransientFailures,
+    staleTime: 0,
+  });
+  /** Messages received over the socket or sent from this device (the transcript is merged in). */
+  const [live, setThread] = useState<ThreadMessage[]>([]);
   const [connection, setConnection] = useState<ChatConnection>('connecting');
   const [unavailable, setUnavailable] = useState<ChatUnavailable | null>(null);
   const socketRef = useRef<ChatSocket | null>(null);
@@ -104,6 +161,7 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
     const { socket, close } = createChatSocket(socketFactory);
     socketRef.current = socket;
     let joinAttempt = 0;
+    let joins = 0;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
     const join = (): void => {
@@ -113,6 +171,11 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
           const ack = error instanceof Error ? null : chatJoinAckSchema.safeParse(response);
           if (ack?.success === true && ack.data.ok) {
             joinAttempt = 0;
+            joins += 1;
+            // Back after a disconnect: catch up on what was said meanwhile. (The first join
+            // needs no refetch: the transcript was requested on mount.)
+            if (joins > 1)
+              void queryClient.invalidateQueries({ queryKey: chatHistoryQueryKey(orderId) });
             return;
           }
           if (ack?.success === true && !ack.data.ok) {
@@ -158,7 +221,7 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
       close();
       socketRef.current = null;
     };
-  }, [orderId, socketFactory]);
+  }, [orderId, queryClient, socketFactory]);
 
   const markFailed = useCallback((clientId: string) => {
     setThread((current) =>
@@ -216,6 +279,11 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
     [emit, orderId, self],
   );
 
+  const thread = useMemo(
+    () => mergeThread(history.data ?? [], live, self.id),
+    [history.data, live, self.id],
+  );
+
   const retry = useCallback(
     (clientId: string) => {
       const entry = thread.find((item) => item.mine && item.message.client_id === clientId);
@@ -230,5 +298,11 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
     [emit, thread],
   );
 
-  return { thread, connection, unavailable, send, retry, self };
+  const historyStatus: ChatHistoryStatus =
+    history.data !== undefined ? 'ready' : history.isError ? 'failed' : 'loading';
+  const retryHistory = useCallback(() => {
+    void history.refetch();
+  }, [history]);
+
+  return { thread, connection, unavailable, send, retry, self, historyStatus, retryHistory };
 }

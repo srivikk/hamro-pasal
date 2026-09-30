@@ -3,15 +3,16 @@ import {
   chatJoinRequestSchema,
   chatSendRequestSchema,
   disputeRoom,
-  sanitizeChatMessage,
   type ChatJoinAck,
   type ChatMessage,
+  type ChatMessageRow,
   type ChatSendAck,
   type User,
   type UserRole,
 } from '@hamro-pasal/shared-types';
 import type { Namespace } from 'socket.io';
 
+import { publicChatMessage } from '../disputes/chat-message-view';
 import type { DisputeAccess, DisputeService } from '../disputes/dispute-service';
 import type { EvidenceStorage } from '../uploads/evidence-storage';
 import { socketAuth, type AuthenticatedSocketData } from './socket-auth';
@@ -43,15 +44,18 @@ export interface ChatNamespaceOptions {
 const CHAT_ROLES: readonly UserRole[] = ['CUSTOMER', 'VENDOR', 'SUPER_ADMIN'];
 
 /**
- * THE PRIVACY FILTER (SPEC implicit requirement 6), and the only way a message leaves the server.
- * `raw.sender` is the sender's full users row, last_name and phone included; `sanitizeChatMessage`
- * strips `last_name` / `phone_number` / `phone` at every depth and reduces the payload to the
- * allowlisted chat contract before it is broadcast. Nothing the client sent is trusted for it.
+ * The only way a message leaves the server over /chat: a stored row turned into its public form by
+ * `publicChatMessage` (THE privacy filter, shared with GET /api/orders/:id/chat), then broadcast.
+ * `sender` is the sender's full users row; nothing the client sent is trusted for it.
  */
-export function broadcastChatMessage(namespace: ChatNamespace, raw: unknown): ChatMessage {
-  const message = sanitizeChatMessage(raw);
-  if (message === null) throw new Error('Chat message broke the chat contract; not broadcast');
-  namespace.to(disputeRoom(message.order_id)).emit(CHAT_SOCKET_EVENTS.newMessage, message);
+export function broadcastChatMessage(
+  namespace: ChatNamespace,
+  row: ChatMessageRow,
+  orderId: string,
+  sender: User,
+): ChatMessage {
+  const message = publicChatMessage(row, orderId, sender);
+  namespace.to(disputeRoom(orderId)).emit(CHAT_SOCKET_EVENTS.newMessage, message);
   return message;
 }
 
@@ -169,15 +173,8 @@ export function serveChatNamespace(chat: ChatNamespace, options: ChatNamespaceOp
           body,
           attachments,
         });
-        const message = broadcastChatMessage(chat, {
-          id: stored.id,
-          client_id: stored.client_id,
-          order_id: orderId,
-          sender, // the full users row: the privacy filter in broadcastChatMessage reduces it
-          body: stored.body,
-          attachments: stored.attachments,
-          sent_at: stored.created_at.toISOString(),
-        });
+        // `sender` is the full users row: the privacy filter in publicChatMessage reduces it.
+        const message = broadcastChatMessage(chat, stored, orderId, sender);
         return { ok: true, message };
       };
 

@@ -1,8 +1,9 @@
 import { act, fireEvent, screen } from '@testing-library/react-native';
 import { launchImageLibraryAsync } from 'expo-image-picker';
-import { http, HttpResponse } from 'msw';
+import { delay, http, HttpResponse } from 'msw';
 
 import DisputeScreen from '../../../app/order/[id]/dispute';
+import { chatHistoryPath } from '../../api/chat';
 import { DISPUTE_EVIDENCE_PATH } from '../../api/uploads';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useOrderStore } from '../../store/useOrderStore';
@@ -124,6 +125,36 @@ async function attachPhoto(): Promise<void> {
   });
 }
 
+/** What GET /api/orders/:id/chat answers (the transcript), and every request it received. */
+let transcript: unknown[] = [];
+let historyRequests: { authorization: string | null }[] = [];
+
+function serveHistory(respond: () => Response | Promise<Response>): void {
+  server.use(
+    http.get(apiUrl(chatHistoryPath(ORDER_ID)), ({ request }) => {
+      historyRequests.push({ authorization: request.headers.get('authorization') });
+      return respond();
+    }),
+  );
+}
+
+/** Lets pending fetches (the transcript) and timers settle inside act(). */
+async function settle(ms = 0): Promise<void> {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(ms);
+  });
+  // A response released by that time still has to reach the query cache and re-render.
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(0);
+  });
+}
+
+/** Renders the screen and lets the transcript request finish. */
+async function renderScreen(): Promise<void> {
+  renderWithProviders(<DisputeScreen />);
+  await settle();
+}
+
 // FlatList renders new cells on a 50 ms batching timer. With fake timers that timer only fires
 // when a test advances time inside act(), never between a test's act() scopes.
 afterEach(() => {
@@ -138,20 +169,23 @@ beforeEach(() => {
   mockSocket = new FakeSocket();
   mockIo.mockClear();
   mockPickImage.mockReset();
+  transcript = [];
+  historyRequests = [];
+  serveHistory(() => HttpResponse.json({ messages: transcript }));
   useAuthStore.getState().setAccessToken(tokenFor(AARAV_ID));
   deliveredAgo(HOUR);
 });
 
 describe('dispute chat screen', () => {
-  it('connects to /chat and joins the order room', () => {
-    renderWithProviders(<DisputeScreen />);
+  it('connects to /chat and joins the order room', async () => {
+    await renderScreen();
 
     expect(mockIo).toHaveBeenCalledWith('http://api.hamropasal.test/chat', expect.anything());
     expect(mockSocket.emittedOf('chat:join')).toEqual([{ order_id: ORDER_ID }]);
   });
 
-  it('shows the server-filtered first name of other participants', () => {
-    renderWithProviders(<DisputeScreen />);
+  it('shows the server-filtered first name of other participants', async () => {
+    await renderScreen();
     acceptJoin();
 
     mockSocket.serverSend('chat:new_message', vendorMessage);
@@ -160,8 +194,8 @@ describe('dispute chat screen', () => {
     expect(screen.getByText('Sorry! Can you share a photo?')).toBeOnTheScreen();
   });
 
-  it('never shows a last name or phone, even if a server leaked them', () => {
-    renderWithProviders(<DisputeScreen />);
+  it('never shows a last name or phone, even if a server leaked them', async () => {
+    await renderScreen();
     acceptJoin();
 
     mockSocket.serverSend('chat:new_message', leakyVendorMessage);
@@ -172,8 +206,8 @@ describe('dispute chat screen', () => {
     expect(text).not.toContain('+9779800000011');
   });
 
-  it('labels a participant without a first name by role', () => {
-    renderWithProviders(<DisputeScreen />);
+  it('labels a participant without a first name by role', async () => {
+    await renderScreen();
 
     mockSocket.serverSend(
       'chat:new_message',
@@ -186,8 +220,8 @@ describe('dispute chat screen', () => {
     expect(screen.getByText('Hamro Pasal Support')).toBeOnTheScreen();
   });
 
-  it('ignores payloads that break the contract or belong to another order', () => {
-    renderWithProviders(<DisputeScreen />);
+  it('ignores payloads that break the contract or belong to another order', async () => {
+    await renderScreen();
 
     mockSocket.serverSend('chat:new_message', { ...vendorMessage, id: 'x', sender: null });
     mockSocket.serverSend('chat:new_message', {
@@ -202,8 +236,8 @@ describe('dispute chat screen', () => {
     ).toBeOnTheScreen();
   });
 
-  it('sends only the message fields the server reads: no user data leaves the device', () => {
-    renderWithProviders(<DisputeScreen />);
+  it('sends only the message fields the server reads: no user data leaves the device', async () => {
+    await renderScreen();
     acceptJoin();
 
     const sent = typeAndSend('  The honey jar arrived broken.  ');
@@ -219,8 +253,8 @@ describe('dispute chat screen', () => {
     expect(screen.getByTestId('chat-input').props.value).toBe('');
   });
 
-  it("replaces its copy with the server's ack (server id and time), without a duplicate echo", () => {
-    renderWithProviders(<DisputeScreen />);
+  it("replaces its copy with the server's ack (server id and time), without a duplicate echo", async () => {
+    await renderScreen();
     acceptJoin();
     const sent = typeAndSend('Hello');
 
@@ -240,8 +274,8 @@ describe('dispute chat screen', () => {
     expect(screen.getByTestId(`chat-message-srv-${sent.client_id}`)).toBeOnTheScreen();
   });
 
-  it('filters a leaky ack too', () => {
-    renderWithProviders(<DisputeScreen />);
+  it('filters a leaky ack too', async () => {
+    await renderScreen();
     acceptJoin();
     const sent = typeAndSend('Hello');
 
@@ -255,8 +289,8 @@ describe('dispute chat screen', () => {
     ['a timeout', null, new Error('operation has timed out')],
     ['a refusal', { ok: false, error: { code: 'DISPUTE_WINDOW_CLOSED', message: 'closed' } }, null],
     ['an ack that breaks the contract', { ok: true }, null],
-  ])('offers a retry after %s, and resends the same message', (_label, response, error) => {
-    renderWithProviders(<DisputeScreen />);
+  ])('offers a retry after %s, and resends the same message', async (_label, response, error) => {
+    await renderScreen();
     acceptJoin();
     typeAndSend('Hello');
 
@@ -278,7 +312,7 @@ describe('dispute chat screen', () => {
       }),
     );
     pickPhoto();
-    renderWithProviders(<DisputeScreen />);
+    await renderScreen();
     acceptJoin();
 
     await attachPhoto();
@@ -309,7 +343,7 @@ describe('dispute chat screen', () => {
       }),
     );
     pickPhoto(5 * 1024 * 1024 + 1);
-    renderWithProviders(<DisputeScreen />);
+    await renderScreen();
 
     await attachPhoto();
 
@@ -339,7 +373,7 @@ describe('dispute chat screen', () => {
       ),
     );
     pickPhoto();
-    renderWithProviders(<DisputeScreen />);
+    await renderScreen();
 
     await attachPhoto();
 
@@ -347,8 +381,8 @@ describe('dispute chat screen', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 
-  it('shows when the connection drops, and rejoins the room on reconnection', () => {
-    renderWithProviders(<DisputeScreen />);
+  it('shows when the connection drops, and rejoins the room on reconnection', async () => {
+    await renderScreen();
     acceptJoin();
 
     mockSocket.drop();
@@ -361,8 +395,8 @@ describe('dispute chat screen', () => {
     expect(mockSocket.emittedOf('chat:join')).toHaveLength(2);
   });
 
-  it('retries a join that timed out, on the backoff schedule', () => {
-    renderWithProviders(<DisputeScreen />);
+  it('retries a join that timed out, on the backoff schedule', async () => {
+    await renderScreen();
 
     mockSocket.answerLast('chat:join', undefined, new Error('operation has timed out'));
     expect(mockSocket.emittedOf('chat:join')).toHaveLength(1);
@@ -376,8 +410,8 @@ describe('dispute chat screen', () => {
   it.each([
     ['DISPUTE_WINDOW_CLOSED', 'The 48-hour dispute window for this order has ended.'],
     ['ORDER_NOT_FOUND', "This dispute isn't available."],
-  ])('closes when the server refuses the join with %s', (code, message) => {
-    renderWithProviders(<DisputeScreen />);
+  ])('closes when the server refuses the join with %s', async (code, message) => {
+    await renderScreen();
 
     mockSocket.answerLast('chat:join', { ok: false, error: { code, message: '' } });
     act(() => {
@@ -388,13 +422,163 @@ describe('dispute chat screen', () => {
     expect(mockSocket.emittedOf('chat:join')).toHaveLength(1); // a refusal is never retried
   });
 
-  it('is closed once 48 h have passed since delivery', () => {
+  it('is closed once 48 h have passed since delivery', async () => {
     deliveredAgo(48 * HOUR + 60_000);
-    renderWithProviders(<DisputeScreen />);
+    await renderScreen();
 
     expect(screen.getByTestId('dispute-closed')).toHaveTextContent(
       'The 48-hour dispute window for this order has ended.',
     );
     expect(mockIo).not.toHaveBeenCalled();
+  });
+
+  describe('transcript read-back (GET /api/orders/:id/chat)', () => {
+    const ownEarlier = serverChatMessage({
+      id: 'srv-own-1',
+      client_id: 'device-1',
+      sender: AARAV,
+      body: 'The honey jar arrived broken.',
+      sent_at: '2026-09-30T09:00:00.000Z',
+    });
+    const vendorReply = serverChatMessage({ sent_at: '2026-09-30T09:05:00.000Z' });
+
+    /** Screen positions of `bodies` must be increasing (the thread is oldest first). */
+    function expectInOrder(bodies: readonly string[]): void {
+      const text = allScreenText();
+      const positions = bodies.map((body) => text.indexOf(body));
+      expect(positions.every((position) => position >= 0)).toBe(true);
+      expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    }
+
+    it('shows the earlier conversation on mount, requested with the Bearer token', async () => {
+      transcript = [ownEarlier, vendorReply];
+
+      await renderScreen();
+
+      expect(historyRequests).toEqual([
+        { authorization: expect.stringMatching(/^Bearer /) as string },
+      ]);
+      expect(screen.getByText('You')).toBeOnTheScreen();
+      expect(screen.getByText('Ram')).toBeOnTheScreen();
+      expect(screen.queryByText('Sending…')).toBeNull();
+      expectInOrder(['The honey jar arrived broken.', 'Sorry! Can you share a photo?']);
+    });
+
+    it('fetches while the socket connects, and says it is loading until then', async () => {
+      serveHistory(async () => {
+        await delay(300);
+        return HttpResponse.json({ messages: [vendorReply] });
+      });
+
+      renderWithProviders(<DisputeScreen />);
+
+      expect(mockIo).toHaveBeenCalled();
+      expect(mockSocket.emittedOf('chat:join')).toHaveLength(1);
+      expect(screen.getByTestId('chat-empty')).toHaveTextContent('Loading the conversation…');
+      await settle(1_000);
+      expect(screen.getByText('Sorry! Can you share a photo?')).toBeOnTheScreen();
+    });
+
+    it('never shows a surname or phone from the transcript either', async () => {
+      transcript = [
+        {
+          ...vendorReply,
+          sender: { ...vendorReply.sender, last_name: 'Shrestha', phone_number: '+9779800000011' },
+        },
+      ];
+
+      await renderScreen();
+
+      expect(screen.getByText('Ram')).toBeOnTheScreen();
+      const text = allScreenText();
+      expect(text).not.toContain('Shrestha');
+      expect(text).not.toContain('+9779800000011');
+    });
+
+    it('merges live messages that arrive before the transcript, without duplicates', async () => {
+      const later = serverChatMessage({
+        id: 'srv-live-2',
+        body: 'Refund issued.',
+        sent_at: '2026-09-30T09:10:00.000Z',
+      });
+      serveHistory(async () => {
+        await delay(300);
+        return HttpResponse.json({ messages: [ownEarlier, vendorReply] });
+      });
+      renderWithProviders(<DisputeScreen />);
+      acceptJoin();
+
+      mockSocket.serverSend('chat:new_message', vendorReply); // also in the transcript
+      mockSocket.serverSend('chat:new_message', later);
+      await settle(1_000);
+
+      expect(screen.getAllByText('Sorry! Can you share a photo?')).toHaveLength(1);
+      expectInOrder([
+        'The honey jar arrived broken.',
+        'Sorry! Can you share a photo?',
+        'Refund issued.',
+      ]);
+    });
+
+    it('shows its own message once when the transcript already has the stored copy', async () => {
+      await renderScreen();
+      acceptJoin();
+      const sent = typeAndSend('Hello');
+      transcript = [
+        serverChatMessage({
+          id: 'srv-hello',
+          client_id: sent.client_id,
+          sender: AARAV,
+          body: 'Hello',
+        }),
+      ];
+
+      // Reconnect before the ack arrives: the refetched transcript already has the message.
+      mockSocket.drop();
+      mockSocket.reconnect();
+      acceptJoin();
+      await settle();
+
+      expect(screen.getAllByText('Hello')).toHaveLength(1);
+      expect(screen.queryByText('Sending…')).toBeNull();
+    });
+
+    it('offers a retry when the transcript cannot be loaded', async () => {
+      let calls = 0;
+      serveHistory(() => {
+        calls += 1;
+        return calls === 1
+          ? HttpResponse.json(errorBody('ORDER_NOT_FOUND'), { status: 404 }) // not retried
+          : HttpResponse.json({ messages: [vendorReply] });
+      });
+
+      await renderScreen();
+
+      expect(screen.getByTestId('chat-history-failed')).toHaveTextContent(
+        /^Couldn't load earlier messages\./,
+      );
+      expect(screen.getByTestId('chat-input')).toBeOnTheScreen(); // the chat itself still works
+      fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
+      await settle();
+
+      expect(screen.queryByTestId('chat-history-failed')).toBeNull();
+      expect(screen.getByText('Sorry! Can you share a photo?')).toBeOnTheScreen();
+    });
+
+    it('catches up after a reconnect, but does not refetch on the first join', async () => {
+      await renderScreen();
+      acceptJoin();
+      await settle();
+      expect(historyRequests).toHaveLength(1);
+
+      mockSocket.drop();
+      transcript = [vendorReply]; // said while this device was offline
+      mockSocket.reconnect();
+      acceptJoin();
+      await settle();
+
+      expect(historyRequests).toHaveLength(2);
+      expect(screen.getByText('Sorry! Can you share a photo?')).toBeOnTheScreen();
+    });
   });
 });

@@ -12,6 +12,7 @@ import type { KhaltiService } from './payments/khalti/khalti-service';
 import type { ReviewService } from './reviews/review-service';
 import { authRouter } from './routes/auth';
 import { cartRouter } from './routes/cart';
+import { orderChatRouter } from './routes/order-chat';
 import { ordersRouter } from './routes/orders';
 import { paymentsRouter } from './routes/payments';
 import { reviewsRouter } from './routes/reviews';
@@ -55,6 +56,12 @@ export function createApp(services?: ApiServices): Express {
     );
     app.use('/api/vendors', customerAuth, vendorsRouter(services.catalog));
     app.use('/api/cart', customerAuth, cartRouter(services.checkout));
+    // Before the customer-only orders router: vendors and admins read dispute transcripts too.
+    app.use(
+      '/api/orders',
+      requireAuth(services.accessTokenSecret, ['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
+      orderChatRouter(services.disputes),
+    );
     app.use('/api/orders', customerAuth, ordersRouter(services.orders));
     app.use(
       '/api/payments',

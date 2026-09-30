@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { DISPUTE_EVIDENCE_CONTENT_TYPES } from '../domain/constants';
 import { geoPointSchema, nepalPhoneSchema } from '../domain/entities';
+import { chatMessageSchema } from '../realtime/chat-socket';
 import {
   deliveryScopeSchema,
   fulfillmentModeSchema,
@@ -329,3 +330,13 @@ export const disputeEvidenceUploadResponseSchema = z.strictObject({
   content_type: z.enum(DISPUTE_EVIDENCE_CONTENT_TYPES),
 });
 export type DisputeEvidenceUploadResponseBody = z.infer<typeof disputeEvidenceUploadResponseSchema>;
+
+/**
+ * GET /api/orders/:id/chat: the dispute transcript, oldest first. Each message is exactly what the
+ * /chat namespace broadcast (same ids, times and privacy-filtered senders). Empty when the order
+ * has no dispute yet.
+ */
+export const chatHistoryResponseSchema = z.strictObject({
+  messages: z.array(chatMessageSchema),
+});
+export type ChatHistoryResponseBody = z.infer<typeof chatHistoryResponseSchema>;

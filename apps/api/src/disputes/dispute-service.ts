@@ -1,15 +1,17 @@
 import { chatMessages, disputes, orders, users, vendors, type Database } from '@hamro-pasal/db';
 import {
   POST_DELIVERY_WINDOW_HOURS,
+  type ChatMessage,
   type ChatMessageRow,
   type Dispute,
   type StoredChatAttachment,
   type User,
   type UserRole,
 } from '@hamro-pasal/shared-types';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { OrderNotFoundError } from '../checkout/checkout-service';
+import { publicChatMessage } from './chat-message-view';
 
 export type DisputeAccess =
   | { readonly ok: true }
@@ -47,6 +49,24 @@ export interface RecordedChatMessage {
   readonly replayed: boolean;
 }
 
+interface OrderParties {
+  readonly customerId: string;
+  readonly vendorUserId: string;
+}
+
+/** Whether the caller is the order's customer or the vendor's own user (drivers never are). */
+function isParty(participant: DisputeParticipant, order: OrderParties): boolean {
+  switch (participant.role) {
+    case 'CUSTOMER':
+      return order.customerId === participant.userId;
+    case 'VENDOR':
+      return order.vendorUserId === participant.userId;
+    case 'DRIVER':
+    case 'SUPER_ADMIN':
+      return false;
+  }
+}
+
 /** The disputes.reason of a dispute opened by a message with `body` (never blank). */
 export function disputeReason(body: string): string {
   const reason = body.trim();
@@ -82,18 +102,8 @@ export class DisputeService {
       .where(eq(orders.id, orderId));
     if (row === undefined) return { ok: false, code: 'ORDER_NOT_FOUND' };
 
-    switch (participant.role) {
-      case 'SUPER_ADMIN':
-        return { ok: true };
-      case 'CUSTOMER':
-        if (row.customerId !== participant.userId) return { ok: false, code: 'ORDER_NOT_FOUND' };
-        break;
-      case 'VENDOR':
-        if (row.vendorUserId !== participant.userId) return { ok: false, code: 'ORDER_NOT_FOUND' };
-        break;
-      case 'DRIVER':
-        return { ok: false, code: 'ORDER_NOT_FOUND' };
-    }
+    if (participant.role === 'SUPER_ADMIN') return { ok: true };
+    if (!isParty(participant, row)) return { ok: false, code: 'ORDER_NOT_FOUND' };
     // A dispute opened inside the window stays reachable until it is resolved.
     return row.state === 'DELIVERED' && (row.windowOpen || row.disputeStatus === 'OPEN')
       ? { ok: true }
@@ -179,5 +189,33 @@ export class DisputeService {
         replayed: inserted === undefined,
       };
     });
+  }
+
+  /**
+   * GET /api/orders/:id/chat: the order's dispute transcript, oldest first, each message built by
+   * publicChatMessage (the same privacy filter as the /chat broadcast). Readable by the order's
+   * customer and vendor at any time (it is their own conversation, even after the window closed or
+   * the dispute was resolved) and by Super Admins; anyone else gets 404. Empty without a dispute.
+   */
+  async transcript(participant: DisputeParticipant, orderId: string): Promise<ChatMessage[]> {
+    const [order] = await this.db
+      .select({ customerId: orders.customer_id, vendorUserId: vendors.user_id })
+      .from(orders)
+      .innerJoin(vendors, eq(vendors.id, orders.vendor_id))
+      .where(eq(orders.id, orderId));
+    if (
+      order === undefined ||
+      (participant.role !== 'SUPER_ADMIN' && !isParty(participant, order))
+    ) {
+      throw new OrderNotFoundError(orderId);
+    }
+    const rows = await this.db
+      .select({ message: chatMessages, sender: users })
+      .from(chatMessages)
+      .innerJoin(disputes, eq(disputes.id, chatMessages.dispute_id))
+      .innerJoin(users, eq(users.id, chatMessages.sender_user_id))
+      .where(eq(disputes.order_id, orderId))
+      .orderBy(asc(chatMessages.created_at), asc(chatMessages.id));
+    return rows.map(({ message, sender }) => publicChatMessage(message, orderId, sender));
   }
 }

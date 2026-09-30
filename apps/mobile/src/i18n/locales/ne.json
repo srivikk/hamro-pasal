@@ -321,7 +321,8 @@
     "windowOpen": "ग्राहकले अझै {{seconds, localizedNumber}} सेकेन्ड रद्द गर्न सक्छन्। त्यसपछि पठाउनुहोस्।",
     "movedOn": "यो अर्डर अगाडि बढिसकेको छ।",
     "dispatchFailed": "अर्डर पठाउन सकिएन। फेरि प्रयास गर्नुहोस्।",
-    "handoffHint": "यो अर्डर तपाईंका कर्मचारीले डेलिभर गर्छन्। ढोकामा ग्राहकको कोड हाल्नुहोस्।"
+    "handoffHint": "यो अर्डर तपाईंका कर्मचारीले डेलिभर गर्छन्। ढोकामा ग्राहकको कोड हाल्नुहोस्।",
+    "wallet": "वालेट"
   },
   "driverDashboard": {
     "title": "डेलिभरीहरू",
@@ -345,5 +346,31 @@
     "locked": "धेरै पटक गलत कोड। {{minutes, localizedNumber}} मिनेटपछि फेरि प्रयास गर्नुहोस्।",
     "incompleteCode": "४ अंकको कोड हाल्नुहोस्।",
     "failed": "डेलिभरी पुष्टि गर्न सकिएन। इन्टरनेट जडान जाँचेर फेरि प्रयास गर्नुहोस्।"
+  },
+  "vendorWallet": {
+    "title": "वालेट",
+    "loadError": "तपाईंको वालेट लोड गर्न सकिएन। इन्टरनेट जडान जाँच गर्नुहोस्।",
+    "balance": "वालेट ब्यालेन्स",
+    "amount": "रु. {{amount, localizedNumber}}",
+    "negativeAmount": "− रु. {{amount, localizedNumber}}",
+    "credit": "+ रु. {{amount, localizedNumber}}",
+    "debit": "− रु. {{amount, localizedNumber}}",
+    "pendingEscrow": "एस्क्रोमा: {{count, localizedNumber}} भुक्तानी भएका अर्डरबाट रु. {{amount, localizedNumber}}, डेलिभर भएपछि जम्मा हुन्छ।",
+    "suspendedTitle": "तपाईंको पसल अफलाइन छ",
+    "suspendedBody": "तपाईंले प्लेटफर्मलाई रु. {{due, localizedNumber}} तिर्न बाँकी छ, जुन रु. {{limit, localizedNumber}} को सीमाभन्दा बढी हो। eSewa बाट बक्यौता नतिरेसम्म ग्राहकले तपाईंबाट अर्डर गर्न सक्दैनन्।",
+    "suspendedOther": "तपाईंको पसल निलम्बित छ, त्यसैले ग्राहकले अर्डर गर्न सक्दैनन्। हाम्रो पसल सहायतामा सम्पर्क गर्नुहोस्।",
+    "history": "कारोबारहरू",
+    "empty": "अहिलेसम्म कुनै कारोबार छैन। हिसाब मिलाइएका अर्डरहरू यहाँ देखिनेछन्।",
+    "loadMoreError": "पुराना कारोबारहरू लोड गर्न सकिएन।",
+    "loadingMore": "पुराना कारोबारहरू लोड हुँदैछन्…",
+    "orderRef": "अर्डर #{{code}}",
+    "commission": "रु. {{subtotal, localizedNumber}} मा कमिसन रु. {{amount, localizedNumber}}",
+    "balanceAfter": "पछिको ब्यालेन्स: {{balance}}",
+    "entry": {
+      "ORDER_PAYOUT": "अर्डर भुक्तानी",
+      "COD_COMMISSION_DEBIT": "नगद अर्डरको कमिसन",
+      "TOP_UP": "बक्यौता भुक्तानी",
+      "ADJUSTMENT": "समायोजन"
+    }
   }
 }

@@ -12,6 +12,7 @@ import { OutboxRelay } from './outbox/outbox-relay';
 import { allTimerQueues, createTimerQueues, registerMidnightJobs } from './queues/definitions';
 import { createProcessors, createTimerHandlers } from './queues/processors';
 import { VendorEscalationService } from './sla/vendor-escalation';
+import { VendorDebtReconciliationService } from './wallet/vendor-debt-reconciliation';
 
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -33,7 +34,10 @@ async function main(): Promise<void> {
   const queues = createTimerQueues(connection);
   await registerMidnightJobs(queues.midnight);
   const processors = createProcessors(
-    createTimerHandlers({ escalation: new VendorEscalationService(db) }),
+    createTimerHandlers({
+      escalation: new VendorEscalationService(db),
+      debtReconciliation: new VendorDebtReconciliationService(db),
+    }),
   );
   const workers = [
     new Worker(queues.vendorAcceptance.name, processors.vendorAcceptance, { connection }),

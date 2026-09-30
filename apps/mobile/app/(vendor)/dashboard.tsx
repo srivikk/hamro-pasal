@@ -1,4 +1,4 @@
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -131,6 +131,14 @@ export default function VendorDashboardScreen() {
         </View>
       ) : null}
 
+      <Button
+        label={t('vendorDashboard.wallet')}
+        variant="secondary"
+        testID="vendor-wallet-link"
+        onPress={() => {
+          router.push('/wallet');
+        }}
+      />
       <Button label={t('auth.signOut')} variant="secondary" onPress={signOut} />
     </ScrollView>
   );

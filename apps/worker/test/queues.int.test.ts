@@ -85,18 +85,19 @@ describe('timer queues (real Redis)', () => {
       await registerMidnightJobs(queues.midnight);
 
       const schedulers = await queues.midnight.getJobSchedulers();
-      expect(schedulers).toHaveLength(1);
-      expect(schedulers[0]).toMatchObject({
-        key: 'subscription-downgrade',
-        pattern: '0 0 * * *',
-        tz: 'Asia/Kathmandu',
-      });
+      expect(schedulers.map((s) => s.key).sort()).toEqual([
+        'subscription-downgrade',
+        'vendor-debt-reconciliation',
+      ]);
+      for (const scheduler of schedulers) {
+        expect(scheduler).toMatchObject({ pattern: '0 0 * * *', tz: 'Asia/Kathmandu' });
 
-      // Nepal is UTC+05:45, so local midnight is 18:15 UTC.
-      const next = new Date(schedulers[0]?.next ?? 0);
-      expect([next.getUTCHours(), next.getUTCMinutes()]).toEqual([18, 15]);
-      expect(next.getTime() - Date.now()).toBeGreaterThan(0);
-      expect(next.getTime() - Date.now()).toBeLessThanOrEqual(24 * 60 * 60 * 1000);
+        // Nepal is UTC+05:45, so local midnight is 18:15 UTC.
+        const next = new Date(scheduler.next ?? 0);
+        expect([next.getUTCHours(), next.getUTCMinutes()]).toEqual([18, 15]);
+        expect(next.getTime() - Date.now()).toBeGreaterThan(0);
+        expect(next.getTime() - Date.now()).toBeLessThanOrEqual(24 * 60 * 60 * 1000);
+      }
     });
   });
 

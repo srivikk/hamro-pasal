@@ -6,12 +6,14 @@ import { chatMessageSchema } from '../realtime/chat-socket';
 import {
   deliveryScopeSchema,
   fulfillmentModeSchema,
+  ledgerTransactionKindSchema,
   orderStateSchema,
   paymentMethodSchema,
   paymentStatusSchema,
   reviewDirectionSchema,
   userRoleSchema,
   vendorFulfillmentModeSchema,
+  vendorStatusSchema,
 } from '../domain/enums';
 
 /*
@@ -426,3 +428,77 @@ export const chatHistoryResponseSchema = z.strictObject({
   messages: z.array(chatMessageSchema),
 });
 export type ChatHistoryResponseBody = z.infer<typeof chatHistoryResponseSchema>;
+
+/*
+ * Vendor wallet (Phase 12, SPEC §5 Financial Governance).
+ */
+
+/**
+ * GET /api/vendors/wallet/balance. `wallet_balance_npr` is the vendor's VENDOR_WALLET ledger
+ * balance (negative while the vendor owes COD commission). `pending_escrow_npr` is what the vendor
+ * will be credited for prepaid orders whose money is still held in SYSTEM_ESCROW (paid, not yet
+ * delivered): subtotal − commission, plus the delivery fee on SELF_DELIVERY orders.
+ */
+export const vendorWalletBalanceResponseSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  status: vendorStatusSchema,
+  /** status === 'SUSPENDED': the shop is offline until the negative balance is paid. */
+  is_suspended: z.boolean(),
+  wallet_balance_npr: z.number(),
+  /** The Super Admin's limit (−2000 … 0): a balance strictly below it suspends the vendor. */
+  suspension_limit_npr: z.number().max(0),
+  pending_escrow_npr: z.number().nonnegative(),
+  pending_escrow_order_count: z.number().int().nonnegative(),
+});
+export type VendorWalletBalanceResponseBody = z.infer<typeof vendorWalletBalanceResponseSchema>;
+
+/**
+ * What one wallet posting means to the vendor:
+ * - ORDER_PAYOUT: an order's settlement credited the vendor (subtotal − commission [+ fee]).
+ * - COD_COMMISSION_DEBIT: a COD self-delivery settlement debited the platform commission the vendor
+ *   collected in cash (SPEC §5 "The COD Problem").
+ * - TOP_UP: the vendor paid dues upfront (eSewa).
+ * - ADJUSTMENT: a Super Admin correction.
+ */
+export const walletEntryTypes = [
+  'ORDER_PAYOUT',
+  'COD_COMMISSION_DEBIT',
+  'TOP_UP',
+  'ADJUSTMENT',
+] as const;
+export const walletEntryTypeSchema = z.enum(walletEntryTypes);
+export type WalletEntryType = z.infer<typeof walletEntryTypeSchema>;
+
+/** The order a settlement posting belongs to, with the amounts it was split from. */
+export const walletEntryOrderSchema = z.strictObject({
+  id: z.uuid(),
+  payment_method: paymentMethodSchema,
+  fulfillment: fulfillmentModeSchema,
+  subtotal_npr: z.number(),
+  delivery_fee_npr: z.number(),
+  commission_npr: z.number(),
+});
+
+/** One posting to the vendor's wallet account. */
+export const vendorWalletLedgerEntrySchema = z.strictObject({
+  /** The ledger entry id; also the pagination cursor. */
+  id: z.uuid(),
+  transaction_id: z.uuid(),
+  kind: ledgerTransactionKindSchema,
+  entry_type: walletEntryTypeSchema,
+  /** Signed change to the wallet (never 0). */
+  amount_npr: z.number().refine((amount) => amount !== 0, 'amount_npr cannot be 0'),
+  /** The wallet balance right after this posting. */
+  balance_after_npr: z.number(),
+  description: z.string().nullable(),
+  created_at: z.iso.datetime(),
+  order: walletEntryOrderSchema.nullable(),
+});
+export type VendorWalletLedgerEntry = z.infer<typeof vendorWalletLedgerEntrySchema>;
+
+/** GET /api/vendors/wallet/ledger: one page, newest first; `next_cursor` null on the last page. */
+export const vendorWalletLedgerResponseSchema = z.strictObject({
+  entries: z.array(vendorWalletLedgerEntrySchema),
+  next_cursor: z.uuid().nullable(),
+});
+export type VendorWalletLedgerResponseBody = z.infer<typeof vendorWalletLedgerResponseSchema>;

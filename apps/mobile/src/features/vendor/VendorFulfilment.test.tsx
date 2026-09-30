@@ -1,5 +1,6 @@
 import type { VendorOrderView } from '@hamro-pasal/shared-types';
 import { fireEvent, screen, waitFor } from '@testing-library/react-native';
+import { router } from 'expo-router';
 import { delay, http, HttpResponse } from 'msw';
 
 import VendorDashboardScreen from '../../../app/(vendor)/dashboard';
@@ -321,5 +322,16 @@ describe('vendor dashboard: self-delivery handoff', () => {
     await renderDashboard();
 
     expect(screen.queryByTestId('vendor-alarm-banner')).not.toBeOnTheScreen();
+  });
+});
+
+describe('vendor dashboard: wallet', () => {
+  it('opens the wallet screen (Phase 12)', async () => {
+    jest.mocked(router.push).mockClear();
+    await renderDashboard();
+
+    fireEvent.press(screen.getByTestId('vendor-wallet-link'));
+
+    expect(router.push).toHaveBeenCalledWith('/wallet');
   });
 });

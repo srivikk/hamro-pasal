@@ -102,15 +102,18 @@ describe('vendor acceptance deadline (Phase 10)', () => {
   });
 });
 
+const noDebt = { suspendIndebtedVendors: () => Promise.resolve([]) };
+
 describe('createTimerHandlers', () => {
   it('runs the escalation for a fired vendor acceptance timer', async () => {
     const escalateIfUnanswered = jest.fn().mockResolvedValue('ESCALATED');
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     const vendorJob = { order_id: randomUUID(), vendor_id: randomUUID() };
 
-    await createTimerHandlers({ escalation: { escalateIfUnanswered } }).onVendorAcceptanceTimeout(
-      vendorJob,
-    );
+    await createTimerHandlers({
+      escalation: { escalateIfUnanswered },
+      debtReconciliation: noDebt,
+    }).onVendorAcceptanceTimeout(vendorJob);
 
     expect(escalateIfUnanswered).toHaveBeenCalledWith(vendorJob);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining(vendorJob.order_id));
@@ -121,10 +124,74 @@ describe('createTimerHandlers', () => {
     const escalateIfUnanswered = jest.fn().mockRejectedValue(new Error('database down'));
 
     await expect(
-      createTimerHandlers({ escalation: { escalateIfUnanswered } }).onVendorAcceptanceTimeout({
+      createTimerHandlers({
+        escalation: { escalateIfUnanswered },
+        debtReconciliation: noDebt,
+      }).onVendorAcceptanceTimeout({
         order_id: randomUUID(),
         vendor_id: randomUUID(),
       }),
     ).rejects.toThrow('database down');
+  });
+});
+
+describe('the midnight debt reconciliation handler', () => {
+  const escalation = { escalateIfUnanswered: jest.fn() };
+
+  it('runs the sweep and writes one structured audit line per suspended vendor', async () => {
+    const vendorId = randomUUID();
+    const suspendIndebtedVendors = jest.fn().mockResolvedValue([
+      {
+        vendorId,
+        previousStatus: 'LIVE',
+        walletBalanceNpr: -1500,
+        suspensionLimitNpr: -1000,
+        suspendedAt: new Date('2026-09-30T18:15:00.000Z'),
+      },
+    ]);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await createTimerHandlers({
+      escalation,
+      debtReconciliation: { suspendIndebtedVendors },
+    }).runMidnightTask('VENDOR_DEBT_RECONCILIATION');
+
+    expect(suspendIndebtedVendors).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toEqual({
+      audit: 'vendor.suspended_for_debt',
+      vendor_id: vendorId,
+      previous_status: 'LIVE',
+      wallet_balance_npr: -1500,
+      suspension_limit_npr: -1000,
+      suspended_at: '2026-09-30T18:15:00.000Z',
+    });
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it('fails the job when the sweep fails (BullMQ retries it)', async () => {
+    const suspendIndebtedVendors = jest.fn().mockRejectedValue(new Error('database down'));
+
+    await expect(
+      createTimerHandlers({
+        escalation,
+        debtReconciliation: { suspendIndebtedVendors },
+      }).runMidnightTask('VENDOR_DEBT_RECONCILIATION'),
+    ).rejects.toThrow('database down');
+  });
+
+  it('does not sweep for the other midnight task', async () => {
+    const suspendIndebtedVendors = jest.fn().mockResolvedValue([]);
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await createTimerHandlers({
+      escalation,
+      debtReconciliation: { suspendIndebtedVendors },
+    }).runMidnightTask('SUBSCRIPTION_DOWNGRADE');
+
+    expect(suspendIndebtedVendors).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

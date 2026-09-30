@@ -40,6 +40,7 @@ import {
   ReviewAlreadySubmittedError,
   ReviewWindowClosedError,
 } from '../reviews/review-service';
+import { InvalidLedgerCursorError } from '../wallet/vendor-wallet-service';
 import { SmsDeliveryError } from '../sms/sms-gateway';
 import { InvalidGatewayCallbackError } from '../payments/esewa/esewa-service';
 import { PaymentGatewayError } from '../payments/gateway-http';
@@ -143,6 +144,9 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof ReviewWindowClosedError) {
     return new HttpError(422, 'REVIEW_WINDOW_CLOSED', error.message);
+  }
+  if (error instanceof InvalidLedgerCursorError) {
+    return new HttpError(400, 'INVALID_CURSOR', error.message);
   }
   if (error instanceof DisputeWindowClosedError) {
     return new HttpError(422, 'DISPUTE_WINDOW_CLOSED', error.message);

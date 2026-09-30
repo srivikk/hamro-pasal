@@ -15,6 +15,9 @@ import {
   vendorMenuSchema,
   vendorOrderDecisionResponseSchema,
   vendorOrderListResponseSchema,
+  vendorWalletBalanceResponseSchema,
+  vendorWalletLedgerEntrySchema,
+  vendorWalletLedgerResponseSchema,
   type AuthTokensResponseBody,
   type ChatMessage,
   type DisputeEvidenceUploadResponseBody,
@@ -34,6 +37,9 @@ import {
   type VendorMenu,
   type VendorOrderDecisionResponseBody,
   type VendorOrderView,
+  type VendorWalletBalanceResponseBody,
+  type VendorWalletLedgerEntry,
+  type VendorWalletLedgerResponseBody,
 } from '@hamro-pasal/shared-types';
 
 import type { CartProduct, CartVendor } from '../store/useCartStore';
@@ -398,4 +404,59 @@ export function driverDelivered(orderId: string): DeliveryConfirmedResponseBody 
     state: 'DELIVERED',
     delivered_at: '2026-09-30T10:45:00.000Z',
   });
+}
+
+/*
+ * Vendor wallet (Phase 12).
+ */
+
+export const WALLET_VENDOR_ID = '5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d';
+
+/** GET /api/vendors/wallet/balance: a healthy LIVE shop by default. */
+export function walletBalance(
+  overrides: Partial<VendorWalletBalanceResponseBody> = {},
+): VendorWalletBalanceResponseBody {
+  return vendorWalletBalanceResponseSchema.parse({
+    vendor_id: WALLET_VENDOR_ID,
+    status: 'LIVE',
+    is_suspended: false,
+    wallet_balance_npr: 850,
+    suspension_limit_npr: -2000,
+    pending_escrow_npr: 0,
+    pending_escrow_order_count: 0,
+    ...overrides,
+  });
+}
+
+/** One wallet posting: a COD self-delivery commission debit (1000 NPR at 10 %) by default. */
+export function walletEntry(
+  overrides: Partial<VendorWalletLedgerEntry> = {},
+): VendorWalletLedgerEntry {
+  return vendorWalletLedgerEntrySchema.parse({
+    id: '6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e',
+    transaction_id: '7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f',
+    kind: 'ORDER_SETTLEMENT',
+    entry_type: 'COD_COMMISSION_DEBIT',
+    amount_npr: -100,
+    balance_after_npr: -100,
+    description: 'COD / SELF_DELIVERY settlement',
+    created_at: '2026-09-30T10:00:00.000Z',
+    order: {
+      id: NEW_ORDER_ID,
+      payment_method: 'COD',
+      fulfillment: 'SELF_DELIVERY',
+      subtotal_npr: 1000,
+      delivery_fee_npr: 50,
+      commission_npr: 100,
+    },
+    ...overrides,
+  });
+}
+
+/** GET /api/vendors/wallet/ledger: one page. */
+export function walletLedgerPage(
+  entries: VendorWalletLedgerEntry[],
+  nextCursor: string | null = null,
+): VendorWalletLedgerResponseBody {
+  return vendorWalletLedgerResponseSchema.parse({ entries, next_cursor: nextCursor });
 }

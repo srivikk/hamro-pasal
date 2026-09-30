@@ -321,7 +321,8 @@
     "windowOpen": "The customer can still cancel for {{seconds, localizedNumber}} s. Dispatch after that.",
     "movedOn": "This order has moved on.",
     "dispatchFailed": "Couldn't dispatch the order. Please try again.",
-    "handoffHint": "Your staff deliver this order. Type the customer's code at the door."
+    "handoffHint": "Your staff deliver this order. Type the customer's code at the door.",
+    "wallet": "Wallet"
   },
   "driverDashboard": {
     "title": "Deliveries",
@@ -345,5 +346,31 @@
     "locked": "Too many wrong codes. Try again in {{minutes, localizedNumber}} min.",
     "incompleteCode": "Enter the 4-digit code.",
     "failed": "Couldn't confirm the delivery. Check your connection and try again."
+  },
+  "vendorWallet": {
+    "title": "Wallet",
+    "loadError": "Couldn't load your wallet. Check your connection.",
+    "balance": "Wallet balance",
+    "amount": "Rs. {{amount, localizedNumber}}",
+    "negativeAmount": "− Rs. {{amount, localizedNumber}}",
+    "credit": "+ Rs. {{amount, localizedNumber}}",
+    "debit": "− Rs. {{amount, localizedNumber}}",
+    "pendingEscrow": "In escrow: Rs. {{amount, localizedNumber}} from {{count, localizedNumber}} paid orders, credited when they are delivered.",
+    "suspendedTitle": "Your shop is offline",
+    "suspendedBody": "You owe Rs. {{due, localizedNumber}} in platform dues, more than the Rs. {{limit, localizedNumber}} limit. Customers cannot order from you until you pay your dues with eSewa.",
+    "suspendedOther": "Your shop is suspended, so customers cannot order from you. Contact Hamro Pasal support.",
+    "history": "Transactions",
+    "empty": "No transactions yet. Settled orders will appear here.",
+    "loadMoreError": "Couldn't load older transactions.",
+    "loadingMore": "Loading older transactions…",
+    "orderRef": "Order #{{code}}",
+    "commission": "Commission Rs. {{amount, localizedNumber}} on Rs. {{subtotal, localizedNumber}}",
+    "balanceAfter": "Balance after: {{balance}}",
+    "entry": {
+      "ORDER_PAYOUT": "Order payout",
+      "COD_COMMISSION_DEBIT": "Commission on a cash order",
+      "TOP_UP": "Dues paid",
+      "ADJUSTMENT": "Adjustment"
+    }
   }
 }

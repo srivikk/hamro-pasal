@@ -8,6 +8,7 @@ import {
   orderStateSchema,
   paymentMethodSchema,
   paymentStatusSchema,
+  vendorStatusSchema,
 } from '../domain/enums';
 
 /** Kafka topics provisioned by infra/kafka/create-topics.sh. Keep the two lists in sync. */
@@ -99,6 +100,24 @@ export const vendorEscalationRequiredPayloadSchema = z.strictObject({
   escalated_at: z.iso.datetime(),
 });
 
+/**
+ * SPEC §5 (Phase 12): the nightly reconciliation found the vendor's wallet below the suspension
+ * limit and switched the vendor to SUSPENDED. The shop stays offline until the negative balance is
+ * cleared with an upfront eSewa payment. Written once per suspension: the vendor is SUSPENDED
+ * afterwards, so the next run skips it.
+ */
+export const vendorSuspendedForDebtPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  /** The vendor's +977 business number, for the SMS telling them why the shop went offline. */
+  vendor_phone: nepalPhoneSchema,
+  /** The status before suspension: what an admin restores once the dues are paid. */
+  previous_status: vendorStatusSchema.exclude(['SUSPENDED']),
+  wallet_balance_npr: z.number().negative(),
+  /** platform_settings.vendor_wallet_suspension_limit_npr at the time of the suspension. */
+  suspension_limit_npr: z.number().max(0),
+  suspended_at: z.iso.datetime(),
+});
+
 /** A balanced journal transaction was posted. One posting per affected account line. */
 export const ledgerMutatedPayloadSchema = z.strictObject({
   transaction_id: z.uuid(),
@@ -151,6 +170,11 @@ export const vendorEscalationRequiredEventSchema = envelope(
   vendorEscalationRequiredPayloadSchema,
 );
 
+export const vendorSuspendedForDebtEventSchema = envelope(
+  'vendor.suspended_for_debt',
+  vendorSuspendedForDebtPayloadSchema,
+);
+
 export const domainEventSchema = z.discriminatedUnion('event_type', [
   orderLockedEventSchema,
   orderPlacedEventSchema,
@@ -158,6 +182,7 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   orderStateChangedEventSchema,
   ledgerMutatedEventSchema,
   vendorEscalationRequiredEventSchema,
+  vendorSuspendedForDebtEventSchema,
 ]);
 
 export type OrderLockedEvent = z.infer<typeof orderLockedEventSchema>;
@@ -166,6 +191,7 @@ export type OrderStateChangedEvent = z.infer<typeof orderStateChangedEventSchema
 export type OrderCanceledRefundDueEvent = z.infer<typeof orderCanceledRefundDueEventSchema>;
 export type LedgerMutatedEvent = z.infer<typeof ledgerMutatedEventSchema>;
 export type VendorEscalationRequiredEvent = z.infer<typeof vendorEscalationRequiredEventSchema>;
+export type VendorSuspendedForDebtEvent = z.infer<typeof vendorSuspendedForDebtEventSchema>;
 export type DomainEvent = z.infer<typeof domainEventSchema>;
 export type DomainEventType = DomainEvent['event_type'];
 export type DomainEventPayload<T extends DomainEventType> = Extract<
@@ -180,4 +206,5 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'order.state_changed': KAFKA_TOPICS.ORDER_LIFECYCLE,
   'ledger.mutated': KAFKA_TOPICS.LEDGER_MUTATIONS,
   'vendor.escalation.required': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.suspended_for_debt': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
 };

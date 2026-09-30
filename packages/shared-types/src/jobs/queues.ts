@@ -25,6 +25,12 @@ export const MIDNIGHT_CRON_PATTERN = '0 0 * * *';
 export const midnightTasks = [
   /** SPEC §4: apply scheduled subscription-to-commission downgrades at the end of the paid cycle. */
   'SUBSCRIPTION_DOWNGRADE',
+  /**
+   * SPEC §5 (Phase 12): suspend every vendor whose wallet is below the Super Admin's current
+   * suspension limit but who is not SUSPENDED yet. The database trigger suspends only when a row is
+   * written, so a vendor already in debt when the limit is tightened is caught here.
+   */
+  'VENDOR_DEBT_RECONCILIATION',
 ] as const;
 export const midnightTaskSchema = z.enum(midnightTasks);
 export type MidnightTask = z.infer<typeof midnightTaskSchema>;

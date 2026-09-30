@@ -157,3 +157,24 @@ export const deliveryOtpRequestSchema = z.strictObject({
   delivery_otp: z.string().length(DELIVERY_OTP_LENGTH).regex(/^\d+$/, 'Must be ASCII digits'),
 });
 export type DeliveryOtpRequest = z.input<typeof deliveryOtpRequestSchema>;
+
+/** Phase 12: page sizes of GET /api/vendors/wallet/ledger. */
+export const VENDOR_WALLET_LEDGER_DEFAULT_LIMIT = 20;
+export const VENDOR_WALLET_LEDGER_MAX_LIMIT = 50;
+
+/**
+ * GET /api/vendors/wallet/ledger?limit=&cursor= (SPEC §5): the vendor's wallet postings, newest
+ * first. `cursor` is the `next_cursor` of the previous page (the id of its last entry), so new
+ * postings arriving meanwhile never shift or repeat entries.
+ */
+export const vendorWalletLedgerQuerySchema = z.strictObject({
+  limit: z
+    .string()
+    .trim()
+    .regex(/^\d{1,3}$/, 'limit must be a whole number')
+    .transform(Number)
+    .pipe(z.number().int().min(1).max(VENDOR_WALLET_LEDGER_MAX_LIMIT))
+    .optional(),
+  cursor: z.uuid().optional(),
+});
+export type VendorWalletLedgerQuery = z.output<typeof vendorWalletLedgerQuerySchema>;

@@ -21,6 +21,7 @@ import {
 import { DrizzleStockReader } from './inventory/stock-reader';
 import { LedgerService } from './ledger/ledger-service';
 import { SettlementService } from './ledger/settlement-service';
+import { VendorWalletService } from './wallet/vendor-wallet-service';
 import {
   DeliveryOtpAttempts,
   type DeliveryOtpAttemptOptions,
@@ -124,6 +125,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     checkout,
     orders: new OrderService(infra.db, locks),
     vendorOrders: new VendorOrderService(infra.db, locks, handoff),
+    vendorWallet: new VendorWalletService(infra.db),
     driverOrders: new DriverOrderService(infra.db, handoff),
     esewa: new EsewaService(infra.db, checkout, confirmation, config.esewa),
     khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),

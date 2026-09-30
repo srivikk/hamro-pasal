@@ -23,6 +23,7 @@ import { buildBullConnection } from '../src/infra/redis';
 import { allTimerQueues, createTimerQueues, type TimerQueues } from '../src/queues/definitions';
 import { createProcessors, createTimerHandlers } from '../src/queues/processors';
 import { VendorEscalationService } from '../src/sla/vendor-escalation';
+import { VendorDebtReconciliationService } from '../src/wallet/vendor-debt-reconciliation';
 
 const VENDOR_PHONE = '+9779800000011';
 
@@ -246,7 +247,12 @@ describe('vendor acceptance SLA (real PostgreSQL + BullMQ)', () => {
     beforeAll(() => {
       worker = new Worker(
         queues.vendorAcceptance.name,
-        createProcessors(createTimerHandlers({ escalation })).vendorAcceptance,
+        createProcessors(
+          createTimerHandlers({
+            escalation,
+            debtReconciliation: new VendorDebtReconciliationService(db),
+          }),
+        ).vendorAcceptance,
         { connection, prefix },
       );
     });

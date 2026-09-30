@@ -143,3 +143,33 @@ describe('vendor.escalation.required', () => {
     expect(parse({ customer_phone: '+9779800000001' })).toBe(false);
   });
 });
+
+describe('vendor.suspended_for_debt', () => {
+  const payload = {
+    vendor_id: randomUUID(),
+    vendor_phone: '+9779800000011',
+    previous_status: 'LIVE',
+    wallet_balance_npr: -1500,
+    suspension_limit_npr: -1000,
+    suspended_at: '2026-09-30T18:15:00.000Z',
+  };
+  const parse = (overrides: Record<string, unknown>) =>
+    domainEventSchema.safeParse({
+      ...base,
+      event_type: 'vendor.suspended_for_debt',
+      payload: { ...payload, ...overrides },
+    }).success;
+
+  it('is a valid domain event routed to the notification fan-out topic', () => {
+    expect(parse({})).toBe(true);
+    expect(DOMAIN_EVENT_TOPICS['vendor.suspended_for_debt']).toBe('notifications.broadcast');
+  });
+
+  it('describes a real debt suspension of a vendor that was not suspended yet', () => {
+    expect(parse({ previous_status: 'SUSPENDED' })).toBe(false);
+    expect(parse({ wallet_balance_npr: 0 })).toBe(false);
+    expect(parse({ suspension_limit_npr: 100 })).toBe(false);
+    expect(parse({ vendor_phone: '9800000011' })).toBe(false);
+    expect(parse({ is_suspended: true })).toBe(false);
+  });
+});

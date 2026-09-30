@@ -1,4 +1,4 @@
-import type { CancelOrderResponseBody } from '@hamro-pasal/shared-types';
+import type { CancelOrderResponseBody, OrderSnapshotView } from '@hamro-pasal/shared-types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -13,18 +13,22 @@ import { useToastStore } from '../../store/useToastStore';
 import { cancellationRemainingMs } from './cancellation-window';
 import { isTerminalOrderState } from './order-tracker';
 
-/**
- * Interim refresh interval for a live order. State changes should arrive over the Socket.io
- * `/orders` namespace (SPEC implicit requirement 4), which the backend does not serve yet. This is
- * a light status fetch, not map polling (SPEC journey step 9).
- */
-export const ORDER_REFRESH_INTERVAL_MS = 30_000;
-
 export function orderQueryKey(orderId: string) {
   return ['order', orderId] as const;
 }
 
-/** Keeps the tracked order in step with the server until it reaches a terminal state. */
+/** Copies a server snapshot into the device stores (whether it came over REST or the socket). */
+export function syncOrderSnapshot(view: OrderSnapshotView): void {
+  useOrderStore.getState().applyOrderView(view);
+  // The handoff code is useless once the order is finished; do not keep it around.
+  if (isTerminalOrderState(view.state)) useDeliveryOtpStore.getState().clearOtp(view.id);
+}
+
+/**
+ * The tracked order, read once from GET /api/orders/:id. There is no polling: state changes arrive
+ * over the Socket.io `/orders` namespace (useOrderRealtime), which also refetches after every
+ * (re)subscription to catch anything missed while offline.
+ */
 export function useOrderQuery(orderId: string) {
   const state = useOrderStore((store) => store.orders[orderId]?.state);
   const live = state === undefined || !isTerminalOrderState(state);
@@ -33,13 +37,10 @@ export function useOrderQuery(orderId: string) {
     queryKey: orderQueryKey(orderId),
     queryFn: async () => {
       const view = await fetchOrder(orderId);
-      useOrderStore.getState().applyOrderView(view);
-      // The handoff code is useless once the order is finished; do not keep it around.
-      if (isTerminalOrderState(view.state)) useDeliveryOtpStore.getState().clearOtp(orderId);
+      syncOrderSnapshot(view);
       return view;
     },
     enabled: live,
-    refetchInterval: live ? ORDER_REFRESH_INTERVAL_MS : false,
     retry: retryTransientFailures,
   });
 }

@@ -85,8 +85,9 @@ describe('checkout lock / claim / release workflows', () => {
     expect(placed.order.state).toBe('PLACED');
     expect(await stockOf(db, productId)).toBe(2);
     expect(await checkout.getLockStatus(vendorId, reservation.id)).toBeNull();
-    const [event] = await outboxFor(db, order.id);
-    expect(event?.event_type).toBe('order.placed');
+    const events = await outboxFor(db, order.id);
+    expect(events.map((e) => e.event_type).sort()).toEqual(['order.placed', 'order.state_changed']);
+    const event = events.find((e) => e.event_type === 'order.placed');
     expect(orderPlacedPayloadSchema.parse(event?.payload).items).toEqual([
       { product_id: productId, quantity: 3 },
     ]);

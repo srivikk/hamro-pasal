@@ -1,13 +1,20 @@
+import {
+  ORDERS_NAMESPACE,
+  SOCKET_PING_INTERVAL_MS,
+  SOCKET_UNAUTHENTICATED,
+  type OrderSubscribeRequest,
+} from '@hamro-pasal/shared-types';
 import { io, type ManagerOptions, type Socket, type SocketOptions } from 'socket.io-client';
 
+import { refreshAccessToken } from '../api/http';
 import { API_URL } from '../config/api';
 import type { ChatMessage } from '../features/dispute/chat-contract';
 import { useAuthStore } from '../store/useAuthStore';
 
 /*
  * Socket.io client (SPEC implicit requirement 4 and infrastructure §1). Discrete namespaces:
- * `/orders` for state updates, `/chat` for dispute chat. The backend does not serve Socket.io yet,
- * so this is the client half, ready for it.
+ * `/orders` for state updates (served by the API since Phase 8), `/chat` for dispute chat (no
+ * server yet).
  */
 
 export const CHAT_NAMESPACE = '/chat';
@@ -41,9 +48,10 @@ const RECONNECT_FACTOR = 2;
  * Heartbeat interval (SPEC: 25 s). In Socket.io the ping/pong heartbeat is driven by the SERVER:
  * its `pingInterval` (25 000 ms, also the Socket.io default) is sent in the handshake and the
  * client follows it, closing and reconnecting when a ping is overdue. A client cannot set it, so
- * this constant is the value the `/chat` server must be configured with.
+ * this constant is the value the servers must be configured with (the API's `/orders` uses the
+ * same shared constant).
  */
-export const HEARTBEAT_INTERVAL_MS = 25_000;
+export const HEARTBEAT_INTERVAL_MS = SOCKET_PING_INTERVAL_MS;
 
 /** Server acknowledgement deadline for an emitted chat message. */
 export const CHAT_ACK_TIMEOUT_MS = 10_000;
@@ -53,7 +61,8 @@ export function reconnectDelayMs(attempt: number): number {
   return Math.min(RECONNECT_DELAY_MS * RECONNECT_FACTOR ** attempt, RECONNECT_DELAY_MAX_MS);
 }
 
-export function chatSocketOptions(): Partial<ManagerOptions & SocketOptions> {
+/** Transport and reconnection policy shared by every namespace. */
+function baseSocketOptions(): Partial<ManagerOptions & SocketOptions> {
   return {
     // React Native has no reliable long-polling transport: go straight to WebSocket.
     transports: ['websocket'],
@@ -65,10 +74,6 @@ export function chatSocketOptions(): Partial<ManagerOptions & SocketOptions> {
     // No jitter, so the schedule is exactly 1, 2, 4, 8, 16, 30 s (Socket.io doubles each attempt).
     randomizationFactor: 0,
     timeout: 20_000,
-    // Read at every (re)connect, so a refreshed access token is used after a reconnection.
-    auth: (callback) => {
-      callback({ token: useAuthStore.getState().accessToken });
-    },
   };
 }
 
@@ -77,8 +82,158 @@ export type SocketFactory = (
   options: Partial<ManagerOptions & SocketOptions>,
 ) => Socket;
 
-/** A `/chat` socket, not yet connected (call `connect()`). */
-export function createChatSocket(factory: SocketFactory = io): ChatSocket {
-  const socket: ChatSocket = factory(`${API_URL}${CHAT_NAMESPACE}`, chatSocketOptions());
-  return socket;
+/**
+ * The access token for a handshake. The in-memory token if there is one; otherwise (e.g. after an
+ * app relaunch, when only the refresh token survived) a fresh one from the HTTP refresh path, which
+ * is single-flight and shared with `apiRequest`. Null when there is no session or the refresh
+ * could not complete; the server then refuses the handshake and `createAuthenticatedSocket`
+ * recovers.
+ */
+export async function socketAccessToken(): Promise<string | null> {
+  const current = useAuthStore.getState().accessToken;
+  if (current !== null) return current;
+  try {
+    return await refreshAccessToken();
+  } catch {
+    return null; // network / 5xx: the session is kept, the recovery retries with backoff
+  }
+}
+
+/**
+ * Options for an authenticated namespace: the shared transport/backoff policy plus an `auth`
+ * callback that resolves `socketAccessToken()` at every (re)connect. `onHandshakeToken` learns
+ * which token each handshake carried.
+ */
+export function authenticatedSocketOptions(
+  onHandshakeToken: (token: string | null) => void = () => undefined,
+): Partial<ManagerOptions & SocketOptions> {
+  return {
+    ...baseSocketOptions(),
+    auth: (callback) => {
+      void socketAccessToken().then((token) => {
+        onHandshakeToken(token);
+        callback({ token });
+      });
+    },
+  };
+}
+
+/** A handshake the server refused because the token was missing, invalid or expired. */
+function isUnauthenticated(error: Error): boolean {
+  const data: unknown = Reflect.get(error, 'data');
+  const code: unknown =
+    typeof data === 'object' && data !== null ? Reflect.get(data, 'code') : undefined;
+  return error.message === SOCKET_UNAUTHENTICATED || code === SOCKET_UNAUTHENTICATED;
+}
+
+export interface SocketConnection<TSocket extends Socket = Socket> {
+  readonly socket: TSocket;
+  /** Disconnects for good: no reconnection or token recovery happens afterwards. */
+  readonly close: () => void;
+}
+
+/**
+ * A socket for `url` (not yet connected: call `socket.connect()`) that follows the token lifecycle.
+ * Every namespace uses it (`/orders`, `/chat`):
+ *   - every (re)connect authenticates with `socketAccessToken()`, so a relaunched app refreshes
+ *     before its first handshake instead of sending no token;
+ *   - a handshake refused as UNAUTHENTICATED (the token expired while the app was offline) is not
+ *     retried by Socket.io itself, so this renews the token (once per refused token: a token that
+ *     was just renewed and is refused again ends the attempt, no loop) and connects again;
+ *   - if the refresh token is refused, the HTTP layer signs the user out and the socket stays down;
+ *     if the refresh fails on the network, it is retried on the 1, 2, 4 … 30 s schedule.
+ * Rooms do not survive a reconnect: callers join again on every `connect`.
+ */
+export function createAuthenticatedSocket(url: string, factory: SocketFactory): SocketConnection {
+  let handshakeToken: string | null = null;
+  let renewedToken: string | null = null;
+  let failedRefreshes = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let closed = false;
+
+  const socket = factory(
+    url,
+    authenticatedSocketOptions((token) => {
+      handshakeToken = token;
+    }),
+  );
+
+  const reconnect = (): void => {
+    if (!closed) socket.connect();
+  };
+
+  const onConnect = (): void => {
+    renewedToken = null;
+    failedRefreshes = 0;
+  };
+
+  const onConnectError = (error: Error): void => {
+    if (!isUnauthenticated(error)) return; // transport errors: Socket.io's own backoff retries
+    const rejected = handshakeToken;
+    if (rejected !== null && rejected === renewedToken) return; // renewed and still refused
+    const current = useAuthStore.getState().accessToken;
+    const renewal =
+      current !== null && current !== rejected
+        ? Promise.resolve(current) // someone (an HTTP request) already renewed it
+        : refreshAccessToken();
+    renewal.then(
+      (token) => {
+        if (token === null) return; // no session any more: stay disconnected
+        renewedToken = token;
+        reconnect();
+      },
+      () => {
+        retryTimer = setTimeout(reconnect, reconnectDelayMs(failedRefreshes));
+        failedRefreshes += 1;
+      },
+    );
+  };
+
+  socket.on('connect', onConnect);
+  socket.on('connect_error', onConnectError);
+
+  return {
+    socket,
+    close: () => {
+      closed = true;
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      socket.off('connect', onConnect);
+      socket.off('connect_error', onConnectError);
+      socket.disconnect();
+    },
+  };
+}
+
+/* ---------- /chat: dispute chat ---------- */
+
+export type ChatConnection = SocketConnection<ChatSocket>;
+
+/** A `/chat` socket with the shared token lifecycle, not yet connected (call `socket.connect()`). */
+export function createChatSocket(factory: SocketFactory = io): ChatConnection {
+  const { socket, close } = createAuthenticatedSocket(`${API_URL}${CHAT_NAMESPACE}`, factory);
+  const chat: ChatSocket = socket;
+  return { socket: chat, close };
+}
+
+/* ---------- /orders: real-time order state (customer journey 9) ---------- */
+
+/** Events the server emits. Payloads are `unknown` until validated (orderStateUpdateSchema). */
+export interface OrdersServerToClientEvents {
+  'order:state_update': (payload: unknown) => void;
+}
+
+export interface OrdersClientToServerEvents {
+  'orders:subscribe': (payload: OrderSubscribeRequest, ack: (response: unknown) => void) => void;
+  'orders:unsubscribe': (payload: OrderSubscribeRequest) => void;
+}
+
+export type OrdersSocket = Socket<OrdersServerToClientEvents, OrdersClientToServerEvents>;
+
+export type OrdersConnection = SocketConnection<OrdersSocket>;
+
+/** A `/orders` socket with the shared token lifecycle, not yet connected. */
+export function createOrdersSocket(factory: SocketFactory = io): OrdersConnection {
+  const { socket, close } = createAuthenticatedSocket(`${API_URL}${ORDERS_NAMESPACE}`, factory);
+  const orders: OrdersSocket = socket;
+  return { socket: orders, close };
 }

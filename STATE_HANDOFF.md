@@ -1,9 +1,9 @@
-# Hamro Pasal: State Handoff (Phases 0–7.5 complete)
+# Hamro Pasal: State Handoff (Phases 0–8 complete)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 7.5 (Token Refresh Flow &
-Auth Polish)**, on top of Phase 7 (OTP Authentication), 6.5 (Mobile Live-Link) and 6 (Backend
-Gap-Closing). When this file and the code disagree, **the code wins**. When anything disagrees with
+work without re-deriving it. It describes the tree at the end of **Phase 8 (Real-Time Order
+Tracking, Socket.io `/orders`)**, on top of Phase 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
+Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this file and the code disagree, **the code wins**. When anything disagrees with
 `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
 
 > **Status in one paragraph.** The customer path is now linked end to end in code: the mobile app
@@ -13,8 +13,16 @@ Gap-Closing). When this file and the code disagree, **the code wins**. When anyt
 > both sides are covered by tests (API integration tests on real Postgres/Redis; mobile tests over
 > msw). **Customers sign in with a +977 OTP** (6 digits, Redis, 2 min) and get a 15-min access
 > token plus a 7-day refresh token; the app renews the access token transparently (§8A, §9.3).
+> **Order tracking is real time (Phase 8):** every order state change writes an
+> `order.state_changed` outbox event; a worker Kafka consumer broadcasts it through Redis to the
+> API's Socket.io `/orders` room `order:{id}` as `order:state_update`, and the tracking screen
+> patches its TanStack Query cache from it. The 30 s polling is gone (§8B, §9.6). Both mobile
+> sockets (`/orders`, `/chat`) share one token lifecycle with the HTTP refresh path (§9.3).
 > **No live device run has happened yet** (§13). Still not built: the order lifecycle after PLACED,
-> reviews, disputes, Socket.io, refund payouts, and refresh-token rotation/revocation.
+> reviews, disputes and the `/chat` server, refund payouts, and refresh-token rotation/revocation.
+>
+> **Next priority: the first live end-to-end device run** (§11 item 1), then the order lifecycle
+> routes, which will stream over `/orders` with no extra socket work.
 
 ---
 
@@ -43,18 +51,18 @@ Gap-Closing). When this file and the code disagree, **the code wins**. When anyt
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · Phases 7 + 7.5 (the commit that adds this file) |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                          |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                 |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                            |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                           |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                     |
-| Unit tests      | **669 passing** (`pnpm test`): shared-types 89, api 75, worker 9, kafka 7, db 7, mobile 482                                                                                                                                                                                                                                                                            |
-| Integ. tests    | **155 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 97, worker 10, kafka 1. Run at the end of Phase 7.5                                                                                                                                                                                                                                       |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 7.5                                                                                                                                                                                                                 |
-| Dev database    | Migrations 0000–0010 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                   |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · Phase 8 (the commit that adds this file) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                        |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                               |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                          |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                         |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                   |
+| Unit tests      | **704 passing** (`pnpm test`): shared-types 95, api 75, worker 18, kafka 7, db 7, mobile 502                                                                                                                                                                                                                                                                                         |
+| Integ. tests    | **177 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 116, worker 13, kafka 1. Run at the end of Phase 8                                                                                                                                                                                                                                                      |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 8                                                                                                                                                                                                                                 |
+| Dev database    | Migrations 0000–0010 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                 |
 
 ### Root commands (`package.json`)
 
@@ -106,21 +114,26 @@ packages/shared-types/src          @hamro-pasal/shared-types (zod only, safe for
   jobs/queues.ts                   BullMQ queue names, delays, payload schemas
   localization/{address,nepal-geography,numerals,phone}.ts   (numerals: toNepaliNumerals, toAsciiDigits)
   nepal/geo.ts                     NEPAL_BOUNDING_BOX (single source for every coarse Nepal check), isWithinNepalBoundingBox
+  realtime/orders-socket.ts        /orders wire contract: ORDERS_NAMESPACE, ORDER_SOCKET_EVENTS, orderRoom, SOCKET_PING_INTERVAL_MS,
+                                   SOCKET_IO_REDIS_KEY, SOCKET_UNAUTHENTICATED, orderSubscribeRequest/Ack schemas,
+                                   orderStateUpdateSchema, orderStateUpdateFromEvent (Phase 8)
 packages/db/src                    @hamro-pasal/db: Drizzle schema, client, migrator, outbox writer
   schema/{columns,enums,users,vendors,orders,ledger,outbox,wallet,disputes,contract}.ts
   geo/ewkb.ts · outbox.ts · testing.ts (@hamro-pasal/db/testing) · scripts/{migrate,seed,database-url}.ts
 packages/db/drizzle/               0000–0010 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
 packages/kafka/src                 config.ts, producer.ts (DomainEventPublisher), index.ts
 apps/api/src                       Express 5 API
-  app.ts (createApp) · container.ts (buildContainer / buildContainerFromEnv) · server.ts
+  app.ts (createApp) · container.ts (buildContainer / buildContainerFromEnv) · server.ts (HTTP + Socket.io)
+  realtime/orders-namespace.ts     attachRealtime: Socket.io /orders (JWT handshake, ownership-checked rooms, Redis adapter)
   auth/access-token.ts             HS256 access tokens (JWT_ACCESS_SECRET, aud hamro-pasal-app, 900 s)
   auth/refresh-token.ts            HS256 refresh tokens (JWT_REFRESH_SECRET, aud hamro-pasal-refresh, typ refresh, jti, 7 d)
   auth/otp-store.ts                OtpStore (Redis keys, keyed digest, atomic Lua check-and-consume), generateOtpCode
   auth/otp-auth-service.ts         OtpAuthService: sendOtp, verifyOtp (fetch-or-create CUSTOMER), refreshAccessToken
   catalog/catalog-service.ts       CatalogService (PostGIS feed + menus), VendorNotFoundError, FEED_SECTION_LIMIT
   checkout/{checkout-service,pricing,delivery-otp}.ts
-  orders/order-service.ts          OrderService (order detail + cancellation), CancellationWindowExpiredError,
+  orders/order-service.ts          OrderService (order detail, cancellation, isCustomerOrder), CancellationWindowExpiredError,
                                    OrderNotCancelableError
+  orders/order-events.ts           enqueueOrderStateChanged: the one way every state change reaches the outbox
   config/env.ts · http/{auth,errors,validate}.ts · infra/{pg-errors,redis-mutex,redis-pool}.ts
   inventory/{inventory-lock-service,stock-reader,errors}.ts
   ledger/{ledger-service,money,settlement-plan,settlement-service}.ts
@@ -129,8 +142,10 @@ apps/api/src                       Express 5 API
   sms/sms-gateway.ts               Sparrow / Aakash / Mock adapters (strict +977); container.smsGatewayFromEnv picks one
 apps/api/scripts/mint-dev-token.ts
 apps/api/test/                     *.int.test.ts (auth-api, cart-api, checkout-claim, inventory-concurrency, ledger-settlement,
-                                   mint-dev-token, orders-api, payments-api, vendors-api) + global-setup.ts + support/
-apps/worker/src                    main.ts, lifecycle.ts, outbox/ (OutboxRelay), consumers/ (none registered), queues/, config/, infra/
+                                   mint-dev-token, orders-api, orders-realtime, payments-api, vendors-api) + global-setup.ts + support/
+apps/worker/src                    main.ts, lifecycle.ts, outbox/ (OutboxRelay), queues/, config/, infra/,
+                                   consumers/ (buildConsumers; order-state-fanout.ts: Kafka order.lifecycle → Redis → /orders rooms)
+apps/worker/test/                  outbox-relay, queues, order-state-fanout (*.int.test.ts)
 ```
 
 ### Mobile workspace (`apps/mobile`, `@hamro-pasal/mobile`)
@@ -151,7 +166,7 @@ app/(tabs)/index.tsx      feed (GET /api/vendors); sign-in prompt when signed ou
 app/(tabs)/cart.tsx       cart, address, checkout, payment; "Sign in to Checkout" when signed out
 app/(tabs)/profile.tsx    account (sign in / sign out) + language + __DEV__ token sign-in + __DEV__ territory simulator
 app/vendor/[id].tsx       vendor menu (GET /api/vendors/:id/products)
-app/order/[id]/index.tsx  order tracking (GET /api/orders/:id), 60 s cancel (POST …/cancel), OTP, dispute button
+app/order/[id]/index.tsx  order tracking (GET /api/orders/:id once + Socket.io /orders live updates), 60 s cancel, OTP, dispute button
 app/order/[id]/dispute.tsx  dispute chat (Socket.io /chat scaffold)
 
 src/api/        http.ts (apiRequest with token renewal, refreshAccessToken, onSessionExpired, ApiError)
@@ -159,7 +174,7 @@ src/api/        http.ts (apiRequest with token renewal, refreshAccessToken, onSe
                 catalog.ts (fetchFeed, fetchVendorMenu, VENDOR_NOT_FOUND) · orders.ts (fetchOrder, cancelOrder,
                 CANCELLATION_WINDOW_EXPIRED) · payments.ts (eSewa/Khalti calls)
                 query-client.ts (createQueryClient, retryTransientFailures)
-src/services/   socket.ts (Socket.io client config, typed /chat events)
+src/services/   socket.ts (createAuthenticatedSocket: shared token lifecycle; createOrdersSocket, createChatSocket)
 src/store/      useAuthStore · useCartStore · useCheckoutStore · useOrderStore · useDeliveryOtpStore
                 useAddressStore · useReviewStore · useToastStore
 src/storage/    app-mmkv.ts (plain) · secure-mmkv.ts (AES-256) · encryption-key.ts · mmkv-state-storage.ts
@@ -302,16 +317,27 @@ EWKB (`geo/ewkb.ts`), because Drizzle 0.45's built-in `geometry()` ignores `srid
 - Producer: `@confluentinc/kafka-javascript`, `{ 'enable.idempotence': true, acks: -1 }`.
 - Events and topics:
 
-  | `event_type`                | Topic                    | Aggregate      | Emitted by                                                                                                                                                                                            |
-  | --------------------------- | ------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `order.locked`              | `order.lifecycle`        | reservation_id | checkout                                                                                                                                                                                              |
-  | `order.placed`              | `order.lifecycle`        | order_id       | lock claim (PLACED)                                                                                                                                                                                   |
-  | `order.canceled_refund_due` | `payment.reconciliation` | order_id       | **Phase 6.** Cancellation of a PAID order ("ORDER_CANCELED_REFUND_DUE"). Payload: order/vendor/customer ids, ESEWA\|KHALTI, gateway ref, `refund_amount_npr` (subtotal + delivery fee), `canceled_at` |
-  | `ledger.mutated`            | `ledger.mutations`       | transaction_id | every journal                                                                                                                                                                                         |
+  | `event_type`                | Topic                    | Aggregate      | Emitted by                                                                                                                                                                                                                                                                                    |
+  | --------------------------- | ------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `order.locked`              | `order.lifecycle`        | reservation_id | checkout                                                                                                                                                                                                                                                                                      |
+  | `order.placed`              | `order.lifecycle`        | order_id       | lock claim (PLACED)                                                                                                                                                                                                                                                                           |
+  | `order.canceled_refund_due` | `payment.reconciliation` | order_id       | **Phase 6.** Cancellation of a PAID order ("ORDER_CANCELED_REFUND_DUE"). Payload: order/vendor/customer ids, ESEWA\|KHALTI, gateway ref, `refund_amount_npr` (subtotal + delivery fee), `canceled_at`                                                                                         |
+  | `order.state_changed`       | `order.lifecycle`        | order_id       | **Phase 8.** Every change of `orders.state`, in the same transaction (`enqueueOrderStateChanged`). Payload: order/customer/vendor ids, `from_state` (null on creation), `to_state`, `payment_status`, `refund_required`, `placed_at`, `delivered_at`, `changed_at` (= the row's `updated_at`) |
+  | `ledger.mutated`            | `ledger.mutations`       | transaction_id | every journal                                                                                                                                                                                                                                                                                 |
 
-- `apps/worker/src/consumers/index.ts` registers **no** consumers: nothing acts on
-  `order.canceled_refund_due` yet (no refund is issued), and **no event is emitted for a COD or
-  otherwise unpaid cancellation** (the vendor is not told; see §11).
+- Consumers (`apps/worker/src/consumers/index.ts#buildConsumers`, one handler per topic, group
+  `KAFKA_CONSUMER_GROUP_ID`):
+
+  | Consumer                                         | Topic             | Acts on               | Does                                                                                                                                                                                                       |
+  | ------------------------------------------------ | ----------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `order-state-fanout.ts#orderStateFanoutConsumer` | `order.lifecycle` | `order.state_changed` | Broadcasts `order:state_update` (`orderStateUpdateFromEvent`) to room `order:{order_id}` of namespace `/orders` via `@socket.io/redis-emitter` (key `SOCKET_IO_REDIS_KEY`). Other event types are ignored. |
+  - **Dedupe:** `SET fanout:orders:seen:{event_id} 1 EX 86400 NX` before broadcasting; a redelivery is
+    skipped. If the broadcast fails the claim is deleted and the handler throws, so Kafka redelivers.
+  - **Publish errors are not swallowed:** the emitter calls `redis.publish` without awaiting it;
+    `RedisOrderRoomBroadcaster` hands it a wrapper that collects those promises and awaits them.
+  - An invalid envelope is logged and skipped (a poison message would otherwise block the partition).
+  - Nothing acts on `order.canceled_refund_due` yet (no refund is issued). A canceled COD order now
+    emits `order.state_changed`, but no vendor app or notification consumes it (§13).
 
 ## 6. Concurrency, ledger, timers
 
@@ -388,7 +414,7 @@ auth). `Infrastructure` now requires an `sms: SmsGateway` (tests inject `MockSms
 | `GET /api/vendors/:id/products?lat=&lng=[&municipality_…]` | Bearer CUSTOMER               | `idParamSchema` + `vendorMenuQuerySchema`                                                                                                        | 200                  | `vendorMenuSchema {vendor, serviceable, products[{id, name, price_npr, in_stock}]}`                                                                                    | `useVendorMenuQuery` (vendor screen)           |
 | `POST /api/cart/checkout`                                  | Bearer CUSTOMER               | `checkoutRequestSchema {idempotency_key(8–100), vendor_id, payment_method, items[1–50]{product_id, quantity 1–99}, delivery_address (required)}` | 201 new / 200 replay | `checkoutResponseSchema {order: OrderView, reservation{id\|null, expires_at\|null}, delivery_otp\|null, replayed}`                                                     | `useCheckout` (sends the saved address)        |
 | `GET /api/cart/lock-status?order_id=`                      | Bearer CUSTOMER (owner)       | `lockStatusQuerySchema`                                                                                                                          | 200                  | `lockStatusResponseSchema {order, lock{status ACTIVE\|EXPIRED\|RELEASED, ttl_ms, expires_at}}`                                                                         | `useLockStatus` (5 s poll, checkout only)      |
-| `GET /api/orders/:id`                                      | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200                  | `orderDetailResponseSchema {order: OrderSnapshot}`                                                                                                                     | `useOrderQuery` → `fetchOrder` (30 s refresh)  |
+| `GET /api/orders/:id`                                      | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200                  | `orderDetailResponseSchema {order: OrderSnapshot}`                                                                                                                     | `useOrderQuery` → `fetchOrder` (no polling)    |
 | `POST /api/orders/:id/cancel`                              | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `cancelOrderResponseSchema {order_id, state:'CANCELED', refund_required}`                                                                                              | `useCancelOrder` → `cancelOrder`               |
 | `POST /api/payments/esewa/initiate`                        | Bearer CUSTOMER (owner)       | `paymentInitiateRequestSchema {order_id}`                                                                                                        | 200                  | `esewaInitiateResponseSchema {payment_url, method:'POST', fields}`                                                                                                     | `initiateEsewa`                                |
 | `POST /api/payments/esewa/webhook`                         | **none** (HMAC-authenticated) | `esewaWebhookRequestSchema {data: base64}`                                                                                                       | 200                  | `paymentStatusResponseSchema {status, payment: PaymentView\|null}`                                                                                                     | `confirmEsewa` (the app forwards the redirect) |
@@ -465,13 +491,57 @@ audience `hamro-pasal-app`, TTL 900 s, claims `{ sub: user uuid, role }`, `Autho
 `apps/api/scripts/mint-dev-token.ts` (`pnpm --filter @hamro-pasal/api token:dev`), which refuses to
 run with `NODE_ENV=production`.
 
+### Order state transitions that exist today
+
+Only these code paths change `orders.state`, and each writes `order.state_changed` in the same
+transaction (Phase 8), which `/orders` streams to the app (§8B). **Any new transition (the lifecycle
+routes) must call `enqueueOrderStateChanged(tx, fromState, updatedRow)`** in its transaction.
+
+| From → to                          | Where                                        | Trigger                                    | Outbox event today                                                              |
+| ---------------------------------- | -------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
+| (new) → PENDING_PAYMENT            | `CheckoutService.checkout`                   | `POST /api/cart/checkout`                  | `order.state_changed` (from null) + `order.locked` (aggregate = reservation_id) |
+| PENDING_PAYMENT → PLACED           | `CheckoutService.claim` (sets `placed_at`)   | COD checkout, eSewa webhook, Khalti lookup | `order.state_changed` + `order.placed`                                          |
+| PENDING_PAYMENT → FAILED           | `PaymentConfirmationService.placeIfPending`  | paid after the 600 s lock expired          | `order.state_changed` (update + event in one transaction)                       |
+| PLACED → CANCELED                  | `OrderService.cancel`                        | `POST /api/orders/:id/cancel` (≤ 60 s)     | `order.state_changed` always; plus `order.canceled_refund_due` if PAID          |
+| PLACED → PREPARING → … → DELIVERED | **no code path** (tests set states directly) | –                                          | –                                                                               |
+
 ### Not implemented (backend)
 
 No routes for: saved-address CRUD, profile (name) editing, logout/revocation, order state transitions after PLACED (vendor
 accept → PREPARING, dispatch, OUT_FOR_DELIVERY, arrival, DELIVERED), delivery-OTP verification,
 reviews, disputes, evidence uploads, refunds, admin, vendor or driver apps, `/metrics`, rate
-limiting beyond the per-phone OTP cooldown. No Socket.io server (`/orders`, `/chat`). No push
+limiting beyond the per-phone OTP cooldown. No Socket.io `/chat` server (`/orders` exists, §8B). No push
 notifications. Worker consumers and timer handlers are placeholders.
+
+## 8B. Socket.io `/orders` (Phase 8)
+
+Code: `apps/api/src/realtime/orders-namespace.ts#attachRealtime`, wired in `server.ts` (the HTTP
+server is created with `createServer(createApp(container))`; the adapter gets its own `pub` and a
+`pub.duplicate()` `sub` Redis connection; shutdown closes Socket.io, which closes the HTTP server).
+Contract: `packages/shared-types/src/realtime/orders-socket.ts`.
+
+```
+state change ──(same tx)──▶ outbox order.state_changed ──OutboxRelay──▶ Kafka order.lifecycle
+  ──worker order-state-fanout (dedupe event_id)──▶ Redis PUBLISH hamro-pasal:socket.io#/orders#order:{id}#
+  ──@socket.io/redis-adapter on every API instance──▶ sockets in room order:{id} ──▶ 'order:state_update'
+```
+
+| Aspect      | Behaviour                                                                                                                                                                                                                                                                                                            |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server      | `transports: ['websocket']` (no sticky sessions needed behind the ALB), `pingInterval: 25000` (= `SOCKET_PING_INTERVAL_MS` = mobile `HEARTBEAT_INTERVAL_MS`), `pingTimeout: 20000`, 16 kB max message                                                                                                                |
+| Adapter     | `@socket.io/redis-adapter`, key `SOCKET_IO_REDIS_KEY = 'hamro-pasal:socket.io'` (the worker's emitter must use the same key). Pub/sub is not scoped by Redis DB: tests use a unique key per run                                                                                                                      |
+| Handshake   | `auth.token` verified with `verifyAccessToken` (HS256, issuer, audience, expiry). Missing/invalid/expired or a refresh token → `connect_error` message `UNAUTHENTICATED`, `data.code` the same. Non-CUSTOMER → `FORBIDDEN`                                                                                           |
+| Subscribe   | `orders:subscribe { order_id }` **with ack**. `OrderService.isCustomerOrder` must hold, then join `order:{id}` → `{ ok: true, order_id }`. Otherwise `{ ok: false, error: { code } }`: `ORDER_NOT_FOUND` (not yours or unknown: no probing), `VALIDATION_FAILED`, `INTERNAL_SERVER_ERROR`. No ack function → ignored |
+| Unsubscribe | `orders:unsubscribe { order_id }` leaves the room. Rooms die with the connection: clients re-subscribe after every reconnect                                                                                                                                                                                         |
+| Update      | `order:state_update` = `orderStateUpdateSchema { order_id, state, payment_status, refund_required, placed_at, delivered_at, changed_at }` (the snapshot fields a state change can alter)                                                                                                                             |
+
+- The token is checked **only at the handshake**: a connection outlives its 15-min access token until
+  it reconnects (§13).
+- Tests: `apps/api/test/orders-realtime.int.test.ts` (outbox event for every transition, handshake
+  refusals, ownership, room isolation, unsubscribe, a real cancel delivered, re-subscribe after
+  reconnect) and `apps/worker/test/order-state-fanout.int.test.ts` (outbox → relay → Kafka → consumer
+  → Redis → a Socket.io server with the adapter; other room gets nothing; redelivery once; failed
+  broadcast retried).
 
 ## 8A. Authentication (Phases 7 and 7.5)
 
@@ -492,14 +562,56 @@ OTP_RESEND_COOLDOWN` with the seconds left, and no SMS.
      2 minutes. Do not share it with anyone." If the adapter throws, both keys are deleted (the customer
      can retry at once) and the API answers `502 SMS_DELIVERY_FAILED`.
 2. **Verify** (`POST /api/auth/otp/verify`):
-   - One Lua script (`CHECK_AND_CONSUME`) atomically increments `attempts`, compares the digest, and
-     deletes the code on success (**single use**, even under concurrent submissions) or on the 5th
-     wrong attempt. Outcomes: valid, `401 OTP_INVALID` (attempts_remaining 4 → 1), `429
+   - One Lua script (`CHECK_AND_CONSUME`, below) counts the attempt, compares the digest and consumes
+     the code **atomically**. Outcomes: valid, `401 OTP_INVALID` (attempts_remaining 4 → 1), `429
 OTP_ATTEMPTS_EXCEEDED`, `410 OTP_EXPIRED`.
    - Account: `INSERT … ON CONFLICT (phone) DO NOTHING`, then SELECT. An unknown number becomes a new
      **CUSTOMER** with `first_name` null (`is_new_user: true`). An existing account **keeps its role**
      (a vendor signing in gets a VENDOR token; customer routes then answer 403).
    - Returns both tokens (below) with `Cache-Control: no-store`.
+
+### Atomic Redis OTP logic (`apps/api/src/auth/otp-store.ts`)
+
+Every OTP state change is a **single Redis command, a MULTI/EXEC block or a Lua script**, so there is
+no read-then-write gap for concurrent requests to slip through.
+
+| Step                | Redis operation(s)                                                                                 | Atomicity                 | Guarantees                                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------- |
+| Cooldown claim      | `SET otp:cooldown:{phone} 1 PX 60000 NX`; if refused, `PTTL` for the seconds left                  | single command (`NX`)     | of N simultaneous sends for one phone, exactly one gets a code and an SMS; the rest get 429 |
+| Save code           | `MULTI` → `DEL otp:code:{phone}` → `HSET … digest <hmac> attempts 0` → `PEXPIRE … 120000` → `EXEC` | transaction               | the old code is gone the instant the new one exists; the hash never exists without its TTL  |
+| Undo on SMS failure | `DEL otp:code:{phone} otp:cooldown:{phone}`                                                        | single command            | a failed SMS leaves no usable code and no cooldown (retry at once)                          |
+| Verify              | `EVAL CHECK_AND_CONSUME 1 otp:code:{phone} <hmac(phone:code)> 5`                                   | Lua (runs alone in Redis) | single use; attempts counted even under concurrency; the 5th wrong guess deletes the code   |
+
+```lua
+-- KEYS[1] = otp:code:{phone}   ARGV[1] = HMAC-SHA256(pepper, "phone:code")   ARGV[2] = 5
+local digest = redis.call('HGET', KEYS[1], 'digest')
+if not digest then return {-1} end                                   -- missing: 410 OTP_EXPIRED
+local attempts = redis.call('HINCRBY', KEYS[1], 'attempts', 1)       -- every attempt counts
+if digest == ARGV[1] then
+  redis.call('DEL', KEYS[1])                                         -- consume: single use
+  return {1}                                                         -- valid
+end
+if attempts >= tonumber(ARGV[2]) then
+  redis.call('DEL', KEYS[1])                                         -- burn after the 5th miss
+  return {-2}                                                        -- 429 OTP_ATTEMPTS_EXCEEDED
+end
+return {0, attempts}                                                 -- 401 OTP_INVALID, 5 - attempts left
+```
+
+- **Why Lua:** a HGET + compare + DEL done from Node would let two concurrent requests with the
+  right code both read the digest before either deletes it, minting two sessions. Redis runs a script
+  to completion before any other command, so the second request finds the key gone (`{-1}` → 410).
+  Tested: 5 simultaneous correct submissions → exactly one 200 and four 410s, one account row.
+- **Attempts are counted before comparing**, so a correct code on the 6th try is impossible: the 5th
+  wrong attempt already deleted the key. Tested: 4 wrong → attempts left `[4, 3, 2, 1]`, 5th wrong →
+  429, correct code afterwards → 410.
+- **Expiry is Redis's own `PEXPIRE`**; the API never compares timestamps. Tested with a 300 ms TTL
+  override: the code works before and returns 410 after.
+- **Digest, not code:** the hash field holds `HMAC-SHA256(pepper, "+9779…:NNNNNN")` (hex). A code for
+  one phone never verifies for another (the phone is inside the MAC). The Lua comparison is a plain
+  string compare of two server-computed digests, not of user input against a secret.
+- **Crash safety:** if the API dies between saving the code and sending the SMS, the code simply
+  expires; nothing outlives its TTL, and no Postgres state is written until a code is consumed.
 
 ### Tokens
 
@@ -510,6 +622,30 @@ OTP_ATTEMPTS_EXCEEDED`, `410 OTP_EXPIRED`.
 
 Different secrets **and** audiences: a refresh token is never accepted as an access token and vice
 versa (tested both ways). `parseServerEnv` already refuses identical secrets.
+
+### Token lifecycle and rotation (exact current state)
+
+```
+OTP verify ──▶ access A1 (15 min, memory)  +  refresh R (7 d, encrypted MMKV)
+   │
+   ├─ request with A1 ──▶ 200
+   ├─ A1 expires ──▶ 401 ──▶ POST /token/refresh {R} ──▶ access A2 ──▶ replay ──▶ 200
+   ├─ app relaunch (A gone, R kept) ──▶ POST /token/refresh {R} before the first request
+   ├─ … lazily, at the next 401 after each expiry: A3, A4, … (R unchanged)
+   └─ R expires / account deleted / R forged ──▶ 401 REFRESH_TOKEN_INVALID ──▶ client signs out
+```
+
+- **Access tokens rotate**: every refresh issues a brand-new 15-minute access token (fresh `iat`/`exp`,
+  role re-read from Postgres). Old access tokens are not revoked; they simply expire within 15 min.
+- **Refresh tokens do NOT rotate.** `/token/refresh` returns no new refresh token, the `jti` is
+  never checked or stored, and the same `R` works for its full 7 days. Sign-out deletes the device
+  copy only. **There is no server-side revocation, denylist or logout endpoint.**
+- **Implications:** a leaked refresh token is usable for up to 7 days; a customer is signed out after
+  7 days no matter how active they are (no sliding window).
+- **To add rotation later** (§11): on each refresh, issue `R'` with a new `jti`, record the old
+  `jti` as used (Redis `SET … EX <remaining ttl>` or a Postgres table), and treat reuse of a used
+  `jti` as theft (revoke the whole token family). The client already persists whatever
+  `refresh_token` it is given, so it needs only `setSession` on refresh instead of `setAccessToken`.
 
 **Refresh** (`POST /api/auth/token/refresh`, Phase 7.5): verifies signature, algorithm (HS256),
 issuer, the refresh audience, `typ` and expiry, then **reads the role from the database** (a role
@@ -600,6 +736,20 @@ fingerprint includes it, and the territory gate reads the shared `NEPAL_BOUNDING
   and invalidates every query, so screens that failed for lack of a session refetch.
   `useSignOut` clears the session and the whole query cache.
 
+### 9.0 Screen inventory (exact current UI)
+
+| Route                 | File                         | Session needed    | Server calls                                                                    | What the user sees                                                                                                                                                                     |
+| --------------------- | ---------------------------- | ----------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/` (Shops tab)       | `app/(tabs)/index.tsx`       | yes               | `GET /api/vendors` (saved-address pin or Thamel)                                | "Delivers to you" + desaturated "Explore Further" (carts disabled); loading; "Sign in to see the shops near you." when signed out; retry on other errors                               |
+| `/vendor/[id]`        | `app/vendor/[id].tsx`        | yes               | `GET /api/vendors/:id/products`                                                 | products with price and stock; add to cart (single-vendor, replace prompt); browse-only banner if not serviceable; "This shop isn't available."                                        |
+| `/cart` (Cart tab)    | `app/(tabs)/cart.tsx`        | only to check out | `POST /api/cart/checkout`, lock-status poll, eSewa/Khalti initiate + confirm    | lines, +/-, summary (platform fee Rs. 0), MOV check, delivery address card, payment picker, **"Proceed to Checkout" or "Sign in to Checkout"**, reservation countdown, payment WebView |
+| `/profile` (tab)      | `app/(tabs)/profile.tsx`     | no                | –                                                                               | account (Sign in / Sign out), language EN/NE, `__DEV__` token paste and territory simulator                                                                                            |
+| `/login`              | `app/login.tsx`              | no                | `POST /api/auth/otp/send`                                                       | +977 prefix, number field, validation and cooldown messages                                                                                                                            |
+| `/verify-otp`         | `app/verify-otp.tsx`         | no                | `POST /api/auth/otp/verify`, `…/otp/send` (resend)                              | 6-digit field, per-error messages, resend countdown, "Change number"; on success toast + back to the caller                                                                            |
+| `/order/[id]`         | `app/order/[id]/index.tsx`   | yes               | `GET /api/orders/:id`, Socket.io `/orders`, `POST /api/orders/:id/cancel`       | order code and total, 60 s cancel countdown + button, delivery OTP badge, discrete tracker, dispute button (48 h after delivery)                                                       |
+| `/order/[id]/dispute` | `app/order/[id]/dispute.tsx` | yes               | Socket.io `/chat` (**no server**; shared token lifecycle), mock evidence upload | chat UI that keeps reconnecting on a device                                                                                                                                            |
+| (root overlays)       | `app/_layout.tsx`            | –                 | lock-status (via `CheckoutSessionWatcher`)                                      | territory gate (topmost), replace-cart modal, review prompt (mock submit), toasts, session-expiry handler                                                                              |
+
 ### 9.1 Storage
 
 | Instance             | File                         | Encryption                                                                                                                                                              | Holds                                                         |
@@ -657,6 +807,75 @@ calls pass `authenticated: false`, so a wrong-OTP 401 never triggers a refresh):
 6. `useSessionExpiryHandler` (mounted once in `app/_layout.tsx`) listens and runs
    `queryClient.clear()` plus the toast "Your session has ended. Please sign in again."
 
+The whole interceptor, as implemented in `src/api/http.ts` (simplified: `send` arguments and imports abbreviated):
+
+```ts
+let refreshInFlight: Promise<string | null> | null = null;
+
+export function refreshAccessToken(): Promise<string | null> {
+  refreshInFlight ??= runRefresh().finally(() => { refreshInFlight = null; });   // single flight
+  return refreshInFlight;
+}
+
+async function runRefresh(): Promise<string | null> {
+  const refreshToken = useAuthStore.getState().refreshToken;
+  if (refreshToken === null) return null;
+  const stillCurrent = () => useAuthStore.getState().refreshToken === refreshToken;
+  try {
+    const { access_token } = await send({ POST /api/auth/token/refresh, body: { refresh_token } }, null);
+    if (!stillCurrent()) return null;                 // signed out meanwhile: never revive
+    useAuthStore.getState().setAccessToken(access_token);   // memory only
+    return access_token;
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || error.status === 400)) {
+      if (stillCurrent()) { clearSession(); notify onSessionExpired listeners; }
+      return null;                                    // session over
+    }
+    throw error;                                      // network / 5xx: keep the session
+  }
+}
+
+export async function apiRequest<T>(request): Promise<T> {
+  if (request.authenticated === false) return send(request, null);          // /api/auth/* only
+  let token = accessToken ?? (await refreshAccessToken());                  // relaunch case
+  if (token === null) throw new ApiError(401, 'NOT_SIGNED_IN', …);
+  try {
+    return await send(request, token);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 401) throw error;
+    const current = useAuthStore.getState().accessToken;
+    token = current !== null && current !== token ? current : await refreshAccessToken();
+    if (token === null) throw error;
+    return send(request, token);                                            // replay once, no loop
+  }
+}
+```
+
+Burst example: three screens fetch at once with an expired token → three 401s → the first caller
+starts `runRefresh`, the other two receive the same promise → **one** refresh call → all three replay
+with the new token. Tested in `src/api/token-refresh.int.test.ts` (10 cases; the single flight, the
+relaunch refresh and the no-revival guard were each broken on purpose and caught).
+
+**Sockets use the same renewal (Phase 8).** `createAuthenticatedSocket(url, factory)`
+(`src/services/socket.ts`) backs both `createOrdersSocket` and `createChatSocket`; each returns
+`{ socket, close }` (always `close()`, never just `disconnect()`, so no pending retry revives it):
+
+1. The `auth` callback runs at every (re)connect and sends `socketAccessToken()`: the in-memory
+   token, or `refreshAccessToken()` when there is none (the relaunch case). It is the **same
+   single-flight refresh** as `apiRequest`: a screen's GET and its socket starting together make one
+   refresh call (tested).
+2. A `connect_error` with `UNAUTHENTICATED` is not retried by Socket.io (server refusal), so the client
+   renews: it uses a newer in-memory token if an HTTP request already renewed it, else
+   `refreshAccessToken()`, then `socket.connect()` again.
+3. **No loop:** if the token it just renewed is refused too, it stops.
+4. Refresh refused (400/401) → the HTTP layer signs out; the socket stays down. Network/5xx → the
+   session is kept and the reconnect is retried on the 1, 2, 4 … 30 s schedule (`reconnectDelayMs`).
+5. Transport errors are left to Socket.io's own reconnection (same backoff).
+
+Tested in `src/features/order/OrderRealtime.test.tsx` (`/orders`, through the tracking screen) and
+`src/services/chat-socket.test.ts` (`/chat`); the relaunch refresh, reconnect after renewal, no-loop
+guard, backoff retry and the `/chat` wiring were each broken on purpose and caught.
+
 ### 9.4 Checkout and lock status
 
 - `buildCheckoutRequest` (`src/api/mutations.ts`) builds `checkoutRequestSchema` from the cart (ids
@@ -692,9 +911,21 @@ calls pass `authenticated: false`, so a wrong-OTP 401 never triggers a refresh):
 ### 9.6 Order tracking and the 60-second cancellation (`app/order/[id]/index.tsx`, `src/features/order/`)
 
 - **Order read:** `useOrderQuery` → `fetchOrder` (`src/api/orders.ts`) → `GET /api/orders/:id`
-  (`orderDetailResponseSchema`), refreshed every 30 s until terminal (stand-in for Socket.io
-  `/orders`). `applyOrderView` copies the server state into `useOrderStore`; terminal states erase the
-  OTP. The lock-status stand-in is gone.
+  (`orderDetailResponseSchema`), **no polling** (Phase 8 removed `ORDER_REFRESH_INTERVAL_MS`).
+  `syncOrderSnapshot` copies the server state into `useOrderStore` (`applyOrderView`); terminal states
+  erase the OTP. REST and socket updates both go through it.
+- **Live updates (Phase 8):** `useOrderRealtime(orderId, enabled)`
+  (`src/features/order/useOrderRealtime.ts`), mounted by the screen while the order is not terminal:
+  - opens `createOrdersSocket()` (§9.3 token lifecycle) and on **every** `connect` emits
+    `orders:subscribe { order_id }` with a 10 s ack; a timed-out or `INTERNAL_SERVER_ERROR` ack is
+    retried on the backoff schedule while connected, `ORDER_NOT_FOUND`/`VALIDATION_FAILED` never;
+  - after each successful join it **invalidates the order query once** (catch-up for anything sent
+    while offline or before the join);
+  - each `order:state_update` is validated (`orderStateUpdateSchema`), must match the order id and must
+    not be older (`changed_at`) than the last applied one; `applyOrderStateUpdate` then patches the
+    cached `OrderSnapshotView` with `queryClient.setQueryData` (no HTTP round trip) and runs
+    `syncOrderSnapshot`. Without a cached snapshot it invalidates instead;
+  - a terminal state disables the hook, which `close()`s the socket.
 - **Cancellation window (UX only):** `CANCELLATION_WINDOW_MS = 60_000` from the persisted **device**
   `placedAt`, clamped to [0, 60 s], with a live countdown and a "Cancel Order" button. When it closes,
   a still-PLACED order is **displayed** as PREPARING (`displayedOrderState`). This timer is purely for
@@ -752,9 +983,14 @@ is_published: false }` after 400 ms. Nothing reaches the `reviews` table.
 
 ### 9.10 Dispute chat + privacy-filtered Socket.io scaffold
 
-- **Socket client** (`src/services/socket.ts`): `createChatSocket()` → `io(\`${API_URL}/chat\`, …)`with`transports: ['websocket']`, `autoConnect: false`, infinite reconnection, **backoff 1 s → 2 s →
-4 s → 8 s → 16 s → 30 s cap** (`randomizationFactor: 0`), `auth`callback sending`{ token }` at every
-(re)connect. **`HEARTBEAT_INTERVAL_MS = 25_000`must be the server's`pingInterval`.**
+- **Socket client** (`src/services/socket.ts`): `createChatSocket()` returns `{ socket, close }` from
+  `createAuthenticatedSocket(API_URL + "/chat")`: `transports: ['websocket']`, `autoConnect: false`,
+  infinite reconnection, **backoff 1 s → 2 s → 4 s → 8 s → 16 s → 30 s cap** (`randomizationFactor: 0`),
+  and since Phase 8 the **same token lifecycle as `/orders`** (§9.3: refresh on relaunch, renew and
+  reconnect after `UNAUTHENTICATED`, no loop). `useDisputeChat` calls `close()` on unmount.
+  **`HEARTBEAT_INTERVAL_MS` (= shared `SOCKET_PING_INTERVAL_MS`, 25 s) must be the server's
+  `pingInterval`.** The future `/chat` server must refuse bad tokens with `UNAUTHENTICATED` (the
+  `/orders` convention), or the client cannot tell a token problem from a network one.
 - **Typed events:** client → server `chat:join { order_id }` (re-sent on reconnect); both directions
   `chat:new_message (ChatMessage, ack)`, ack expected within 10 s, else "Not sent. Tap to retry.".
 - **Wire contract and privacy filter** (`src/features/dispute/chat-contract.ts`): `ChatMessage = { id,
@@ -773,7 +1009,7 @@ content_type image/* }], sent_at ISO }`; `ChatUser = { id, first_name|null, role
 
 ### 9.12 Mobile test infrastructure
 
-- 482 Jest tests (jest-expo + React Native Testing Library 13 + react-test-renderer 19.2.3).
+- 502 Jest tests (jest-expo + React Native Testing Library 13 + react-test-renderer 19.2.3).
 - **msw 2** intercepts `fetch` for every API-backed test (`src/test/msw.ts`,
   `setupApiTestEnvironment()`: listens with `onUnhandledRequest: 'error'`, sets the test access
   token and saves `THAMEL_ADDRESS` before each test). Screen tests (feed, menu, order tracking) go
@@ -816,18 +1052,20 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 
 ## 11. Backlog (suggested order)
 
-1. **First live end-to-end run** on a development build against the local API (§3): feed → menu →
-   checkout (COD, then eSewa and Khalti sandboxes) → tracking → cancel. Confirm eSewa's real success
+1. **NEXT PRIORITY: first live end-to-end run** on a development build against the local API (§3),
+   with the worker running (`pnpm --filter @hamro-pasal/worker dev`) so `/orders` updates flow: feed →
+   menu → checkout (COD, then eSewa and Khalti sandboxes) → tracking (live) → cancel. Confirm eSewa's real success
    redirect matches `rawQueryParam` (§13).
 2. **Session hardening:** refresh-token rotation (a new refresh token per refresh, old `jti` burned)
    with a Redis/Postgres denylist, `POST /api/auth/logout` revoking the `jti`, and per-IP rate
    limiting on `/api/auth/*` (only the per-phone cooldown exists).
 3. **Order lifecycle** (vendor accept → PREPARING, dispatch, OUT_FOR_DELIVERY, arrival, delivery-OTP
    verification → DELIVERED + `delivered_at` + settlement) with BullMQ timers (90 s acceptance/IVR,
-   8 min ghost customer) and **Socket.io `/orders`** (`order:state_update`) with
-   `@socket.io/redis-adapter`, `pingInterval: 25000`; then drop the 30 s order refresh.
-4. **Cancellation follow-ups:** emit a general cancellation event (the vendor currently learns nothing
-   about a canceled COD order); decide how the 60 s window interacts with a vendor accepting within it.
+   8 min ghost customer). Each transition calls `enqueueOrderStateChanged` in its transaction and is
+   then streamed to the app by `/orders` with no further socket work (§8B); vendor/driver access to
+   `/orders` rooms needs the role and ownership checks widened.
+4. **Cancellation follow-ups:** tell the vendor about cancellations (`order.state_changed` now exists
+   for every cancel, but nothing delivers it to a vendor); decide how the 60 s window interacts with a vendor accepting within it.
 5. **Refunds:** a worker consumer for `order.canceled_refund_due` (eSewa/Khalti refund APIs + a ledger
    journal out of SYSTEM_ESCROW), and the same for `PAID_AFTER_SESSION_EXPIRED` (which should also set
    `refund_required`). The app already tells the customer "Escrow refund initiated".
@@ -837,7 +1075,8 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 8. **Saved addresses** (`customer_addresses` CRUD) if the app should sync addresses across devices,
    and a profile screen to add the customer's name (`first_name` is null after OTP sign-up).
 9. **Reviews** (double-blind publish rule; SPEC verification test 4) and **disputes** + **Socket.io
-   `/chat`**: authenticate the handshake `auth.token`, handle `chat:join { order_id }` (owner, vendor
+   `/chat`**: authenticate the handshake `auth.token` exactly like `/orders` (refuse with
+   `UNAUTHENTICATED`, which the client's shared token lifecycle already handles), handle `chat:join { order_id }` (owner, vendor
    or admin only), ack `chat:new_message`, broadcast **with `last_name` and `phone_number` stripped**
    (client contract: `src/features/dispute/chat-contract.ts`), reject messages after the 48 h window.
 10. **Evidence upload:** presigned R2 PUT URLs (image types, size limit).
@@ -898,6 +1137,21 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
   - A stored refresh token counts as signed in (`selectHasSession`), so the Cart and Profile do not
     flash "signed out" after a relaunch.
 
+- **Phase 8:**
+  - The socket event is SPEC's `order:state_update` (the Phase 8 prompt said `order_updated`; SPEC
+    wins per CLAUDE.md). Its payload is the slim `orderStateUpdateSchema`, patched into the cached
+    snapshot, not a full `OrderSnapshot`.
+  - One generic event, `order.state_changed` on `order.lifecycle`, for every transition (creation
+    included), alongside the existing specific events.
+  - Fan-out runs in the worker (Kafka consumer + `@socket.io/redis-emitter`), not in the API; the API
+    only serves sockets. Both share `SOCKET_IO_REDIS_KEY`.
+  - WebSocket-only transport on server and client (no sticky sessions needed).
+  - Only CUSTOMERs may connect to `/orders` for now, mirroring the REST routes.
+  - Room membership is checked once, at subscribe; the token only at the handshake.
+  - The client refetches once after every successful subscribe instead of polling.
+  - `/chat` got the same client token lifecycle now (`createAuthenticatedSocket`), before its server
+    exists.
+
 ## 13. Known gaps and risks
 
 - **No live end-to-end run** of the app against the API, and no live eSewa/Khalti sandbox session.
@@ -907,15 +1161,25 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 - **Refunds are flagged, never paid:** `refund_required` + `order.canceled_refund_due` have no
   consumer, yet the app tells the customer "Escrow refund initiated"; `PAID_AFTER_SESSION_EXPIRED`
   orders are not even flagged.
-- **Canceled COD orders emit no event**; nothing tells the vendor.
+- **Nobody tells the vendor about a canceled COD order:** it now emits `order.state_changed`, but
+  there is no vendor app, push notification or consumer acting on it for the vendor.
 - **Checkout accepts an address outside the vendor's delivery area.**
 - The device-side 60 s countdown starts when the device sees PLACED, the server's at `placed_at`;
   a device that learns of the placement late shows more time than the server allows. **Accepted by
   design** (§12): the server answers 422 and the app shows the "window has ended" toast.
+- **`/chat` token refresh is client-only and unproven:** the app's `/chat` socket now renews its
+  token like `/orders` (§9.3), but there is no `/chat` server, so it has never run against a real
+  handshake. The server must reject bad tokens with `UNAUTHENTICATED` for the renewal to trigger.
+- **Socket tokens are checked only at the handshake:** a `/orders` connection stays open after its
+  15-min access token expires, until the next reconnect (then the client renews). Disconnecting at
+  `exp` would close this.
+- **No live run of the fan-out:** API and worker were each tested against real Redis/Kafka, and the
+  API was started once to check the handshake, but a device has never received `order:state_update`.
+  The worker must be running or no update is broadcast (the app still catches up on reconnect).
 - **Refresh tokens cannot be revoked.** Sign-out only deletes the device copy; a stolen refresh token
-  keeps minting access tokens for up to 7 days. Rotation + denylist is backlog item 2.
+  keeps minting access tokens for up to 7 days. Rotation + denylist is backlog item 3.
 - **Rate limiting is per phone only**: one IP can request codes for many numbers (SMS cost) and try
-  codes across many numbers. Per-IP limits are backlog item 2.
+  codes across many numbers. Per-IP limits are backlog item 3.
 - **`.env` uses Sparrow**: local sign-ins send real SMS unless `SMS_PROVIDER=MOCK`.
 - A vendor or driver signing in on the customer app gets a token for their real role and sees 403s.
 - The `__DEV__` token paste has no refresh token, so it lapses after 15 min (then the Feed shows its

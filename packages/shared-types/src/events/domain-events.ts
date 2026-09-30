@@ -4,7 +4,9 @@ import {
   fulfillmentModeSchema,
   ledgerAccountTypeSchema,
   ledgerTransactionKindSchema,
+  orderStateSchema,
   paymentMethodSchema,
+  paymentStatusSchema,
 } from '../domain/enums';
 
 /** Kafka topics provisioned by infra/kafka/create-topics.sh. Keep the two lists in sync. */
@@ -60,6 +62,26 @@ export const orderCanceledRefundDuePayloadSchema = z.strictObject({
   canceled_at: z.iso.datetime(),
 });
 
+/**
+ * Any change of `orders.state`, written in the same transaction as the change. Every code path that
+ * mutates the state emits it (creation, placement, cancellation of COD and prepaid orders, failure),
+ * so the /orders Socket.io namespace can fan it out (customer journey 9).
+ */
+export const orderStateChangedPayloadSchema = z.strictObject({
+  order_id: z.uuid(),
+  customer_id: z.uuid(),
+  vendor_id: z.uuid(),
+  /** null when the order was just created. */
+  from_state: orderStateSchema.nullable(),
+  to_state: orderStateSchema,
+  payment_status: paymentStatusSchema,
+  refund_required: z.boolean(),
+  placed_at: z.iso.datetime().nullable(),
+  delivered_at: z.iso.datetime().nullable(),
+  /** The order row's updated_at after the change (database clock). */
+  changed_at: z.iso.datetime(),
+});
+
 /** A balanced journal transaction was posted. One posting per affected account line. */
 export const ledgerMutatedPayloadSchema = z.strictObject({
   transaction_id: z.uuid(),
@@ -102,17 +124,23 @@ export const orderCanceledRefundDueEventSchema = envelope(
   'order.canceled_refund_due',
   orderCanceledRefundDuePayloadSchema,
 );
+export const orderStateChangedEventSchema = envelope(
+  'order.state_changed',
+  orderStateChangedPayloadSchema,
+);
 export const ledgerMutatedEventSchema = envelope('ledger.mutated', ledgerMutatedPayloadSchema);
 
 export const domainEventSchema = z.discriminatedUnion('event_type', [
   orderLockedEventSchema,
   orderPlacedEventSchema,
   orderCanceledRefundDueEventSchema,
+  orderStateChangedEventSchema,
   ledgerMutatedEventSchema,
 ]);
 
 export type OrderLockedEvent = z.infer<typeof orderLockedEventSchema>;
 export type OrderPlacedEvent = z.infer<typeof orderPlacedEventSchema>;
+export type OrderStateChangedEvent = z.infer<typeof orderStateChangedEventSchema>;
 export type OrderCanceledRefundDueEvent = z.infer<typeof orderCanceledRefundDueEventSchema>;
 export type LedgerMutatedEvent = z.infer<typeof ledgerMutatedEventSchema>;
 export type DomainEvent = z.infer<typeof domainEventSchema>;
@@ -126,5 +154,6 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'order.locked': KAFKA_TOPICS.ORDER_LIFECYCLE,
   'order.placed': KAFKA_TOPICS.ORDER_LIFECYCLE,
   'order.canceled_refund_due': KAFKA_TOPICS.PAYMENT_RECONCILIATION,
+  'order.state_changed': KAFKA_TOPICS.ORDER_LIFECYCLE,
   'ledger.mutated': KAFKA_TOPICS.LEDGER_MUTATIONS,
 };

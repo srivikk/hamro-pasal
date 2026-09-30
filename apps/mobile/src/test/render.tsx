@@ -23,8 +23,7 @@ const TEST_SAFE_AREA: Metrics = {
   insets: { top: 47, left: 0, right: 0, bottom: 34 },
 };
 
-function providers(locale: AppLocale) {
-  const queryClient = createTestQueryClient();
+function providers(locale: AppLocale, queryClient: QueryClient = createTestQueryClient()) {
   const i18n = createI18n(locale);
   return function Providers({ children }: { children: ReactNode }) {
     return (
@@ -37,12 +36,15 @@ function providers(locale: AppLocale) {
   };
 }
 
-/** Renders with the same providers as app/_layout.tsx: a fresh QueryClient and i18n. */
+/**
+ * Renders with the same providers as app/_layout.tsx: a fresh QueryClient (or the given one, so a
+ * test can inspect the cache) and i18n.
+ */
 export function renderWithProviders(
   ui: ReactElement,
-  { locale = 'en' }: { locale?: AppLocale } = {},
+  { locale = 'en', queryClient }: { locale?: AppLocale; queryClient?: QueryClient } = {},
 ) {
-  return render(ui, { wrapper: providers(locale) });
+  return render(ui, { wrapper: providers(locale, queryClient) });
 }
 
 export function renderHookWithProviders<Result>(

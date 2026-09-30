@@ -91,7 +91,7 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
   }, [self.id]);
 
   useEffect(() => {
-    const socket = createChatSocket(socketFactory);
+    const { socket, close } = createChatSocket(socketFactory);
     socketRef.current = socket;
 
     const onConnect = (): void => {
@@ -117,7 +117,7 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off(CHAT_EVENTS.newMessage, onMessage);
-      socket.disconnect();
+      close();
       socketRef.current = null;
     };
   }, [orderId, socketFactory]);

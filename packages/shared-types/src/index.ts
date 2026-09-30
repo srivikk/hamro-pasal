@@ -9,5 +9,6 @@ export * from './localization/nepal-geography';
 export * from './localization/numerals';
 export * from './localization/phone';
 export * from './nepal/geo';
+export * from './realtime/orders-socket';
 export * from './api/requests';
 export * from './api/responses';

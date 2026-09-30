@@ -10,8 +10,15 @@ import { useDeliveryOtpStore } from '../../store/useDeliveryOtpStore';
 import { useOrderStore } from '../../store/useOrderStore';
 import { useToastStore } from '../../store/useToastStore';
 import { cancelResponse, errorBody, ORDER_ID, orderDetailResponse } from '../../test/api-fixtures';
+import { FakeSocket } from '../../test/fake-socket';
 import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
+
+// The screen opens a Socket.io /orders connection; real-time behaviour is in OrderRealtime.test.tsx.
+let mockSocket = new FakeSocket();
+jest.mock('socket.io-client', () => ({
+  io: (url: string, options: { auth?: unknown }) => mockSocket.created(url, options),
+}));
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: '0b7e9c1a-2f4d-4c8e-9a6b-1d2e3f4a5b6c' }),
@@ -88,6 +95,7 @@ const cancelButton = () => screen.queryByRole('button', { name: 'Cancel Order' }
 const stepLabel = (label: string) => screen.getByLabelText(label);
 
 beforeEach(() => {
+  mockSocket = new FakeSocket();
   jest.useFakeTimers({ now: NOW });
   useAuthStore.getState().setLocale('en');
   useOrderStore.setState({ orders: {} });

@@ -6,6 +6,7 @@ import type { CheckoutService } from '../checkout/checkout-service';
 import { InsufficientStockError, ReservationExpiredError } from '../inventory/errors';
 import { toPaisa } from '../ledger/money';
 import type { SettlementService } from '../ledger/settlement-service';
+import { enqueueOrderStateChanged } from '../orders/order-events';
 import type { Gateway } from './gateway-http';
 
 /** SPEC: the gateway amount must match the DB snapshot within +/-0.01 NPR (1 paisa). */
@@ -132,10 +133,17 @@ export class PaymentConfirmationService {
         throw error;
       }
       // Paid, but the lock expired or stock no longer covers it: the order cannot be placed.
-      await this.db
-        .update(orders)
-        .set({ state: 'FAILED' })
-        .where(and(eq(orders.id, order.id), eq(orders.state, 'PENDING_PAYMENT')));
+      await this.db.transaction(async (tx) => {
+        const [failed] = await tx
+          .update(orders)
+          .set({ state: 'FAILED' })
+          .where(and(eq(orders.id, order.id), eq(orders.state, 'PENDING_PAYMENT')))
+          .returning();
+        // No row: a concurrent confirmation already moved it (and announced that change).
+        if (failed !== undefined) {
+          await enqueueOrderStateChanged(tx, 'PENDING_PAYMENT', failed);
+        }
+      });
       throw new PaidAfterLockExpiredError(order.id);
     }
   }

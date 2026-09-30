@@ -14,6 +14,7 @@ import {
 } from '../../../src/features/order/order-hooks';
 import { isTerminalOrderState } from '../../../src/features/order/order-tracker';
 import { OrderTracker } from '../../../src/features/order/OrderTracker';
+import { useOrderRealtime } from '../../../src/features/order/useOrderRealtime';
 import { useBeforeDeadline } from '../../../src/lib/useBeforeDeadline';
 import { useAuthStore } from '../../../src/store/useAuthStore';
 import { useDeliveryOtpStore } from '../../../src/store/useDeliveryOtpStore';
@@ -32,6 +33,8 @@ export default function OrderTrackingScreen() {
   const order = useOrderStore((state) => state.orders[id]);
   const otp = useDeliveryOtpStore((state) => state.otps[id] ?? null);
   const query = useOrderQuery(id);
+  // Real-time state over Socket.io /orders until the order is finished (no polling).
+  useOrderRealtime(id, order === undefined || !isTerminalOrderState(order.state));
   const cancel = useCancelOrder();
   const remainingMs = useCancellationCountdown(order?.placedAt ?? null);
   // SPEC journey step 11: disputes may be opened for 48 h after delivery.

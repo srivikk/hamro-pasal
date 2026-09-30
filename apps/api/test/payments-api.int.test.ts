@@ -141,7 +141,13 @@ describe('payments API', () => {
       expect((await escrow()) - escrowBefore).toBeCloseTo(1050, 2);
       expect(await stockOf(db(), productId)).toBe(3);
       const events = (await outboxFor(db(), orderId)).map((e) => e.event_type).sort();
-      expect(events).toEqual(['ledger.mutated', 'order.placed']);
+      // order.state_changed twice: creation (PENDING_PAYMENT) and placement (PLACED).
+      expect(events).toEqual([
+        'ledger.mutated',
+        'order.placed',
+        'order.state_changed',
+        'order.state_changed',
+      ]);
     });
 
     it('credits exactly once under duplicate and concurrent callbacks (SELECT ... FOR UPDATE)', async () => {

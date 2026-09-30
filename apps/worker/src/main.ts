@@ -1,9 +1,10 @@
 import { createDatabase } from '@hamro-pasal/db';
 import { createIdempotentProducer, createKafka, DomainEventPublisher } from '@hamro-pasal/kafka';
 import { Worker } from 'bullmq';
+import { Redis } from 'ioredis';
 
 import { loadEnv } from './config/env';
-import { consumers } from './consumers';
+import { buildConsumers } from './consumers';
 import { buildBullConnection } from './infra/redis';
 import { Lifecycle } from './lifecycle';
 import { OutboxRelay } from './outbox/outbox-relay';
@@ -45,7 +46,12 @@ async function main(): Promise<void> {
     lifecycle.register(() => queue.close());
   }
 
-  // Kafka consumers
+  // Kafka consumers (order state fan-out to the API's Socket.io rooms through Redis)
+  const redis = new Redis(env.REDIS_URL);
+  lifecycle.register(async () => {
+    await redis.quit();
+  });
+  const consumers = buildConsumers({ redis });
   if (consumers.length > 0) {
     const handlers = new Map(consumers.map((c) => [c.topic, c.handle]));
     const consumer = kafka.consumer({ kafkaJS: { groupId: env.KAFKA_CONSUMER_GROUP_ID } });

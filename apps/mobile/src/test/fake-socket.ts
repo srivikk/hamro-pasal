@@ -12,10 +12,31 @@ interface Emitted {
  * In-memory stand-in for a Socket.io client socket: records what the app emits and lets a test
  * play the server (connect, disconnect, push events, acknowledge or time out emits).
  */
+type AuthCallback = (callback: (data: object) => void) => void;
+
 export class FakeSocket {
   readonly emitted: Emitted[] = [];
   connected = false;
+  /** The URL the app asked the factory for (set by `created`). */
+  url: string | null = null;
+  /** Every handshake `auth` payload the app sent, in order. */
+  readonly handshakes: unknown[] = [];
+  /** Server side: which handshake tokens are accepted (refused ones get UNAUTHENTICATED). */
+  acceptToken: (token: unknown) => boolean = () => true;
+  /** How many times the app called `connect()`. */
+  connectCalls = 0;
+  private auth: AuthCallback | null = null;
   private readonly handlers = new Map<string, Set<Handler>>();
+
+  /**
+   * Records what a socket factory was called with. With an `auth` callback, `connect()` performs
+   * the handshake like Socket.io: it calls `auth`, then accepts or refuses the token it receives.
+   */
+  created(url: string, options: { auth?: unknown }): this {
+    this.url = url;
+    if (typeof options.auth === 'function') this.auth = options.auth as AuthCallback;
+    return this;
+  }
 
   on(event: string, handler: Handler): this {
     const set = this.handlers.get(event) ?? new Set<Handler>();
@@ -30,8 +51,27 @@ export class FakeSocket {
   }
 
   connect(): this {
-    this.connected = true;
-    this.fire('connect');
+    this.connectCalls += 1;
+    if (this.auth === null) {
+      this.connected = true;
+      this.fire('connect');
+      return this;
+    }
+    this.auth((data) => {
+      this.handshakes.push(data);
+      const token: unknown = Reflect.get(data, 'token');
+      act(() => {
+        if (this.acceptToken(token)) {
+          this.connected = true;
+          this.fire('connect');
+        } else {
+          const error = Object.assign(new Error('UNAUTHENTICATED'), {
+            data: { code: 'UNAUTHENTICATED', message: 'Invalid or expired access token' },
+          });
+          this.fire('connect_error', error);
+        }
+      });
+    });
     return this;
   }
 
@@ -79,6 +119,14 @@ export class FakeSocket {
     const last = [...this.emitted].reverse().find((entry) => entry.event === event);
     act(() => {
       last?.ack?.(error, error === null ? { ok: true } : undefined);
+    });
+  }
+
+  /** Answer the most recent emit of `event` with `response` (or fail it with `error`). */
+  answerLast(event: string, response: unknown, error: Error | null = null): void {
+    const last = [...this.emitted].reverse().find((entry) => entry.event === event);
+    act(() => {
+      last?.ack?.(error, response);
     });
   }
 

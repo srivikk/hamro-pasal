@@ -24,6 +24,7 @@ import {
   ReservationExpiredError,
 } from '../inventory/errors';
 import { toNpr } from '../ledger/money';
+import { enqueueOrderStateChanged } from '../orders/order-events';
 import { generateDeliveryOtp, hashDeliveryOtp } from './delivery-otp';
 import { CheckoutRejectedError, priceCart } from './pricing';
 import type {
@@ -179,6 +180,7 @@ export class CheckoutService {
         if (created === undefined) {
           throw new Error('Order insert returned no row');
         }
+        await enqueueOrderStateChanged(tx, null, created);
         await tx.insert(orderItems).values(
           priced.lines.map((line) => ({
             order_id: created.id,
@@ -413,6 +415,7 @@ export class CheckoutService {
       if (updated === undefined) {
         throw new OrderNotPlaceableError(order.id, 'disappeared during placement');
       }
+      await enqueueOrderStateChanged(tx, order.state, updated);
 
       const event = await enqueueDomainEvent(tx, {
         type: 'order.placed',

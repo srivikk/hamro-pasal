@@ -1,9 +1,10 @@
 import { io } from 'socket.io-client';
 
 import { useAuthStore } from '../store/useAuthStore';
+import { FakeSocket } from '../test/fake-socket';
 import {
   CHAT_NAMESPACE,
-  chatSocketOptions,
+  authenticatedSocketOptions,
   createChatSocket,
   HEARTBEAT_INTERVAL_MS,
   reconnectDelayMs,
@@ -18,7 +19,9 @@ describe('chat socket configuration', () => {
   });
 
   it('targets the /chat namespace of the API with the reconnection policy', () => {
-    const factory = jest.fn<ReturnType<SocketFactory>, Parameters<SocketFactory>>();
+    const factory = jest.fn<ReturnType<SocketFactory>, Parameters<SocketFactory>>(
+      () => new FakeSocket() as unknown as ReturnType<SocketFactory>,
+    );
 
     createChatSocket(factory);
 
@@ -38,7 +41,7 @@ describe('chat socket configuration', () => {
   });
 
   it('configures the real Socket.io manager with that exact schedule', () => {
-    const socket = io('http://api.hamropasal.test/chat', chatSocketOptions());
+    const socket = io('http://api.hamropasal.test/chat', authenticatedSocketOptions());
 
     expect(socket.io.reconnection()).toBe(true);
     expect(socket.io.reconnectionDelay()).toBe(1000);
@@ -53,16 +56,19 @@ describe('chat socket configuration', () => {
     expect(HEARTBEAT_INTERVAL_MS).toBe(25_000);
   });
 
-  it('authenticates with the access token current at each (re)connect', () => {
-    const { auth } = chatSocketOptions();
+  it('authenticates with the access token current at each (re)connect', async () => {
+    const { auth } = authenticatedSocketOptions();
     if (typeof auth !== 'function') throw new Error('auth must be a callback');
-    const received: unknown[] = [];
+    const handshake = () =>
+      new Promise<object | undefined>((resolve) => {
+        auth(resolve);
+      });
 
     useAuthStore.getState().setAccessToken('first.token');
-    auth((data) => received.push(data));
+    const first = await handshake();
     useAuthStore.getState().setAccessToken('refreshed.token');
-    auth((data) => received.push(data));
+    const second = await handshake();
 
-    expect(received).toEqual([{ token: 'first.token' }, { token: 'refreshed.token' }]);
+    expect([first, second]).toEqual([{ token: 'first.token' }, { token: 'refreshed.token' }]);
   });
 });

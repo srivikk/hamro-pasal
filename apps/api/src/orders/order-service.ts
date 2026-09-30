@@ -18,6 +18,7 @@ import { OrderNotFoundError } from '../checkout/checkout-service';
 import type { InventoryLockService } from '../inventory/inventory-lock-service';
 import { toNpr } from '../ledger/money';
 import { orderTotalPaisa } from '../payments/payment-confirmation';
+import { enqueueOrderStateChanged } from './order-events';
 
 /** Customer journey 8: the 60 s window, measured on the database clock, has closed. */
 export class CancellationWindowExpiredError extends Error {
@@ -76,6 +77,15 @@ export class OrderService {
       this.db.select().from(orderAddresses).where(eq(orderAddresses.order_id, orderId)),
     ]);
     return { order, items, address: address ?? null };
+  }
+
+  /** Whether the order exists and belongs to the customer (the GET /api/orders/:id rule). */
+  async isCustomerOrder(customerId: string, orderId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(eq(orders.id, orderId), eq(orders.customer_id, customerId)));
+    return row !== undefined;
   }
 
   /**
@@ -138,6 +148,8 @@ export class OrderService {
       if (canceled === undefined) {
         throw new Error(`Order ${orderId} disappeared during cancellation`);
       }
+      // Every cancellation, COD included, is announced (the refund event below is extra).
+      await enqueueOrderStateChanged(tx, order.state, canceled);
 
       if (refundRequired) {
         if (canceled.payment_method === 'COD' || canceled.payment_gateway_ref === null) {

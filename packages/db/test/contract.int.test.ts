@@ -263,6 +263,19 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
     });
   });
 
+  it('allows a customer without a name (OTP sign-up), but never a blank one', async () => {
+    const phoneOnly = one(
+      await db.insert(users).values({ phone: uniqueNepalPhone(), role: 'CUSTOMER' }).returning(),
+    );
+
+    expect(userSchema.parse(phoneOnly).first_name).toBeNull();
+    await expect(
+      db.insert(users).values({ phone: uniqueNepalPhone(), role: 'CUSTOMER', first_name: '  ' }),
+    ).rejects.toMatchObject({
+      cause: expect.objectContaining({ constraint: 'users_first_name_check' }) as unknown,
+    });
+  });
+
   it('bumps updated_at on update', async () => {
     const user = one(
       await db

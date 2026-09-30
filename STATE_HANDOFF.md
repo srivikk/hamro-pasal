@@ -1,18 +1,20 @@
-# Hamro Pasal: State Handoff (Phases 0–6.5 complete)
+# Hamro Pasal: State Handoff (Phases 0–7.5 complete)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 6.5 (Mobile Client E2E
-Live-Link)**, on top of Phase 6 (Backend Gap-Closing). When this file and the code disagree,
-**the code wins**. When anything disagrees with `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
+work without re-deriving it. It describes the tree at the end of **Phase 7.5 (Token Refresh Flow &
+Auth Polish)**, on top of Phase 7 (OTP Authentication), 6.5 (Mobile Live-Link) and 6 (Backend
+Gap-Closing). When this file and the code disagree, **the code wins**. When anything disagrees with
+`SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
 
 > **Status in one paragraph.** The customer path is now linked end to end in code: the mobile app
 > reads the PostGIS vendor feed, vendor menus and order detail from the Express API, sends the
 > saved Nepal delivery address with checkout, and cancels through the server. **The feed, menu and
 > cancel mocks are deleted.** Every call is validated against the shared-types Zod contracts, and
 > both sides are covered by tests (API integration tests on real Postgres/Redis; mobile tests over
-> msw). **No live device run has happened yet** (§13). Still not built: OTP login (the app uses a
-> `__DEV__` token), the order lifecycle after PLACED, reviews, disputes, Socket.io and refund
-> payouts.
+> msw). **Customers sign in with a +977 OTP** (6 digits, Redis, 2 min) and get a 15-min access
+> token plus a 7-day refresh token; the app renews the access token transparently (§8A, §9.3).
+> **No live device run has happened yet** (§13). Still not built: the order lifecycle after PLACED,
+> reviews, disputes, Socket.io, refund payouts, and refresh-token rotation/revocation.
 
 ---
 
@@ -33,24 +35,26 @@ Live-Link)**, on top of Phase 6 (Backend Gap-Closing). When this file and the co
 - The project verifies important behaviour with **mutation checks**: break the rule on purpose,
   confirm a test fails, restore. Phase 6 did this for the 1.1× radius buffer, the 60 s window, the
   `placed_at` anchor and the address-aware idempotency fingerprint; Phase 6.5 for the address-based
-  feed location, the `CANCELLATION_WINDOW_EXPIRED` mapping and the refund toast. **A test must not
+  feed location, the `CANCELLATION_WINDOW_EXPIRED` mapping and the refund toast; Phase 7 for the
+  OTP TTL, single use, session storage, post-sign-in refetch and return navigation; Phase 7.5 for
+  the refresh single flight, the relaunch refresh and the no-revival guard. **A test must not
   build its expectation from the constant it is guarding** (the 422 screen test uses the literal
   server code for this reason).
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                            |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · Phase 6.5 (the commit that adds this file) |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                    |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                           |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                      |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                     |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                               |
-| Unit tests      | **611 passing** (`pnpm test`): shared-types 82, api 67, worker 9, kafka 7, db 7, mobile 439 (Phase 6.5 deleted the mock tests and added msw-based ones)                                                                                                                                                                                          |
-| Integ. tests    | **137 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 46, api 80, worker 10, kafka 1. Re-run at the end of Phase 6.5 (the backend did not change)                                                                                                                                                                                 |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 6.5                                                                                                                                                                                           |
-| Dev database    | Migrations 0000–0009 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                             |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · Phases 7 + 7.5 (the commit that adds this file) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                          |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                 |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                            |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                           |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                     |
+| Unit tests      | **669 passing** (`pnpm test`): shared-types 89, api 75, worker 9, kafka 7, db 7, mobile 482                                                                                                                                                                                                                                                                            |
+| Integ. tests    | **155 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 97, worker 10, kafka 1. Run at the end of Phase 7.5                                                                                                                                                                                                                                       |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 7.5                                                                                                                                                                                                                 |
+| Dev database    | Migrations 0000–0010 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                   |
 
 ### Root commands (`package.json`)
 
@@ -83,27 +87,36 @@ packages/shared-types/src          @hamro-pasal/shared-types (zod only, safe for
   api/requests.ts                  checkoutRequestSchema (delivery_address REQUIRED), vendorFeedQuerySchema,
                                    vendorMenuQuerySchema, idParamSchema, lockStatusQuerySchema,
                                    paymentInitiateRequestSchema, esewaWebhookRequestSchema, khaltiLookupRequestSchema,
+                                   otpSendRequestSchema, otpVerifyRequestSchema, tokenRefreshRequestSchema,
                                    MAX_CART_LINES=50, MAX_LINE_QUANTITY=99
   api/responses.ts                 errorBodySchema, orderViewSchema, lockViewSchema, paymentViewSchema,
                                    checkoutResponseSchema, lockStatusResponseSchema, esewa/khalti initiate schemas,
                                    paymentStatusResponseSchema, feedVendorSchema, feedEntrySchema, feedResponseSchema,
                                    menuProductSchema, vendorMenuSchema, orderAddressViewSchema, orderItemViewSchema,
-                                   orderSnapshotSchema, orderDetailResponseSchema, cancelOrderResponseSchema
+                                   orderSnapshotSchema, orderDetailResponseSchema, cancelOrderResponseSchema,
+                                   otpSendResponseSchema, authUserSchema, authTokensResponseSchema,
+                                   tokenRefreshResponseSchema
   domain/{enums,entities,constants}.ts   strict row schemas (users, vendors, products, orders, order_addresses, ...)
-                                   constants incl. DELIVERY_RADIUS_GPS_DRIFT_MULTIPLIER=1.1, ORDER_CANCELLATION_WINDOW_SECONDS=60
-  env/server-env.ts                serverEnvSchema, parseServerEnv (empty optional vars are treated as unset), kafka env
+                                   constants incl. DELIVERY_RADIUS_GPS_DRIFT_MULTIPLIER=1.1, ORDER_CANCELLATION_WINDOW_SECONDS=60,
+                                   OTP_CODE_LENGTH=6, OTP_TTL_SECONDS=120, OTP_RESEND_COOLDOWN_SECONDS=60,
+                                   OTP_MAX_VERIFY_ATTEMPTS=5, ACCESS_TOKEN_TTL_SECONDS=900, REFRESH_TOKEN_TTL_SECONDS=604800
+  env/server-env.ts                serverEnvSchema, parseServerEnv (empty optional vars are treated as unset), kafka env;
+                                   SMS_PROVIDER ∈ SPARROW | AAKASH | FIREBASE | MOCK (MOCK refused in production)
   events/domain-events.ts          Kafka topics + typed event envelopes
   jobs/queues.ts                   BullMQ queue names, delays, payload schemas
-  localization/{address,nepal-geography,numerals,phone}.ts
+  localization/{address,nepal-geography,numerals,phone}.ts   (numerals: toNepaliNumerals, toAsciiDigits)
   nepal/geo.ts                     NEPAL_BOUNDING_BOX (single source for every coarse Nepal check), isWithinNepalBoundingBox
 packages/db/src                    @hamro-pasal/db: Drizzle schema, client, migrator, outbox writer
   schema/{columns,enums,users,vendors,orders,ledger,outbox,wallet,disputes,contract}.ts
   geo/ewkb.ts · outbox.ts · testing.ts (@hamro-pasal/db/testing) · scripts/{migrate,seed,database-url}.ts
-packages/db/drizzle/               0000–0009 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
+packages/db/drizzle/               0000–0010 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
 packages/kafka/src                 config.ts, producer.ts (DomainEventPublisher), index.ts
 apps/api/src                       Express 5 API
   app.ts (createApp) · container.ts (buildContainer / buildContainerFromEnv) · server.ts
-  auth/access-token.ts             HS256 sign/verify
+  auth/access-token.ts             HS256 access tokens (JWT_ACCESS_SECRET, aud hamro-pasal-app, 900 s)
+  auth/refresh-token.ts            HS256 refresh tokens (JWT_REFRESH_SECRET, aud hamro-pasal-refresh, typ refresh, jti, 7 d)
+  auth/otp-store.ts                OtpStore (Redis keys, keyed digest, atomic Lua check-and-consume), generateOtpCode
+  auth/otp-auth-service.ts         OtpAuthService: sendOtp, verifyOtp (fetch-or-create CUSTOMER), refreshAccessToken
   catalog/catalog-service.ts       CatalogService (PostGIS feed + menus), VendorNotFoundError, FEED_SECTION_LIMIT
   checkout/{checkout-service,pricing,delivery-otp}.ts
   orders/order-service.ts          OrderService (order detail + cancellation), CancellationWindowExpiredError,
@@ -112,10 +125,10 @@ apps/api/src                       Express 5 API
   inventory/{inventory-lock-service,stock-reader,errors}.ts
   ledger/{ledger-service,money,settlement-plan,settlement-service}.ts
   payments/{gateway-http,payable-order,payment-confirmation}.ts · payments/esewa/* · payments/khalti/*
-  routes/{vendors,cart,orders,payments,views}.ts
-  sms/sms-gateway.ts               Sparrow / Aakash / Mock adapters (strict +977). No route uses them yet
+  routes/{auth,vendors,cart,orders,payments,views}.ts
+  sms/sms-gateway.ts               Sparrow / Aakash / Mock adapters (strict +977); container.smsGatewayFromEnv picks one
 apps/api/scripts/mint-dev-token.ts
-apps/api/test/                     *.int.test.ts (cart-api, checkout-claim, inventory-concurrency, ledger-settlement,
+apps/api/test/                     *.int.test.ts (auth-api, cart-api, checkout-claim, inventory-concurrency, ledger-settlement,
                                    mint-dev-token, orders-api, payments-api, vendors-api) + global-setup.ts + support/
 apps/worker/src                    main.ts, lifecycle.ts, outbox/ (OutboxRelay), consumers/ (none registered), queues/, config/, infra/
 ```
@@ -129,16 +142,20 @@ babel.config.js · metro.config.js · tailwind.config.js · global.css · native
 jest.config.js · jest.setup.ts · jest.setup-after-env.ts                                     test infrastructure (§9.12)
 .env                      EXPO_PUBLIC_API_URL only (must be the host's LAN IP, e.g. http://192.168.1.20:4000)
 
-app/_layout.tsx           root: QueryClientProvider > I18nextProvider > Stack + ReplaceCartModal,
+app/_layout.tsx           root: QueryClientProvider > I18nextProvider > SessionExpiryHandler, Stack, ReplaceCartModal,
                           CheckoutSessionWatcher, ReviewPrompt, ToastHost, TerritoryGate (last = topmost)
+app/login.tsx             OTP step 1: +977 number → POST /api/auth/otp/send, then replaces itself with /verify-otp
+app/verify-otp.tsx        OTP step 2: 6-digit code → POST /api/auth/otp/verify, resend countdown, change number
 app/(tabs)/_layout.tsx    Tabs: Shops / Cart (badge = item count) / Profile
-app/(tabs)/index.tsx      feed (GET /api/vendors)   app/(tabs)/cart.tsx      cart, address, checkout, payment
-app/(tabs)/profile.tsx    language + __DEV__ sign-in + __DEV__ territory simulator
+app/(tabs)/index.tsx      feed (GET /api/vendors); sign-in prompt when signed out
+app/(tabs)/cart.tsx       cart, address, checkout, payment; "Sign in to Checkout" when signed out
+app/(tabs)/profile.tsx    account (sign in / sign out) + language + __DEV__ token sign-in + __DEV__ territory simulator
 app/vendor/[id].tsx       vendor menu (GET /api/vendors/:id/products)
 app/order/[id]/index.tsx  order tracking (GET /api/orders/:id), 60 s cancel (POST …/cancel), OTP, dispute button
 app/order/[id]/dispute.tsx  dispute chat (Socket.io /chat scaffold)
 
-src/api/        http.ts (apiRequest, ApiError) · mutations.ts (useCheckout, NO_DELIVERY_ADDRESS) · queries.ts (useLockStatus)
+src/api/        http.ts (apiRequest with token renewal, refreshAccessToken, onSessionExpired, ApiError)
+                auth.ts (sendOtp, verifyOtp, useSendOtp, useVerifyOtp, useSignOut, AUTH_ERROR_CODES) · mutations.ts (useCheckout, NO_DELIVERY_ADDRESS) · queries.ts (useLockStatus)
                 catalog.ts (fetchFeed, fetchVendorMenu, VENDOR_NOT_FOUND) · orders.ts (fetchOrder, cancelOrder,
                 CANCELLATION_WINDOW_EXPIRED) · payments.ts (eSewa/Khalti calls)
                 query-client.ts (createQueryClient, retryTransientFailures)
@@ -147,7 +164,8 @@ src/store/      useAuthStore · useCartStore · useCheckoutStore · useOrderStor
                 useAddressStore · useReviewStore · useToastStore
 src/storage/    app-mmkv.ts (plain) · secure-mmkv.ts (AES-256) · encryption-key.ts · mmkv-state-storage.ts
 src/features/   address/ auth/ cart/ checkout/ dispute/ feed/ location/ menu/ order/ payment/ review/ territory/
-                (location/customer-location.ts: useCustomerLocation, THAMEL_FALLBACK_LOCATION)
+                (location/customer-location.ts: useCustomerLocation, THAMEL_FALLBACK_LOCATION;
+                auth/login-form.ts: toNepalPhone, sanitizeOtpInput, leaveSignIn; auth/useSessionExpiryHandler.ts)
 src/components/ Button, VendorCard, ReplaceCartModal, PaymentWebViewModal, AddressFormModal, ReviewModal, Toast
 src/i18n/       i18n.ts (createI18n, bindLocale, `localizedNumber` formatter) · format-number.ts · locales/{en,ne}.json
 src/config/     api.ts (API_URL, throws at startup if EXPO_PUBLIC_API_URL is missing) · parse-api-url.ts
@@ -164,12 +182,14 @@ src/test/       msw.ts · api-fixtures.ts · render.tsx · in-memory-mmkv.ts · 
 - Topics: `order.lifecycle` (4), `payment.reconciliation` (4), `ledger.mutations` (4),
   `notifications.broadcast` (2). Auto-create is disabled.
 - Root `.env` passes `parseServerEnv`. Never print or commit `.env` values. The API has still not
-  been started live against a device.
+  been started live against a device. **The dev `.env` has `SMS_PROVIDER=SPARROW`**: signing in sends
+  a real, billed SMS. For local work set `SMS_PROVIDER=MOCK`; the API then prints
+  `[sms:mock] to +977…: Hamro Pasal: your login code is 123456…` to its console.
 - **Running the app against the API:** `pnpm infra:up`, `pnpm db:migrate`, `pnpm db:seed`,
-  `pnpm --filter @hamro-pasal/api dev`, then mint a token with
-  `pnpm --filter @hamro-pasal/api token:dev -- --phone 9800000001` (Aarav) and paste it into the
-  Profile tab's `__DEV__` sign-in. **Every screen that reads the API needs that token**; without it
-  the feed shows its load error at once (`NOT_SIGNED_IN` is not retried).
+  `pnpm --filter @hamro-pasal/api dev`, then sign in from the Profile tab (or the Feed/Cart prompts)
+  with a seeded number, e.g. 9800000001 (Aarav), and the code from the API log. An unknown number
+  becomes a new CUSTOMER. The `__DEV__` token paste (`token:dev`) still works for quick checks, but
+  it holds no refresh token, so it lapses after 15 min.
 - **Mobile → API:** `apps/mobile/.env` holds only `EXPO_PUBLIC_API_URL`. A device or emulator cannot
   reach the host's `127.0.0.1`. Expo inlines only `EXPO_PUBLIC_*` values into the bundle.
 - The mobile app needs a **development build** (`npx expo prebuild` + `expo run:android`, or EAS),
@@ -207,6 +227,7 @@ src/test/       msw.ts · api-fixtures.ts · render.tsx · in-memory-mmkv.ts · 
 | `0007_checkout_order_links.sql`            | orders.reservation_id (unique), vendors.fulfillment_mode (backfilled SELF_DELIVERY, default dropped)                                                |
 | `0008_order_addresses_and_refunds.sql`     | **Phase 6.** `order_addresses` table; `orders.refund_required` + `orders_refund_required_paid_check`                                                |
 | `0009_orders_placed_at.sql`                | **Phase 6.** `orders.placed_at`, hand-added backfill (`placed_at = created_at` for already-placed rows), `orders_placed_at_check`                   |
+| `0010_users_first_name_optional.sql`       | **Phase 7.** `users.first_name` nullable (OTP sign-up knows only the phone); `users_first_name_check` still rejects a blank name                    |
 
 **Staging rule:** drizzle-kit prompts interactively on renames, which fails in this non-TTY
 environment. Stage schema edits so a single `generate` only adds or only drops. Hand-write renames
@@ -216,7 +237,8 @@ hand-inserted between the generated statements (0009 does this).
 
 ### Tables and key invariants
 
-- `users(phone UNIQUE CHECK ~ '^\+9779[0-9]{9}$', role, first_name, last_name?)`.
+- `users(phone UNIQUE CHECK ~ '^\+9779[0-9]{9}$', role, first_name?, last_name?)`. `first_name` is null for
+  customers created by OTP sign-up until they add a name (Phase 7); a present name is non-blank.
 - `customer_addresses`: Nepal hierarchy + `exact_lat/exact_lng` (double) + generated `location`
   `ST_SetSRID(ST_MakePoint(exact_lng, exact_lat), 4326)` with GiST. Province 1–7, ward ≥ 1.
   **No route writes it yet** (saved-address CRUD is not built; the app keeps the address locally).
@@ -348,26 +370,30 @@ payment_gateway_ref)` `FOR UPDATE`, capture escrow once, then claim the lock →
 
 Composition root `apps/api/src/container.ts` (`buildContainer`, `buildContainerFromEnv`); app
 `apps/api/src/app.ts#createApp(services?)` (without services only `/health` is mounted). JSON body
-limit 100 kB, `x-powered-by` off. `ApiServices = { accessTokenSecret, catalog, checkout, orders,
-esewa, khalti }`. Routers (all customer routes behind `requireAuth(CUSTOMER)`):
-`/api/vendors` (`routes/vendors.ts`), `/api/cart` (`routes/cart.ts`), `/api/orders`
-(`routes/orders.ts`), `/api/payments` (`routes/payments.ts`, per-route customer auth).
+limit 100 kB, `x-powered-by` off. `ApiServices = { accessTokenSecret, auth, catalog, checkout,
+orders, esewa, khalti }`. Routers: `/api/auth` (`routes/auth.ts`, **public**), and behind
+`requireAuth(CUSTOMER)`: `/api/vendors` (`routes/vendors.ts`), `/api/cart` (`routes/cart.ts`),
+`/api/orders` (`routes/orders.ts`), `/api/payments` (`routes/payments.ts`, per-route customer
+auth). `Infrastructure` now requires an `sms: SmsGateway` (tests inject `MockSmsGateway`).
 
 ### Implemented routes (the complete list)
 
-| Method & path                                              | Auth                          | Request                                                                                                                                          | Success              | Response schema                                                                                                    | Used by mobile                                 |
-| ---------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| `GET /health`                                              | none                          | –                                                                                                                                                | 200 `{status:'ok'}`  | –                                                                                                                  | no                                             |
-| `GET /api/vendors?lat=&lng=[&municipality_palika_string=]` | Bearer CUSTOMER               | `vendorFeedQuerySchema` (coordinates inside `NEPAL_BOUNDING_BOX`)                                                                                | 200                  | `feedResponseSchema {serviceable[], explore_further[]}` of `{vendor: FeedVendor, distance_km, serviceable}`        | `useFeedQuery` (Shops tab)                     |
-| `GET /api/vendors/:id/products?lat=&lng=[&municipality_…]` | Bearer CUSTOMER               | `idParamSchema` + `vendorMenuQuerySchema`                                                                                                        | 200                  | `vendorMenuSchema {vendor, serviceable, products[{id, name, price_npr, in_stock}]}`                                | `useVendorMenuQuery` (vendor screen)           |
-| `POST /api/cart/checkout`                                  | Bearer CUSTOMER               | `checkoutRequestSchema {idempotency_key(8–100), vendor_id, payment_method, items[1–50]{product_id, quantity 1–99}, delivery_address (required)}` | 201 new / 200 replay | `checkoutResponseSchema {order: OrderView, reservation{id\|null, expires_at\|null}, delivery_otp\|null, replayed}` | `useCheckout` (sends the saved address)        |
-| `GET /api/cart/lock-status?order_id=`                      | Bearer CUSTOMER (owner)       | `lockStatusQuerySchema`                                                                                                                          | 200                  | `lockStatusResponseSchema {order, lock{status ACTIVE\|EXPIRED\|RELEASED, ttl_ms, expires_at}}`                     | `useLockStatus` (5 s poll, checkout only)      |
-| `GET /api/orders/:id`                                      | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200                  | `orderDetailResponseSchema {order: OrderSnapshot}`                                                                 | `useOrderQuery` → `fetchOrder` (30 s refresh)  |
-| `POST /api/orders/:id/cancel`                              | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `cancelOrderResponseSchema {order_id, state:'CANCELED', refund_required}`                                          | `useCancelOrder` → `cancelOrder`               |
-| `POST /api/payments/esewa/initiate`                        | Bearer CUSTOMER (owner)       | `paymentInitiateRequestSchema {order_id}`                                                                                                        | 200                  | `esewaInitiateResponseSchema {payment_url, method:'POST', fields}`                                                 | `initiateEsewa`                                |
-| `POST /api/payments/esewa/webhook`                         | **none** (HMAC-authenticated) | `esewaWebhookRequestSchema {data: base64}`                                                                                                       | 200                  | `paymentStatusResponseSchema {status, payment: PaymentView\|null}`                                                 | `confirmEsewa` (the app forwards the redirect) |
-| `POST /api/payments/khalti/initiate`                       | Bearer CUSTOMER (owner)       | `{order_id}`                                                                                                                                     | 200                  | `khaltiInitiateResponseSchema {pidx, payment_url, expires_at}`                                                     | `initiateKhalti`                               |
-| `POST /api/payments/khalti/lookup`                         | Bearer CUSTOMER (pidx owner)  | `khaltiLookupRequestSchema {pidx}`                                                                                                               | 200                  | `paymentStatusResponseSchema`                                                                                      | `lookupKhalti`                                 |
+| Method & path                                              | Auth                          | Request                                                                                                                                          | Success              | Response schema                                                                                                                                                        | Used by mobile                                 |
+| ---------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `POST /api/auth/otp/send`                                  | **none**                      | `otpSendRequestSchema {phone: strict +9779XXXXXXXXX}`                                                                                            | 200                  | `otpSendResponseSchema {phone, expires_in_seconds: 120, resend_after_seconds: 60}`                                                                                     | `useSendOtp` (login screen, resend)            |
+| `POST /api/auth/otp/verify`                                | **none**                      | `otpVerifyRequestSchema {phone, code: 6 digits}`                                                                                                 | 200 (`no-store`)     | `authTokensResponseSchema {token_type, access_token, access_token_expires_in, refresh_token, refresh_token_expires_in, user{id, role, first_name\|null}, is_new_user}` | `useVerifyOtp` (code screen)                   |
+| `POST /api/auth/token/refresh`                             | **none** (the refresh JWT)    | `tokenRefreshRequestSchema {refresh_token}`                                                                                                      | 200 (`no-store`)     | `tokenRefreshResponseSchema {token_type, access_token, access_token_expires_in}`                                                                                       | `apiRequest` renewal (`refreshAccessToken`)    |
+| `GET /health`                                              | none                          | –                                                                                                                                                | 200 `{status:'ok'}`  | –                                                                                                                                                                      | no                                             |
+| `GET /api/vendors?lat=&lng=[&municipality_palika_string=]` | Bearer CUSTOMER               | `vendorFeedQuerySchema` (coordinates inside `NEPAL_BOUNDING_BOX`)                                                                                | 200                  | `feedResponseSchema {serviceable[], explore_further[]}` of `{vendor: FeedVendor, distance_km, serviceable}`                                                            | `useFeedQuery` (Shops tab)                     |
+| `GET /api/vendors/:id/products?lat=&lng=[&municipality_…]` | Bearer CUSTOMER               | `idParamSchema` + `vendorMenuQuerySchema`                                                                                                        | 200                  | `vendorMenuSchema {vendor, serviceable, products[{id, name, price_npr, in_stock}]}`                                                                                    | `useVendorMenuQuery` (vendor screen)           |
+| `POST /api/cart/checkout`                                  | Bearer CUSTOMER               | `checkoutRequestSchema {idempotency_key(8–100), vendor_id, payment_method, items[1–50]{product_id, quantity 1–99}, delivery_address (required)}` | 201 new / 200 replay | `checkoutResponseSchema {order: OrderView, reservation{id\|null, expires_at\|null}, delivery_otp\|null, replayed}`                                                     | `useCheckout` (sends the saved address)        |
+| `GET /api/cart/lock-status?order_id=`                      | Bearer CUSTOMER (owner)       | `lockStatusQuerySchema`                                                                                                                          | 200                  | `lockStatusResponseSchema {order, lock{status ACTIVE\|EXPIRED\|RELEASED, ttl_ms, expires_at}}`                                                                         | `useLockStatus` (5 s poll, checkout only)      |
+| `GET /api/orders/:id`                                      | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200                  | `orderDetailResponseSchema {order: OrderSnapshot}`                                                                                                                     | `useOrderQuery` → `fetchOrder` (30 s refresh)  |
+| `POST /api/orders/:id/cancel`                              | Bearer CUSTOMER (owner)       | `idParamSchema`                                                                                                                                  | 200 (also on repeat) | `cancelOrderResponseSchema {order_id, state:'CANCELED', refund_required}`                                                                                              | `useCancelOrder` → `cancelOrder`               |
+| `POST /api/payments/esewa/initiate`                        | Bearer CUSTOMER (owner)       | `paymentInitiateRequestSchema {order_id}`                                                                                                        | 200                  | `esewaInitiateResponseSchema {payment_url, method:'POST', fields}`                                                                                                     | `initiateEsewa`                                |
+| `POST /api/payments/esewa/webhook`                         | **none** (HMAC-authenticated) | `esewaWebhookRequestSchema {data: base64}`                                                                                                       | 200                  | `paymentStatusResponseSchema {status, payment: PaymentView\|null}`                                                                                                     | `confirmEsewa` (the app forwards the redirect) |
+| `POST /api/payments/khalti/initiate`                       | Bearer CUSTOMER (owner)       | `{order_id}`                                                                                                                                     | 200                  | `khaltiInitiateResponseSchema {pidx, payment_url, expires_at}`                                                                                                         | `initiateKhalti`                               |
+| `POST /api/payments/khalti/lookup`                         | Bearer CUSTOMER (pidx owner)  | `khaltiLookupRequestSchema {pidx}`                                                                                                               | 200                  | `paymentStatusResponseSchema`                                                                                                                                          | `lookupKhalti`                                 |
 
 - `OrderView = {id, vendor_id, state, payment_method, payment_status, fulfillment, subtotal_npr,
 delivery_fee_npr, total_npr, created_at}` (no OTP hash, gateway ref or commission).
@@ -425,28 +451,103 @@ transaction under `SELECT … FOR UPDATE`:
 | HTTP            | codes                                                                                                                                                                                                                                                         |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 400             | `VALIDATION_FAILED` (details.issues), `MALFORMED_REQUEST`, `INVALID_CART`, `INVALID_PAYMENT_CALLBACK`                                                                                                                                                         |
-| 401 / 403       | `UNAUTHENTICATED` / `FORBIDDEN`                                                                                                                                                                                                                               |
+| 401 / 403       | `UNAUTHENTICATED` / `FORBIDDEN`; auth: `OTP_INVALID` (details.attempts_remaining), `REFRESH_TOKEN_INVALID`                                                                                                                                                    |
 | 404             | `NOT_FOUND`, `ORDER_NOT_FOUND`, `PAYMENT_NOT_FOUND`, `VENDOR_NOT_FOUND`                                                                                                                                                                                       |
 | 409             | `INSUFFICIENT_STOCK` (details.shortfalls), `IDEMPOTENCY_KEY_REUSED`, `WRONG_PAYMENT_METHOD`, `ORDER_NOT_PAYABLE`, `ORDER_STATE_CONFLICT`, `CHECKOUT_IN_PROGRESS`, `PAYMENT_AMOUNT_MISMATCH`, `PAID_AFTER_SESSION_EXPIRED` (details.order_id, refund_required) |
-| 410             | `RESERVATION_EXPIRED` (SPEC "Session Expired")                                                                                                                                                                                                                |
+| 410             | `RESERVATION_EXPIRED` (SPEC "Session Expired"), `OTP_EXPIRED` (no valid code: never sent, expired, used or burned)                                                                                                                                            |
 | 422             | `VENDOR_UNAVAILABLE`, `PRODUCT_UNAVAILABLE` (details.product_ids), `BELOW_MINIMUM_ORDER_VALUE`, `COD_NOT_AVAILABLE`, `CANCELLATION_WINDOW_EXPIRED`                                                                                                            |
-| 502 / 503 / 500 | `PAYMENT_GATEWAY_ERROR` / `CHECKOUT_BUSY` / `INTERNAL_SERVER_ERROR`                                                                                                                                                                                           |
+| 429             | `OTP_RESEND_COOLDOWN` (details.retry_after_seconds), `OTP_ATTEMPTS_EXCEEDED`                                                                                                                                                                                  |
+| 502 / 503 / 500 | `PAYMENT_GATEWAY_ERROR`, `SMS_DELIVERY_FAILED` / `CHECKOUT_BUSY` / `INTERNAL_SERVER_ERROR`                                                                                                                                                                    |
 
-**Auth** (`auth/access-token.ts`, `http/auth.ts`): HS256 only, issuer `hamro-pasal-api`, audience
-`hamro-pasal-app`, TTL 900 s, claims `{ sub: user uuid, role }`, `Authorization: Bearer <jwt>`.
-**No login, OTP, token-issuance or refresh endpoints.** Development tokens come from
-`apps/api/scripts/mint-dev-token.ts` (`pnpm --filter @hamro-pasal/api token:dev`), refuses to run
-with `NODE_ENV=production`.
+**Access tokens** (`auth/access-token.ts`, `http/auth.ts`): HS256 only, issuer `hamro-pasal-api`,
+audience `hamro-pasal-app`, TTL 900 s, claims `{ sub: user uuid, role }`, `Authorization: Bearer
+<jwt>`. Issued by OTP login and by the refresh endpoint (§8A). Development tokens still come from
+`apps/api/scripts/mint-dev-token.ts` (`pnpm --filter @hamro-pasal/api token:dev`), which refuses to
+run with `NODE_ENV=production`.
 
 ### Not implemented (backend)
 
-No routes for: auth/OTP/refresh, saved-address CRUD, order state transitions after PLACED (vendor
+No routes for: saved-address CRUD, profile (name) editing, logout/revocation, order state transitions after PLACED (vendor
 accept → PREPARING, dispatch, OUT_FOR_DELIVERY, arrival, DELIVERED), delivery-OTP verification,
 reviews, disputes, evidence uploads, refunds, admin, vendor or driver apps, `/metrics`, rate
-limiting. No Socket.io server (`/orders`, `/chat`). No push notifications. The SMS adapters are not
-wired to any route. Worker consumers and timer handlers are placeholders.
+limiting beyond the per-phone OTP cooldown. No Socket.io server (`/orders`, `/chat`). No push
+notifications. Worker consumers and timer handlers are placeholders.
 
-## 9. Mobile app: state as of Phase 6.5
+## 8A. Authentication (Phases 7 and 7.5)
+
+SPEC journey step 1 ("Auth via OTP (+977 only)") and implicit requirement 3 (15-min access tokens,
+7-day refresh tokens). Code: `apps/api/src/auth/*`, `routes/auth.ts`; client `apps/mobile/src/api/{auth,http}.ts`.
+
+### OTP flow (`OtpAuthService`)
+
+1. **Send** (`POST /api/auth/otp/send`):
+   - The phone must already be strict `+9779XXXXXXXXX` (`nepalPhoneSchema`); the app normalises input
+     (Nepali digits, pasted +977) before sending.
+   - Resend cooldown: `SET otp:cooldown:{phone} 1 PX 60000 NX`. If it is held, `429
+OTP_RESEND_COOLDOWN` with the seconds left, and no SMS.
+   - A fresh code (`crypto.randomInt`, 6 digits, leading zeros kept) **replaces** any earlier one
+     (MULTI: DEL, HSET, PEXPIRE 120000), so an older SMS stops working. It is stored **before** the SMS
+     is sent, so it already works when the SMS arrives.
+   - SMS text (plain ASCII, one GSM-7 segment): "Hamro Pasal: your login code is NNNNNN. It expires in
+     2 minutes. Do not share it with anyone." If the adapter throws, both keys are deleted (the customer
+     can retry at once) and the API answers `502 SMS_DELIVERY_FAILED`.
+2. **Verify** (`POST /api/auth/otp/verify`):
+   - One Lua script (`CHECK_AND_CONSUME`) atomically increments `attempts`, compares the digest, and
+     deletes the code on success (**single use**, even under concurrent submissions) or on the 5th
+     wrong attempt. Outcomes: valid, `401 OTP_INVALID` (attempts_remaining 4 → 1), `429
+OTP_ATTEMPTS_EXCEEDED`, `410 OTP_EXPIRED`.
+   - Account: `INSERT … ON CONFLICT (phone) DO NOTHING`, then SELECT. An unknown number becomes a new
+     **CUSTOMER** with `first_name` null (`is_new_user: true`). An existing account **keeps its role**
+     (a vendor signing in gets a VENDOR token; customer routes then answer 403).
+   - Returns both tokens (below) with `Cache-Control: no-store`.
+
+### Tokens
+
+| Token   | Secret               | Audience              | TTL      | Claims                                | Where the app keeps it                                      |
+| ------- | -------------------- | --------------------- | -------- | ------------------------------------- | ----------------------------------------------------------- |
+| Access  | `JWT_ACCESS_SECRET`  | `hamro-pasal-app`     | 900 s    | `sub`, `role`                         | memory only (`useAuthStore.accessToken`, never persisted)   |
+| Refresh | `JWT_REFRESH_SECRET` | `hamro-pasal-refresh` | 604800 s | `sub`, `typ: 'refresh'`, `jti` (uuid) | AES-256 MMKV (`hamro-pasal.secure`, key in the OS keychain) |
+
+Different secrets **and** audiences: a refresh token is never accepted as an access token and vice
+versa (tested both ways). `parseServerEnv` already refuses identical secrets.
+
+**Refresh** (`POST /api/auth/token/refresh`, Phase 7.5): verifies signature, algorithm (HS256),
+issuer, the refresh audience, `typ` and expiry, then **reads the role from the database** (a role
+change applies at the next refresh; a deleted account gets `401 REFRESH_TOKEN_INVALID`). Returns only
+a new access token. **The refresh token is not rotated and there is no server-side revocation**:
+sign-out only forgets it on the device, and a copied refresh token stays valid for its 7 days (§13).
+Every failure (forged, expired, wrong audience, access token sent, deleted account, garbage) is the
+same `401 REFRESH_TOKEN_INVALID`.
+
+### Redis boundaries
+
+Redis holds only short-lived coordination state; **PostgreSQL is the source of truth** for anything
+durable. Flushing Redis loses no orders, money or accounts (it only cancels live checkouts and
+outstanding codes).
+
+| Key                                  | Type   | TTL                                  | Owner                  | Purpose                                                                            |
+| ------------------------------------ | ------ | ------------------------------------ | ---------------------- | ---------------------------------------------------------------------------------- |
+| `inv:{vendorId}:res:{reservationId}` | string | 600 s (`PX`)                         | `InventoryLockService` | the 10-minute cart lock (SPEC §3)                                                  |
+| `inv:{vendorId}:holds:{productId}`   | hash   | follows the reservations             | `InventoryLockService` | live holds subtracted from Postgres stock                                          |
+| `mutex:checkout:{idempotency_key}`   | string | 30 s lease                           | `RedisKeyedMutex`      | serialises same-key checkout retries                                               |
+| `otp:code:{phone}`                   | hash   | 120 s (`OTP_TTL_SECONDS`)            | `OtpStore`             | `{ digest, attempts }`; digest = HMAC-SHA256(pepper, "phone:code"), never the code |
+| `otp:cooldown:{phone}`               | string | 60 s (`OTP_RESEND_COOLDOWN_SECONDS`) | `OtpStore`             | per-phone resend throttle                                                          |
+
+- **No session state lives in Redis.** Tokens are stateless JWTs; nothing about a signed-in user is
+  stored server-side (hence no revocation yet).
+- The OTP digest key (pepper) is derived as `HMAC-SHA256(JWT_ACCESS_SECRET, "hamro-pasal:otp-digest:v1")`
+  (`container.ts#otpPepper`): no extra secret to provision, and the JWT key itself is never reused.
+  Rotating `JWT_ACCESS_SECRET` invalidates outstanding codes (harmless: they last 2 min).
+- BullMQ (worker) uses the same Redis. Integration tests use logical DB 15 (api) and 14 (worker).
+
+### SMS providers (`container.ts#smsGatewayFromEnv`)
+
+`SPARROW` and `AAKASH` send real SMS (strict +977 via `prepareOutboundSms`). `MOCK` records and
+prints the message (`[sms:mock] …`); `parseServerEnv` refuses it when `NODE_ENV=production`.
+`FIREBASE` makes the API **fail at startup**: Firebase Auth sends its own codes and cannot deliver a
+server-generated OTP.
+
+## 9. Mobile app: state as of Phase 7.5
 
 Expo SDK 57 (`expo ~57.0.25`, `react-native 0.86.3`, `react 19.2.3`), Expo Router (typed routes),
 strict TS, NativeWind 4.2.7 + **Tailwind 3.4** (NativeWind 4 requires v3), Reanimated 4.5.1,
@@ -479,6 +580,26 @@ fingerprint includes it, and the territory gate reads the shared `NEPAL_BOUNDING
 - **Only UI files touched:** the three screens' data wiring (which hook, which error code), and the
   cancel button's mutation arguments. No layout, style or copy changed except the new refund toast.
 
+**Phases 7 and 7.5** added sign-in and session renewal:
+
+- **Screens:** `app/login.tsx` (fixed `+977` prefix, 10-digit field, Nepali digits accepted,
+  validated by `toNepalPhone` → `normalizeNepalPhone` + `NEPAL_PHONE_REGEX`) and
+  `app/verify-otp.tsx` (6-digit code with `textContentType="oneTimeCode"` / `autoComplete="sms-otp"`,
+  per-code error messages, a resend countdown from `resend_after_seconds` via `useNow` +
+  `formatCountdown`, "Change number"). All copy is in `en.json` / `ne.json` under `auth.*`.
+- **Navigation contract:** a screen that needs a session does `router.push('/login')`. Login
+  **replaces** itself with `/verify-otp` after the SMS is sent, so after verifying `leaveSignIn` does
+  `router.back()` to exactly the screen that asked (Feed, Cart, Profile), or `router.replace('/')`
+  when sign-in was the first screen.
+- **Entry points:** Profile's account section (sign in / sign out); the Feed's "Sign in to see the
+  shops near you." (shown for `NOT_SIGNED_IN` or a 401); the Cart's **"Sign in to Checkout"**, which
+  replaces "Proceed to Checkout" while signed out (Phase 7.5).
+- **Signed in** means `selectHasSession`: an access token in memory **or** a refresh token in
+  encrypted storage (after a relaunch only the refresh token exists; the first request renews it).
+- **On verify:** `useVerifyOtp` calls `setSession` (access token in memory, refresh token persisted)
+  and invalidates every query, so screens that failed for lack of a session refetch.
+  `useSignOut` clears the session and the whole query cache.
+
 ### 9.1 Storage
 
 | Instance             | File                         | Encryption                                                                                                                                                              | Holds                                                         |
@@ -494,7 +615,7 @@ fails**. Each store has a `create*Store(storage)` factory for tests plus an app-
 
 | Store                                                                 | Key / version                              | Persisted                                                                                                                   | Memory only                            | Status                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `useAuthStore`                                                        | `hamro-pasal.auth` v1 (secure)             | `refreshToken`, `locale` ('en' \| 'ne')                                                                                     | **`accessToken`** (SPEC: memory only)  | Only `setAccessToken` is used in the app, by the `__DEV__` sign-in (`src/features/auth/DevSignIn.tsx`) that accepts a `token:dev` JWT. No login screen, no refresh flow.                                                                                                                                                                                                                            |
+| `useAuthStore`                                                        | `hamro-pasal.auth` v1 (secure)             | `refreshToken`, `locale` ('en' \| 'ne')                                                                                     | **`accessToken`** (SPEC: memory only)  | `setSession` on OTP verify; `setAccessToken` on refresh (and by the `__DEV__` token paste); `clearSession` on sign-out or a refused refresh. `selectHasSession` = either token present.                                                                                                                                                                                                             |
 | `useCartStore`                                                        | `hamro-pasal.cart` v2 (app)                | `vendor {id, name, deliveryFeeNpr, minOrderValueNpr}`, `lines[{productId, name, unitPriceNpr, quantity}]`                   | `pendingAddition`                      | **Single-vendor** (SPEC edge case 4) with a replace prompt (`ReplaceCartModal`). Limits from shared-types (99 per line, 50 lines). Prices are display-only; the server re-prices.                                                                                                                                                                                                                   |
 | `useCheckoutStore`                                                    | `hamro-pasal.checkout` v1 (app)            | `session {orderId, reservationId, expiresAt, orderState, paymentMethod, totalNpr}`, `attempt {idempotencyKey, fingerprint}` | `deliveryOtp`, `sessionExpired`        | One idempotency key per **checkout fingerprint = vendor + method + sorted items + delivery address** (Phase 6 added the address), reused across retries and relaunches. `startSession`, `applyLockStatus`, `applyPaymentView`, `setOrderState`, `expireSession`, `endSession`. A stored v1 fingerprint without the address no longer matches, so the first checkout after upgrade gets a fresh key. |
 | `useOrderStore`                                                       | `hamro-pasal.orders` v2 (app)              | `orders[id] {orderId, placedAt, deliveredAt, state, paymentMethod, totalNpr}`, capped at 20                                 | –                                      | `placedAt` = when the device saw PLACED (60 s countdown anchor); `deliveredAt` = when it first saw DELIVERED (48 h dispute anchor). **Deliberately device clocks** (§9.6, §12): the server's `placed_at`/`delivered_at` arrive with `GET /api/orders/:id` but are not used for the UI timers.                                                                                                       |
@@ -504,7 +625,7 @@ fails**. Each store has a `create*Store(storage)` factory for tests plus an app-
 | `useToastStore`                                                       | –                                          | –                                                                                                                           | `toast`                                | Rendered by `ToastHost` (Reanimated, 4 s).                                                                                                                                                                                                                                                                                                                                                          |
 | `useTerritorySimulator` (`features/territory/territory-simulator.ts`) | –                                          | –                                                                                                                           | `simulation: off \| inside \| outside` | `__DEV__` only.                                                                                                                                                                                                                                                                                                                                                                                     |
 
-### 9.3 API client (`src/api/http.ts`)
+### 9.3 API client and token renewal (`src/api/http.ts`)
 
 `apiRequest({ method, path, query?, body?, schema })` reads the access token from `useAuthStore` **at
 call time**, JSON-encodes the body, builds the query string by hand (RN's `URLSearchParams` is
@@ -516,6 +637,25 @@ every request carries the Bearer token and every 2xx body is Zod-validated; a co
 `UNEXPECTED_RESPONSE`. Query defaults (`query-client.ts`): staleTime 30 s, 3 retries with capped
 exponential backoff (`retryTransientFailures` narrows that for the catalogue and order reads, §9),
 **mutations never retried automatically**.
+
+**Token renewal (Phase 7.5).** Authenticated requests (the default; only the three `/api/auth/*`
+calls pass `authenticated: false`, so a wrong-OTP 401 never triggers a refresh):
+
+1. No access token in memory but a refresh token stored → **refresh first** (the relaunch case).
+   Neither → `401 NOT_SIGNED_IN`, no request sent.
+2. Send. On a **401**: if another request already renewed the token meanwhile, replay with that one;
+   otherwise `refreshAccessToken()` and replay **once** with the new token. A second 401 surfaces
+   (no loop).
+3. `refreshAccessToken` is **single flight** (one module-level promise): a burst of 401s makes one
+   `POST /api/auth/token/refresh` and every caller waits for it ("pauses the queue").
+4. Refresh outcomes: success → `setAccessToken` (memory only). **400/401** → the session is over:
+   `clearSession()` (the persisted refresh token is removed too) and every `onSessionExpired`
+   listener runs; the original 401 surfaces. **Network error or 5xx** → the error surfaces and the
+   session is **kept** (a flaky connection never signs anyone out).
+5. If the user signed out (or another account signed in) while a refresh was running, its result is
+   discarded: a stale refresh never revives a session.
+6. `useSessionExpiryHandler` (mounted once in `app/_layout.tsx`) listens and runs
+   `queryClient.clear()` plus the toast "Your session has ended. Please sign in again."
 
 ### 9.4 Checkout and lock status
 
@@ -633,12 +773,17 @@ content_type image/* }], sent_at ISO }`; `ChatUser = { id, first_name|null, role
 
 ### 9.12 Mobile test infrastructure
 
-- 439 Jest tests (jest-expo + React Native Testing Library 13 + react-test-renderer 19.2.3).
+- 482 Jest tests (jest-expo + React Native Testing Library 13 + react-test-renderer 19.2.3).
 - **msw 2** intercepts `fetch` for every API-backed test (`src/test/msw.ts`,
   `setupApiTestEnvironment()`: listens with `onUnhandledRequest: 'error'`, sets the test access
   token and saves `THAMEL_ADDRESS` before each test). Screen tests (feed, menu, order tracking) go
   through the real `apiRequest`, so they also exercise the Zod contracts and the Bearer header.
-  `src/api/{catalog,orders,checkout,lock-status}.int.test.ts` assert the exact wire format.
+  `src/api/{auth,catalog,orders,checkout,lock-status,token-refresh}.int.test.ts` assert the exact wire
+  format; `token-refresh.int.test.ts` covers every renewal branch in §9.3 (single flight, relaunch,
+  refused refresh, network/5xx, no loop, no revival, auth endpoints excluded).
+- `src/features/auth/LoginFlow.test.tsx` drives both sign-in screens over msw, including the Feed
+  and the code screen in one tree to prove the Feed recovers after sign-in. Tests that assert router
+  calls must `jest.clearAllMocks()` in `beforeEach` (router mocks otherwise leak between tests).
 - **Fixtures** (`src/test/api-fixtures.ts`) are seed-shaped, fixed-uuid test data built through the
   shared-types response schemas (`feedResponse`, `vendorMenu`, `orderSnapshot`,
   `orderDetailResponse`, `cancelResponse`, …), so a fixture can never drift from the contract.
@@ -660,7 +805,7 @@ Phase 6.5 removed every catalogue, order and cancellation mock. What remains:
 | ----------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | Review submission       | `src/features/review/review-api.ts#submitReview` | Reviews endpoint (not built).                                                                 |
 | Dispute evidence upload | `src/features/dispute/mock-evidence-upload.ts`   | Presigned Cloudflare R2 upload + react-native-compressor (not built).                         |
-| Login                   | `src/features/auth/DevSignIn.tsx` (`__DEV__`)    | OTP login + refresh token endpoints (not built). Until then use `token:dev` (§3).             |
+| Dev token paste         | `src/features/auth/DevSignIn.tsx` (`__DEV__`)    | Superseded by OTP login (§8A); kept for quick checks. Holds no refresh token.                 |
 | Feed location           | `THAMEL_FALLBACK_LOCATION` when no address saved | Live GPS (`expo-location` is already used by the territory gate) or a Mapbox pin-drop (§9.8). |
 
 The **dispute chat** has no server either (§9.10), so on a device the socket keeps reconnecting.
@@ -674,9 +819,9 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 1. **First live end-to-end run** on a development build against the local API (§3): feed → menu →
    checkout (COD, then eSewa and Khalti sandboxes) → tracking → cancel. Confirm eSewa's real success
    redirect matches `rawQueryParam` (§13).
-2. **Auth:** `POST /api/auth/otp/*` via the existing SMS adapters (+977 only), token issuance, and
-   7-day refresh tokens (SPEC: HTTP-only refresh; the app keeps the access token in memory), then a
-   login screen replacing `DevSignIn`.
+2. **Session hardening:** refresh-token rotation (a new refresh token per refresh, old `jti` burned)
+   with a Redis/Postgres denylist, `POST /api/auth/logout` revoking the `jti`, and per-IP rate
+   limiting on `/api/auth/*` (only the per-phone cooldown exists).
 3. **Order lifecycle** (vendor accept → PREPARING, dispatch, OUT_FOR_DELIVERY, arrival, delivery-OTP
    verification → DELIVERED + `delivered_at` + settlement) with BullMQ timers (90 s acceptance/IVR,
    8 min ghost customer) and **Socket.io `/orders`** (`order:state_update`) with
@@ -689,7 +834,8 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 6. **Checkout serviceability:** reject a delivery address outside the vendor's scope (reuse the
    CatalogService SQL).
 7. **Feed location from GPS** instead of the saved address / Thamel fallback.
-8. **Saved addresses** (`customer_addresses` CRUD) if the app should sync addresses across devices.
+8. **Saved addresses** (`customer_addresses` CRUD) if the app should sync addresses across devices,
+   and a profile screen to add the customer's name (`first_name` is null after OTP sign-up).
 9. **Reviews** (double-blind publish rule; SPEC verification test 4) and **disputes** + **Socket.io
    `/chat`**: authenticate the handshake `auth.token`, handle `chat:join { order_id }` (owner, vendor
    or admin only), ack `chat:new_message`, broadcast **with `last_name` and `phone_number` stripped**
@@ -736,6 +882,21 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
   - Reads that cannot succeed on retry (4xx other than 408/429) are not retried.
   - A prepaid cancel is announced as "Order cancelled. Escrow refund initiated." based on the
     server's `refund_required`, not on the client's idea of the payment method.
+- **Phase 7:**
+  - OTP: 6 digits, 120 s TTL, 60 s resend cooldown, 5 attempts, single use, stored as a keyed digest
+    (all constants in shared-types).
+  - `users.first_name` became nullable rather than inventing a placeholder name.
+  - Existing accounts keep their role on sign-in; new numbers become CUSTOMERs.
+  - `SMS_PROVIDER=MOCK` for development (refused in production); `FIREBASE` fails at startup.
+  - The refresh token is returned in the JSON body (a native app has no HTTP-only cookie jar) and
+    stored in AES-256 MMKV; the access token stays in memory.
+  - Login replaces itself with the code screen so "back" after verifying lands on the caller.
+- **Phase 7.5:**
+  - Refresh returns a new access token only (no rotation yet); the role comes from the database.
+  - The client refreshes on a 401 **and** up front when only a refresh token exists (relaunch).
+  - Only 400/401 from the refresh endpoint end the session; network errors and 5xx keep it.
+  - A stored refresh token counts as signed in (`selectHasSession`), so the Cart and Profile do not
+    flash "signed out" after a relaunch.
 
 ## 13. Known gaps and risks
 
@@ -751,8 +912,15 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 - The device-side 60 s countdown starts when the device sees PLACED, the server's at `placed_at`;
   a device that learns of the placement late shows more time than the server allows. **Accepted by
   design** (§12): the server answers 422 and the app shows the "window has ended" toast.
-- **Login is a `__DEV__` token paste.** Access tokens expire after 15 min with no refresh, so a long
-  session starts failing with `UNAUTHENTICATED` until a new token is pasted.
+- **Refresh tokens cannot be revoked.** Sign-out only deletes the device copy; a stolen refresh token
+  keeps minting access tokens for up to 7 days. Rotation + denylist is backlog item 2.
+- **Rate limiting is per phone only**: one IP can request codes for many numbers (SMS cost) and try
+  codes across many numbers. Per-IP limits are backlog item 2.
+- **`.env` uses Sparrow**: local sign-ins send real SMS unless `SMS_PROVIDER=MOCK`.
+- A vendor or driver signing in on the customer app gets a token for their real role and sees 403s.
+- The `__DEV__` token paste has no refresh token, so it lapses after 15 min (then the Feed shows its
+  sign-in prompt).
+- The Nepali sign-in strings have not been reviewed by a native speaker.
 - An order placed on another device (or before this app version) has no device `placedAt`, so its
   cancel button never shows even inside the server's window.
 - `in_stock` on menus ignores Redis holds; the feed loads every LIVE vendor before capping at 100 per

@@ -45,7 +45,8 @@ export const userSchema = z.strictObject({
   id: z.uuid(),
   phone: nepalPhoneSchema,
   role: userRoleSchema,
-  first_name: nonEmptyTextSchema,
+  /** Null for customers who signed up by OTP and have not added a name yet. */
+  first_name: nonEmptyTextSchema.nullable(),
   last_name: nonEmptyTextSchema.nullable(),
   created_at: z.date(),
   updated_at: z.date(),

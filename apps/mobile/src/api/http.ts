@@ -1,4 +1,4 @@
-import { errorBodySchema } from '@hamro-pasal/shared-types';
+import { errorBodySchema, tokenRefreshResponseSchema } from '@hamro-pasal/shared-types';
 import type { z } from 'zod';
 
 import { API_URL } from '../config/api';
@@ -36,6 +36,11 @@ interface ApiRequest<T> {
   path: string;
   query?: Record<string, string>;
   body?: unknown;
+  /**
+   * Defaults to true: send `Authorization: Bearer` and refuse to call without a token. Only the
+   * sign-in endpoints (which is how a token is obtained) pass false.
+   */
+  authenticated?: boolean;
   /** Response body contract; the body is validated before it reaches the caller. */
   schema: z.ZodType<T>;
 }
@@ -51,22 +56,14 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 /**
- * Authenticated JSON request to the Hamro Pasal API. The access token is read from the in-memory
- * auth store at call time (SPEC: tokens live in memory) and sent as `Authorization: Bearer`.
+ * One HTTP exchange: builds the URL by hand (React Native's URLSearchParams polyfill is
+ * incomplete), attaches the given access token, maps error bodies to ApiError and validates 2xx
+ * bodies with the shared-types schema.
  */
-export async function apiRequest<T>({
-  method,
-  path,
-  query,
-  body,
-  schema,
-}: ApiRequest<T>): Promise<T> {
-  const token = useAuthStore.getState().accessToken;
-  if (token === null) {
-    throw new ApiError(401, CLIENT_ERROR_CODES.notSignedIn, 'No access token; sign in first');
-  }
-
-  // Built by hand: React Native's URLSearchParams polyfill is incomplete.
+async function send<T>(
+  { method, path, query, body, schema }: ApiRequest<T>,
+  token: string | null,
+): Promise<T> {
   const search =
     query === undefined
       ? ''
@@ -76,7 +73,7 @@ export async function apiRequest<T>({
   const url = `${API_URL}${path}${search}`;
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    Authorization: `Bearer ${token}`,
+    ...(token === null ? {} : { Authorization: `Bearer ${token}` }),
   };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
@@ -115,4 +112,95 @@ export async function apiRequest<T>({
     );
   }
   return parsed.data;
+}
+
+/* ---------- Session renewal (SPEC implicit requirement 3) ---------- */
+
+export const TOKEN_REFRESH_PATH = '/api/auth/token/refresh';
+
+type SessionExpiredListener = () => void;
+const sessionExpiredListeners = new Set<SessionExpiredListener>();
+
+/**
+ * Called after the session ended because the refresh token was refused (expired, revoked, or the
+ * account is gone). The app uses it to drop cached data. Returns an unsubscribe function.
+ */
+export function onSessionExpired(listener: SessionExpiredListener): () => void {
+  sessionExpiredListeners.add(listener);
+  return () => {
+    sessionExpiredListeners.delete(listener);
+  };
+}
+
+let refreshInFlight: Promise<string | null> | null = null;
+
+/**
+ * Exchanges the stored refresh token for a new access token. Single flight: every caller that
+ * needs a token while a refresh is running waits for that same refresh, so a burst of 401s makes
+ * one call. Resolves the new access token, or null when there is no session (no refresh token, or
+ * the server refused it, in which case the user is signed out). Network and 5xx failures reject
+ * with ApiError and keep the session, so a flaky connection never signs anyone out.
+ */
+export function refreshAccessToken(): Promise<string | null> {
+  refreshInFlight ??= runRefresh().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+async function runRefresh(): Promise<string | null> {
+  const refreshToken = useAuthStore.getState().refreshToken;
+  if (refreshToken === null) return null;
+  // Signed out (or another account signed in) while the call ran: never revive the old session.
+  const stillCurrent = () => useAuthStore.getState().refreshToken === refreshToken;
+  try {
+    const { access_token: accessToken } = await send(
+      {
+        method: 'POST',
+        path: TOKEN_REFRESH_PATH,
+        body: { refresh_token: refreshToken },
+        schema: tokenRefreshResponseSchema,
+      },
+      null,
+    );
+    if (!stillCurrent()) return null;
+    useAuthStore.getState().setAccessToken(accessToken);
+    return accessToken;
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || error.status === 400)) {
+      if (stillCurrent()) {
+        useAuthStore.getState().clearSession();
+        for (const listener of sessionExpiredListeners) listener();
+      }
+      return null;
+    }
+    throw error;
+  }
+}
+
+/**
+ * JSON request to the Hamro Pasal API. Authenticated requests (the default) send the in-memory
+ * access token as `Authorization: Bearer` and renew it transparently:
+ *   - no access token in memory but a refresh token in encrypted MMKV (e.g. after a relaunch):
+ *     refresh first;
+ *   - a 401 answer: refresh once (shared with concurrent callers) and replay the request with the
+ *     new token. If the refresh is refused, the user is signed out and the 401 surfaces.
+ */
+export async function apiRequest<T>(request: ApiRequest<T>): Promise<T> {
+  if (request.authenticated === false) return send(request, null);
+
+  let token = useAuthStore.getState().accessToken ?? (await refreshAccessToken());
+  if (token === null) {
+    throw new ApiError(401, CLIENT_ERROR_CODES.notSignedIn, 'No access token; sign in first');
+  }
+  try {
+    return await send(request, token);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 401) throw error;
+    // Another request may already have renewed the token while this one was in flight.
+    const current = useAuthStore.getState().accessToken;
+    token = current !== null && current !== token ? current : await refreshAccessToken();
+    if (token === null) throw error;
+    return send(request, token);
+  }
 }

@@ -1,16 +1,16 @@
-import { userRoleSchema, type UserRole } from '@hamro-pasal/shared-types';
+import { ACCESS_TOKEN_TTL_SECONDS, userRoleSchema, type UserRole } from '@hamro-pasal/shared-types';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 
 /**
- * SPEC implicit requirement 3: short-lived (15 min) access tokens. Issuance via OTP login lands
- * with the auth phase; this module fixes the token contract both sides use.
+ * SPEC implicit requirement 3: short-lived (15 min) access tokens, issued by OTP login
+ * (auth/otp-auth-service.ts). This module fixes the token contract both sides use.
  */
 export const ACCESS_TOKEN = {
   algorithm: 'HS256',
   issuer: 'hamro-pasal-api',
   audience: 'hamro-pasal-app',
-  ttlSeconds: 15 * 60,
+  ttlSeconds: ACCESS_TOKEN_TTL_SECONDS,
 } as const;
 
 export interface AccessTokenClaims {

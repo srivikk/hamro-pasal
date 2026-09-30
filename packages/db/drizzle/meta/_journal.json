@@ -71,6 +71,13 @@
       "when": 1790705280769,
       "tag": "0009_orders_placed_at",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790708064185,
+      "tag": "0010_users_first_name_optional",
+      "breakpoints": true
     }
   ]
 }

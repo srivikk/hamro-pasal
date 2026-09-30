@@ -1,6 +1,13 @@
 import type { ErrorBody } from '@hamro-pasal/shared-types';
 import type { ErrorRequestHandler } from 'express';
 
+import {
+  OtpAttemptsExceededError,
+  OtpCooldownError,
+  OtpExpiredError,
+  OtpInvalidError,
+} from '../auth/otp-auth-service';
+import { InvalidRefreshTokenError } from '../auth/refresh-token';
 import { VendorNotFoundError } from '../catalog/catalog-service';
 import { OrderNotFoundError, OrderNotPlaceableError } from '../checkout/checkout-service';
 import { CheckoutRejectedError } from '../checkout/pricing';
@@ -15,6 +22,7 @@ import { MutexTimeoutError } from '../infra/redis-mutex';
 import { toNpr } from '../ledger/money';
 import { SettlementNotAllowedError } from '../ledger/settlement-service';
 import { CancellationWindowExpiredError, OrderNotCancelableError } from '../orders/order-service';
+import { SmsDeliveryError } from '../sms/sms-gateway';
 import { InvalidGatewayCallbackError } from '../payments/esewa/esewa-service';
 import { PaymentGatewayError } from '../payments/gateway-http';
 import {
@@ -48,6 +56,29 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof OrderNotFoundError) {
     return new HttpError(404, 'ORDER_NOT_FOUND', 'Order not found');
+  }
+  if (error instanceof OtpCooldownError) {
+    return new HttpError(429, 'OTP_RESEND_COOLDOWN', error.message, {
+      retry_after_seconds: error.retryAfterSeconds,
+    });
+  }
+  if (error instanceof OtpInvalidError) {
+    return new HttpError(401, 'OTP_INVALID', error.message, {
+      attempts_remaining: error.attemptsRemaining,
+    });
+  }
+  if (error instanceof OtpAttemptsExceededError) {
+    return new HttpError(429, 'OTP_ATTEMPTS_EXCEEDED', error.message);
+  }
+  if (error instanceof OtpExpiredError) {
+    return new HttpError(410, 'OTP_EXPIRED', error.message);
+  }
+  if (error instanceof InvalidRefreshTokenError) {
+    // Deliberately vague: forged, expired, wrong audience and deleted account all look the same.
+    return new HttpError(401, 'REFRESH_TOKEN_INVALID', 'Refresh token is invalid or expired');
+  }
+  if (error instanceof SmsDeliveryError) {
+    return new HttpError(502, 'SMS_DELIVERY_FAILED', 'The code could not be sent; try again');
   }
   if (error instanceof VendorNotFoundError) {
     return new HttpError(404, 'VENDOR_NOT_FOUND', 'Vendor not found');

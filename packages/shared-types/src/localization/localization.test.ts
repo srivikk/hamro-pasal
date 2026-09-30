@@ -5,7 +5,7 @@ import {
   NEPAL_DISTRICTS_BY_PROVINCE,
   NEPAL_PROVINCES,
 } from './nepal-geography';
-import { toNepaliNumerals } from './numerals';
+import { toAsciiDigits, toNepaliNumerals } from './numerals';
 import { InvalidNepalPhoneError, isNepalPhone, normalizeNepalPhone } from './phone';
 
 describe('toNepaliNumerals', () => {
@@ -149,5 +149,18 @@ describe('nepalAddressInputSchema', () => {
       'exact_lat: Pin is outside Nepal',
       'exact_lng: Pin is outside Nepal',
     ]);
+  });
+});
+
+describe('toAsciiDigits', () => {
+  it('turns Devanagari digits into ASCII and leaves everything else alone', () => {
+    expect(toAsciiDigits('९८०००००००१')).toBe('9800000001');
+    expect(toAsciiDigits('०४२१८७')).toBe('042187');
+    expect(toAsciiDigits('98-००')).toBe('98-00');
+    expect(toAsciiDigits('abc')).toBe('abc');
+  });
+
+  it('round-trips with toNepaliNumerals', () => {
+    expect(toAsciiDigits(toNepaliNumerals(9876543210))).toBe('9876543210');
   });
 });

@@ -35,3 +35,17 @@ export const DELIVERY_RADIUS_GPS_DRIFT_MULTIPLIER = 1.1;
  * it on its own clock as NOW() - orders.placed_at.
  */
 export const ORDER_CANCELLATION_WINDOW_SECONDS = 60;
+
+/*
+ * OTP login (SPEC customer/vendor journey step 1: "Auth via OTP (+977 only)").
+ * The code lives in Redis for OTP_TTL_SECONDS; a new code can be requested after
+ * OTP_RESEND_COOLDOWN_SECONDS; OTP_MAX_VERIFY_ATTEMPTS wrong guesses burn the code.
+ */
+export const OTP_CODE_LENGTH = 6;
+export const OTP_TTL_SECONDS = 120;
+export const OTP_RESEND_COOLDOWN_SECONDS = 60;
+export const OTP_MAX_VERIFY_ATTEMPTS = 5;
+
+/** SPEC implicit requirement 3: 15-minute access tokens and 7-day refresh tokens. */
+export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+export const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;

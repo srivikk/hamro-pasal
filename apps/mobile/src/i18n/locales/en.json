@@ -20,7 +20,8 @@
     "exploreFurtherHeading": "Explore Further",
     "exploreFurtherHint": "These shops don't deliver to your location yet.",
     "empty": "No shops deliver to your location yet.",
-    "loadError": "Couldn't load shops. Check your connection."
+    "loadError": "Couldn't load shops. Check your connection.",
+    "signInPrompt": "Sign in to see the shops near you."
   },
   "vendor": {
     "scope": {
@@ -52,7 +53,8 @@
     "deliverTo": "Deliver to",
     "addAddress": "Add delivery address",
     "changeAddress": "Change",
-    "addressRequired": "Add a delivery address to continue."
+    "addressRequired": "Add a delivery address to continue.",
+    "signInToCheckout": "Sign in to Checkout"
   },
   "cartConflict": {
     "title": "Start a new cart?",
@@ -254,5 +256,34 @@
       "connecting": "Connecting to support…",
       "reconnecting": "Reconnecting… your messages will send when you're back online."
     }
+  },
+  "auth": {
+    "title": "Sign in",
+    "subtitle": "We'll text a 6-digit code to your Nepal mobile number.",
+    "phoneLabel": "Mobile number",
+    "phonePlaceholder": "98XXXXXXXX",
+    "invalidPhone": "Enter a 10-digit Nepal mobile number starting with 9.",
+    "sendCode": "Send code",
+    "sending": "Sending…",
+    "cooldown": "Please wait {{seconds, localizedNumber}} s before requesting another code.",
+    "smsFailed": "We couldn't send the code. Please try again.",
+    "failed": "Something went wrong. Please try again.",
+    "verifyTitle": "Enter the code",
+    "sentTo": "Sent to {{phone}}",
+    "codeLabel": "6-digit code",
+    "verify": "Verify",
+    "verifying": "Verifying…",
+    "wrongCode": "Wrong code. Attempts left: {{count, localizedNumber}}.",
+    "expired": "This code has expired. Request a new one.",
+    "tooManyAttempts": "Too many wrong attempts. Request a new code.",
+    "resendIn": "You can request a new code in {{time}}",
+    "resend": "Resend code",
+    "resent": "A new code is on its way.",
+    "changeNumber": "Change number",
+    "signedIn": "You're signed in.",
+    "signOut": "Sign out",
+    "signedInStatus": "You're signed in.",
+    "signedOutStatus": "Sign in to order from shops near you.",
+    "sessionExpired": "Your session has ended. Please sign in again."
   }
 }

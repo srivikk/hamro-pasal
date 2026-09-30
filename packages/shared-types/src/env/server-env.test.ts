@@ -96,4 +96,12 @@ describe('parseServerEnv', () => {
     });
     expect(env.SMS_PROVIDER).toBe('FIREBASE');
   });
+
+  it('allows the MOCK SMS provider outside production only', () => {
+    expect(parseServerEnv({ ...validEnv, SMS_PROVIDER: 'MOCK' }).SMS_PROVIDER).toBe('MOCK');
+    expectInvalid(
+      { ...validEnv, SMS_PROVIDER: 'MOCK', NODE_ENV: 'production' },
+      'not allowed in production',
+    );
+  });
 });

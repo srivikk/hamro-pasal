@@ -3,7 +3,12 @@ import { z } from 'zod';
 const nonEmpty = z.string().trim().min(1);
 const optionalNonEmpty = nonEmpty.optional();
 
-export const smsProviders = ['SPARROW', 'AAKASH', 'FIREBASE'] as const;
+/**
+ * SPARROW / AAKASH send the API's own OTP. FIREBASE is declared for completeness but cannot deliver
+ * a server-generated code (Firebase Auth sends its own). MOCK prints the SMS to the API log and is
+ * refused in production; it exists so local end-to-end runs need no paid SMS account.
+ */
+export const smsProviders = ['SPARROW', 'AAKASH', 'FIREBASE', 'MOCK'] as const;
 export type SmsProvider = (typeof smsProviders)[number];
 
 export const kafkaSaslMechanisms = ['plain', 'scram-sha-256', 'scram-sha-512'] as const;
@@ -126,6 +131,15 @@ export const serverEnvSchema = z
           ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'],
           'SMS_PROVIDER=FIREBASE',
         );
+        break;
+      case 'MOCK':
+        if (env.NODE_ENV === 'production') {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['SMS_PROVIDER'],
+            message: 'MOCK only prints codes to the log; it is not allowed in production',
+          });
+        }
         break;
     }
   });

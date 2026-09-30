@@ -17,3 +17,11 @@ export function toNepaliNumerals(num: number): string {
   });
   return plain.replace(/[0-9]/g, (digit) => DEVANAGARI_DIGITS[Number(digit)] ?? digit);
 }
+
+/**
+ * The inverse for input: digits typed on a Nepali keyboard ("९८००") become ASCII ("9800"). Every
+ * other character is kept, so callers still validate the result.
+ */
+export function toAsciiDigits(input: string): string {
+  return input.replace(/[०-९]/g, (digit) => String(DEVANAGARI_DIGITS.indexOf(digit as '०')));
+}

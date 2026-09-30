@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { OTP_CODE_LENGTH } from '../domain/constants';
+import { nepalPhoneSchema } from '../domain/entities';
 import { paymentMethodSchema } from '../domain/enums';
 import { nepalAddressInputSchema } from '../localization/address';
 import { NEPAL_BOUNDING_BOX } from '../nepal/geo';
@@ -88,3 +90,27 @@ export const esewaWebhookRequestSchema = z.strictObject({
 export const khaltiLookupRequestSchema = z.strictObject({
   pidx: z.string().trim().min(1).max(100),
 });
+
+/** POST /api/auth/otp/send: the number must already be strict E.164 +977 (SPEC Nepal §4). */
+export const otpSendRequestSchema = z.strictObject({
+  phone: nepalPhoneSchema,
+});
+export type OtpSendRequest = z.infer<typeof otpSendRequestSchema>;
+
+/** POST /api/auth/otp/verify */
+export const otpVerifyRequestSchema = z.strictObject({
+  phone: nepalPhoneSchema,
+  code: z
+    .string()
+    .regex(
+      new RegExp(`^[0-9]{${String(OTP_CODE_LENGTH)}}$`),
+      `code must be ${String(OTP_CODE_LENGTH)} digits`,
+    ),
+});
+export type OtpVerifyRequest = z.infer<typeof otpVerifyRequestSchema>;
+
+/** POST /api/auth/token/refresh: the 7-day refresh token issued by /otp/verify. */
+export const tokenRefreshRequestSchema = z.strictObject({
+  refresh_token: z.string().min(1).max(4096),
+});
+export type TokenRefreshRequest = z.infer<typeof tokenRefreshRequestSchema>;

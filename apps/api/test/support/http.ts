@@ -8,10 +8,13 @@ import { createApp } from '../../src/app';
 import { signAccessToken } from '../../src/auth/access-token';
 import { buildContainer, type ApiContainer } from '../../src/container';
 import { esewaHmacBase64, esewaSignatureMessage } from '../../src/payments/esewa/signature';
+import type { OtpStoreOptions } from '../../src/auth/otp-store';
 import type { FetchLike } from '../../src/payments/gateway-http';
+import { MockSmsGateway, type OutboundSms, type SmsGateway } from '../../src/sms/sms-gateway';
 import { testDatabase, testRedisPool } from './fixtures';
 
 export const ACCESS_SECRET = 'integration-access-secret-0123456789abcdef';
+export const REFRESH_SECRET = 'integration-refresh-secret-fedcba9876543210';
 /** eSewa's public UAT merchant secret for product code EPAYTEST. */
 export const ESEWA_UAT_SECRET = '8gBm/:&EnhH.1/q';
 export const KHALTI_BASE = 'https://a.khalti.com/api/v2';
@@ -40,14 +43,23 @@ export function requestBodyText(init: RequestInit): string {
 export interface TestApp {
   readonly app: Express;
   readonly container: ApiContainer;
+  /** Every OTP SMS the app sent. */
+  readonly sms: SmsGateway & { readonly sent: readonly OutboundSms[] };
 }
 
 export function buildTestApp(
-  options: { khaltiFetch?: FetchLike; lockTtlMs?: number } = {},
+  options: {
+    khaltiFetch?: FetchLike;
+    lockTtlMs?: number;
+    sms?: SmsGateway & { readonly sent: readonly OutboundSms[] };
+    otpOptions?: OtpStoreOptions;
+  } = {},
 ): TestApp {
+  const sms = options.sms ?? new MockSmsGateway();
   const container = buildContainer(
     {
       accessTokenSecret: ACCESS_SECRET,
+      refreshTokenSecret: REFRESH_SECRET,
       esewa: {
         productCode: 'EPAYTEST',
         secretKey: ESEWA_UAT_SECRET,
@@ -67,9 +79,11 @@ export function buildTestApp(
       redisPool: testRedisPool(10),
       ...(options.khaltiFetch === undefined ? {} : { fetch: options.khaltiFetch }),
       ...(options.lockTtlMs === undefined ? {} : { lockOptions: { ttlMs: options.lockTtlMs } }),
+      ...(options.otpOptions === undefined ? {} : { otpOptions: options.otpOptions }),
+      sms,
     },
   );
-  return { app: createApp(container), container };
+  return { app: createApp(container), container, sms };
 }
 
 export function bearer(

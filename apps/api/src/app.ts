@@ -1,5 +1,6 @@
 import express, { type Express } from 'express';
 
+import type { OtpAuthService } from './auth/otp-auth-service';
 import type { CatalogService } from './catalog/catalog-service';
 import type { CheckoutService } from './checkout/checkout-service';
 import { requireAuth } from './http/auth';
@@ -7,6 +8,7 @@ import { errorHandler, HttpError } from './http/errors';
 import type { OrderService } from './orders/order-service';
 import type { EsewaService } from './payments/esewa/esewa-service';
 import type { KhaltiService } from './payments/khalti/khalti-service';
+import { authRouter } from './routes/auth';
 import { cartRouter } from './routes/cart';
 import { ordersRouter } from './routes/orders';
 import { paymentsRouter } from './routes/payments';
@@ -14,6 +16,7 @@ import { vendorsRouter } from './routes/vendors';
 
 export interface ApiServices {
   readonly accessTokenSecret: string;
+  readonly auth: OtpAuthService;
   readonly catalog: CatalogService;
   readonly checkout: CheckoutService;
   readonly orders: OrderService;
@@ -34,6 +37,7 @@ export function createApp(services?: ApiServices): Express {
 
   if (services !== undefined) {
     const customerAuth = requireAuth(services.accessTokenSecret, ['CUSTOMER']);
+    app.use('/api/auth', authRouter(services.auth));
     app.use('/api/vendors', customerAuth, vendorsRouter(services.catalog));
     app.use('/api/cart', customerAuth, cartRouter(services.checkout));
     app.use('/api/orders', customerAuth, ordersRouter(services.orders));

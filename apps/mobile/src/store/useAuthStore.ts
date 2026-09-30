@@ -81,3 +81,11 @@ export function createAuthStore(storage: StateStorage<void>): AuthStore {
 }
 
 export const useAuthStore: AuthStore = createAuthStore(mmkvStateStorage(getSecureStorage()));
+
+/**
+ * Signed in: an access token in memory, or a refresh token in encrypted storage that apiRequest
+ * can exchange for one (after a relaunch the access token is gone but the session is not).
+ */
+export function selectHasSession(state: Pick<AuthState, 'accessToken' | 'refreshToken'>): boolean {
+  return state.accessToken !== null || state.refreshToken !== null;
+}

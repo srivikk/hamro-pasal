@@ -1,11 +1,14 @@
 import {
+  authTokensResponseSchema,
   cancelOrderResponseSchema,
   checkoutResponseSchema,
   feedResponseSchema,
   lockStatusResponseSchema,
   nepalAddressInputSchema,
   orderDetailResponseSchema,
+  otpSendResponseSchema,
   vendorMenuSchema,
+  type AuthTokensResponseBody,
   type CancelOrderResponseBody,
   type CheckoutResponseBody,
   type FeedResponse,
@@ -14,6 +17,7 @@ import {
   type LockView,
   type NepalAddress,
   type OrderSnapshotView,
+  type OtpSendResponseBody,
   type OrderView,
   type VendorMenu,
 } from '@hamro-pasal/shared-types';
@@ -210,5 +214,27 @@ export function cancelResponse(refundRequired = false): CancelOrderResponseBody 
     order_id: ORDER_ID,
     state: 'CANCELED',
     refund_required: refundRequired,
+  });
+}
+
+/* ---------- Auth (POST /api/auth/otp/send, POST /api/auth/otp/verify) ---------- */
+
+export const TEST_PHONE = '+9779800000001';
+export const ISSUED_ACCESS_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.issued-access.signature';
+export const ISSUED_REFRESH_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.issued-refresh.signature';
+
+export function otpSendResponse(phone = TEST_PHONE): OtpSendResponseBody {
+  return otpSendResponseSchema.parse({ phone, expires_in_seconds: 120, resend_after_seconds: 60 });
+}
+
+export function authTokensResponse(isNewUser = false): AuthTokensResponseBody {
+  return authTokensResponseSchema.parse({
+    token_type: 'Bearer',
+    access_token: ISSUED_ACCESS_TOKEN,
+    access_token_expires_in: 900,
+    refresh_token: ISSUED_REFRESH_TOKEN,
+    refresh_token_expires_in: 604_800,
+    user: { id: '9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a', role: 'CUSTOMER', first_name: null },
+    is_new_user: isNewUser,
   });
 }

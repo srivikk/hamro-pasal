@@ -163,11 +163,15 @@ export class MockSmsGateway implements SmsGateway {
   readonly provider = 'MOCK';
   readonly sent: OutboundSms[] = [];
 
+  /** `onSend` lets local development see the message (e.g. print the OTP to the log). */
+  constructor(private readonly onSend?: (sms: OutboundSms) => void) {}
+
   // async, so validation failures surface as rejections exactly like the HTTP adapters.
   // eslint-disable-next-line @typescript-eslint/require-await
   async send(message: SmsMessage): Promise<SmsDelivery> {
     const sms = prepareOutboundSms(message);
     this.sent.push(sms);
+    this.onSend?.(sms);
     return { provider: this.provider, to: sms.to };
   }
 }

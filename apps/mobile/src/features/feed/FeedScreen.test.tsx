@@ -1,4 +1,5 @@
 import { fireEvent, screen, within } from '@testing-library/react-native';
+import { router } from 'expo-router';
 import { http, HttpResponse } from 'msw';
 
 import FeedScreen from '../../../app/(tabs)/index';
@@ -66,7 +67,7 @@ describe('Feed screen (GET /api/vendors)', () => {
     let fail = true;
     const calls = serveFeed(() =>
       fail
-        ? HttpResponse.json(errorBody('UNAUTHENTICATED'), { status: 401 })
+        ? HttpResponse.json(errorBody('FORBIDDEN'), { status: 403 })
         : HttpResponse.json(feedResponse()),
     );
     renderWithProviders(<FeedScreen />);
@@ -79,6 +80,16 @@ describe('Feed screen (GET /api/vendors)', () => {
 
     expect(await screen.findByTestId(`vendor-card-${THAMEL_VENDOR.id}`)).toBeOnTheScreen();
     expect(calls()).toBe(2);
+  });
+
+  it('offers sign-in when the session has lapsed (401)', async () => {
+    serveFeed(() => HttpResponse.json(errorBody('UNAUTHENTICATED'), { status: 401 }));
+    renderWithProviders(<FeedScreen />);
+
+    expect(await screen.findByText('Sign in to see the shops near you.')).toBeOnTheScreen();
+    fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(jest.mocked(router.push)).toHaveBeenCalledWith('/login');
   });
 
   it('renders the feed in Nepali with Devanagari numerals', async () => {

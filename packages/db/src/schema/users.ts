@@ -25,14 +25,15 @@ export const users = pgTable(
     id: primaryId(),
     phone: text().notNull().unique(),
     role: userRoleEnum().notNull(),
-    first_name: text().notNull(),
+    // Null until the customer adds a name: OTP sign-up only knows the phone number.
+    first_name: text(),
     last_name: text(),
     created_at: createdAt(),
     updated_at: updatedAt(),
   },
   (t) => [
     check('users_phone_np_check', sql`${t.phone} ~ '${sql.raw(NEPAL_PHONE_PATTERN)}'`),
-    check('users_first_name_check', sql`btrim(${t.first_name}) <> ''`),
+    check('users_first_name_check', sql`${t.first_name} IS NULL OR btrim(${t.first_name}) <> ''`),
     check('users_last_name_check', sql`${t.last_name} IS NULL OR btrim(${t.last_name}) <> ''`),
   ],
 );

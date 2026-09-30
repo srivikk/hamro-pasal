@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
 import { NEPAL_BOUNDING_BOX } from '../nepal/geo';
-import { checkoutRequestSchema, idParamSchema, vendorFeedQuerySchema } from './requests';
+import {
+  checkoutRequestSchema,
+  idParamSchema,
+  otpSendRequestSchema,
+  otpVerifyRequestSchema,
+  tokenRefreshRequestSchema,
+  vendorFeedQuerySchema,
+} from './requests';
 
 const address = {
   province_id: 3,
@@ -94,5 +101,36 @@ describe('idParamSchema', () => {
   it('requires a uuid', () => {
     expect(idParamSchema.safeParse({ id: 'not-a-uuid' }).success).toBe(false);
     expect(idParamSchema.safeParse({ id: randomUUID() }).success).toBe(true);
+  });
+});
+
+describe('OTP request schemas', () => {
+  it('accept only strict +977 numbers', () => {
+    expect(otpSendRequestSchema.safeParse({ phone: '+9779800000001' }).success).toBe(true);
+    for (const phone of ['9800000001', '977 9800000001', '+91 9800000001', '+9771234567890', '']) {
+      expect(otpSendRequestSchema.safeParse({ phone }).success).toBe(false);
+    }
+  });
+
+  it('require a 6-digit code', () => {
+    const verify = (code: string) =>
+      otpVerifyRequestSchema.safeParse({ phone: '+9779800000001', code }).success;
+
+    expect(verify('042187')).toBe(true);
+    expect(verify('42187')).toBe(false);
+    expect(verify('0421870')).toBe(false);
+    expect(verify('०४२१८७')).toBe(false);
+    expect(verify('04 218')).toBe(false);
+  });
+});
+
+describe('tokenRefreshRequestSchema', () => {
+  it('requires a non-empty refresh token and nothing else', () => {
+    expect(tokenRefreshRequestSchema.safeParse({ refresh_token: 'a.b.c' }).success).toBe(true);
+    expect(tokenRefreshRequestSchema.safeParse({ refresh_token: '' }).success).toBe(false);
+    expect(tokenRefreshRequestSchema.safeParse({}).success).toBe(false);
+    expect(
+      tokenRefreshRequestSchema.safeParse({ refresh_token: 'a.b.c', user_id: 'x' }).success,
+    ).toBe(false);
   });
 });

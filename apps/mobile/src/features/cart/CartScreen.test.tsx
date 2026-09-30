@@ -1,10 +1,12 @@
 import { act, fireEvent, screen, within } from '@testing-library/react-native';
+import { router } from 'expo-router';
 import { http, HttpResponse } from 'msw';
 
 import CartScreen from '../../../app/(tabs)/cart';
 import { CHECKOUT_PATH } from '../../api/mutations';
 import { KHALTI_INITIATE_PATH } from '../../api/payments';
 import { useAddressStore } from '../../store/useAddressStore';
+import { useAuthStore } from '../../store/useAuthStore';
 import { useCartStore } from '../../store/useCartStore';
 import { useCheckoutStore } from '../../store/useCheckoutStore';
 import { checkoutResponse, errorBody, NOODLES, RICE, THAMEL_VENDOR } from '../../test/api-fixtures';
@@ -17,6 +19,8 @@ import {
 } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
 import { useTerritorySimulator } from '../territory/territory-simulator';
+
+jest.mock('expo-router', () => ({ router: { push: jest.fn(), replace: jest.fn() } }));
 
 setupApiTestEnvironment();
 
@@ -197,5 +201,38 @@ describe('Cart screen', () => {
     expect(screen.getByText('Session Expired')).toBeOnTheScreen();
     fireEvent.press(screen.getByRole('button', { name: 'Done' }));
     expect(screen.queryByText('Session Expired')).toBeNull();
+  });
+});
+
+describe('Cart screen when signed out', () => {
+  beforeEach(() => {
+    jest.mocked(router.push).mockClear();
+    useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 1);
+  });
+
+  it('replaces "Proceed to Checkout" with "Sign in to Checkout", which opens the login', () => {
+    useAuthStore.getState().clearSession();
+    renderWithProviders(<CartScreen />);
+
+    expect(screen.queryByRole('button', { name: 'Proceed to Checkout' })).toBeNull();
+    fireEvent.press(screen.getByRole('button', { name: 'Sign in to Checkout' }));
+
+    expect(router.push).toHaveBeenCalledWith('/login');
+  });
+
+  it('counts a stored refresh token as signed in (the access token is renewed on demand)', () => {
+    useAuthStore.getState().setSession({ accessToken: 'a.b.c', refreshToken: 'r.e.f' });
+    useAuthStore.setState({ accessToken: null });
+    renderWithProviders(<CartScreen />);
+
+    expect(screen.getByRole('button', { name: 'Proceed to Checkout' })).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: 'Sign in to Checkout' })).toBeNull();
+  });
+
+  it('shows the Nepali label', () => {
+    useAuthStore.getState().clearSession();
+    renderWithProviders(<CartScreen />, { locale: 'ne' });
+
+    expect(screen.getByRole('button', { name: 'चेकआउट गर्न साइन इन गर्नुहोस्' })).toBeOnTheScreen();
   });
 });

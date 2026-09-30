@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { ActivityIndicator, SectionList, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { ApiError, CLIENT_ERROR_CODES } from '../../src/api/http';
 import { Button } from '../../src/components/Button';
 import { VendorCard } from '../../src/components/VendorCard';
 import { toFeedSections } from '../../src/features/feed/feed-sections';
@@ -22,6 +23,24 @@ export default function FeedScreen() {
   }
 
   if (feed.isError) {
+    // No session (never signed in, or the 15-min access token has lapsed): offer sign-in, which
+    // returns here afterwards.
+    const needsSignIn =
+      feed.error instanceof ApiError &&
+      (feed.error.code === CLIENT_ERROR_CODES.notSignedIn || feed.error.status === 401);
+    if (needsSignIn) {
+      return (
+        <View className="flex-1 items-center justify-center gap-4 bg-neutral-50 px-6">
+          <Text className="text-center text-base text-neutral-700">{t('feed.signInPrompt')}</Text>
+          <Button
+            label={t('auth.title')}
+            onPress={() => {
+              router.push('/login');
+            }}
+          />
+        </View>
+      );
+    }
     return (
       <View className="flex-1 items-center justify-center gap-4 bg-neutral-50 px-6">
         <Text className="text-center text-base text-neutral-700">{t('feed.loadError')}</Text>

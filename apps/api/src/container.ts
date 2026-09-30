@@ -1,8 +1,12 @@
+import { createHmac } from 'node:crypto';
+
 import { createDatabase, type Database } from '@hamro-pasal/db';
 import type { ServerEnv } from '@hamro-pasal/shared-types';
 import { Redis } from 'ioredis';
 
 import type { ApiServices } from './app';
+import { OtpAuthService } from './auth/otp-auth-service';
+import { OtpStore, type OtpStoreOptions } from './auth/otp-store';
 import { CatalogService } from './catalog/catalog-service';
 import { CheckoutService } from './checkout/checkout-service';
 import { RedisKeyedMutex } from './infra/redis-mutex';
@@ -20,9 +24,16 @@ import type { FetchLike } from './payments/gateway-http';
 import { KhaltiClient, type KhaltiConfig } from './payments/khalti/khalti-client';
 import { KhaltiService } from './payments/khalti/khalti-service';
 import { PaymentConfirmationService } from './payments/payment-confirmation';
+import {
+  AakashSmsGateway,
+  MockSmsGateway,
+  SparrowSmsGateway,
+  type SmsGateway,
+} from './sms/sms-gateway';
 
 export interface ApiConfig {
   readonly accessTokenSecret: string;
+  readonly refreshTokenSecret: string;
   readonly esewa: EsewaConfig;
   readonly khalti: KhaltiConfig;
 }
@@ -33,6 +44,10 @@ export interface Infrastructure {
   readonly fetch?: FetchLike;
   /** Tests only: shorter lock TTLs. Production always uses the SPEC 600 s. */
   readonly lockOptions?: InventoryLockOptions;
+  /** Delivers OTP codes (buildContainerFromEnv picks it from SMS_PROVIDER). */
+  readonly sms: SmsGateway;
+  /** Tests only: shorter OTP windows. Production uses the shared-types constants. */
+  readonly otpOptions?: OtpStoreOptions;
 }
 
 export interface ApiContainer extends ApiServices {
@@ -45,6 +60,7 @@ export interface ApiContainer extends ApiServices {
 export function apiConfigFromEnv(env: ServerEnv): ApiConfig {
   return {
     accessTokenSecret: env.JWT_ACCESS_SECRET,
+    refreshTokenSecret: env.JWT_REFRESH_SECRET,
     esewa: {
       productCode: env.ESEWA_PRODUCT_CODE,
       secretKey: env.ESEWA_SECRET_KEY,
@@ -72,12 +88,17 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
   const settlement = new SettlementService(infra.db, new LedgerService());
   const confirmation = new PaymentConfirmationService(infra.db, settlement, checkout);
   const khaltiClient = new KhaltiClient(config.khalti, infra.fetch);
+  const otps = new OtpStore(infra.redisPool, otpPepper(config.accessTokenSecret), infra.otpOptions);
 
   return {
     accessTokenSecret: config.accessTokenSecret,
     db: infra.db,
     redisPool: infra.redisPool,
     settlement,
+    auth: new OtpAuthService(infra.db, otps, infra.sms, {
+      accessTokenSecret: config.accessTokenSecret,
+      refreshTokenSecret: config.refreshTokenSecret,
+    }),
     catalog: new CatalogService(infra.db),
     checkout,
     orders: new OrderService(infra.db, locks),
@@ -90,9 +111,49 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
   };
 }
 
+/**
+ * HMAC key for stored OTP digests, derived from the access secret with a fixed label (domain
+ * separation), so no extra secret has to be provisioned and the JWT key itself is never reused.
+ */
+function otpPepper(accessTokenSecret: string): Buffer {
+  return createHmac('sha256', accessTokenSecret).update('hamro-pasal:otp-digest:v1').digest();
+}
+
+/** The SMS adapter for SMS_PROVIDER (SPEC Nepal §4). */
+export function smsGatewayFromEnv(env: ServerEnv): SmsGateway {
+  switch (env.SMS_PROVIDER) {
+    case 'SPARROW':
+      return new SparrowSmsGateway({
+        token: required(env.SPARROW_SMS_TOKEN, 'SPARROW_SMS_TOKEN'),
+        from: required(env.SPARROW_SMS_FROM, 'SPARROW_SMS_FROM'),
+        apiUrl: required(env.SPARROW_SMS_API_URL, 'SPARROW_SMS_API_URL'),
+      });
+    case 'AAKASH':
+      return new AakashSmsGateway({
+        authToken: required(env.AAKASH_SMS_AUTH_TOKEN, 'AAKASH_SMS_AUTH_TOKEN'),
+        apiUrl: required(env.AAKASH_SMS_API_URL, 'AAKASH_SMS_API_URL'),
+      });
+    case 'MOCK':
+      // Development only (parseServerEnv refuses it in production): the code appears in the log.
+      return new MockSmsGateway((sms) => {
+        console.info(`[sms:mock] to ${sms.to}: ${sms.text}`);
+      });
+    case 'FIREBASE':
+      throw new Error(
+        'SMS_PROVIDER=FIREBASE cannot deliver server-generated OTP codes; use SPARROW, AAKASH or MOCK',
+      );
+  }
+}
+
+function required(value: string | undefined, name: string): string {
+  if (value === undefined) throw new Error(`${name} is required`);
+  return value;
+}
+
 export function buildContainerFromEnv(env: ServerEnv): ApiContainer {
   return buildContainer(apiConfigFromEnv(env), {
     db: createDatabase(env.DATABASE_URL),
     redisPool: new RedisConnectionPool(() => new Redis(env.REDIS_URL), 20),
+    sms: smsGatewayFromEnv(env),
   });
 }

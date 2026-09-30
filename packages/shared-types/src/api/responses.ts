@@ -1,12 +1,13 @@
 import { z } from 'zod';
 
-import { geoPointSchema } from '../domain/entities';
+import { geoPointSchema, nepalPhoneSchema } from '../domain/entities';
 import {
   deliveryScopeSchema,
   fulfillmentModeSchema,
   orderStateSchema,
   paymentMethodSchema,
   paymentStatusSchema,
+  userRoleSchema,
   vendorFulfillmentModeSchema,
 } from '../domain/enums';
 
@@ -237,3 +238,52 @@ export const cancelOrderResponseSchema = z.strictObject({
   refund_required: z.boolean(),
 });
 export type CancelOrderResponseBody = z.infer<typeof cancelOrderResponseSchema>;
+
+/*
+ * OTP authentication (SPEC implicit requirement 3).
+ */
+
+/** POST /api/auth/otp/send */
+export const otpSendResponseSchema = z.strictObject({
+  phone: nepalPhoneSchema,
+  /** How long the code is valid (OTP_TTL_SECONDS). */
+  expires_in_seconds: z.number().int().positive(),
+  /** When a new code may be requested (OTP_RESEND_COOLDOWN_SECONDS). */
+  resend_after_seconds: z.number().int().nonnegative(),
+});
+export type OtpSendResponseBody = z.infer<typeof otpSendResponseSchema>;
+
+export const authUserSchema = z.strictObject({
+  id: z.uuid(),
+  role: userRoleSchema,
+  /** Null until the customer adds a name; OTP sign-up only knows the phone number. */
+  first_name: z.string().min(1).nullable(),
+});
+export type AuthUser = z.infer<typeof authUserSchema>;
+
+/**
+ * POST /api/auth/otp/verify. The access token (15 min) is kept in memory by the client; the
+ * refresh token (7 days) only in encrypted storage.
+ */
+export const authTokensResponseSchema = z.strictObject({
+  token_type: z.literal('Bearer'),
+  access_token: z.string().min(1),
+  access_token_expires_in: z.number().int().positive(),
+  refresh_token: z.string().min(1),
+  refresh_token_expires_in: z.number().int().positive(),
+  user: authUserSchema,
+  /** true when this verification created the customer account. */
+  is_new_user: z.boolean(),
+});
+export type AuthTokensResponseBody = z.infer<typeof authTokensResponseSchema>;
+
+/**
+ * POST /api/auth/token/refresh: a new 15-minute access token. The refresh token itself is not
+ * rotated; it stays valid until its own 7-day expiry.
+ */
+export const tokenRefreshResponseSchema = z.strictObject({
+  token_type: z.literal('Bearer'),
+  access_token: z.string().min(1),
+  access_token_expires_in: z.number().int().positive(),
+});
+export type TokenRefreshResponseBody = z.infer<typeof tokenRefreshResponseSchema>;

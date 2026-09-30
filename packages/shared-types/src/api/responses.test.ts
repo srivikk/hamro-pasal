@@ -8,6 +8,7 @@ import {
   lockStatusResponseSchema,
   orderDetailResponseSchema,
   paymentStatusResponseSchema,
+  tokenRefreshResponseSchema,
   vendorMenuSchema,
 } from './responses';
 
@@ -196,5 +197,16 @@ describe('order detail and cancellation schemas', () => {
 
     expect(cancelOrderResponseSchema.parse(body)).toEqual(body);
     expect(cancelOrderResponseSchema.safeParse({ ...body, state: 'PLACED' }).success).toBe(false);
+  });
+});
+
+describe('token refresh schemas', () => {
+  it('accept a new access token and nothing that leaks a refresh token back', () => {
+    const body = { token_type: 'Bearer', access_token: 'a.b.c', access_token_expires_in: 900 };
+
+    expect(tokenRefreshResponseSchema.parse(body)).toEqual(body);
+    expect(tokenRefreshResponseSchema.safeParse({ ...body, refresh_token: 'x.y.z' }).success).toBe(
+      false,
+    );
   });
 });

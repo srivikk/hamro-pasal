@@ -1,4 +1,5 @@
 import type { PaymentMethod } from '@hamro-pasal/shared-types';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { FlatList, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
@@ -19,7 +20,7 @@ import { usePaymentFlow } from '../../src/features/payment/usePaymentFlow';
 import { formatLocalizedNumber } from '../../src/i18n/format-number';
 import { toNpr, toPaisa } from '../../src/lib/money';
 import { useAddressStore } from '../../src/store/useAddressStore';
-import { useAuthStore } from '../../src/store/useAuthStore';
+import { selectHasSession, useAuthStore } from '../../src/store/useAuthStore';
 import { MAX_LINE_QUANTITY, useCartStore, useItemCount } from '../../src/store/useCartStore';
 import { selectIsCheckoutPending, useCheckoutStore } from '../../src/store/useCheckoutStore';
 
@@ -78,6 +79,7 @@ export default function CartScreen() {
   const session = useCheckoutStore((state) => state.session);
   const payment = usePaymentFlow();
   const hasAddress = useAddressStore((state) => state.address !== null);
+  const signedIn = useAuthStore(selectHasSession);
 
   const paymentModal = (
     <PaymentWebViewModal
@@ -232,21 +234,31 @@ export default function CartScreen() {
                 {error}
               </Text>
             )}
-            <Button
-              label={t('cart.proceed')}
-              // SPEC Nepal localizations §3: no checkout without a valid delivery address.
-              disabled={checkout.isPending || summary.shortOfMinimumNpr > 0 || !hasAddress}
-              onPress={() => {
-                checkout.mutate(paymentMethod, {
-                  // Prepaid orders wait in PENDING_PAYMENT: open the gateway straight away.
-                  onSuccess: ({ order }) => {
-                    if (order.state === 'PENDING_PAYMENT' && order.payment_method !== 'COD') {
-                      payment.start(order.id, order.payment_method);
-                    }
-                  },
-                });
-              }}
-            />
+            {signedIn ? (
+              <Button
+                label={t('cart.proceed')}
+                // SPEC Nepal localizations §3: no checkout without a valid delivery address.
+                disabled={checkout.isPending || summary.shortOfMinimumNpr > 0 || !hasAddress}
+                onPress={() => {
+                  checkout.mutate(paymentMethod, {
+                    // Prepaid orders wait in PENDING_PAYMENT: open the gateway straight away.
+                    onSuccess: ({ order }) => {
+                      if (order.state === 'PENDING_PAYMENT' && order.payment_method !== 'COD') {
+                        payment.start(order.id, order.payment_method);
+                      }
+                    },
+                  });
+                }}
+              />
+            ) : (
+              // Signing in returns here (the login screen replaces itself; one step back is the cart).
+              <Button
+                label={t('cart.signInToCheckout')}
+                onPress={() => {
+                  router.push('/login');
+                }}
+              />
+            )}
             <Button
               label={t('cart.clear')}
               variant="danger"

@@ -9,6 +9,7 @@ import { InsufficientStockError, ReservationExpiredError } from '../src/inventor
 import { InventoryLockService } from '../src/inventory/inventory-lock-service';
 import { DrizzleStockReader } from '../src/inventory/stock-reader';
 import { LedgerService } from '../src/ledger/ledger-service';
+import { WalletService } from '../src/wallet/wallet-service';
 import { SettlementService } from '../src/ledger/settlement-service';
 import {
   createOrder,
@@ -132,7 +133,9 @@ describe('checkout lock / claim / release workflows', () => {
       checkout.claim({ orderId: order.id, vendorId, reservationId: reservation.id }),
     ).rejects.toBeInstanceOf(OrderNotPlaceableError);
 
-    await new SettlementService(db, new LedgerService()).capturePayment(order.id);
+    await new SettlementService(db, new LedgerService(new WalletService())).capturePayment(
+      order.id,
+    );
     const placed = await checkout.claim({
       orderId: order.id,
       vendorId,

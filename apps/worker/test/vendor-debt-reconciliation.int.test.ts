@@ -167,8 +167,14 @@ describe('nightly vendor debt reconciliation (real PostgreSQL + BullMQ)', () => 
       ].sort(),
     );
     expect(result.map((s) => s.vendorId)).not.toEqual(expect.arrayContaining([atLimit]));
-    expect((await vendorRow(indebted)).status).toBe('SUSPENDED');
-    expect((await vendorRow(indebtedApproved)).status).toBe('SUSPENDED');
+    expect(await vendorRow(indebted)).toMatchObject({
+      status: 'SUSPENDED',
+      status_before_debt_suspension: 'LIVE',
+    });
+    expect(await vendorRow(indebtedApproved)).toMatchObject({
+      status: 'SUSPENDED',
+      status_before_debt_suspension: 'APPROVED',
+    });
     // Healthy vendors: same status, and their rows were not even rewritten.
     expect(await Promise.all(untouched.map(vendorRow))).toEqual(before);
     for (const vendorId of untouched) expect(await suspensionEvents(vendorId)).toEqual([]);

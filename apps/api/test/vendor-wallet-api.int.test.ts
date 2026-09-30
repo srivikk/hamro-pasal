@@ -4,6 +4,7 @@ import { orders } from '@hamro-pasal/db';
 import {
   vendorWalletBalanceResponseSchema,
   vendorWalletLedgerResponseSchema,
+  walletTopUpResponseSchema,
   type FulfillmentMode,
   type OrderState,
   type PaymentMethod,
@@ -121,6 +122,7 @@ describe('vendor wallet API', () => {
         vendor_id: v.vendorId,
         status: 'LIVE',
         is_suspended: false,
+        suspended_for_debt: false,
         wallet_balance_npr: 0,
         suspension_limit_npr: -2000,
         pending_escrow_npr: 0,
@@ -148,8 +150,18 @@ describe('vendor wallet API', () => {
       expect(body).toMatchObject({
         status: 'SUSPENDED',
         is_suspended: true,
+        suspended_for_debt: true,
         wallet_balance_npr: -2500,
         suspension_limit_npr: -2000,
+      });
+    });
+
+    it('tells an admin suspension apart from a debt suspension', async () => {
+      const v = await vendor({ status: 'SUSPENDED' });
+
+      expect(await balanceBody(v.userId)).toMatchObject({
+        is_suspended: true,
+        suspended_for_debt: false,
       });
     });
 
@@ -317,6 +329,163 @@ describe('vendor wallet API', () => {
       const ledger = await getLedger(shopless);
       expect([balance.status, ledger.status]).toEqual([404, 404]);
       expect(errorOf(balance).code).toBe('VENDOR_NOT_FOUND');
+    });
+  });
+
+  describe('POST /api/vendors/wallet/top-up (Phase 12.5, MOCK mode)', () => {
+    const topUp = (userId: string, body: Record<string, unknown>, app = t.app) =>
+      request(app)
+        .post('/api/vendors/wallet/top-up')
+        .set('authorization', bearer(userId, 'VENDOR'))
+        .send(body);
+
+    async function suspendedVendor() {
+      const v = await vendor();
+      await settled(v.vendorId, { subtotal: 25_000 }); // −2500, SUSPENDED
+      expect((await balanceBody(v.userId)).is_suspended).toBe(true);
+      return v;
+    }
+
+    it('pays off the debt: credits the wallet, restores the shop and lists the top-up', async () => {
+      const v = await suspendedVendor();
+      const clearingBefore = (await balanceOf(db(), 'GATEWAY_CLEARING:ESEWA')) ?? 0;
+
+      const res = await topUp(v.userId, { idempotency_key: randomUUID(), amount_npr: 2500 });
+
+      expect(res.status).toBe(201);
+      expect(res.headers['cache-control']).toBe('no-store');
+      const body = bodyOf(walletTopUpResponseSchema, res);
+      expect(body).toMatchObject({
+        amount_npr: 2500,
+        wallet_balance_npr: 0,
+        status: 'LIVE',
+        is_suspended: false,
+        restored: true,
+        replayed: false,
+      });
+      expect(await balanceBody(v.userId)).toMatchObject({ status: 'LIVE', is_suspended: false });
+      // Balanced journal: the (mock) eSewa clearing account is the other side.
+      expect(((await balanceOf(db(), 'GATEWAY_CLEARING:ESEWA')) ?? 0) - clearingBefore).toBe(-2500);
+      const [latest] = bodyOf(vendorWalletLedgerResponseSchema, await getLedger(v.userId)).entries;
+      expect(latest).toMatchObject({
+        transaction_id: body.transaction_id,
+        kind: 'VENDOR_TOP_UP',
+        entry_type: 'TOP_UP',
+        amount_npr: 2500,
+        balance_after_npr: 0,
+        order: null,
+      });
+    });
+
+    it('keeps the shop offline after a partial payment', async () => {
+      const v = await suspendedVendor();
+
+      const res = await topUp(v.userId, { idempotency_key: randomUUID(), amount_npr: 1000 });
+
+      expect(bodyOf(walletTopUpResponseSchema, res)).toMatchObject({
+        wallet_balance_npr: -1500,
+        status: 'SUSPENDED',
+        is_suspended: true,
+        restored: false,
+      });
+      // Above the −2000 limit, but still suspended for debt until the balance is cleared.
+      expect(await balanceBody(v.userId)).toMatchObject({ suspended_for_debt: true });
+    });
+
+    it('credits a healthy wallet without changing the status', async () => {
+      const v = await vendor();
+
+      const res = await topUp(v.userId, { idempotency_key: randomUUID(), amount_npr: 12.5 });
+
+      expect(bodyOf(walletTopUpResponseSchema, res)).toMatchObject({
+        wallet_balance_npr: 12.5,
+        status: 'LIVE',
+        restored: false,
+      });
+    });
+
+    it('credits once per idempotency key, and refuses the key for another amount', async () => {
+      const v = await suspendedVendor();
+      const key = randomUUID();
+
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          topUp(v.userId, { idempotency_key: key, amount_npr: 2500 }),
+        ),
+      );
+
+      expect(results.map((r) => r.status).sort()).toEqual([200, 200, 200, 200, 201]);
+      const bodies = results.map((r) => bodyOf(walletTopUpResponseSchema, r));
+      expect(new Set(bodies.map((b) => b.transaction_id)).size).toBe(1);
+      expect(bodies.filter((b) => b.replayed)).toHaveLength(4);
+      expect(await balanceOf(db(), { vendorId: v.vendorId })).toBe(0);
+
+      const reused = await topUp(v.userId, { idempotency_key: key, amount_npr: 100 });
+      expect(reused.status).toBe(409);
+      expect(errorOf(reused).code).toBe('IDEMPOTENCY_KEY_REUSED');
+      expect(await balanceOf(db(), { vendorId: v.vendorId })).toBe(0);
+    });
+
+    it('scopes keys to the vendor: another vendor may use the same key', async () => {
+      const [a, b] = [await vendor(), await vendor()];
+      const key = randomUUID();
+
+      expect((await topUp(a.userId, { idempotency_key: key, amount_npr: 10 })).status).toBe(201);
+      expect((await topUp(b.userId, { idempotency_key: key, amount_npr: 20 })).status).toBe(201);
+      expect(await balanceOf(db(), { vendorId: b.vendorId })).toBe(20);
+    });
+
+    it('validates the amount and the key', async () => {
+      const v = await vendor();
+      for (const body of [
+        { idempotency_key: randomUUID(), amount_npr: 0 },
+        { idempotency_key: randomUUID(), amount_npr: -50 },
+        { idempotency_key: randomUUID(), amount_npr: 100_000.01 },
+        { idempotency_key: randomUUID(), amount_npr: 10.005 },
+        { idempotency_key: randomUUID(), amount_npr: '100' },
+        { amount_npr: 100 },
+      ]) {
+        const res = await topUp(v.userId, body);
+        expect(res.status).toBe(400);
+        expect(errorOf(res).code).toBe('VALIDATION_FAILED');
+      }
+      expect(await balanceOf(db(), { vendorId: v.vendorId })).toBe(0);
+    });
+
+    it('requires a vendor with a shop', async () => {
+      const customerId = await createUser(db());
+      const asCustomer = await request(t.app)
+        .post('/api/vendors/wallet/top-up')
+        .set('authorization', bearer(customerId))
+        .send({ idempotency_key: randomUUID(), amount_npr: 10 });
+      expect(asCustomer.status).toBe(403);
+      const shopless = await topUp(await createUser(db(), 'VENDOR'), {
+        idempotency_key: randomUUID(),
+        amount_npr: 10,
+      });
+      expect(errorOf(shopless).code).toBe('VENDOR_NOT_FOUND');
+    });
+
+    it('answers 503 TOP_UP_UNAVAILABLE and credits nothing when top-ups are disabled', async () => {
+      const disabled = buildTestApp({ walletTopUpMode: 'DISABLED' });
+      try {
+        const v = await suspendedVendor();
+
+        const res = await topUp(
+          v.userId,
+          { idempotency_key: randomUUID(), amount_npr: 2500 },
+          disabled.app,
+        );
+
+        expect(res.status).toBe(503);
+        expect(errorOf(res).code).toBe('TOP_UP_UNAVAILABLE');
+        expect(await balanceBody(v.userId)).toMatchObject({
+          wallet_balance_npr: -2500,
+          is_suspended: true,
+        });
+      } finally {
+        await disabled.container.close();
+      }
     });
   });
 });

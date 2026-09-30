@@ -173,3 +173,31 @@ describe('vendor.suspended_for_debt', () => {
     expect(parse({ is_suspended: true })).toBe(false);
   });
 });
+
+describe('vendor.restored', () => {
+  const payload = {
+    vendor_id: randomUUID(),
+    vendor_phone: '+9779800000011',
+    restored_status: 'LIVE',
+    wallet_balance_npr: 0,
+    transaction_id: randomUUID(),
+    restored_at: '2026-09-30T10:00:00.000Z',
+  };
+  const parse = (overrides: Record<string, unknown>) =>
+    domainEventSchema.safeParse({
+      ...base,
+      event_type: 'vendor.restored',
+      payload: { ...payload, ...overrides },
+    }).success;
+
+  it('is a valid domain event routed to the notification fan-out topic', () => {
+    expect(parse({})).toBe(true);
+    expect(DOMAIN_EVENT_TOPICS['vendor.restored']).toBe('notifications.broadcast');
+  });
+
+  it('never restores into SUSPENDED or with a negative balance', () => {
+    expect(parse({ restored_status: 'SUSPENDED' })).toBe(false);
+    expect(parse({ restored_status: 'ACTIVE' })).toBe(false);
+    expect(parse({ wallet_balance_npr: -1 })).toBe(false);
+  });
+});

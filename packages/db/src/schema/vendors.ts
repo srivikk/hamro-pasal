@@ -2,6 +2,7 @@ import {
   NEPAL_PHONE_PATTERN,
   VENDOR_WALLET_HARD_FLOOR_NPR,
   type VendorFulfillmentMode,
+  type VendorStatus,
 } from '@hamro-pasal/shared-types';
 import { sql } from 'drizzle-orm';
 import {
@@ -52,6 +53,8 @@ export const vendors = pgTable(
     base_delivery_fee_npr: npr().notNull(),
     location: geoPoint().notNull(),
     wallet_balance_npr: npr().notNull().default(0),
+    // Phase 12.5: the status a debt suspension lifts back to (SPEC §5). Null unless SUSPENDED for debt.
+    status_before_debt_suspension: vendorStatusEnum().$type<Exclude<VendorStatus, 'SUSPENDED'>>(),
     created_at: createdAt(),
     updated_at: updatedAt(),
   },
@@ -88,6 +91,11 @@ export const vendors = pgTable(
     // Negative wallet invariant (SPEC §5, edge case #2): an active vendor can never sit below
     // the hard floor. A breaching debit is still recorded, because the
     // enforce_vendor_wallet_limit trigger suspends the vendor in the same row write.
+    // Only a SUSPENDED vendor remembers what to return to, and it is never SUSPENDED itself.
+    check(
+      'vendors_debt_suspension_check',
+      sql`${t.status_before_debt_suspension} IS NULL OR (${t.status} = 'SUSPENDED' AND ${t.status_before_debt_suspension} <> 'SUSPENDED')`,
+    ),
     check(
       'vendors_wallet_balance_floor_check',
       sql`${t.wallet_balance_npr} >= ${hardFloor} OR ${t.status} = 'SUSPENDED'`,

@@ -101,10 +101,11 @@ export const vendorEscalationRequiredPayloadSchema = z.strictObject({
 });
 
 /**
- * SPEC §5 (Phase 12): the nightly reconciliation found the vendor's wallet below the suspension
- * limit and switched the vendor to SUSPENDED. The shop stays offline until the negative balance is
- * cleared with an upfront eSewa payment. Written once per suspension: the vendor is SUSPENDED
- * afterwards, so the next run skips it.
+ * SPEC §5: the vendor's wallet went below the suspension limit and the vendor was switched to
+ * SUSPENDED, either by the posting that took it there (API, Phase 12.5) or by the nightly
+ * reconciliation after the limit was tightened (worker, Phase 12). The shop stays offline until
+ * the negative balance is cleared with an upfront eSewa payment (then `vendor.restored`). Written
+ * once per suspension: only a transition into SUSPENDED writes it.
  */
 export const vendorSuspendedForDebtPayloadSchema = z.strictObject({
   vendor_id: z.uuid(),
@@ -116,6 +117,20 @@ export const vendorSuspendedForDebtPayloadSchema = z.strictObject({
   /** platform_settings.vendor_wallet_suspension_limit_npr at the time of the suspension. */
   suspension_limit_npr: z.number().max(0),
   suspended_at: z.iso.datetime(),
+});
+
+/**
+ * SPEC §5 (Phase 12.5): a vendor suspended for wallet debt cleared the negative balance (a top-up or
+ * a payout brought it back to zero or above) and is back in the status it had before.
+ */
+export const vendorRestoredPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  vendor_phone: nepalPhoneSchema,
+  restored_status: vendorStatusSchema.exclude(['SUSPENDED']),
+  wallet_balance_npr: z.number().nonnegative(),
+  /** The journal that cleared the debt. */
+  transaction_id: z.uuid(),
+  restored_at: z.iso.datetime(),
 });
 
 /** A balanced journal transaction was posted. One posting per affected account line. */
@@ -175,6 +190,8 @@ export const vendorSuspendedForDebtEventSchema = envelope(
   vendorSuspendedForDebtPayloadSchema,
 );
 
+export const vendorRestoredEventSchema = envelope('vendor.restored', vendorRestoredPayloadSchema);
+
 export const domainEventSchema = z.discriminatedUnion('event_type', [
   orderLockedEventSchema,
   orderPlacedEventSchema,
@@ -183,6 +200,7 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   ledgerMutatedEventSchema,
   vendorEscalationRequiredEventSchema,
   vendorSuspendedForDebtEventSchema,
+  vendorRestoredEventSchema,
 ]);
 
 export type OrderLockedEvent = z.infer<typeof orderLockedEventSchema>;
@@ -192,6 +210,7 @@ export type OrderCanceledRefundDueEvent = z.infer<typeof orderCanceledRefundDueE
 export type LedgerMutatedEvent = z.infer<typeof ledgerMutatedEventSchema>;
 export type VendorEscalationRequiredEvent = z.infer<typeof vendorEscalationRequiredEventSchema>;
 export type VendorSuspendedForDebtEvent = z.infer<typeof vendorSuspendedForDebtEventSchema>;
+export type VendorRestoredEvent = z.infer<typeof vendorRestoredEventSchema>;
 export type DomainEvent = z.infer<typeof domainEventSchema>;
 export type DomainEventType = DomainEvent['event_type'];
 export type DomainEventPayload<T extends DomainEventType> = Extract<
@@ -207,4 +226,5 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'ledger.mutated': KAFKA_TOPICS.LEDGER_MUTATIONS,
   'vendor.escalation.required': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.suspended_for_debt': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.restored': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
 };

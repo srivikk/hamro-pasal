@@ -12,6 +12,7 @@ import type { VendorOrderService } from './orders/vendor-order-service';
 import type { EsewaService } from './payments/esewa/esewa-service';
 import type { KhaltiService } from './payments/khalti/khalti-service';
 import type { ReviewService } from './reviews/review-service';
+import type { VendorTopUpService } from './wallet/vendor-top-up-service';
 import type { VendorWalletService } from './wallet/vendor-wallet-service';
 import { authRouter } from './routes/auth';
 import { cartRouter } from './routes/cart';
@@ -34,6 +35,7 @@ export interface ApiServices {
   readonly orders: OrderService;
   readonly vendorOrders: VendorOrderService;
   readonly vendorWallet: VendorWalletService;
+  readonly vendorTopUps: VendorTopUpService;
   readonly driverOrders: DriverOrderService;
   readonly esewa: EsewaService;
   readonly khalti: KhaltiService;
@@ -65,7 +67,7 @@ export function createApp(services?: ApiServices): Express {
     app.use(
       '/api/vendors/wallet',
       requireAuth(services.accessTokenSecret, ['VENDOR']),
-      vendorWalletRouter(services.vendorWallet),
+      vendorWalletRouter(services.vendorWallet, services.vendorTopUps),
     );
     app.use('/api/vendors', customerAuth, vendorsRouter(services.catalog));
     app.use(

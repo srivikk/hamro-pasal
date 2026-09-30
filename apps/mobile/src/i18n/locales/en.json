@@ -357,7 +357,7 @@
     "debit": "− Rs. {{amount, localizedNumber}}",
     "pendingEscrow": "In escrow: Rs. {{amount, localizedNumber}} from {{count, localizedNumber}} paid orders, credited when they are delivered.",
     "suspendedTitle": "Your shop is offline",
-    "suspendedBody": "You owe Rs. {{due, localizedNumber}} in platform dues, more than the Rs. {{limit, localizedNumber}} limit. Customers cannot order from you until you pay your dues with eSewa.",
+    "suspendedBody": "Your wallet went past the Rs. {{limit, localizedNumber}} limit, so customers cannot order from you. Pay the Rs. {{due, localizedNumber}} you owe to bring your shop back online.",
     "suspendedOther": "Your shop is suspended, so customers cannot order from you. Contact Hamro Pasal support.",
     "history": "Transactions",
     "empty": "No transactions yet. Settled orders will appear here.",
@@ -371,6 +371,12 @@
       "COD_COMMISSION_DEBIT": "Commission on a cash order",
       "TOP_UP": "Dues paid",
       "ADJUSTMENT": "Adjustment"
-    }
+    },
+    "payDues": "Pay outstanding balance (Rs. {{amount, localizedNumber}})",
+    "paying": "Paying…",
+    "paid": "Dues paid. Your shop is back online.",
+    "paidPartly": "Payment received. Your shop stays offline until the balance is cleared.",
+    "payUnavailable": "Paying dues in the app isn't available yet.",
+    "payFailed": "Couldn't complete the payment. Please try again."
   }
 }

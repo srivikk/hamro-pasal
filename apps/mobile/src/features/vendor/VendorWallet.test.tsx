@@ -3,14 +3,20 @@ import type {
   VendorWalletLedgerResponseBody,
 } from '@hamro-pasal/shared-types';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react-native';
-import { http, HttpResponse } from 'msw';
+import { walletTopUpResponseSchema } from '@hamro-pasal/shared-types';
+import { delay, http, HttpResponse } from 'msw';
 
 import VendorWalletScreen from '../../../app/(vendor)/wallet';
-import { VENDOR_WALLET_BALANCE_PATH, VENDOR_WALLET_LEDGER_PATH } from '../../api/vendor-wallet';
+import {
+  VENDOR_WALLET_BALANCE_PATH,
+  VENDOR_WALLET_LEDGER_PATH,
+  VENDOR_WALLET_TOP_UP_PATH,
+} from '../../api/vendor-wallet';
 import type { AppLocale } from '../../i18n/app-locale';
 import { errorBody, walletBalance, walletEntry, walletLedgerPage } from '../../test/api-fixtures';
-import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
+import { apiUrl, capture, server, setupApiTestEnvironment } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
+import { useToastStore } from '../../store/useToastStore';
 
 jest.mock('expo-router', () => ({
   Stack: { Screen: () => null },
@@ -22,7 +28,8 @@ setupApiTestEnvironment();
 /**
  * Phase 12: the vendor wallet screen (SPEC §5) over msw, through the real apiRequest, Zod contracts
  * and TanStack queries. The suspension banner is the SPEC's "app locks until they clear the negative
- * balance": it must appear exactly when the server says the vendor is suspended.
+ * balance": it must appear exactly when the server says the vendor is suspended. Phase 12.5 adds
+ * the "Pay Outstanding Balance" button (a mock top-up of exactly the dues).
  */
 
 let ledgerRequests: URL[] = [];
@@ -58,16 +65,22 @@ beforeEach(() => {
   ledgerRequests = [];
 });
 
+/** A vendor suspended for wallet debt (−2500 against the −2000 limit) by default. */
+const inDebt = (overrides: Partial<VendorWalletBalanceResponseBody> = {}) =>
+  walletBalance({
+    status: 'SUSPENDED',
+    is_suspended: true,
+    suspended_for_debt: true,
+    wallet_balance_npr: -2500,
+    suspension_limit_npr: -2000,
+    ...overrides,
+  });
+
+const payButton = () => screen.queryByTestId('wallet-pay-dues');
+
 describe('the suspension banner', () => {
-  it('is shown, in red with the dues and the limit, when the vendor is suspended for debt', async () => {
-    serve(
-      walletBalance({
-        status: 'SUSPENDED',
-        is_suspended: true,
-        wallet_balance_npr: -2500,
-        suspension_limit_npr: -2000,
-      }),
-    );
+  it('is shown, in red with the dues, the limit and a pay button, when suspended for debt', async () => {
+    serve(inDebt());
 
     await renderWallet();
 
@@ -75,9 +88,12 @@ describe('the suspension banner', () => {
     expect(within(shown).getByText('Your shop is offline')).toBeOnTheScreen();
     expect(
       screen.getByText(
-        'You owe Rs. 2500 in platform dues, more than the Rs. 2000 limit. Customers cannot order from you until you pay your dues with eSewa.',
+        'Your wallet went past the Rs. 2000 limit, so customers cannot order from you. Pay the Rs. 2500 you owe to bring your shop back online.',
       ),
     ).toBeOnTheScreen();
+    expect(within(shown).getByTestId('wallet-pay-dues')).toHaveTextContent(
+      'Pay outstanding balance (Rs. 2500)',
+    );
     expect(screen.getByTestId('wallet-balance')).toHaveTextContent('− Rs. 2500');
   });
 
@@ -87,6 +103,7 @@ describe('the suspension banner', () => {
     await renderWallet();
 
     expect(banner()).not.toBeOnTheScreen();
+    expect(payButton()).not.toBeOnTheScreen();
     expect(screen.getByTestId('wallet-balance')).toHaveTextContent('Rs. 850');
   });
 
@@ -99,25 +116,25 @@ describe('the suspension banner', () => {
     expect(screen.getByTestId('wallet-balance')).toHaveTextContent('− Rs. 1500');
   });
 
-  it('follows the server’s is_suspended, not a client-side comparison with the limit', async () => {
-    // Suspended by the nightly sweep after the limit was tightened to −1000.
-    serve(
-      walletBalance({
-        status: 'SUSPENDED',
-        is_suspended: true,
-        wallet_balance_npr: -1500,
-        suspension_limit_npr: -1000,
-      }),
-    );
+  it('follows the server’s debt flag, not a comparison with the limit (after a partial payment)', async () => {
+    // −1500 is above the −2000 limit, but the shop stays offline until the debt is cleared.
+    serve(inDebt({ wallet_balance_npr: -1500 }));
 
     await renderWallet();
 
     expect(banner()).toBeOnTheScreen();
-    expect(screen.getByText(/You owe Rs\. 1500 .* Rs\. 1000 limit/)).toBeOnTheScreen();
+    expect(payButton()).toHaveTextContent('Pay outstanding balance (Rs. 1500)');
   });
 
-  it('explains a suspension that is not about dues without quoting any', async () => {
-    serve(walletBalance({ status: 'SUSPENDED', is_suspended: true, wallet_balance_npr: 0 }));
+  it('explains a suspension that is not about dues, with no pay button', async () => {
+    serve(
+      walletBalance({
+        status: 'SUSPENDED',
+        is_suspended: true,
+        suspended_for_debt: false,
+        wallet_balance_npr: -300,
+      }),
+    );
 
     await renderWallet();
 
@@ -127,24 +144,194 @@ describe('the suspension banner', () => {
         'Your shop is suspended, so customers cannot order from you. Contact Hamro Pasal support.',
       ),
     ).toBeOnTheScreen();
-    expect(screen.queryByText(/You owe/)).not.toBeOnTheScreen();
+    expect(payButton()).not.toBeOnTheScreen();
   });
 
   it('renders the amounts in Devanagari digits in Nepali', async () => {
-    serve(
-      walletBalance({
-        status: 'SUSPENDED',
-        is_suspended: true,
-        wallet_balance_npr: -2500,
-        suspension_limit_npr: -2000,
-      }),
-    );
+    serve(inDebt());
 
     await renderWallet('ne');
 
     expect(banner()).toBeOnTheScreen();
-    expect(screen.getByText(/रु\. २५०० तिर्न बाँकी/)).toBeOnTheScreen();
+    expect(screen.getByText(/बाँकी रु\. २५०० तिर्नुहोस्/)).toBeOnTheScreen();
+    expect(payButton()).toHaveTextContent('बाँकी रकम तिर्नुहोस् (रु. २५००)');
     expect(screen.getByTestId('wallet-balance')).toHaveTextContent('− रु. २५००');
+  });
+});
+
+describe('Pay Outstanding Balance (Phase 12.5)', () => {
+  const topUpEntry = walletEntry({
+    id: '0f1a2b3c-4d5e-4f6a-8b7c-8d9e0f1a2b3c',
+    kind: 'VENDOR_TOP_UP',
+    entry_type: 'TOP_UP',
+    amount_npr: 2500,
+    balance_after_npr: 0,
+    description: 'Mock top-up (no payment taken)',
+    order: null,
+  });
+  let topUps: { idempotency_key: string; amount_npr: number }[] = [];
+  const toast = () => useToastStore.getState().toast;
+
+  beforeEach(() => {
+    topUps = [];
+    useToastStore.setState({ toast: null });
+  });
+
+  function serveTopUp(respond: () => Response | Promise<Response>): void {
+    server.use(
+      http.post(apiUrl(VENDOR_WALLET_TOP_UP_PATH), async ({ request }) => {
+        topUps.push((await capture(request)).body as (typeof topUps)[number]);
+        return respond();
+      }),
+    );
+  }
+
+  const restoredBody = () =>
+    walletTopUpResponseSchema.parse({
+      transaction_id: topUpEntry.transaction_id,
+      amount_npr: 2500,
+      wallet_balance_npr: 0,
+      status: 'LIVE',
+      is_suspended: false,
+      restored: true,
+      replayed: false,
+    });
+
+  it('pays exactly what is owed, clears the banner at once, then refetches balance and ledger', async () => {
+    serve(inDebt());
+    await renderWallet();
+    let paid = false;
+    let refetchAnswered = false;
+    serveTopUp(() => {
+      paid = true;
+      return HttpResponse.json(restoredBody(), { status: 201 });
+    });
+    server.use(
+      http.get(apiUrl(VENDOR_WALLET_BALANCE_PATH), async () => {
+        if (!paid) return HttpResponse.json(inDebt());
+        await delay(300); // the refetch is slow: the banner must already be gone
+        refetchAnswered = true;
+        return HttpResponse.json(walletBalance({ wallet_balance_npr: 0 }));
+      }),
+      http.get(apiUrl(VENDOR_WALLET_LEDGER_PATH), ({ request }) => {
+        ledgerRequests.push(new URL(request.url));
+        return HttpResponse.json(walletLedgerPage(paid ? [topUpEntry] : []));
+      }),
+    );
+
+    fireEvent.press(screen.getByTestId('wallet-pay-dues'));
+
+    await waitFor(() => {
+      expect(banner()).not.toBeOnTheScreen();
+    });
+    expect(refetchAnswered).toBe(false);
+    expect(screen.getByTestId('wallet-balance')).toHaveTextContent('Rs. 0');
+    expect(topUps).toHaveLength(1);
+    expect(topUps[0]?.amount_npr).toBe(2500);
+    expect(topUps[0]?.idempotency_key).toMatch(/^[0-9a-f-]{36}$/);
+    expect(toast()).toMatchObject({
+      message: 'Dues paid. Your shop is back online.',
+      tone: 'success',
+    });
+    expect(await screen.findByTestId(`wallet-entry-${topUpEntry.id}`)).toBeOnTheScreen();
+    expect(screen.getByText('Dues paid')).toBeOnTheScreen();
+    await waitFor(() => {
+      expect(refetchAnswered).toBe(true);
+    });
+    expect(banner()).not.toBeOnTheScreen();
+  });
+
+  it('shows "Paying…" and cannot be pressed twice while the payment is in flight', async () => {
+    serve(inDebt());
+    await renderWallet();
+    serveTopUp(async () => {
+      await delay(200);
+      return HttpResponse.json(restoredBody(), { status: 201 });
+    });
+
+    fireEvent.press(screen.getByTestId('wallet-pay-dues'));
+    expect(await screen.findByText('Paying…')).toBeOnTheScreen();
+    fireEvent.press(screen.getByTestId('wallet-pay-dues'));
+
+    await waitFor(() => {
+      expect(toast()?.tone).toBe('success');
+    });
+    expect(topUps).toHaveLength(1);
+  });
+
+  it('keeps the banner when the server says the shop is still suspended', async () => {
+    serve(inDebt());
+    await renderWallet();
+    serveTopUp(() =>
+      HttpResponse.json(
+        {
+          ...restoredBody(),
+          wallet_balance_npr: -100,
+          status: 'SUSPENDED',
+          is_suspended: true,
+          restored: false,
+        },
+        { status: 201 },
+      ),
+    );
+
+    fireEvent.press(screen.getByTestId('wallet-pay-dues'));
+
+    await waitFor(() => {
+      expect(toast()?.message).toBe(
+        'Payment received. Your shop stays offline until the balance is cleared.',
+      );
+    });
+    expect(banner()).toBeOnTheScreen();
+  });
+
+  it('says so when the server has no top-up flow (503 TOP_UP_UNAVAILABLE)', async () => {
+    serve(inDebt());
+    await renderWallet();
+    serveTopUp(() => HttpResponse.json(errorBody('TOP_UP_UNAVAILABLE'), { status: 503 }));
+
+    fireEvent.press(screen.getByTestId('wallet-pay-dues'));
+
+    await waitFor(() => {
+      expect(toast()).toMatchObject({
+        message: "Paying dues in the app isn't available yet.",
+        tone: 'error',
+      });
+    });
+    expect(banner()).toBeOnTheScreen();
+  });
+
+  it('retries a failed payment with the same idempotency key, so it can never pay twice', async () => {
+    serve(inDebt());
+    await renderWallet();
+    let calls = 0;
+    serveTopUp(() => {
+      calls += 1;
+      return calls === 1
+        ? HttpResponse.json(errorBody('INTERNAL_SERVER_ERROR'), { status: 500 })
+        : HttpResponse.json(restoredBody(), { status: 201 });
+    });
+    // The server's balance reflects the payment once the second attempt went through.
+    server.use(
+      http.get(apiUrl(VENDOR_WALLET_BALANCE_PATH), () =>
+        HttpResponse.json(calls >= 2 ? walletBalance({ wallet_balance_npr: 0 }) : inDebt()),
+      ),
+    );
+
+    fireEvent.press(screen.getByTestId('wallet-pay-dues'));
+    await waitFor(() => {
+      expect(toast()?.message).toBe("Couldn't complete the payment. Please try again.");
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('wallet-pay-dues')).toBeEnabled();
+    });
+    fireEvent.press(screen.getByTestId('wallet-pay-dues'));
+
+    await waitFor(() => {
+      expect(banner()).not.toBeOnTheScreen();
+    });
+    expect(topUps).toHaveLength(2);
+    expect(topUps[1]?.idempotency_key).toBe(topUps[0]?.idempotency_key);
   });
 });
 

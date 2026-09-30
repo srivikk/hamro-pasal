@@ -32,6 +32,7 @@ export class InvalidLedgerCursorError extends Error {
 export interface VendorWalletBalance {
   readonly vendorId: string;
   readonly status: VendorStatus;
+  readonly suspendedForDebt: boolean;
   readonly walletBalanceNpr: number;
   readonly suspensionLimitNpr: number;
   readonly pendingEscrowNpr: number;
@@ -109,6 +110,7 @@ export class VendorWalletService {
       return {
         vendorId: vendor.id,
         status: vendor.status,
+        suspendedForDebt: vendor.status === 'SUSPENDED' && vendor.restoreTo !== null,
         walletBalanceNpr: vendor.walletBalanceNpr,
         suspensionLimitNpr: settings.limit,
         pendingEscrowNpr: escrow?.total ?? 0,
@@ -245,6 +247,7 @@ async function vendorOf(tx: Transaction, vendorUserId: string) {
       id: vendors.id,
       status: vendors.status,
       walletBalanceNpr: vendors.wallet_balance_npr,
+      restoreTo: vendors.status_before_debt_suspension,
     })
     .from(vendors)
     .where(eq(vendors.user_id, vendorUserId));

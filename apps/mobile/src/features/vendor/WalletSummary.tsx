@@ -2,15 +2,25 @@ import type { VendorWalletBalanceResponseBody } from '@hamro-pasal/shared-types'
 import { Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { formatBalance, suspensionReason } from './wallet-format';
+import { Button } from '../../components/Button';
+import { formatBalance, outstandingDues, suspensionReason } from './wallet-format';
 
 /**
- * The top of the wallet screen: the suspension banner when the shop is offline, the balance
+ * The top of the wallet screen: the suspension banner when the shop is offline (with the "Pay
+ * outstanding balance" button for a debt suspension), the balance
  * (red while negative) and the prepaid money still waiting in escrow.
  */
-export function WalletSummary({ balance }: { balance: VendorWalletBalanceResponseBody }) {
+export interface WalletSummaryProps {
+  balance: VendorWalletBalanceResponseBody;
+  /** Pays exactly the outstanding dues (Phase 12.5). */
+  onPayDues: (amountNpr: number) => void;
+  paying: boolean;
+}
+
+export function WalletSummary({ balance, onPayDues, paying }: WalletSummaryProps) {
   const { t } = useTranslation();
   const reason = suspensionReason(balance);
+  const dues = outstandingDues(balance);
   const negative = balance.wallet_balance_npr < 0;
 
   return (
@@ -25,11 +35,26 @@ export function WalletSummary({ balance }: { balance: VendorWalletBalanceRespons
           <Text className="text-base text-white">
             {reason === 'DEBT'
               ? t('vendorWallet.suspendedBody', {
-                  due: -balance.wallet_balance_npr,
+                  due: dues,
                   limit: -balance.suspension_limit_npr,
                 })
               : t('vendorWallet.suspendedOther')}
           </Text>
+          {reason === 'DEBT' && dues > 0 ? (
+            <View className="mt-2">
+              <Button
+                label={
+                  paying ? t('vendorWallet.paying') : t('vendorWallet.payDues', { amount: dues })
+                }
+                variant="secondary"
+                disabled={paying}
+                testID="wallet-pay-dues"
+                onPress={() => {
+                  onPayDues(dues);
+                }}
+              />
+            </View>
+          ) : null}
         </View>
       )}
 

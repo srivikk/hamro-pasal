@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { vendorWalletLedgerQuerySchema } from './requests';
+import { vendorWalletLedgerQuerySchema, walletTopUpRequestSchema } from './requests';
 import { vendorWalletBalanceResponseSchema, vendorWalletLedgerResponseSchema } from './responses';
 
 describe('vendorWalletLedgerQuerySchema', () => {
@@ -31,6 +31,7 @@ describe('vendor wallet responses', () => {
     vendor_id: randomUUID(),
     status: 'SUSPENDED',
     is_suspended: true,
+    suspended_for_debt: true,
     wallet_balance_npr: -2500,
     suspension_limit_npr: -2000,
     pending_escrow_npr: 0,
@@ -75,5 +76,25 @@ describe('vendor wallet responses', () => {
         next_cursor: null,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('walletTopUpRequestSchema', () => {
+  const ok = (body: Record<string, unknown>) =>
+    walletTopUpRequestSchema.safeParse({ idempotency_key: randomUUID(), ...body }).success;
+
+  it('accepts a positive amount in whole paisa up to the cap', () => {
+    expect(ok({ amount_npr: 2500 })).toBe(true);
+    expect(ok({ amount_npr: 12.5 })).toBe(true);
+    expect(ok({ amount_npr: 100_000 })).toBe(true);
+  });
+
+  it('refuses zero, negative, sub-paisa, oversized and string amounts, and a missing key', () => {
+    expect(ok({ amount_npr: 0 })).toBe(false);
+    expect(ok({ amount_npr: -100 })).toBe(false);
+    expect(ok({ amount_npr: 10.005 })).toBe(false);
+    expect(ok({ amount_npr: 100_000.01 })).toBe(false);
+    expect(ok({ amount_npr: '2500' })).toBe(false);
+    expect(walletTopUpRequestSchema.safeParse({ amount_npr: 100 }).success).toBe(false);
   });
 });

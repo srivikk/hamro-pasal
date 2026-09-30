@@ -1,8 +1,10 @@
 import {
   vendorWalletBalanceResponseSchema,
   vendorWalletLedgerResponseSchema,
+  walletTopUpResponseSchema,
   type VendorWalletBalanceResponseBody,
   type VendorWalletLedgerResponseBody,
+  type WalletTopUpResponseBody,
 } from '@hamro-pasal/shared-types';
 
 import { apiRequest } from './http';
@@ -31,5 +33,26 @@ export function fetchVendorWalletLedger(
     path: VENDOR_WALLET_LEDGER_PATH,
     ...(cursor === null ? {} : { query: { cursor } }),
     schema: vendorWalletLedgerResponseSchema,
+  });
+}
+
+export const VENDOR_WALLET_TOP_UP_PATH = '/api/vendors/wallet/top-up';
+
+/** Server code when this server has no top-up flow (WALLET_TOP_UP_MODE=DISABLED). */
+export const TOP_UP_UNAVAILABLE = 'TOP_UP_UNAVAILABLE';
+
+/**
+ * POST /api/vendors/wallet/top-up (SPEC §5: the vendor clears a negative wallet upfront). Resending
+ * the same key never credits twice. The server is in MOCK mode in development (no payment taken).
+ */
+export function topUpVendorWallet(
+  amountNpr: number,
+  idempotencyKey: string,
+): Promise<WalletTopUpResponseBody> {
+  return apiRequest({
+    method: 'POST',
+    path: VENDOR_WALLET_TOP_UP_PATH,
+    body: { idempotency_key: idempotencyKey, amount_npr: amountNpr },
+    schema: walletTopUpResponseSchema,
   });
 }

@@ -104,4 +104,16 @@ describe('parseServerEnv', () => {
       'not allowed in production',
     );
   });
+
+  it('disables wallet top-ups by default and allows the MOCK top-up outside production only', () => {
+    expect(parseServerEnv(validEnv).WALLET_TOP_UP_MODE).toBe('DISABLED');
+    expect(parseServerEnv({ ...validEnv, WALLET_TOP_UP_MODE: 'MOCK' }).WALLET_TOP_UP_MODE).toBe(
+      'MOCK',
+    );
+    expectInvalid(
+      { ...validEnv, WALLET_TOP_UP_MODE: 'MOCK', NODE_ENV: 'production' },
+      'WALLET_TOP_UP_MODE',
+    );
+    expectInvalid({ ...validEnv, WALLET_TOP_UP_MODE: 'FREE' }, 'WALLET_TOP_UP_MODE');
+  });
 });

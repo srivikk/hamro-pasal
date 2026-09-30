@@ -40,6 +40,7 @@ import {
   ReviewAlreadySubmittedError,
   ReviewWindowClosedError,
 } from '../reviews/review-service';
+import { TopUpKeyReusedError, TopUpUnavailableError } from '../wallet/vendor-top-up-service';
 import { InvalidLedgerCursorError } from '../wallet/vendor-wallet-service';
 import { SmsDeliveryError } from '../sms/sms-gateway';
 import { InvalidGatewayCallbackError } from '../payments/esewa/esewa-service';
@@ -144,6 +145,12 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof ReviewWindowClosedError) {
     return new HttpError(422, 'REVIEW_WINDOW_CLOSED', error.message);
+  }
+  if (error instanceof TopUpUnavailableError) {
+    return new HttpError(503, 'TOP_UP_UNAVAILABLE', error.message);
+  }
+  if (error instanceof TopUpKeyReusedError) {
+    return new HttpError(409, 'IDEMPOTENCY_KEY_REUSED', error.message);
   }
   if (error instanceof InvalidLedgerCursorError) {
     return new HttpError(400, 'INVALID_CURSOR', error.message);

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createDatabase, type Database } from '@hamro-pasal/db';
-import type { ServerEnv } from '@hamro-pasal/shared-types';
+import type { ServerEnv, WalletTopUpMode } from '@hamro-pasal/shared-types';
 import { Redis } from 'ioredis';
 
 import type { ApiServices } from './app';
@@ -21,7 +21,9 @@ import {
 import { DrizzleStockReader } from './inventory/stock-reader';
 import { LedgerService } from './ledger/ledger-service';
 import { SettlementService } from './ledger/settlement-service';
+import { VendorTopUpService } from './wallet/vendor-top-up-service';
 import { VendorWalletService } from './wallet/vendor-wallet-service';
+import { WalletService } from './wallet/wallet-service';
 import {
   DeliveryOtpAttempts,
   type DeliveryOtpAttemptOptions,
@@ -49,6 +51,8 @@ export interface ApiConfig {
   readonly refreshTokenSecret: string;
   readonly esewa: EsewaConfig;
   readonly khalti: KhaltiConfig;
+  /** WALLET_TOP_UP_MODE: MOCK credits vendor top-ups without a payment (never in production). */
+  readonly walletTopUpMode: WalletTopUpMode;
 }
 
 export interface Infrastructure {
@@ -91,6 +95,7 @@ export function apiConfigFromEnv(env: ServerEnv): ApiConfig {
       returnUrl: env.KHALTI_RETURN_URL,
       websiteUrl: env.KHALTI_WEBSITE_URL,
     },
+    walletTopUpMode: env.WALLET_TOP_UP_MODE,
   };
 }
 
@@ -102,7 +107,8 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     infra.lockOptions,
   );
   const checkout = new CheckoutService(infra.db, locks, new RedisKeyedMutex(infra.redisPool));
-  const settlement = new SettlementService(infra.db, new LedgerService());
+  const ledger = new LedgerService(new WalletService());
+  const settlement = new SettlementService(infra.db, ledger);
   const confirmation = new PaymentConfirmationService(infra.db, settlement, checkout);
   const khaltiClient = new KhaltiClient(config.khalti, infra.fetch);
   // One handoff (and one Redis counter per order) for the rider's and the vendor's deliveries.
@@ -126,6 +132,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     orders: new OrderService(infra.db, locks),
     vendorOrders: new VendorOrderService(infra.db, locks, handoff),
     vendorWallet: new VendorWalletService(infra.db),
+    vendorTopUps: new VendorTopUpService(infra.db, ledger, config.walletTopUpMode),
     driverOrders: new DriverOrderService(infra.db, handoff),
     esewa: new EsewaService(infra.db, checkout, confirmation, config.esewa),
     khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),

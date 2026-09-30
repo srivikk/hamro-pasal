@@ -442,8 +442,13 @@ export type ChatHistoryResponseBody = z.infer<typeof chatHistoryResponseSchema>;
 export const vendorWalletBalanceResponseSchema = z.strictObject({
   vendor_id: z.uuid(),
   status: vendorStatusSchema,
-  /** status === 'SUSPENDED': the shop is offline until the negative balance is paid. */
+  /** status === 'SUSPENDED': the shop is offline. */
   is_suspended: z.boolean(),
+  /**
+   * Suspended because of wallet debt (Phase 12.5): paying until the balance is 0 or more restores the
+   * shop. False for any other suspension, which a top-up does not lift.
+   */
+  suspended_for_debt: z.boolean(),
   wallet_balance_npr: z.number(),
   /** The Super Admin's limit (−2000 … 0): a balance strictly below it suspends the vendor. */
   suspension_limit_npr: z.number().max(0),
@@ -502,3 +507,19 @@ export const vendorWalletLedgerResponseSchema = z.strictObject({
   next_cursor: z.uuid().nullable(),
 });
 export type VendorWalletLedgerResponseBody = z.infer<typeof vendorWalletLedgerResponseSchema>;
+
+/**
+ * POST /api/vendors/wallet/top-up: 201 for a new top-up, 200 (`replayed: true`) when the same
+ * idempotency key is sent again. `restored` is true only on the request whose credit lifted a debt
+ * suspension (the vendor is back in its previous status).
+ */
+export const walletTopUpResponseSchema = z.strictObject({
+  transaction_id: z.uuid(),
+  amount_npr: z.number().positive(),
+  wallet_balance_npr: z.number(),
+  status: vendorStatusSchema,
+  is_suspended: z.boolean(),
+  restored: z.boolean(),
+  replayed: z.boolean(),
+});
+export type WalletTopUpResponseBody = z.infer<typeof walletTopUpResponseSchema>;

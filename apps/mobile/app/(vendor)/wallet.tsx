@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import { Button } from '../../src/components/Button';
 import {
+  useVendorTopUp,
   useVendorWalletBalanceQuery,
   useVendorWalletLedgerQuery,
 } from '../../src/features/vendor/useVendorWallet';
@@ -13,13 +14,15 @@ import { WalletSummary } from '../../src/features/vendor/WalletSummary';
 /**
  * SPEC §5 (Phase 12): the vendor's wallet. The balance goes negative when the shop collects COD
  * cash that includes the platform's commission; below the platform limit the shop is SUSPENDED and
- * a red banner explains that it stays offline until the dues are paid. Below it, every posting
- * (order payouts, COD commission debits), newest first, loaded page by page as the list scrolls.
+ * a red banner explains that it stays offline until the dues are paid, with a button that pays
+ * them (Phase 12.5). Below it, every posting (order payouts, COD commission debits, top-ups),
+ * newest first, loaded page by page as the list scrolls.
  */
 export default function VendorWalletScreen() {
   const { t } = useTranslation();
   const balance = useVendorWalletBalanceQuery();
   const ledger = useVendorWalletLedgerQuery();
+  const { payOutstanding, paying } = useVendorTopUp();
   const entries = ledger.data?.pages.flatMap((page) => page.entries) ?? [];
   const header = <Stack.Screen options={{ headerShown: true, title: t('vendorWallet.title') }} />;
 
@@ -78,7 +81,7 @@ export default function VendorWalletScreen() {
       ListHeaderComponent={
         <View className="gap-4">
           {header}
-          <WalletSummary balance={balance.data} />
+          <WalletSummary balance={balance.data} onPayDues={payOutstanding} paying={paying} />
           <Text className="text-lg font-bold text-neutral-900">{t('vendorWallet.history')}</Text>
         </View>
       }

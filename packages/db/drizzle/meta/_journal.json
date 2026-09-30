@@ -99,6 +99,13 @@
       "when": 1790766905538,
       "tag": "0013_delivery_otp_nullable",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790773582838,
+      "tag": "0014_vendor_debt_suspension",
+      "breakpoints": true
     }
   ]
 }

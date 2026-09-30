@@ -1,6 +1,6 @@
 import { enqueueDomainEvent, platformSettings, vendors, type Database } from '@hamro-pasal/db';
 import type { VendorStatus } from '@hamro-pasal/shared-types';
-import { and, asc, inArray, lt, ne } from 'drizzle-orm';
+import { and, asc, eq, lt, ne } from 'drizzle-orm';
 
 /** One vendor switched to SUSPENDED by the nightly reconciliation. */
 export interface DebtSuspension {
@@ -24,9 +24,11 @@ function isActive(status: VendorStatus): status is Exclude<VendorStatus, 'SUSPEN
  * In one transaction:
  *   - read the current limit from platform_settings;
  *   - lock every vendor that is not SUSPENDED and whose wallet is strictly below it
- *     (`SELECT … FOR UPDATE`; the same rule as the trigger, and the condition is re-checked on the
- *     locked row, so a top-up that commits first saves the vendor);
- *   - set them SUSPENDED and write one `vendor.suspended_for_debt` outbox event each.
+ *     (`SELECT … FOR NO KEY UPDATE`; the same rule as the trigger, and the condition is re-checked
+ *     on the locked row, so a top-up that commits first saves the vendor);
+ *   - set them SUSPENDED (remembering the previous status in `status_before_debt_suspension`, which
+ *     the API restores once the debt is cleared) and write one `vendor.suspended_for_debt` outbox
+ *     event each.
  * Healthy vendors are not touched. A rerun (retried job) finds them already SUSPENDED and does
  * nothing, so each suspension is announced once.
  */
@@ -54,24 +56,19 @@ export class VendorDebtReconciliationService {
         .where(and(ne(vendors.status, 'SUSPENDED'), lt(vendors.wallet_balance_npr, settings.limit)))
         // One lock order for every run, so concurrent sweeps cannot deadlock.
         .orderBy(asc(vendors.id))
-        .for('update');
+        .for('no key update');
       if (breached.length === 0) return [];
-
-      await tx
-        .update(vendors)
-        .set({ status: 'SUSPENDED' })
-        .where(
-          inArray(
-            vendors.id,
-            breached.map((vendor) => vendor.id),
-          ),
-        );
 
       const suspendedAt = this.now();
       const suspensions: DebtSuspension[] = [];
       for (const vendor of breached) {
         const previousStatus = vendor.status;
         if (!isActive(previousStatus)) throw new Error(`Vendor ${vendor.id} was already suspended`);
+        // Remembered so that clearing the debt restores it (API WalletService, Phase 12.5).
+        await tx
+          .update(vendors)
+          .set({ status: 'SUSPENDED', status_before_debt_suspension: previousStatus })
+          .where(eq(vendors.id, vendor.id));
         await enqueueDomainEvent(tx, {
           type: 'vendor.suspended_for_debt',
           aggregateId: vendor.id,

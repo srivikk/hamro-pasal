@@ -11,6 +11,14 @@ const optionalNonEmpty = nonEmpty.optional();
 export const smsProviders = ['SPARROW', 'AAKASH', 'FIREBASE', 'MOCK'] as const;
 export type SmsProvider = (typeof smsProviders)[number];
 
+/**
+ * Vendor wallet top-ups (SPEC §5: debts are cleared by an upfront eSewa payment). No gateway flow
+ * exists for top-ups yet: MOCK credits the wallet without taking a payment and is refused in
+ * production; DISABLED (the default) answers 503 TOP_UP_UNAVAILABLE.
+ */
+export const walletTopUpModes = ['MOCK', 'DISABLED'] as const;
+export type WalletTopUpMode = (typeof walletTopUpModes)[number];
+
 export const kafkaSaslMechanisms = ['plain', 'scram-sha-256', 'scram-sha-512'] as const;
 export type KafkaSaslMechanism = (typeof kafkaSaslMechanisms)[number];
 
@@ -101,6 +109,9 @@ export const serverEnvSchema = z
     // host's LAN address when a phone or emulator has to load the images.
     UPLOADS_DIR: optionalNonEmpty,
     UPLOADS_PUBLIC_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
+
+    // Vendor wallet top-ups (Phase 12.5).
+    WALLET_TOP_UP_MODE: z.enum(walletTopUpModes).default('DISABLED'),
   })
   .superRefine((env, ctx) => {
     const requireKeys = (keys: readonly (keyof typeof env)[], reason: string): void => {
@@ -121,6 +132,14 @@ export const serverEnvSchema = z
 
     if (env.KAFKA_SASL_MECHANISM !== undefined) {
       requireKeys(['KAFKA_SASL_USERNAME', 'KAFKA_SASL_PASSWORD'], 'KAFKA_SASL_MECHANISM is set');
+    }
+
+    if (env.WALLET_TOP_UP_MODE === 'MOCK' && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['WALLET_TOP_UP_MODE'],
+        message: 'MOCK credits wallets without a payment; it is not allowed in production',
+      });
     }
 
     switch (env.SMS_PROVIDER) {

@@ -99,6 +99,11 @@ export const vendorSchema = z.strictObject({
   location: geoPointSchema,
   /** Below the hard floor only while SUSPENDED. */
   wallet_balance_npr: nprAmountSchema,
+  /**
+   * Set only while the vendor is SUSPENDED for wallet debt (SPEC §5): the status to restore once the
+   * negative balance is cleared. Null for any other suspension, which a top-up never lifts.
+   */
+  status_before_debt_suspension: vendorStatusSchema.exclude(['SUSPENDED']).nullable(),
   created_at: z.date(),
   updated_at: z.date(),
 });

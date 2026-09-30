@@ -420,6 +420,7 @@ export function walletBalance(
     vendor_id: WALLET_VENDOR_ID,
     status: 'LIVE',
     is_suspended: false,
+    suspended_for_debt: false,
     wallet_balance_npr: 850,
     suspension_limit_npr: -2000,
     pending_escrow_npr: 0,

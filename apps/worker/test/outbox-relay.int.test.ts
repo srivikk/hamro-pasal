@@ -163,4 +163,73 @@ describe('OutboxRelay', () => {
       await Promise.all([producer.disconnect(), consumer.disconnect()]);
     }
   }, 60_000);
+
+  it('relays the vendor standing events to notifications.broadcast, keyed by vendor (Phase 12.5)', async () => {
+    const kafka = createKafka(parseKafkaEnv(process.env));
+    const producer = createIdempotentProducer(kafka);
+    const consumer = kafka.consumer({
+      kafkaJS: { groupId: `relay-vendor-${randomUUID()}`, fromBeginning: false },
+    });
+    await Promise.all([producer.connect(), consumer.connect()]);
+    try {
+      await consumer.subscribe({ topics: ['notifications.broadcast'] });
+      const vendorId = randomUUID();
+      const at = new Date().toISOString();
+      const suspended = await enqueueDomainEvent(db, {
+        type: 'vendor.suspended_for_debt',
+        aggregateId: vendorId,
+        payload: {
+          vendor_id: vendorId,
+          vendor_phone: '+9779800000011',
+          previous_status: 'LIVE',
+          wallet_balance_npr: -2500,
+          suspension_limit_npr: -2000,
+          suspended_at: at,
+        },
+      });
+      const restored = await enqueueDomainEvent(db, {
+        type: 'vendor.restored',
+        aggregateId: vendorId,
+        payload: {
+          vendor_id: vendorId,
+          vendor_phone: '+9779800000011',
+          restored_status: 'LIVE',
+          wallet_balance_npr: 0,
+          transaction_id: randomUUID(),
+          restored_at: at,
+        },
+      });
+      const wanted = new Set([suspended.event_id, restored.event_id]);
+      const seen: { key: string | undefined; event: unknown }[] = [];
+      const received = new Promise<void>((resolve) => {
+        void consumer.run({
+          eachMessage: ({ message }) => {
+            if (wanted.has(message.headers?.event_id?.toString() ?? '')) {
+              seen.push({
+                key: message.key?.toString(),
+                event: JSON.parse(message.value?.toString() ?? 'null'),
+              });
+              if (seen.length === wanted.size) resolve();
+            }
+            return Promise.resolve();
+          },
+        });
+      });
+      const deadline = Date.now() + 30_000;
+      while (consumer.assignment().length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+
+      await drain(new OutboxRelay(db, new DomainEventPublisher(producer)));
+      await received;
+
+      // One key, so both land on one partition in order: suspended, then restored.
+      expect(seen).toEqual([
+        { key: vendorId, event: suspended },
+        { key: vendorId, event: restored },
+      ]);
+    } finally {
+      await Promise.all([producer.disconnect(), consumer.disconnect()]);
+    }
+  }, 60_000);
 });

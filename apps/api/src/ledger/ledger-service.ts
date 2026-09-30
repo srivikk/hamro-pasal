@@ -10,6 +10,7 @@ import type { DomainEvent, LedgerAccount, LedgerTransactionKind } from '@hamro-p
 import { eq, inArray } from 'drizzle-orm';
 
 import { toNpr } from './money';
+import type { WalletService, StandingChange } from '../wallet/wallet-service';
 import type { AccountRef, PlannedPosting } from './settlement-plan';
 
 export interface JournalInput {
@@ -22,7 +23,13 @@ export interface JournalInput {
 }
 
 export type PostResult =
-  | { readonly status: 'posted'; readonly transactionId: string; readonly event: DomainEvent }
+  | {
+      readonly status: 'posted';
+      readonly transactionId: string;
+      readonly event: DomainEvent;
+      /** Vendors this journal suspended for debt or restored (SPEC §5, WalletService). */
+      readonly standingChanges: readonly StandingChange[];
+    }
   | { readonly status: 'duplicate'; readonly transactionId: string };
 
 export class LedgerError extends Error {
@@ -37,8 +44,14 @@ export class LedgerError extends Error {
  * with the business state change it accounts for. The database independently enforces
  * balance (deferred trigger), append-only history, escrow >= 0 and the vendor wallet
  * floor/suspension (SPEC §5). This service is the typed front door, not the only guard.
+ *
+ * Every journal that moves a vendor wallet goes through WalletService in the same transaction: the
+ * vendor rows are locked before the postings and the suspension threshold is applied after them
+ * (Phase 12.5).
  */
 export class LedgerService {
+  constructor(private readonly wallets: WalletService) {}
+
   async post(tx: Transaction, input: JournalInput): Promise<PostResult> {
     if (input.postings.length < 2) {
       throw new LedgerError('A journal needs at least two postings');
@@ -70,6 +83,11 @@ export class LedgerService {
       }
       return { status: 'duplicate', transactionId: existing.id };
     }
+
+    const vendorIds = input.postings.flatMap(({ account }) =>
+      account.type === 'VENDOR_WALLET' ? [account.vendorId] : [],
+    );
+    const standingsBefore = await this.wallets.lockStandings(tx, vendorIds);
 
     const resolved = [];
     for (const posting of input.postings) {
@@ -120,7 +138,8 @@ export class LedgerService {
       },
     });
 
-    return { status: 'posted', transactionId: header.id, event };
+    const standingChanges = await this.wallets.applyThreshold(tx, standingsBefore, header.id);
+    return { status: 'posted', transactionId: header.id, event, standingChanges };
   }
 
   private async resolveAccount(tx: Transaction, ref: AccountRef): Promise<string> {

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { errorBodySchema, type ErrorBody } from '@hamro-pasal/shared-types';
+import { errorBodySchema, type ErrorBody, type WalletTopUpMode } from '@hamro-pasal/shared-types';
 import type { Express } from 'express';
 import type { z } from 'zod';
 
@@ -65,6 +65,8 @@ export function buildTestApp(
     otpOptions?: OtpStoreOptions;
     deliveryOtpLockoutMs?: number;
     uploadsDir?: string;
+    /** Defaults to MOCK so wallet tests can top up. */
+    walletTopUpMode?: WalletTopUpMode;
   } = {},
 ): TestApp {
   const sms = options.sms ?? new MockSmsGateway();
@@ -85,6 +87,7 @@ export function buildTestApp(
         returnUrl: 'https://app.hamropasal.test/payments/khalti/return',
         websiteUrl: 'https://hamropasal.test',
       },
+      walletTopUpMode: options.walletTopUpMode ?? 'MOCK',
     },
     {
       db: testDatabase(),

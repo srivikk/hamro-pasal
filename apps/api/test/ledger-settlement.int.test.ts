@@ -3,6 +3,7 @@ import { ledgerMutatedPayloadSchema } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 
 import { LedgerService } from '../src/ledger/ledger-service';
+import { WalletService } from '../src/wallet/wallet-service';
 import { SettlementNotAllowedError, SettlementService } from '../src/ledger/settlement-service';
 import {
   balanceOf,
@@ -24,7 +25,7 @@ describe('double-entry settlement', () => {
 
   beforeAll(async () => {
     db = testDatabase();
-    ledger = new LedgerService();
+    ledger = new LedgerService(new WalletService());
     settlement = new SettlementService(db, ledger);
     customerId = await createUser(db);
   });

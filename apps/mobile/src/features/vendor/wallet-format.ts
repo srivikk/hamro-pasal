@@ -18,6 +18,11 @@ export function formatPosting(t: TFunction, amountNpr: number): string {
     : t('vendorWallet.credit', { amount: amountNpr });
 }
 
+/** What clears the debt: the whole negative balance (0 when there is none). */
+export function outstandingDues(balance: VendorWalletBalanceResponseBody): number {
+  return balance.wallet_balance_npr < 0 ? -balance.wallet_balance_npr : 0;
+}
+
 /** "2026-09-30 16:05" in the device's time zone, Devanagari digits under `ne`. */
 export function formatPostedAt(iso: string, locale: AppLocale): string {
   const date = new Date(iso);
@@ -27,12 +32,14 @@ export function formatPostedAt(iso: string, locale: AppLocale): string {
 }
 
 /**
- * Why a suspended shop is offline. DEBT: the wallet is below the platform limit (SPEC §5), the
- * banner shows the dues. OTHER: suspended for another reason (an admin decision).
+ * Why a suspended shop is offline, as the server says (`suspended_for_debt`). DEBT: wallet debt
+ * (SPEC §5): the banner shows the dues and the pay button; paying to 0 restores the shop, even if the
+ * balance is already back above the limit. OTHER: another reason (an admin decision), no payment
+ * lifts it.
  */
 export function suspensionReason(
   balance: VendorWalletBalanceResponseBody,
 ): 'DEBT' | 'OTHER' | null {
   if (!balance.is_suspended) return null;
-  return balance.wallet_balance_npr < balance.suspension_limit_npr ? 'DEBT' : 'OTHER';
+  return balance.suspended_for_debt ? 'DEBT' : 'OTHER';
 }

@@ -1,15 +1,16 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import {
+  MAX_REVIEW_FEEDBACK_LENGTH,
+  type ReviewSubmitRequest,
+  type ReviewView,
+} from '@hamro-pasal/shared-types';
 import { useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Modal, Pressable, Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import {
-  MAX_REVIEW_COMMENT_LENGTH,
-  submitReview,
-  type ReviewInput,
-  type SubmittedReview,
-} from '../features/review/review-api';
+import { ApiError } from '../api/http';
+import { existingReviewId, REVIEW_ERROR_CODES, submitReview } from '../api/reviews';
 import { formatLocalizedNumber } from '../i18n/format-number';
 import { useAuthStore } from '../store/useAuthStore';
 import { useReviewStore } from '../store/useReviewStore';
@@ -34,21 +35,49 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
   const [rating, setRating] = useState<number | null>(null);
   const [comment, setComment] = useState('');
 
-  const submit = useMutation<SubmittedReview, Error, ReviewInput>({
+  const submit = useMutation<ReviewView, Error, ReviewSubmitRequest>({
     mutationKey: ['review-submit', orderId],
     mutationFn: (input) => submitReview(input),
-    onSuccess: (review, input) => {
+    onSuccess: (review) => {
       // Recorded only after the server accepted it, so a failed attempt can be retried.
       markSubmitted(orderId, {
-        reviewId: review.review_id,
-        rating: input.rating,
-        comment: typeof input.comment === 'string' ? input.comment.trim() || null : null,
+        reviewId: review.id,
+        rating: review.rating,
+        comment: review.feedback,
         submittedAt: Date.now(),
       });
-      toast(t('review.thanks'), 'success');
+      // PUBLISHED: the vendor had already rated, so the double blind lifted at once (SPEC §6).
+      toast(
+        t(review.status === 'PUBLISHED' ? 'review.thanksPublished' : 'review.thanks'),
+        'success',
+      );
       onDone();
     },
-    onError: () => {
+    onError: (error, input) => {
+      const existing = existingReviewId(error);
+      if (existing !== null) {
+        // Submitted before (e.g. the response was lost on a flaky network): never ask again.
+        markSubmitted(orderId, {
+          reviewId: existing,
+          rating: input.rating,
+          comment: null,
+          submittedAt: Date.now(),
+        });
+        toast(t('review.alreadySubmitted'), 'success');
+        onDone();
+        return;
+      }
+      if (
+        error instanceof ApiError &&
+        (error.code === REVIEW_ERROR_CODES.windowClosed ||
+          error.code === REVIEW_ERROR_CODES.notDelivered)
+      ) {
+        // Retrying cannot succeed: put the prompt away for this session.
+        snooze(orderId);
+        toast(t('review.unavailable'), 'error');
+        onDone();
+        return;
+      }
       toast(t('review.failed'), 'error');
     },
   });
@@ -87,14 +116,14 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
           value={comment}
           onChangeText={setComment}
           placeholder={t('review.commentPlaceholder')}
-          maxLength={MAX_REVIEW_COMMENT_LENGTH}
+          maxLength={MAX_REVIEW_FEEDBACK_LENGTH}
           multiline
           editable={!submit.isPending}
           className="min-h-20 rounded-xl border border-neutral-300 px-3 py-2 text-neutral-900"
         />
         <Text className="mt-1 text-right text-xs text-neutral-500">
           {formatLocalizedNumber(comment.length, locale)}/
-          {formatLocalizedNumber(MAX_REVIEW_COMMENT_LENGTH, locale)}
+          {formatLocalizedNumber(MAX_REVIEW_FEEDBACK_LENGTH, locale)}
         </Text>
       </View>
 
@@ -110,7 +139,7 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
         label={submit.isPending ? t('review.submitting') : t('review.submit')}
         disabled={rating === null || submit.isPending}
         onPress={() => {
-          if (rating !== null) submit.mutate({ order_id: orderId, rating, comment });
+          if (rating !== null) submit.mutate({ order_id: orderId, rating, feedback: comment });
         }}
       />
       <Button

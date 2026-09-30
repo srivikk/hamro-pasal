@@ -1,40 +1,39 @@
 import {
+  CHAT_NAMESPACE,
+  CHAT_SOCKET_EVENTS,
   ORDERS_NAMESPACE,
   SOCKET_PING_INTERVAL_MS,
   SOCKET_UNAUTHENTICATED,
+  type ChatJoinRequest,
   type OrderSubscribeRequest,
 } from '@hamro-pasal/shared-types';
 import { io, type ManagerOptions, type Socket, type SocketOptions } from 'socket.io-client';
 
 import { refreshAccessToken } from '../api/http';
 import { API_URL } from '../config/api';
-import type { ChatMessage } from '../features/dispute/chat-contract';
+import type { ChatSendPayload } from '../features/dispute/chat-contract';
 import { useAuthStore } from '../store/useAuthStore';
 
 /*
  * Socket.io client (SPEC implicit requirement 4 and infrastructure §1). Discrete namespaces:
- * `/orders` for state updates (served by the API since Phase 8), `/chat` for dispute chat (no
- * server yet).
+ * `/orders` for state updates (Phase 8) and `/chat` for dispute chat (Phase 9), both served by the
+ * API.
  */
 
-export const CHAT_NAMESPACE = '/chat';
+export { CHAT_NAMESPACE };
 
-export const CHAT_EVENTS = {
-  /** Client → server: join the dispute room of an order. */
-  join: 'chat:join',
-  /** Both directions: one chat message (see features/dispute/chat-contract.ts). */
-  newMessage: 'chat:new_message',
-} as const;
+/** `chat:join` (client → server, acked) and `chat:new_message` (both directions). */
+export const CHAT_EVENTS = CHAT_SOCKET_EVENTS;
 
 /** Events the server emits. Payloads are `unknown` until the privacy/contract filter has run. */
 export interface ChatServerToClientEvents {
   'chat:new_message': (payload: unknown) => void;
 }
 
-/** Events the app emits. Messages are always built by buildOutgoingMessage (sanitized). */
+/** Events the app emits. Acks are `unknown` until validated (chatJoinAckSchema, chatSendAckSchema). */
 export interface ChatClientToServerEvents {
-  'chat:join': (payload: { order_id: string }) => void;
-  'chat:new_message': (payload: ChatMessage, ack: (response: unknown) => void) => void;
+  'chat:join': (payload: ChatJoinRequest, ack: (response: unknown) => void) => void;
+  'chat:new_message': (payload: ChatSendPayload, ack: (response: unknown) => void) => void;
 }
 
 export type ChatSocket = Socket<ChatServerToClientEvents, ChatClientToServerEvents>;
@@ -53,7 +52,7 @@ const RECONNECT_FACTOR = 2;
  */
 export const HEARTBEAT_INTERVAL_MS = SOCKET_PING_INTERVAL_MS;
 
-/** Server acknowledgement deadline for an emitted chat message. */
+/** Server acknowledgement deadline for an emitted chat message or join. */
 export const CHAT_ACK_TIMEOUT_MS = 10_000;
 
 /** The delay before reconnection attempt `attempt` (0-based), exactly as the client schedules it. */

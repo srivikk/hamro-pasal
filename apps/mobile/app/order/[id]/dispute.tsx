@@ -14,6 +14,11 @@ import {
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import {
+  EvidenceRejectedError,
+  uploadDisputeEvidence,
+  type EvidenceRejection,
+} from '../../../src/api/uploads';
 import { Button } from '../../../src/components/Button';
 import type { ChatAttachment } from '../../../src/features/dispute/chat-contract';
 import {
@@ -21,7 +26,6 @@ import {
   MAX_CHAT_MESSAGE_LENGTH,
 } from '../../../src/features/dispute/chat-contract';
 import { postDeliveryDeadline } from '../../../src/features/dispute/dispute-window';
-import { uploadDisputeEvidence } from '../../../src/features/dispute/mock-evidence-upload';
 import { useDisputeChat, type ThreadMessage } from '../../../src/features/dispute/useDisputeChat';
 import { useBeforeDeadline } from '../../../src/lib/useBeforeDeadline';
 import { useOrderStore } from '../../../src/store/useOrderStore';
@@ -68,16 +72,33 @@ function MessageBubble({ entry, onRetry }: { entry: ThreadMessage; onRetry: () =
   );
 }
 
+const ATTACH_ERRORS = {
+  too_large: 'dispute.attachTooLarge',
+  not_an_image: 'dispute.attachNotImage',
+  window_closed: 'dispute.closed',
+  failed: 'dispute.attachFailed',
+} as const;
+
+function ClosedNotice({ message }: { message: string }) {
+  return (
+    <View className="flex-1 items-center justify-center bg-neutral-50 px-8">
+      <Text className="text-center text-base text-neutral-700" testID="dispute-closed">
+        {message}
+      </Text>
+    </View>
+  );
+}
+
 function DisputeChat({ orderId }: { orderId: string }) {
   const { t } = useTranslation();
-  const { thread, connection, send, retry } = useDisputeChat(orderId);
+  const { thread, connection, unavailable, send, retry } = useDisputeChat(orderId);
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [attaching, setAttaching] = useState(false);
-  const [attachFailed, setAttachFailed] = useState(false);
+  const [attachError, setAttachError] = useState<EvidenceRejection | 'failed' | null>(null);
 
   const attach = async (): Promise<void> => {
-    setAttachFailed(false);
+    setAttachError(null);
     const picked = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 0.75,
@@ -91,14 +112,26 @@ function DisputeChat({ orderId }: { orderId: string }) {
         uri: asset.uri,
         mimeType: asset.mimeType ?? null,
         fileSize: asset.fileSize ?? null,
+        fileName: asset.fileName ?? null,
       });
       setAttachments((current) => [...current, uploaded]);
-    } catch {
-      setAttachFailed(true);
+    } catch (error) {
+      setAttachError(error instanceof EvidenceRejectedError ? error.reason : 'failed');
     } finally {
       setAttaching(false);
     }
   };
+
+  if (unavailable !== null) {
+    // The server's decision (window closed, or not this user's order) overrides the device's.
+    return (
+      <ClosedNotice
+        message={t(
+          unavailable === 'DISPUTE_WINDOW_CLOSED' ? 'dispute.closed' : 'dispute.unavailable',
+        )}
+      />
+    );
+  }
 
   return (
     <KeyboardAvoidingView
@@ -148,9 +181,11 @@ function DisputeChat({ orderId }: { orderId: string }) {
           ))}
         </View>
       )}
-      {attachFailed ? (
-        <Text className="px-4 pb-2 text-xs text-red-700">{t('dispute.attachFailed')}</Text>
-      ) : null}
+      {attachError === null ? null : (
+        <Text className="px-4 pb-2 text-xs text-red-700" testID="chat-attach-error">
+          {t(ATTACH_ERRORS[attachError])}
+        </Text>
+      )}
       <View className="flex-row items-end gap-2 border-t border-neutral-200 bg-white p-3">
         <Pressable
           accessibilityRole="button"
@@ -209,15 +244,7 @@ export default function DisputeScreen() {
           headerBackTitle: t('common.back'),
         }}
       />
-      {eligible ? (
-        <DisputeChat orderId={id} />
-      ) : (
-        <View className="flex-1 items-center justify-center bg-neutral-50 px-8">
-          <Text className="text-center text-base text-neutral-700" testID="dispute-closed">
-            {t('dispute.closed')}
-          </Text>
-        </View>
-      )}
+      {eligible ? <DisputeChat orderId={id} /> : <ClosedNotice message={t('dispute.closed')} />}
     </>
   );
 }

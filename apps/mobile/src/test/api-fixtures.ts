@@ -1,5 +1,8 @@
 import {
   authTokensResponseSchema,
+  chatMessageSchema,
+  disputeEvidenceUploadResponseSchema,
+  reviewSubmitResponseSchema,
   cancelOrderResponseSchema,
   checkoutResponseSchema,
   feedResponseSchema,
@@ -9,6 +12,9 @@ import {
   otpSendResponseSchema,
   vendorMenuSchema,
   type AuthTokensResponseBody,
+  type ChatMessage,
+  type DisputeEvidenceUploadResponseBody,
+  type ReviewView,
   type CancelOrderResponseBody,
   type CheckoutResponseBody,
   type FeedResponse,
@@ -236,5 +242,50 @@ export function authTokensResponse(isNewUser = false): AuthTokensResponseBody {
     refresh_token_expires_in: 604_800,
     user: { id: '9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a', role: 'CUSTOMER', first_name: null },
     is_new_user: isNewUser,
+  });
+}
+
+/* ---------- Phase 9: reviews, dispute evidence, /chat acks ---------- */
+
+export const REVIEW_ID = '3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b';
+
+/** POST /api/reviews 201 body. */
+export function reviewResponse(overrides: Partial<ReviewView> = {}) {
+  return reviewSubmitResponseSchema.parse({
+    review: {
+      id: REVIEW_ID,
+      order_id: ORDER_ID,
+      direction: 'CUSTOMER_TO_VENDOR',
+      rating: 5,
+      feedback: null,
+      status: 'QUARANTINED',
+      published_at: null,
+      created_at: '2026-09-30T09:00:00.000Z',
+      ...overrides,
+    },
+  });
+}
+
+/** POST /api/uploads/dispute-evidence 201 body (the local-dev storage URL shape). */
+export function evidenceUpload(
+  name = 'b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e.jpg',
+): DisputeEvidenceUploadResponseBody {
+  return disputeEvidenceUploadResponseSchema.parse({
+    url: `http://localhost:4000/uploads/dispute-evidence/${ORDER_ID}/${name}`,
+    content_type: 'image/jpeg',
+  });
+}
+
+/** A message exactly as the /chat server broadcasts it (and acks it to its sender). */
+export function serverChatMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return chatMessageSchema.parse({
+    id: '9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a',
+    client_id: null,
+    order_id: ORDER_ID,
+    sender: { id: 'user-ram', first_name: 'Ram', role: 'VENDOR' },
+    body: 'Sorry! Can you share a photo?',
+    attachments: [],
+    sent_at: '2026-09-30T10:00:00.000Z',
+    ...overrides,
   });
 }

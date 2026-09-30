@@ -1,13 +1,13 @@
 import type { Server as HttpServer } from 'node:http';
 
 import {
+  CHAT_NAMESPACE,
   ORDER_SOCKET_EVENTS,
   orderRoom,
   ORDERS_NAMESPACE,
   orderSubscribeRequestSchema,
   SOCKET_IO_REDIS_KEY,
   SOCKET_PING_INTERVAL_MS,
-  SOCKET_UNAUTHENTICATED,
   type OrderStateUpdate,
   type OrderSubscribeAck,
   type UserRole,
@@ -16,8 +16,13 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import type { Redis } from 'ioredis';
 import { Server, type Namespace } from 'socket.io';
 
-import { verifyAccessToken } from '../auth/access-token';
 import type { OrderService } from '../orders/order-service';
+import {
+  serveChatNamespace,
+  type ChatNamespace,
+  type ChatNamespaceOptions,
+} from './chat-namespace';
+import { socketAuth, type AuthenticatedSocketData } from './socket-auth';
 
 export interface OrdersServerToClientEvents {
   'order:state_update': (update: OrderStateUpdate) => void;
@@ -29,10 +34,7 @@ export interface OrdersClientToServerEvents {
   'orders:unsubscribe': (payload: unknown) => void;
 }
 
-export interface OrdersSocketData {
-  userId: string;
-  role: UserRole;
-}
+export type OrdersSocketData = AuthenticatedSocketData;
 
 export type OrdersServer = Server<
   OrdersClientToServerEvents,
@@ -56,11 +58,15 @@ export interface RealtimeOptions {
    * broadcasts stay inside this process (unit tests only).
    */
   readonly redis?: { readonly pub: Redis; readonly sub: Redis; readonly key?: string };
+  /** Serves the `/chat` dispute namespace on the same server (and Redis adapter). */
+  readonly chat?: Omit<ChatNamespaceOptions, 'accessTokenSecret'>;
 }
 
 export interface RealtimeServer {
   readonly io: OrdersServer;
   readonly orders: OrdersNamespace;
+  /** The `/chat` namespace, when `options.chat` was given. */
+  readonly chat: ChatNamespace | null;
   /** Disconnects every client and closes the HTTP server it is attached to. */
   close(): Promise<void>;
 }
@@ -96,27 +102,13 @@ export function attachRealtime(httpServer: HttpServer, options: RealtimeOptions)
 
   const orders: OrdersNamespace = io.of(ORDERS_NAMESPACE);
 
-  orders.use((socket, next) => {
-    const auth: unknown = socket.handshake.auth;
-    const token: unknown =
-      typeof auth === 'object' && auth !== null ? Reflect.get(auth, 'token') : undefined;
-    if (typeof token !== 'string' || token === '') {
-      next(unauthenticated('Missing access token'));
-      return;
-    }
-    try {
-      const claims = verifyAccessToken(token, options.accessTokenSecret);
-      if (!ALLOWED_ROLES.includes(claims.role)) {
-        next(refusal('FORBIDDEN', 'Order tracking is not available for your role'));
-        return;
-      }
-      socket.data.userId = claims.userId;
-      socket.data.role = claims.role;
-      next();
-    } catch {
-      next(unauthenticated('Invalid or expired access token'));
-    }
-  });
+  orders.use(
+    socketAuth(
+      options.accessTokenSecret,
+      ALLOWED_ROLES,
+      'Order tracking is not available for your role',
+    ),
+  );
 
   orders.on('connection', (socket) => {
     socket.on(ORDER_SOCKET_EVENTS.subscribe, (payload, ack) => {
@@ -156,9 +148,17 @@ export function attachRealtime(httpServer: HttpServer, options: RealtimeOptions)
     // Rooms are per connection: Socket.io drops them on disconnect, nothing to clean up here.
   });
 
+  let chat: ChatNamespace | null = null;
+  if (options.chat !== undefined) {
+    // Same server, so /chat shares the Redis adapter above: a message reaches every instance.
+    chat = io.of(CHAT_NAMESPACE);
+    serveChatNamespace(chat, { ...options.chat, accessTokenSecret: options.accessTokenSecret });
+  }
+
   return {
     io,
     orders,
+    chat,
     close: () =>
       new Promise<void>((resolve, reject) => {
         void io.close((error) => {
@@ -174,13 +174,4 @@ export function attachRealtime(httpServer: HttpServer, options: RealtimeOptions)
         });
       }),
   };
-}
-
-/** A handshake refusal the client receives as `connect_error` (message + data.code). */
-function refusal(code: string, message: string): Error & { data: { code: string } } {
-  return Object.assign(new Error(code), { data: { code, message } });
-}
-
-function unauthenticated(message: string): Error & { data: { code: string } } {
-  return refusal(SOCKET_UNAUTHENTICATED, message);
 }

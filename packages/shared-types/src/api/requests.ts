@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { OTP_CODE_LENGTH } from '../domain/constants';
+import { MAX_REVIEW_FEEDBACK_LENGTH, OTP_CODE_LENGTH } from '../domain/constants';
 import { nepalPhoneSchema } from '../domain/entities';
 import { paymentMethodSchema } from '../domain/enums';
 import { nepalAddressInputSchema } from '../localization/address';
@@ -114,3 +114,25 @@ export const tokenRefreshRequestSchema = z.strictObject({
   refresh_token: z.string().min(1).max(4096),
 });
 export type TokenRefreshRequest = z.infer<typeof tokenRefreshRequestSchema>;
+
+/**
+ * POST /api/reviews (SPEC §6): the customer's rating of a delivered order's vendor. `feedback` is
+ * optional; it is trimmed and a blank one is stored as null.
+ */
+export const reviewSubmitRequestSchema = z.strictObject({
+  order_id: z.uuid(),
+  rating: z.number().int().min(1).max(5),
+  feedback: z
+    .string()
+    .trim()
+    .max(MAX_REVIEW_FEEDBACK_LENGTH)
+    .nullish()
+    .transform((value) => (value === undefined || value === null || value === '' ? null : value)),
+});
+export type ReviewSubmitRequest = z.input<typeof reviewSubmitRequestSchema>;
+export type ReviewSubmission = z.output<typeof reviewSubmitRequestSchema>;
+
+/** Form fields of POST /api/uploads/dispute-evidence (multipart, next to the `file` part). */
+export const disputeEvidenceUploadFieldsSchema = z.strictObject({
+  order_id: z.uuid(),
+});

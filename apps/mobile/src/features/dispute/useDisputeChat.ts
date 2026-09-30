@@ -1,4 +1,4 @@
-import { userRoleSchema } from '@hamro-pasal/shared-types';
+import { chatJoinAckSchema, chatSendAckSchema, userRoleSchema } from '@hamro-pasal/shared-types';
 import { randomUUID } from 'expo-crypto';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -6,6 +6,7 @@ import {
   CHAT_ACK_TIMEOUT_MS,
   CHAT_EVENTS,
   createChatSocket,
+  reconnectDelayMs,
   type ChatSocket,
   type SocketFactory,
 } from '../../services/socket';
@@ -13,6 +14,7 @@ import { useAuthStore } from '../../store/useAuthStore';
 import {
   buildOutgoingMessage,
   sanitizeIncomingMessage,
+  toSendPayload,
   type ChatAttachment,
   type ChatMessage,
   type ChatUser,
@@ -27,6 +29,9 @@ export interface ThreadMessage {
 }
 
 export type ChatConnection = 'connecting' | 'connected' | 'reconnecting';
+
+/** Why the server refused to let this user into the order's dispute (final: never retried). */
+export type ChatUnavailable = 'DISPUTE_WINDOW_CLOSED' | 'ORDER_NOT_FOUND';
 
 /**
  * The signed-in user as the chat knows them: id and role from the access token's claims. The
@@ -52,7 +57,7 @@ export function chatUserFromToken(token: string | null): ChatUser {
   }
 }
 
-/** Adds or reconciles a message: the server's echo of our own message replaces the local copy. */
+/** Adds or reconciles a message: the server's copy of our own message replaces the local one. */
 function upsert(
   thread: readonly ThreadMessage[],
   incoming: ChatMessage,
@@ -75,14 +80,19 @@ function upsert(
 }
 
 /**
- * Live dispute thread for an order over the Socket.io `/chat` namespace. Every incoming payload
- * and every outgoing message goes through the chat contract's privacy allowlist.
+ * Live dispute thread for an order over the Socket.io `/chat` namespace:
+ *   - joins `chat:join { order_id }` on every (re)connect; a timed-out or INTERNAL_SERVER_ERROR ack
+ *     is retried on the backoff schedule, a refusal (window closed, not your order) is final;
+ *   - a sent message is "Sending…" until the server's ack, which carries the message exactly as it
+ *     was broadcast (server id, time and privacy-filtered sender) and replaces the local copy;
+ *   - every incoming payload goes through the chat contract's privacy filter.
  */
 export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
   const token = useAuthStore((state) => state.accessToken);
   const self = useMemo(() => chatUserFromToken(token), [token]);
   const [thread, setThread] = useState<ThreadMessage[]>([]);
   const [connection, setConnection] = useState<ChatConnection>('connecting');
+  const [unavailable, setUnavailable] = useState<ChatUnavailable | null>(null);
   const socketRef = useRef<ChatSocket | null>(null);
   const selfIdRef = useRef(self.id);
 
@@ -93,11 +103,38 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
   useEffect(() => {
     const { socket, close } = createChatSocket(socketFactory);
     socketRef.current = socket;
+    let joinAttempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const join = (): void => {
+      socket
+        .timeout(CHAT_ACK_TIMEOUT_MS)
+        .emit(CHAT_EVENTS.join, { order_id: orderId }, (error, response) => {
+          const ack = error instanceof Error ? null : chatJoinAckSchema.safeParse(response);
+          if (ack?.success === true && ack.data.ok) {
+            joinAttempt = 0;
+            return;
+          }
+          if (ack?.success === true && !ack.data.ok) {
+            const { code } = ack.data.error;
+            if (code === 'DISPUTE_WINDOW_CLOSED' || code === 'ORDER_NOT_FOUND') {
+              setUnavailable(code);
+              return;
+            }
+            if (code === 'VALIDATION_FAILED') return; // resending the same request cannot help
+          }
+          if (!socket.connected) return; // the next connect joins again
+          retryTimer = setTimeout(join, reconnectDelayMs(joinAttempt));
+          joinAttempt += 1;
+        });
+    };
 
     const onConnect = (): void => {
       setConnection('connected');
       // Rooms are per connection: join again after every reconnection.
-      socket.emit(CHAT_EVENTS.join, { order_id: orderId });
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      joinAttempt = 0;
+      join();
     };
     const onDisconnect = (): void => {
       setConnection('reconnecting');
@@ -114,6 +151,7 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
     socket.connect();
 
     return () => {
+      if (retryTimer !== null) clearTimeout(retryTimer);
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off(CHAT_EVENTS.newMessage, onMessage);
@@ -122,11 +160,11 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
     };
   }, [orderId, socketFactory]);
 
-  const setStatus = useCallback((clientId: string, status: MessageStatus) => {
+  const markFailed = useCallback((clientId: string) => {
     setThread((current) =>
       current.map((entry) =>
         entry.mine && entry.message.client_id === clientId && entry.status !== 'sent'
-          ? { ...entry, status }
+          ? { ...entry, status: 'failed' }
           : entry,
       ),
     );
@@ -137,17 +175,25 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
       const clientId = message.client_id ?? message.id;
       const socket = socketRef.current;
       if (socket === null) {
-        setStatus(clientId, 'failed');
+        markFailed(clientId);
         return;
       }
       // Socket.io buffers emits while disconnected and flushes them on reconnection.
       socket
         .timeout(CHAT_ACK_TIMEOUT_MS)
-        .emit(CHAT_EVENTS.newMessage, message, (error: Error | null) => {
-          setStatus(clientId, error === null ? 'sent' : 'failed');
+        .emit(CHAT_EVENTS.newMessage, toSendPayload(message), (error, response) => {
+          const ack = error instanceof Error ? null : chatSendAckSchema.safeParse(response);
+          const sent = ack?.success === true && ack.data.ok ? ack.data.message : null;
+          // Run the server's copy through the privacy filter like any incoming payload.
+          const accepted = sent === null ? null : sanitizeIncomingMessage(sent);
+          if (accepted === null) {
+            markFailed(clientId);
+            return;
+          }
+          setThread((current) => upsert(current, accepted, selfIdRef.current));
         });
     },
-    [setStatus],
+    [markFailed],
   );
 
   /** Sends a message; returns false (sending nothing) when there is neither text nor an image. */
@@ -174,11 +220,15 @@ export function useDisputeChat(orderId: string, socketFactory?: SocketFactory) {
     (clientId: string) => {
       const entry = thread.find((item) => item.mine && item.message.client_id === clientId);
       if (entry === undefined) return;
-      setStatus(clientId, 'sending');
+      setThread((current) =>
+        current.map((item) =>
+          item.mine && item.message.client_id === clientId ? { ...item, status: 'sending' } : item,
+        ),
+      );
       emit(entry.message);
     },
-    [emit, setStatus, thread],
+    [emit, thread],
   );
 
-  return { thread, connection, send, retry, self };
+  return { thread, connection, unavailable, send, retry, self };
 }

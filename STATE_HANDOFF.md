@@ -1,8 +1,8 @@
-# Hamro Pasal: State Handoff (Phases 0–8 complete)
+# Hamro Pasal: State Handoff (Phases 0–9 complete)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 8 (Real-Time Order
-Tracking, Socket.io `/orders`)**, on top of Phase 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
+work without re-deriving it. It describes the tree at the end of **Phase 9 (Double-Blind Reviews &
+Dispute Chat)**, on top of Phase 8 (Real-Time Order Tracking, Socket.io `/orders`), 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
 Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this file and the code disagree, **the code wins**. When anything disagrees with
 `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
 
@@ -18,8 +18,12 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 > API's Socket.io `/orders` room `order:{id}` as `order:state_update`, and the tracking screen
 > patches its TanStack Query cache from it. The 30 s polling is gone (§8B, §9.6). Both mobile
 > sockets (`/orders`, `/chat`) share one token lifecycle with the HTTP refresh path (§9.3).
+> **Phase 9:** `POST /api/reviews` stores double-blind reviews (quarantined until both sides rate or
+> 48 h pass), the API serves the `/chat` dispute namespace (Redis adapter, server-side PII filter) and
+> accepts dispute photos at `POST /api/uploads/dispute-evidence` (local disk stand-in for R2, 5 MB);
+> the app's review and upload mocks are deleted (§8C, §9.9, §9.10).
 > **No live device run has happened yet** (§13). Still not built: the order lifecycle after PLACED,
-> reviews, disputes and the `/chat` server, refund payouts, and refresh-token rotation/revocation.
+> persisted disputes/transcripts, R2, refund payouts, and refresh-token rotation/revocation.
 >
 > **Next priority: the first live end-to-end device run** (§11 item 1), then the order lifecycle
 > routes, which will stream over `/orders` with no extra socket work.
@@ -51,18 +55,18 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · Phase 8 (the commit that adds this file) |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                        |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                               |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                          |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                         |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                   |
-| Unit tests      | **704 passing** (`pnpm test`): shared-types 95, api 75, worker 18, kafka 7, db 7, mobile 502                                                                                                                                                                                                                                                                                         |
-| Integ. tests    | **177 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 116, worker 13, kafka 1. Run at the end of Phase 8                                                                                                                                                                                                                                                      |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 8                                                                                                                                                                                                                                 |
-| Dev database    | Migrations 0000–0010 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                 |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · Phase 9 (uncommitted) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                    |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                           |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                      |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                     |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                               |
+| Unit tests      | **758 passing** (`pnpm test`): shared-types 112, api 93, worker 18, kafka 7, db 7, mobile 521                                                                                                                                                                                                                                                                                    |
+| Integ. tests    | **214 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 153, worker 13, kafka 1. Run at the end of Phase 9 (the kafka publisher test timed out once when run in parallel with the worker suite, and passed alone)                                                                                                                                           |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 9                                                                                                                                                                                                                             |
+| Dev database    | Migrations 0000–0010 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                             |
 
 ### Root commands (`package.json`)
 
@@ -287,7 +291,8 @@ idempotency_key UNIQUE, order_id?)`, `ledger_entries(amount_npr <> 0)`. Journals
   are append-only. Escrow balance ≥ 0.
 - `disputes(order_id, opened_by_user_id, reason, status, resolved_by_user_id?, resolved_at?)` and
   `reviews(order_id, direction CUSTOMER_TO_VENDOR|VENDOR_TO_CUSTOMER, rating 1–5, comment?,
-is_published DEFAULT false, published_at, one per direction per order)`. **Tables exist, no routes.**
+is_published DEFAULT false, published_at, one per direction per order)`. Reviews are written by
+  `POST /api/reviews` (Phase 9, §8C); **`disputes` is still unused** (no migration was needed in Phase 9).
 - Money is `numeric(12,2)` read as JS `number`. Services compute in integer paisa
   (`apps/api/src/ledger/money.ts`). The mobile app does the same (`src/lib/money.ts`).
 
@@ -420,6 +425,9 @@ auth). `Infrastructure` now requires an `sms: SmsGateway` (tests inject `MockSms
 | `POST /api/payments/esewa/webhook`                         | **none** (HMAC-authenticated) | `esewaWebhookRequestSchema {data: base64}`                                                                                                       | 200                  | `paymentStatusResponseSchema {status, payment: PaymentView\|null}`                                                                                                     | `confirmEsewa` (the app forwards the redirect) |
 | `POST /api/payments/khalti/initiate`                       | Bearer CUSTOMER (owner)       | `{order_id}`                                                                                                                                     | 200                  | `khaltiInitiateResponseSchema {pidx, payment_url, expires_at}`                                                                                                         | `initiateKhalti`                               |
 | `POST /api/payments/khalti/lookup`                         | Bearer CUSTOMER (pidx owner)  | `khaltiLookupRequestSchema {pidx}`                                                                                                               | 200                  | `paymentStatusResponseSchema`                                                                                                                                          | `lookupKhalti`                                 |
+| `POST /api/reviews`                                        | Bearer CUSTOMER (order owner) | `reviewSubmitRequestSchema {order_id, rating 1–5 int, feedback? ≤500 (trimmed, blank → null)}`                                                   | 201                  | `reviewSubmitResponseSchema {review: {id, order_id, direction, rating, feedback, status QUARANTINED\|PUBLISHED, published_at, created_at}}`                            | `submitReview` (`ReviewModal`)                 |
+| `POST /api/uploads/dispute-evidence`                       | Bearer CUSTOMER (order owner) | multipart: field `order_id` (`disputeEvidenceUploadFieldsSchema`) + part `file` (JPEG/PNG/WebP by magic bytes, ≤ 5 MB)                           | 201                  | `disputeEvidenceUploadResponseSchema {url, content_type}` (= a chat attachment)                                                                                        | `uploadDisputeEvidence` (dispute screen)       |
+| `GET /uploads/dispute-evidence/:order/:file`               | none (unguessable uuid names) | –                                                                                                                                                | 200                  | the stored image (`express.static`, `nosniff`); only mounted for `LocalEvidenceStorage`                                                                                | chat image bubbles                             |
 
 - `OrderView = {id, vendor_id, state, payment_method, payment_status, fulfillment, subtotal_npr,
 delivery_fee_npr, total_npr, created_at}` (no OTP hash, gateway ref or commission).
@@ -474,16 +482,17 @@ transaction under `SELECT … FOR UPDATE`:
 **Error envelope** `{ error: { code, message, details? } }` (`errorBodySchema`, emitted by
 `http/errors.ts`). Clients branch on `code`:
 
-| HTTP            | codes                                                                                                                                                                                                                                                         |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 400             | `VALIDATION_FAILED` (details.issues), `MALFORMED_REQUEST`, `INVALID_CART`, `INVALID_PAYMENT_CALLBACK`                                                                                                                                                         |
-| 401 / 403       | `UNAUTHENTICATED` / `FORBIDDEN`; auth: `OTP_INVALID` (details.attempts_remaining), `REFRESH_TOKEN_INVALID`                                                                                                                                                    |
-| 404             | `NOT_FOUND`, `ORDER_NOT_FOUND`, `PAYMENT_NOT_FOUND`, `VENDOR_NOT_FOUND`                                                                                                                                                                                       |
-| 409             | `INSUFFICIENT_STOCK` (details.shortfalls), `IDEMPOTENCY_KEY_REUSED`, `WRONG_PAYMENT_METHOD`, `ORDER_NOT_PAYABLE`, `ORDER_STATE_CONFLICT`, `CHECKOUT_IN_PROGRESS`, `PAYMENT_AMOUNT_MISMATCH`, `PAID_AFTER_SESSION_EXPIRED` (details.order_id, refund_required) |
-| 410             | `RESERVATION_EXPIRED` (SPEC "Session Expired"), `OTP_EXPIRED` (no valid code: never sent, expired, used or burned)                                                                                                                                            |
-| 422             | `VENDOR_UNAVAILABLE`, `PRODUCT_UNAVAILABLE` (details.product_ids), `BELOW_MINIMUM_ORDER_VALUE`, `COD_NOT_AVAILABLE`, `CANCELLATION_WINDOW_EXPIRED`                                                                                                            |
-| 429             | `OTP_RESEND_COOLDOWN` (details.retry_after_seconds), `OTP_ATTEMPTS_EXCEEDED`                                                                                                                                                                                  |
-| 502 / 503 / 500 | `PAYMENT_GATEWAY_ERROR`, `SMS_DELIVERY_FAILED` / `CHECKOUT_BUSY` / `INTERNAL_SERVER_ERROR`                                                                                                                                                                    |
+| HTTP            | codes                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400             | `VALIDATION_FAILED` (details.issues), `MALFORMED_REQUEST`, `INVALID_CART`, `INVALID_PAYMENT_CALLBACK`                                                                                                                                                                                                                                                                         |
+| 401 / 403       | `UNAUTHENTICATED` / `FORBIDDEN`; auth: `OTP_INVALID` (details.attempts_remaining), `REFRESH_TOKEN_INVALID`                                                                                                                                                                                                                                                                    |
+| 404             | `NOT_FOUND`, `ORDER_NOT_FOUND`, `PAYMENT_NOT_FOUND`, `VENDOR_NOT_FOUND`                                                                                                                                                                                                                                                                                                       |
+| 409             | `INSUFFICIENT_STOCK` (details.shortfalls), `IDEMPOTENCY_KEY_REUSED`, `WRONG_PAYMENT_METHOD`, `ORDER_NOT_PAYABLE`, `ORDER_STATE_CONFLICT` (also: reviewing an order that is not DELIVERED, details.state), `CHECKOUT_IN_PROGRESS`, `PAYMENT_AMOUNT_MISMATCH`, `PAID_AFTER_SESSION_EXPIRED` (details.order_id, refund_required), `REVIEW_ALREADY_SUBMITTED` (details.review_id) |
+| 410             | `RESERVATION_EXPIRED` (SPEC "Session Expired"), `OTP_EXPIRED` (no valid code: never sent, expired, used or burned)                                                                                                                                                                                                                                                            |
+| 413 / 415       | `FILE_TOO_LARGE` (details.max_bytes) / `UNSUPPORTED_MEDIA_TYPE` (evidence uploads)                                                                                                                                                                                                                                                                                            |
+| 422             | `VENDOR_UNAVAILABLE`, `PRODUCT_UNAVAILABLE` (details.product_ids), `BELOW_MINIMUM_ORDER_VALUE`, `COD_NOT_AVAILABLE`, `CANCELLATION_WINDOW_EXPIRED`, `REVIEW_WINDOW_CLOSED`, `DISPUTE_WINDOW_CLOSED`                                                                                                                                                                           |
+| 429             | `OTP_RESEND_COOLDOWN` (details.retry_after_seconds), `OTP_ATTEMPTS_EXCEEDED`                                                                                                                                                                                                                                                                                                  |
+| 502 / 503 / 500 | `PAYMENT_GATEWAY_ERROR`, `SMS_DELIVERY_FAILED` / `CHECKOUT_BUSY` / `INTERNAL_SERVER_ERROR`                                                                                                                                                                                                                                                                                    |
 
 **Access tokens** (`auth/access-token.ts`, `http/auth.ts`): HS256 only, issuer `hamro-pasal-api`,
 audience `hamro-pasal-app`, TTL 900 s, claims `{ sub: user uuid, role }`, `Authorization: Bearer
@@ -509,9 +518,62 @@ routes) must call `enqueueOrderStateChanged(tx, fromState, updatedRow)`** in its
 
 No routes for: saved-address CRUD, profile (name) editing, logout/revocation, order state transitions after PLACED (vendor
 accept → PREPARING, dispatch, OUT_FOR_DELIVERY, arrival, DELIVERED), delivery-OTP verification,
-reviews, disputes, evidence uploads, refunds, admin, vendor or driver apps, `/metrics`, rate
-limiting beyond the per-phone OTP cooldown. No Socket.io `/chat` server (`/orders` exists, §8B). No push
+the vendor's side of reviews (the service supports it, no route), reading published reviews,
+persisted disputes (the `disputes` table is still unused) and chat transcripts, refunds, admin,
+vendor or driver apps, `/metrics`, rate limiting beyond the per-phone OTP cooldown. No push
 notifications. Worker consumers and timer handlers are placeholders.
+
+## 8C. Reviews, dispute chat `/chat` and evidence uploads (Phase 9)
+
+**Reviews (SPEC §6).** `apps/api/src/reviews/review-service.ts#ReviewService`, route `routes/reviews.ts`.
+
+- `submit({ orderId, direction, authorUserId, rating, feedback })`, one transaction under
+  `SELECT … FOR UPDATE OF orders`: author = the order's customer (CUSTOMER_TO_VENDOR) or the vendor's
+  `user_id` (VENDOR_TO_CUSTOMER), else `OrderNotFoundError` (404); state must be `DELIVERED` (409
+  `ORDER_STATE_CONFLICT`); `clock_timestamp() < delivered_at + 48 h` (422 `REVIEW_WINDOW_CLOSED`: a late
+  review would see the other side's already-public one); one per side (409 `REVIEW_ALREADY_SUBMITTED`).
+- **Quarantine = SPEC's `is_published = false`.** The API exposes it as `status: QUARANTINED | PUBLISHED`
+  (the prompt asked for `status: QUARANTINED`; SPEC's column wins, the status is derived). If the other
+  side has already reviewed, **both rows are published in the same transaction** with the same
+  `published_at`; otherwise the new row stays quarantined.
+- **48 h rule without a sweeper:** `reviews/review-visibility.ts#reviewIsPublic()` is the SQL predicate
+  `is_published OR delivered_at <= now() - 48 h`. `ReviewService.publicReview(orderId, direction)`
+  (SPEC verification test 4) and the checkout COD-eligibility average both use it, so a single-sided
+  review counts once 48 h have passed even though `is_published` was never flipped. Nothing flips it
+  later (no BullMQ job); add one if the flag itself must become true.
+- The row lock is what makes "both reviewed → publish both" race-free (mutation-checked: without it,
+  simultaneous customer + vendor submissions leave both quarantined).
+
+**Dispute access.** `disputes/dispute-service.ts#DisputeService.access(participant, orderId)`: the
+order's customer or the vendor's user while `state = DELIVERED` and `clock_timestamp() < delivered_at + 48 h`;
+`SUPER_ADMIN` always; anyone else (drivers included) `ORDER_NOT_FOUND`. `participantProfile(userId)` loads
+the **full** users row (last name and phone included) for the chat's sender field.
+
+**Socket.io `/chat`** (`realtime/chat-namespace.ts#serveChatNamespace`, attached by `attachRealtime`
+when `options.chat` is given, so it shares the `/orders` server, heartbeat and **Redis adapter**).
+Contract: `packages/shared-types/src/realtime/chat-socket.ts`.
+
+| Aspect    | Behaviour                                                                                                                                                                                                                                                                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Handshake | `realtime/socket-auth.ts#socketAuth` (shared with `/orders`): bad/missing/expired token → `UNAUTHENTICATED`; roles CUSTOMER, VENDOR, SUPER_ADMIN, else `FORBIDDEN`                                                                                                                                                                          |
+| Join      | `chat:join { order_id }` (ack optional) → `DisputeService.access` → room `dispute:{order_id}`; ack `{ ok: true, order_id }` or `{ ok: false, error: { code: VALIDATION_FAILED \| ORDER_NOT_FOUND \| DISPUTE_WINDOW_CLOSED \| INTERNAL_SERVER_ERROR } }`. Access is decided once per order per connection                                    |
+| Send      | `chat:new_message { client_id, order_id, body ≤ 2000, attachments ≤ 4 }` + ack. Anything else the client sends (sender, id, sent_at) is ignored. Same access rule (no join needed to send). Attachments must satisfy `EvidenceStorage.isEvidenceUrl(order, url)` (issued by the upload endpoint for that order)                             |
+| Broadcast | Server sets `id` (uuid), `sent_at` and `sender` = the sender's users row, then **`broadcastChatMessage` → `sanitizeChatMessage`**: `stripChatPii` deletes `last_name` / `phone_number` / `phone` at every depth, then the allowlist schema keeps `sender {id, first_name, role}` only. Emitted to the room; the ack carries the same object |
+
+- **Privacy tests:** `src/realtime/chat-namespace.test.ts` (in-process, raw payloads received by the
+  other party, spoofed senders, admin without first name; mutation-checked: bypassing the filter fails 4
+  tests) and `test/chat-realtime.int.test.ts` (two API instances on one Redis adapter, real DB rows with
+  surnames and phones, customer on one instance, vendor on the other).
+- **Not persisted:** messages exist only in flight; there is no transcript table yet, and the `disputes`
+  row is never created. The chat stays open only while the 48 h window is (an admin can always join).
+
+**Evidence uploads (mock R2).** `uploads/evidence-storage.ts#LocalEvidenceStorage` writes
+`<UPLOADS_DIR>/dispute-evidence/<order>/<uuid>.<ext>` (default `UPLOADS_DIR` = `os.tmpdir()/uploads`, i.e.
+`/tmp/uploads` on Linux/macOS) and returns `<UPLOADS_PUBLIC_BASE_URL>/dispute-evidence/…` (default
+`http://localhost:<API_PORT>/uploads`); `createApp` serves the directory there. multer (memory, 5 MB
+limit, 1 file) → owner + 48 h window (`DisputeService.assertAccess`) → `sniffEvidenceType` (magic bytes;
+the declared type is ignored) → save. **A phone cannot load `localhost`: set `UPLOADS_PUBLIC_BASE_URL` to
+the host's LAN address for device runs.** Swapping in R2 means another `EvidenceStorage` implementation.
 
 ## 8B. Socket.io `/orders` (Phase 8)
 
@@ -747,8 +809,8 @@ fingerprint includes it, and the territory gate reads the shared `NEPAL_BOUNDING
 | `/login`              | `app/login.tsx`              | no                | `POST /api/auth/otp/send`                                                       | +977 prefix, number field, validation and cooldown messages                                                                                                                            |
 | `/verify-otp`         | `app/verify-otp.tsx`         | no                | `POST /api/auth/otp/verify`, `…/otp/send` (resend)                              | 6-digit field, per-error messages, resend countdown, "Change number"; on success toast + back to the caller                                                                            |
 | `/order/[id]`         | `app/order/[id]/index.tsx`   | yes               | `GET /api/orders/:id`, Socket.io `/orders`, `POST /api/orders/:id/cancel`       | order code and total, 60 s cancel countdown + button, delivery OTP badge, discrete tracker, dispute button (48 h after delivery)                                                       |
-| `/order/[id]/dispute` | `app/order/[id]/dispute.tsx` | yes               | Socket.io `/chat` (**no server**; shared token lifecycle), mock evidence upload | chat UI that keeps reconnecting on a device                                                                                                                                            |
-| (root overlays)       | `app/_layout.tsx`            | –                 | lock-status (via `CheckoutSessionWatcher`)                                      | territory gate (topmost), replace-cart modal, review prompt (mock submit), toasts, session-expiry handler                                                                              |
+| `/order/[id]/dispute` | `app/order/[id]/dispute.tsx` | yes               | Socket.io `/chat` (join + send with acks), `POST /api/uploads/dispute-evidence` | chat (first names only), photo attach (≤ 5 MB), closed/unavailable notice when the server refuses the join                                                                             |
+| (root overlays)       | `app/_layout.tsx`            | –                 | lock-status (via `CheckoutSessionWatcher`), `POST /api/reviews`                 | territory gate (topmost), replace-cart modal, review prompt, toasts, session-expiry handler                                                                                            |
 
 ### 9.1 Storage
 
@@ -977,9 +1039,14 @@ guard, backoff retry and the `/chat` wiring were each broken on purpose and caug
 ### 9.9 Reviews (SPEC §6) (`src/components/ReviewModal.tsx`, `src/features/review/`)
 
 - `ReviewPrompt` opens the modal for the most recent DELIVERED order inside its 48 h window that hasn't
-  been reviewed or snoozed. 1–5 stars, optional comment (≤ 500 chars), quarantine badge (EN/NE).
-- **Submission is a MOCK:** `review-api.ts#submitReview` returns `{ review_id, order_id,
-is_published: false }` after 400 ms. Nothing reaches the `reviews` table.
+  been reviewed or snoozed. 1–5 stars, optional feedback (≤ 500 chars), quarantine badge (EN/NE).
+- **Live since Phase 9:** `src/api/reviews.ts#submitReview` → `POST /api/reviews` (input validated with
+  `reviewSubmitRequestSchema` first; invalid → `INVALID_REVIEW`, nothing sent). Outcomes in `ReviewModal`:
+  201 → recorded with the server's id/feedback, toast `review.thanks` (QUARANTINED) or
+  `review.thanksPublished` (PUBLISHED: the vendor had rated); 409 `REVIEW_ALREADY_SUBMITTED` → recorded
+  with `details.review_id` (a lost response), toast `review.alreadySubmitted`; 422 `REVIEW_WINDOW_CLOSED`
+  / 409 `ORDER_STATE_CONFLICT` → snoozed, toast `review.unavailable`; anything else → modal stays, toast
+  `review.failed`, retryable. `features/review/review-api.ts` (the mock) is deleted.
 
 ### 9.10 Dispute chat + privacy-filtered Socket.io scaffold
 
@@ -989,18 +1056,26 @@ is_published: false }` after 400 ms. Nothing reaches the `reviews` table.
   and since Phase 8 the **same token lifecycle as `/orders`** (§9.3: refresh on relaunch, renew and
   reconnect after `UNAUTHENTICATED`, no loop). `useDisputeChat` calls `close()` on unmount.
   **`HEARTBEAT_INTERVAL_MS` (= shared `SOCKET_PING_INTERVAL_MS`, 25 s) must be the server's
-  `pingInterval`.** The future `/chat` server must refuse bad tokens with `UNAUTHENTICATED` (the
-  `/orders` convention), or the client cannot tell a token problem from a network one.
-- **Typed events:** client → server `chat:join { order_id }` (re-sent on reconnect); both directions
-  `chat:new_message (ChatMessage, ack)`, ack expected within 10 s, else "Not sent. Tap to retry.".
-- **Wire contract and privacy filter** (`src/features/dispute/chat-contract.ts`): `ChatMessage = { id,
-client_id|null, order_id, sender: ChatUser, body ≤ 2000, attachments ≤ 4 [{ url (https),
-content_type image/* }], sent_at ISO }`; `ChatUser = { id, first_name|null, role }` is an
-  **allowlist** that strips `last_name`, `phone_number`/`phone` and anything else from every payload in
-  both directions. SPEC implicit requirement 6 still requires the **server** to strip them too.
-- **Evidence upload is a MOCK:** `mock-evidence-upload.ts` (image type, ≤ 10 MB, fake URL). No
-  compression (react-native-compressor is not installed), no presigned R2 URL.
-- **There is no chat server:** on a device the socket keeps retrying.
+  `pingInterval`.** The `/chat` server (Phase 9, §8C) refuses bad tokens with `UNAUTHENTICATED`, so the
+  client's renewal applies.
+- **Events (Phase 9):** `chat:join { order_id }` **with ack** on every (re)connect; a timeout or
+  `INTERNAL_SERVER_ERROR` is retried on the 1, 2, 4 … 30 s schedule, `DISPUTE_WINDOW_CLOSED` /
+  `ORDER_NOT_FOUND` are final and replace the chat with "window has ended" / "This dispute isn't
+  available.". `chat:new_message` sends **only `{ client_id, order_id, body, attachments }`** (no user
+  object leaves the device); the message is "Sending…" until the ack `{ ok: true, message }`, whose
+  message (server id, time, filtered sender) replaces the local copy. A refusal, a malformed ack or a
+  10 s timeout → "Not sent. Tap to retry.".
+- **Contract and privacy filter:** the schemas live in shared-types (`realtime/chat-socket.ts`);
+  `src/features/dispute/chat-contract.ts` re-exports them. Every incoming payload **and every ack**
+  goes through `sanitizeChatMessage` again (PII keys stripped at every depth, `ChatUser = { id,
+first_name|null, role }` allowlist), so a server regression would still not render a surname or phone.
+  Attachment URLs may be `http` or `https` (local-dev evidence is `http`).
+- **Evidence upload is live:** `src/api/uploads.ts#uploadDisputeEvidence` → multipart
+  `POST /api/uploads/dispute-evidence` (RN FormData `{ uri, name, type }` part; `apiRequest` sends
+  FormData without a JSON content type). Refused on the device before sending: not an image, or
+  `fileSize > 5 MB`. Server `FILE_TOO_LARGE` / `UNSUPPORTED_MEDIA_TYPE` / `DISPUTE_WINDOW_CLOSED` map to
+  `EvidenceRejectedError` reasons with their own messages. `mock-evidence-upload.ts` is deleted. **Still
+  no compression** (react-native-compressor is not installed): full-size photos over 5 MB are refused.
 
 ### 9.11 i18n
 
@@ -1037,14 +1112,13 @@ content_type image/* }], sent_at ISO }`; `ChatUser = { id, first_name|null, role
 
 Phase 6.5 removed every catalogue, order and cancellation mock. What remains:
 
-| Mock                    | File                                             | Real replacement (status)                                                                     |
-| ----------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| Review submission       | `src/features/review/review-api.ts#submitReview` | Reviews endpoint (not built).                                                                 |
-| Dispute evidence upload | `src/features/dispute/mock-evidence-upload.ts`   | Presigned Cloudflare R2 upload + react-native-compressor (not built).                         |
-| Dev token paste         | `src/features/auth/DevSignIn.tsx` (`__DEV__`)    | Superseded by OTP login (§8A); kept for quick checks. Holds no refresh token.                 |
-| Feed location           | `THAMEL_FALLBACK_LOCATION` when no address saved | Live GPS (`expo-location` is already used by the territory gate) or a Mapbox pin-drop (§9.8). |
+| Mock            | File                                             | Real replacement (status)                                                                     |
+| --------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| Dev token paste | `src/features/auth/DevSignIn.tsx` (`__DEV__`)    | Superseded by OTP login (§8A); kept for quick checks. Holds no refresh token.                 |
+| Feed location   | `THAMEL_FALLBACK_LOCATION` when no address saved | Live GPS (`expo-location` is already used by the territory gate) or a Mapbox pin-drop (§9.8). |
 
-The **dispute chat** has no server either (§9.10), so on a device the socket keeps reconnecting.
+Phase 9 deleted the review and evidence-upload mocks; the dispute chat talks to the real `/chat`
+server. The **server side** still fakes R2: evidence is stored on the API host's disk (§8C).
 
 **Ids are real now.** The feed and menus return database uuids, so a checkout started from the app
 references real vendors and products (a Phase 6 API test checks out a product id taken from the
@@ -1074,12 +1148,15 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 7. **Feed location from GPS** instead of the saved address / Thamel fallback.
 8. **Saved addresses** (`customer_addresses` CRUD) if the app should sync addresses across devices,
    and a profile screen to add the customer's name (`first_name` is null after OTP sign-up).
-9. **Reviews** (double-blind publish rule; SPEC verification test 4) and **disputes** + **Socket.io
-   `/chat`**: authenticate the handshake `auth.token` exactly like `/orders` (refuse with
-   `UNAUTHENTICATED`, which the client's shared token lifecycle already handles), handle `chat:join { order_id }` (owner, vendor
-   or admin only), ack `chat:new_message`, broadcast **with `last_name` and `phone_number` stripped**
-   (client contract: `src/features/dispute/chat-contract.ts`), reject messages after the 48 h window.
-10. **Evidence upload:** presigned R2 PUT URLs (image types, size limit).
+9. **Disputes follow-up (Phase 9 built reviews, `/chat` and uploads, §8C):** persist chat messages
+   (a transcript table for Super Admin arbitration), create the `disputes` row on the first message and
+   keep an OPEN dispute's chat available past 48 h, move the order to `DISPUTED`, admin resolution
+   routes. Vendor review route (the service already supports `VENDOR_TO_CUSTOMER`), a read route for
+   published reviews, and optionally a BullMQ job that flips `is_published` after 48 h (reads already
+   treat such reviews as public).
+10. **Evidence storage:** replace `LocalEvidenceStorage` with Cloudflare R2 (presigned PUT or
+    server-side put) behind the same `EvidenceStorage` interface, and add react-native-compressor on
+    the device (SPEC infrastructure §6: WebP, 1200 px, < 300 KB) so large photos are not refused.
 11. Landing pages for `ESEWA_SUCCESS_URL` / `ESEWA_FAILURE_URL` / `KHALTI_RETURN_URL`, eSewa app-to-app
     support, `/metrics` (the Prometheus target is down), rate limiting, worker consumers and timer
     handlers, feed pagination (sections are capped at 100).
@@ -1152,6 +1229,23 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
   - `/chat` got the same client token lifecycle now (`createAuthenticatedSocket`), before its server
     exists.
 
+- **Phase 9:**
+  - Review quarantine is SPEC's `is_published = false`; the prompt's `status: QUARANTINED` is the
+    API's derived view of it (SPEC wins). The request field is the prompt's `feedback` (stored in
+    `reviews.comment`).
+  - The 48 h anchor is `orders.delivered_at` (database clock). Reviews after the window are refused
+    (422), so the double blind cannot be bypassed by reviewing after the other side went public.
+  - 48 h publication is evaluated at read time (`reviewIsPublic`), including for the COD rating
+    average; no sweeper job.
+  - `/chat` lives on the same Socket.io server as `/orders` (one Redis adapter, one heartbeat). Chat
+    access: order customer / vendor user inside the window, Super Admin always, drivers never.
+  - The server builds the sender from its own users row and strips PII at a single exit point
+    (`broadcastChatMessage`); clients send no user object. Attachments must be URLs the upload
+    endpoint issued for that order.
+  - Uploads are multipart through the API (multer, memory, 5 MB), type checked by magic bytes, stored
+    under `os.tmpdir()/uploads` (the prompt's `/tmp/uploads`, portable to Windows) and served by the
+    API. Attachment URLs may be `http` for this local stand-in.
+
 ## 13. Known gaps and risks
 
 - **No live end-to-end run** of the app against the API, and no live eSewa/Khalti sandbox session.
@@ -1167,9 +1261,12 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 - The device-side 60 s countdown starts when the device sees PLACED, the server's at `placed_at`;
   a device that learns of the placement late shows more time than the server allows. **Accepted by
   design** (§12): the server answers 422 and the app shows the "window has ended" toast.
-- **`/chat` token refresh is client-only and unproven:** the app's `/chat` socket now renews its
-  token like `/orders` (§9.3), but there is no `/chat` server, so it has never run against a real
-  handshake. The server must reject bad tokens with `UNAUTHENTICATED` for the renewal to trigger.
+- **Dispute chat is not persisted:** messages sent while a party is offline are lost for them, and a
+  reopened screen starts empty. Super Admin has no transcript to arbitrate from yet (§11 item 9).
+- **Evidence lives on the API host's disk** (`os.tmpdir()/uploads`): lost on redeploy, not shared
+  between instances, and served without auth (unguessable names only). Development only until R2.
+- **Chat access is decided once per order per connection:** a socket that joined before the 48 h
+  mark can keep posting until it reconnects.
 - **Socket tokens are checked only at the handshake:** a `/orders` connection stays open after its
   15-min access token expires, until the next reconnect (then the client renews). Disconnecting at
   `exp` would close this.

@@ -1,76 +1,56 @@
-import { userRoleSchema } from '@hamro-pasal/shared-types';
-import { z } from 'zod';
+import {
+  chatMessageSchema,
+  sanitizeChatMessage,
+  type ChatAttachment,
+  type ChatMessage,
+} from '@hamro-pasal/shared-types';
 
 /*
- * Dispute chat wire format for the Socket.io `/chat` namespace (SPEC implicit requirement 4:
- * event `chat:new_message`). The backend has no chat server yet, so the contract lives in the app
- * until it moves to @hamro-pasal/shared-types.
+ * Dispute chat wire format for the Socket.io `/chat` namespace. The contract lives in
+ * @hamro-pasal/shared-types (realtime/chat-socket.ts) and the API applies it before broadcasting.
  *
- * PRIVACY (SPEC implicit requirement 6): user objects are reduced to an ALLOWLIST (id, first name,
- * role). `z.object` drops every other key, so last_name, phone_number / phone, email or any field
- * added later can never reach a message bubble or an outgoing event. Every payload in either
- * direction passes through these schemas.
+ * PRIVACY (SPEC implicit requirement 6): the server strips last_name and phone_number from every
+ * user object it broadcasts. The app does not rely on that: every incoming payload goes through the
+ * same filter again (PII keys removed at every depth, users reduced to id, first name and role), and
+ * outgoing messages carry no user object at all.
  */
 
-export const MAX_CHAT_MESSAGE_LENGTH = 2000;
-export const MAX_CHAT_ATTACHMENTS = 4;
-
-/** The only user fields the chat ever carries. Everything else is stripped. */
-export const chatUserSchema = z.object({
-  id: z.string().min(1),
-  /** First name only ("Aarav"); null when the sender has none on record. */
-  first_name: z.string().trim().min(1).max(60).nullable().catch(null),
-  role: userRoleSchema,
-});
-export type ChatUser = z.infer<typeof chatUserSchema>;
-
-export const chatAttachmentSchema = z.object({
-  /** Public URL of the evidence image in Cloudflare R2 (served through the CDN). */
-  url: z.url({ protocol: /^https$/ }),
-  content_type: z.string().regex(/^image\/[a-z0-9.+-]+$/),
-});
-export type ChatAttachment = z.infer<typeof chatAttachmentSchema>;
-
-export const chatMessageSchema = z.object({
-  id: z.string().min(1),
-  /** Client-generated id of the sending device, echoed back so the sender can match its copy. */
-  client_id: z.string().min(1).nullable(),
-  order_id: z.string().min(1),
-  sender: chatUserSchema,
-  body: z.string().max(MAX_CHAT_MESSAGE_LENGTH),
-  attachments: z.array(chatAttachmentSchema).max(MAX_CHAT_ATTACHMENTS),
-  sent_at: z.iso.datetime(),
-});
-export type ChatMessage = z.infer<typeof chatMessageSchema>;
-
-/** A user object reduced to the allowlist, or null if it lacks the required fields. */
-export function sanitizeChatUser(user: unknown): ChatUser | null {
-  const parsed = chatUserSchema.safeParse(user);
-  return parsed.success ? parsed.data : null;
-}
+export {
+  chatAttachmentSchema,
+  chatMessageSchema,
+  chatUserSchema,
+  MAX_CHAT_ATTACHMENTS,
+  MAX_CHAT_MESSAGE_LENGTH,
+  sanitizeChatUser,
+  type ChatAttachment,
+  type ChatMessage,
+  type ChatUser,
+} from '@hamro-pasal/shared-types';
 
 /**
  * Incoming `chat:new_message` payload: reduced to the allowlisted shape (sender included), or
  * null when it does not match the contract, in which case it is never rendered.
  */
 export function sanitizeIncomingMessage(payload: unknown): ChatMessage | null {
-  const parsed = chatMessageSchema.safeParse(payload);
-  return parsed.success ? parsed.data : null;
+  return sanitizeChatMessage(payload);
 }
 
 export interface OutgoingMessageInput {
   clientId: string;
   orderId: string;
-  /** Whatever profile object the app holds; only the allowlisted fields are sent. */
+  /** Whatever profile object the app holds; only the allowlisted fields are kept locally. */
   sender: unknown;
   body: string;
   attachments: readonly ChatAttachment[];
   sentAt: Date;
 }
 
-/** Builds the outgoing `chat:new_message` payload. Throws if the result breaks the contract. */
+/**
+ * The local copy of a message being sent (shown as "Sending…" until the server's version replaces
+ * it). Throws if the result breaks the contract.
+ */
 export function buildOutgoingMessage(input: OutgoingMessageInput): ChatMessage {
-  return chatMessageSchema.parse({
+  const message = sanitizeChatMessage({
     id: input.clientId,
     client_id: input.clientId,
     order_id: input.orderId,
@@ -79,4 +59,26 @@ export function buildOutgoingMessage(input: OutgoingMessageInput): ChatMessage {
     attachments: input.attachments,
     sent_at: input.sentAt.toISOString(),
   });
+  // Re-parse for the precise contract error when sanitizing fails.
+  return message ?? chatMessageSchema.parse(input);
+}
+
+/**
+ * What is emitted as `chat:new_message`: the server reads only these fields and sets the id, time
+ * and sender itself, so no user data leaves the device with a message.
+ */
+export interface ChatSendPayload {
+  client_id: string;
+  order_id: string;
+  body: string;
+  attachments: ChatAttachment[];
+}
+
+export function toSendPayload(message: ChatMessage): ChatSendPayload {
+  return {
+    client_id: message.client_id ?? message.id,
+    order_id: message.order_id,
+    body: message.body,
+    attachments: message.attachments.map(({ url, content_type }) => ({ url, content_type })),
+  };
 }

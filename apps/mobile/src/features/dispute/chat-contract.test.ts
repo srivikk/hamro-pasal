@@ -103,10 +103,11 @@ describe('chat privacy filter (SPEC implicit requirement 6)', () => {
     ['no sender', { ...incoming(AARAV_FULL), sender: undefined }],
     ['an unknown role', incoming({ ...AARAV_FULL, role: 'HACKER' })],
     [
-      'a non-https attachment',
+      // http(s) only: local development serves evidence over http, but never other schemes.
+      'a non-web attachment URL',
       {
         ...incoming(AARAV_FULL),
-        attachments: [{ url: 'http://x.test/a.png', content_type: 'image/png' }],
+        attachments: [{ url: 'file:///etc/passwd', content_type: 'image/png' }],
       },
     ],
     [

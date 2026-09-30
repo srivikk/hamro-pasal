@@ -94,6 +94,13 @@ export const serverEnvSchema = z
     FIREBASE_PROJECT_ID: optionalNonEmpty,
     FIREBASE_CLIENT_EMAIL: z.email().optional(),
     FIREBASE_PRIVATE_KEY: optionalNonEmpty,
+
+    // Dispute evidence uploads. Cloudflare R2 is not wired yet: the API stores files on local disk
+    // (default <os tmpdir>/uploads, i.e. /tmp/uploads on Linux/macOS) and serves them under
+    // /uploads. The public base URL defaults to http://localhost:<API_PORT>/uploads; set it to the
+    // host's LAN address when a phone or emulator has to load the images.
+    UPLOADS_DIR: optionalNonEmpty,
+    UPLOADS_PUBLIC_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
   })
   .superRefine((env, ctx) => {
     const requireKeys = (keys: readonly (keyof typeof env)[], reason: string): void => {

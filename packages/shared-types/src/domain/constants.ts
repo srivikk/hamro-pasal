@@ -49,3 +49,21 @@ export const OTP_MAX_VERIFY_ATTEMPTS = 5;
 /** SPEC implicit requirement 3: 15-minute access tokens and 7-day refresh tokens. */
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/*
+ * SPEC §6 and customer journey 11: at delivery a 48-hour window opens for the double-blind review
+ * and for starting a dispute chat. A review stays quarantined (is_published = false) until the
+ * other side has reviewed too, or until this window has elapsed since orders.delivered_at.
+ */
+export const POST_DELIVERY_WINDOW_HOURS = 48;
+export const POST_DELIVERY_WINDOW_SECONDS = POST_DELIVERY_WINDOW_HOURS * 60 * 60;
+
+/** Longest optional feedback text accepted with a review. */
+export const MAX_REVIEW_FEEDBACK_LENGTH = 500;
+
+/** Largest dispute evidence image accepted by POST /api/uploads/dispute-evidence (5 MB). */
+export const MAX_DISPUTE_EVIDENCE_BYTES = 5 * 1024 * 1024;
+
+/** Image types accepted as dispute evidence (checked against the file's own bytes). */
+export const DISPUTE_EVIDENCE_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+export type DisputeEvidenceContentType = (typeof DISPUTE_EVIDENCE_CONTENT_TYPES)[number];

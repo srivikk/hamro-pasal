@@ -1,5 +1,6 @@
-import type { ErrorBody } from '@hamro-pasal/shared-types';
+import { MAX_DISPUTE_EVIDENCE_BYTES, type ErrorBody } from '@hamro-pasal/shared-types';
 import type { ErrorRequestHandler } from 'express';
+import { MulterError } from 'multer';
 
 import {
   OtpAttemptsExceededError,
@@ -11,6 +12,7 @@ import { InvalidRefreshTokenError } from '../auth/refresh-token';
 import { VendorNotFoundError } from '../catalog/catalog-service';
 import { OrderNotFoundError, OrderNotPlaceableError } from '../checkout/checkout-service';
 import { CheckoutRejectedError } from '../checkout/pricing';
+import { DisputeWindowClosedError } from '../disputes/dispute-service';
 import {
   InsufficientStockError,
   InvalidCartError,
@@ -22,6 +24,11 @@ import { MutexTimeoutError } from '../infra/redis-mutex';
 import { toNpr } from '../ledger/money';
 import { SettlementNotAllowedError } from '../ledger/settlement-service';
 import { CancellationWindowExpiredError, OrderNotCancelableError } from '../orders/order-service';
+import {
+  OrderNotReviewableError,
+  ReviewAlreadySubmittedError,
+  ReviewWindowClosedError,
+} from '../reviews/review-service';
 import { SmsDeliveryError } from '../sms/sms-gateway';
 import { InvalidGatewayCallbackError } from '../payments/esewa/esewa-service';
 import { PaymentGatewayError } from '../payments/gateway-http';
@@ -88,6 +95,27 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof OrderNotCancelableError) {
     return new HttpError(409, 'ORDER_STATE_CONFLICT', error.message, { state: error.state });
+  }
+  if (error instanceof OrderNotReviewableError) {
+    return new HttpError(409, 'ORDER_STATE_CONFLICT', error.message, { state: error.state });
+  }
+  if (error instanceof ReviewAlreadySubmittedError) {
+    return new HttpError(409, 'REVIEW_ALREADY_SUBMITTED', error.message, {
+      review_id: error.reviewId,
+    });
+  }
+  if (error instanceof ReviewWindowClosedError) {
+    return new HttpError(422, 'REVIEW_WINDOW_CLOSED', error.message);
+  }
+  if (error instanceof DisputeWindowClosedError) {
+    return new HttpError(422, 'DISPUTE_WINDOW_CLOSED', error.message);
+  }
+  if (error instanceof MulterError) {
+    return error.code === 'LIMIT_FILE_SIZE'
+      ? new HttpError(413, 'FILE_TOO_LARGE', 'Evidence images may be at most 5 MB', {
+          max_bytes: MAX_DISPUTE_EVIDENCE_BYTES,
+        })
+      : new HttpError(400, 'MALFORMED_REQUEST', `Upload rejected: ${error.code}`);
   }
   if (error instanceof PaymentNotFoundError) {
     return new HttpError(404, 'PAYMENT_NOT_FOUND', 'Payment not found');

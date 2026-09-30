@@ -7,6 +7,8 @@ import type {
   OrderSnapshotView,
   OrderView,
   PaymentView,
+  Review,
+  ReviewView,
   VendorMenu,
 } from '@hamro-pasal/shared-types';
 
@@ -131,5 +133,19 @@ export function orderSnapshotView({ order, items, address }: OrderDetail): Order
       unit_price_npr: item.unit_price_npr,
       quantity: item.quantity,
     })),
+  };
+}
+
+/** SPEC §6: the stored review as its author sees it; status reflects the double-blind quarantine. */
+export function reviewView(review: Review): ReviewView {
+  return {
+    id: review.id,
+    order_id: review.order_id,
+    direction: review.direction,
+    rating: review.rating,
+    feedback: review.comment,
+    status: review.is_published ? 'PUBLISHED' : 'QUARANTINED',
+    published_at: review.published_at?.toISOString() ?? null,
+    created_at: review.created_at.toISOString(),
   };
 }

@@ -1,4 +1,6 @@
 import { createHmac } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { createDatabase, type Database } from '@hamro-pasal/db';
 import type { ServerEnv } from '@hamro-pasal/shared-types';
@@ -9,6 +11,7 @@ import { OtpAuthService } from './auth/otp-auth-service';
 import { OtpStore, type OtpStoreOptions } from './auth/otp-store';
 import { CatalogService } from './catalog/catalog-service';
 import { CheckoutService } from './checkout/checkout-service';
+import { DisputeService } from './disputes/dispute-service';
 import { RedisKeyedMutex } from './infra/redis-mutex';
 import { RedisConnectionPool } from './infra/redis-pool';
 import {
@@ -24,12 +27,14 @@ import type { FetchLike } from './payments/gateway-http';
 import { KhaltiClient, type KhaltiConfig } from './payments/khalti/khalti-client';
 import { KhaltiService } from './payments/khalti/khalti-service';
 import { PaymentConfirmationService } from './payments/payment-confirmation';
+import { ReviewService } from './reviews/review-service';
 import {
   AakashSmsGateway,
   MockSmsGateway,
   SparrowSmsGateway,
   type SmsGateway,
 } from './sms/sms-gateway';
+import { LocalEvidenceStorage, type EvidenceStorage } from './uploads/evidence-storage';
 
 export interface ApiConfig {
   readonly accessTokenSecret: string;
@@ -48,6 +53,8 @@ export interface Infrastructure {
   readonly sms: SmsGateway;
   /** Tests only: shorter OTP windows. Production uses the shared-types constants. */
   readonly otpOptions?: OtpStoreOptions;
+  /** Where dispute evidence images are stored (local disk until Cloudflare R2 is wired). */
+  readonly evidence: EvidenceStorage;
 }
 
 export interface ApiContainer extends ApiServices {
@@ -104,6 +111,9 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     orders: new OrderService(infra.db, locks),
     esewa: new EsewaService(infra.db, checkout, confirmation, config.esewa),
     khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),
+    reviews: new ReviewService(infra.db),
+    disputes: new DisputeService(infra.db),
+    evidence: infra.evidence,
     async close() {
       await infra.redisPool.close();
       await infra.db.$client.end();
@@ -155,5 +165,9 @@ export function buildContainerFromEnv(env: ServerEnv): ApiContainer {
     db: createDatabase(env.DATABASE_URL),
     redisPool: new RedisConnectionPool(() => new Redis(env.REDIS_URL), 20),
     sms: smsGatewayFromEnv(env),
+    evidence: new LocalEvidenceStorage(
+      env.UPLOADS_DIR ?? join(tmpdir(), 'uploads'),
+      env.UPLOADS_PUBLIC_BASE_URL ?? `http://localhost:${String(env.API_PORT)}/uploads`,
+    ),
   });
 }

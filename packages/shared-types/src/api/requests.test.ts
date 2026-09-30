@@ -6,6 +6,7 @@ import {
   idParamSchema,
   otpSendRequestSchema,
   otpVerifyRequestSchema,
+  reviewSubmitRequestSchema,
   tokenRefreshRequestSchema,
   vendorFeedQuerySchema,
 } from './requests';
@@ -131,6 +132,46 @@ describe('tokenRefreshRequestSchema', () => {
     expect(tokenRefreshRequestSchema.safeParse({}).success).toBe(false);
     expect(
       tokenRefreshRequestSchema.safeParse({ refresh_token: 'a.b.c', user_id: 'x' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('reviewSubmitRequestSchema', () => {
+  const orderId = randomUUID();
+
+  it('accepts a 1-5 integer rating with optional feedback', () => {
+    expect(reviewSubmitRequestSchema.parse({ order_id: orderId, rating: 5 })).toEqual({
+      order_id: orderId,
+      rating: 5,
+      feedback: null,
+    });
+    expect(
+      reviewSubmitRequestSchema.parse({ order_id: orderId, rating: 1, feedback: '  Late.  ' })
+        .feedback,
+    ).toBe('Late.');
+  });
+
+  it('stores blank feedback as null', () => {
+    expect(
+      reviewSubmitRequestSchema.parse({ order_id: orderId, rating: 3, feedback: '   ' }).feedback,
+    ).toBeNull();
+  });
+
+  it.each([0, 6, 2.5, '5'])('rejects rating %p', (rating) => {
+    expect(reviewSubmitRequestSchema.safeParse({ order_id: orderId, rating }).success).toBe(false);
+  });
+
+  it('rejects feedback over 500 characters and unknown fields', () => {
+    expect(
+      reviewSubmitRequestSchema.safeParse({
+        order_id: orderId,
+        rating: 4,
+        feedback: 'a'.repeat(501),
+      }).success,
+    ).toBe(false);
+    expect(
+      reviewSubmitRequestSchema.safeParse({ order_id: orderId, rating: 4, is_published: true })
+        .success,
     ).toBe(false);
   });
 });

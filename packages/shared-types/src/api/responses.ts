@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { DISPUTE_EVIDENCE_CONTENT_TYPES } from '../domain/constants';
 import { geoPointSchema, nepalPhoneSchema } from '../domain/entities';
 import {
   deliveryScopeSchema,
@@ -7,6 +8,7 @@ import {
   orderStateSchema,
   paymentMethodSchema,
   paymentStatusSchema,
+  reviewDirectionSchema,
   userRoleSchema,
   vendorFulfillmentModeSchema,
 } from '../domain/enums';
@@ -287,3 +289,43 @@ export const tokenRefreshResponseSchema = z.strictObject({
   access_token_expires_in: z.number().int().positive(),
 });
 export type TokenRefreshResponseBody = z.infer<typeof tokenRefreshResponseSchema>;
+
+/*
+ * Double-blind reviews (SPEC §6).
+ */
+
+/**
+ * QUARANTINED: stored with is_published = false and hidden from the other side. PUBLISHED: both
+ * sides have reviewed the order, or 48 hours have passed since delivery.
+ */
+export const reviewStatuses = ['QUARANTINED', 'PUBLISHED'] as const;
+export const reviewStatusSchema = z.enum(reviewStatuses);
+export type ReviewStatus = z.infer<typeof reviewStatusSchema>;
+
+export const reviewViewSchema = z.strictObject({
+  id: z.uuid(),
+  order_id: z.uuid(),
+  direction: reviewDirectionSchema,
+  rating: z.number().int().min(1).max(5),
+  feedback: z.string().min(1).nullable(),
+  status: reviewStatusSchema,
+  published_at: z.iso.datetime().nullable(),
+  created_at: z.iso.datetime(),
+});
+export type ReviewView = z.infer<typeof reviewViewSchema>;
+
+/** POST /api/reviews (201). */
+export const reviewSubmitResponseSchema = z.strictObject({
+  review: reviewViewSchema,
+});
+export type ReviewSubmitResponseBody = z.infer<typeof reviewSubmitResponseSchema>;
+
+/**
+ * POST /api/uploads/dispute-evidence (201): where the stored image is served. The body is a valid
+ * chat attachment, sent as is with `chat:new_message`.
+ */
+export const disputeEvidenceUploadResponseSchema = z.strictObject({
+  url: z.url({ protocol: /^https?$/ }),
+  content_type: z.enum(DISPUTE_EVIDENCE_CONTENT_TYPES),
+});
+export type DisputeEvidenceUploadResponseBody = z.infer<typeof disputeEvidenceUploadResponseSchema>;

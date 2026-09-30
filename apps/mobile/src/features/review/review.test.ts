@@ -2,7 +2,6 @@ import { mmkvStateStorage } from '../../storage/mmkv-state-storage';
 import { createReviewStore, REVIEW_STORE_KEY } from '../../store/useReviewStore';
 import type { TrackedOrder } from '../../store/useOrderStore';
 import { InMemoryMmkv } from '../../test/in-memory-mmkv';
-import { reviewInputSchema, submitReview } from './review-api';
 import { orderAwaitingReview } from './review-prompt';
 
 const NOW = Date.parse('2026-09-29T12:00:00.000Z');
@@ -16,35 +15,6 @@ const order = (orderId: string, overrides: Partial<TrackedOrder> = {}): TrackedO
   paymentMethod: 'COD',
   totalNpr: 1250,
   ...overrides,
-});
-
-describe('review input (shared-types review rules)', () => {
-  it.each([0, 6, 2.5])('rejects rating %p', (rating) => {
-    expect(reviewInputSchema.safeParse({ order_id: 'o', rating, comment: null }).success).toBe(
-      false,
-    );
-  });
-
-  it('trims the comment and turns a blank one into null', () => {
-    expect(
-      reviewInputSchema.parse({ order_id: 'o', rating: 5, comment: '  Fresh!  ' }).comment,
-    ).toBe('Fresh!');
-    expect(
-      reviewInputSchema.parse({ order_id: 'o', rating: 5, comment: '   ' }).comment,
-    ).toBeNull();
-  });
-
-  it('caps the comment at 500 characters', () => {
-    expect(
-      reviewInputSchema.safeParse({ order_id: 'o', rating: 4, comment: 'x'.repeat(501) }).success,
-    ).toBe(false);
-  });
-
-  it('is submitted quarantined (double-blind, SPEC §6)', async () => {
-    await expect(
-      submitReview({ order_id: 'o', rating: 4, comment: null }, { latencyMs: 0 }),
-    ).resolves.toMatchObject({ order_id: 'o', is_published: false });
-  });
 });
 
 describe('orderAwaitingReview', () => {

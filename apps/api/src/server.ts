@@ -11,13 +11,15 @@ const env = loadEnv();
 const container = buildContainerFromEnv(env);
 const httpServer = createServer(createApp(container));
 
-// Socket.io /orders (real-time order state). The adapter needs its own pub and sub connections.
+// Socket.io /orders (real-time order state) and /chat (dispute chat). The adapter needs its own
+// pub and sub connections.
 const redisPub = new Redis(env.REDIS_URL);
 const redisSub = redisPub.duplicate();
 const realtime = attachRealtime(httpServer, {
   accessTokenSecret: container.accessTokenSecret,
   orders: container.orders,
   redis: { pub: redisPub, sub: redisSub },
+  chat: { disputes: container.disputes, evidence: container.evidence },
 });
 
 httpServer.listen(env.API_PORT, () => {

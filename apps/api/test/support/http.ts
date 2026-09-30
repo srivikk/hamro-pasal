@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { errorBodySchema, type ErrorBody } from '@hamro-pasal/shared-types';
 import type { Express } from 'express';
@@ -11,6 +13,7 @@ import { esewaHmacBase64, esewaSignatureMessage } from '../../src/payments/esewa
 import type { OtpStoreOptions } from '../../src/auth/otp-store';
 import type { FetchLike } from '../../src/payments/gateway-http';
 import { MockSmsGateway, type OutboundSms, type SmsGateway } from '../../src/sms/sms-gateway';
+import { LocalEvidenceStorage } from '../../src/uploads/evidence-storage';
 import { testDatabase, testRedisPool } from './fixtures';
 
 export const ACCESS_SECRET = 'integration-access-secret-0123456789abcdef';
@@ -40,6 +43,13 @@ export function requestBodyText(init: RequestInit): string {
   return typeof init.body === 'string' ? init.body : '';
 }
 
+/** Evidence uploads land in a per-run temporary directory, served under this base URL. */
+export const TEST_UPLOADS_DIR = join(
+  tmpdir(),
+  `hamro-pasal-api-test-uploads-${String(process.pid)}`,
+);
+export const TEST_UPLOADS_BASE_URL = 'http://localhost:4000/uploads';
+
 export interface TestApp {
   readonly app: Express;
   readonly container: ApiContainer;
@@ -53,6 +63,7 @@ export function buildTestApp(
     lockTtlMs?: number;
     sms?: SmsGateway & { readonly sent: readonly OutboundSms[] };
     otpOptions?: OtpStoreOptions;
+    uploadsDir?: string;
   } = {},
 ): TestApp {
   const sms = options.sms ?? new MockSmsGateway();
@@ -81,6 +92,10 @@ export function buildTestApp(
       ...(options.lockTtlMs === undefined ? {} : { lockOptions: { ttlMs: options.lockTtlMs } }),
       ...(options.otpOptions === undefined ? {} : { otpOptions: options.otpOptions }),
       sms,
+      evidence: new LocalEvidenceStorage(
+        options.uploadsDir ?? TEST_UPLOADS_DIR,
+        TEST_UPLOADS_BASE_URL,
+      ),
     },
   );
   return { app: createApp(container), container, sms };
@@ -88,7 +103,7 @@ export function buildTestApp(
 
 export function bearer(
   userId: string,
-  role: 'CUSTOMER' | 'VENDOR' | 'DRIVER' = 'CUSTOMER',
+  role: 'CUSTOMER' | 'VENDOR' | 'DRIVER' | 'SUPER_ADMIN' = 'CUSTOMER',
 ): string {
   return `Bearer ${signAccessToken({ userId, role }, ACCESS_SECRET)}`;
 }

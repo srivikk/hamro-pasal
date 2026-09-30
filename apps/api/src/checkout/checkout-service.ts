@@ -24,6 +24,7 @@ import {
   ReservationExpiredError,
 } from '../inventory/errors';
 import { toNpr } from '../ledger/money';
+import { reviewIsPublic } from '../reviews/review-visibility';
 import { enqueueOrderStateChanged } from '../orders/order-events';
 import { generateDeliveryOtp, hashDeliveryOtp } from './delivery-otp';
 import { CheckoutRejectedError, priceCart } from './pricing';
@@ -297,7 +298,10 @@ export class CheckoutService {
     };
   }
 
-  /** SPEC §6 / journey 7: an average rating below 3.0 disables COD for the customer. */
+  /**
+   * SPEC §6 / journey 7: an average rating below 3.0 disables COD for the customer. Only public
+   * vendor ratings count: a quarantined one (the double blind) does not, until it is published.
+   */
   private async assertCodEligible(customerId: string): Promise<void> {
     const [rating] = await this.db
       .select({ average: avg(reviews.rating), total: count() })
@@ -307,7 +311,7 @@ export class CheckoutService {
         and(
           eq(orders.customer_id, customerId),
           eq(reviews.direction, 'VENDOR_TO_CUSTOMER'),
-          eq(reviews.is_published, true),
+          reviewIsPublic(),
         ),
       );
     if (

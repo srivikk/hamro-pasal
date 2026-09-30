@@ -35,6 +35,7 @@ interface ApiRequest<T> {
   /** Path under the API base URL, starting with `/`. */
   path: string;
   query?: Record<string, string>;
+  /** JSON-encoded, except FormData, which is sent as multipart/form-data. */
   body?: unknown;
   /**
    * Defaults to true: send `Authorization: Bearer` and refuse to call without a token. Only the
@@ -75,14 +76,16 @@ async function send<T>(
     Accept: 'application/json',
     ...(token === null ? {} : { Authorization: `Bearer ${token}` }),
   };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  // fetch sets the multipart Content-Type (with its boundary) itself for FormData.
+  const multipart = body instanceof FormData;
+  if (body !== undefined && !multipart) headers['Content-Type'] = 'application/json';
 
   let response: Response;
   try {
     response = await fetch(url, {
       method,
       headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(body === undefined ? {} : { body: multipart ? body : JSON.stringify(body) }),
     });
   } catch (cause) {
     throw new ApiError(0, CLIENT_ERROR_CODES.network, `${method} ${path} failed: ${String(cause)}`);

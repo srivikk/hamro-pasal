@@ -20,9 +20,12 @@ const queryClient = new QueryClient({
     mutations: { retry: false },
   },
 });
-// Signing out (or a refused token refresh) must not leave another admin's data in the cache.
+// Signing out (or a refused token refresh) must not leave another admin's data in the cache; nor
+// may a refresh that answers for a different admin (another tab signed in with the shared cookie).
 session.subscribe((state, previous) => {
-  if (previous.session !== null && state.session === null) queryClient.clear();
+  if (previous.session !== null && previous.session.user.id !== state.session?.user.id) {
+    queryClient.clear();
+  }
 });
 
 const root = document.getElementById('root');

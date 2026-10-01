@@ -379,6 +379,35 @@ export const tokenRefreshResponseSchema = z.strictObject({
 });
 export type TokenRefreshResponseBody = z.infer<typeof tokenRefreshResponseSchema>;
 
+/**
+ * POST /api/auth/otp/verify for a SUPER_ADMIN (Phase 16): the same body without `refresh_token`.
+ * The refresh token travels only in the HttpOnly, Secure, SameSite=Strict cookie set by the same
+ * response, so no script can read it.
+ */
+export const cookieAuthTokensResponseSchema = authTokensResponseSchema.omit({
+  refresh_token: true,
+});
+export type CookieAuthTokensResponseBody = z.infer<typeof cookieAuthTokensResponseSchema>;
+
+/** POST /api/auth/otp/verify as a browser sees it: either shape, depending on the account's role. */
+export const otpVerifyResponseSchema = z.union([
+  authTokensResponseSchema,
+  cookieAuthTokensResponseSchema,
+]);
+export type OtpVerifyResponseBody = z.infer<typeof otpVerifyResponseSchema>;
+
+/**
+ * POST /api/auth/refresh: a new 15-minute access token for the refresh cookie, with the account it
+ * belongs to (a reloaded dashboard knows nothing else about its session). The cookie is not rotated.
+ */
+export const sessionRefreshResponseSchema = z.strictObject({
+  token_type: z.literal('Bearer'),
+  access_token: z.string().min(1),
+  access_token_expires_in: z.number().int().positive(),
+  user: authUserSchema.extend({ phone: nepalPhoneSchema }),
+});
+export type SessionRefreshResponseBody = z.infer<typeof sessionRefreshResponseSchema>;
+
 /*
  * Double-blind reviews (SPEC §6).
  */

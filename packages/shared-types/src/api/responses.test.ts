@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   cancelOrderResponseSchema,
+  cookieAuthTokensResponseSchema,
   errorBodySchema,
   checkoutResponseSchema,
   deliveryConfirmedResponseSchema,
@@ -9,7 +10,9 @@ import {
   feedResponseSchema,
   lockStatusResponseSchema,
   orderDetailResponseSchema,
+  otpVerifyResponseSchema,
   paymentStatusResponseSchema,
+  sessionRefreshResponseSchema,
   tokenRefreshResponseSchema,
   vendorMenuSchema,
   vendorOrderDecisionResponseSchema,
@@ -258,6 +261,54 @@ describe('token refresh schemas', () => {
     expect(tokenRefreshResponseSchema.safeParse({ ...body, refresh_token: 'x.y.z' }).success).toBe(
       false,
     );
+  });
+});
+
+describe('cookie session schemas', () => {
+  const user = { id: randomUUID(), role: 'SUPER_ADMIN', first_name: null };
+  const cookieBody = {
+    token_type: 'Bearer',
+    access_token: 'a.b.c',
+    access_token_expires_in: 900,
+    refresh_token_expires_in: 604_800,
+    user,
+    is_new_user: false,
+  };
+
+  it('accept a Super Admin sign-in only without the refresh token in the body', () => {
+    expect(cookieAuthTokensResponseSchema.parse(cookieBody)).toEqual(cookieBody);
+    expect(
+      cookieAuthTokensResponseSchema.safeParse({ ...cookieBody, refresh_token: 'x.y.z' }).success,
+    ).toBe(false);
+  });
+
+  it('accept either sign-in shape where a browser cannot know the role beforehand', () => {
+    const withToken = { ...cookieBody, refresh_token: 'x.y.z' };
+
+    expect(otpVerifyResponseSchema.parse(cookieBody)).toEqual(cookieBody);
+    expect(otpVerifyResponseSchema.parse(withToken)).toEqual(withToken);
+    expect(otpVerifyResponseSchema.safeParse({ ...cookieBody, token_type: 'MAC' }).success).toBe(
+      false,
+    );
+  });
+
+  it('accept a cookie refresh with the account and its +977 phone, never a refresh token', () => {
+    const body = {
+      token_type: 'Bearer',
+      access_token: 'a.b.c',
+      access_token_expires_in: 900,
+      user: { ...user, phone: '+9779800000099' },
+    };
+
+    expect(sessionRefreshResponseSchema.parse(body)).toEqual(body);
+    expect(sessionRefreshResponseSchema.safeParse({ ...body, user }).success).toBe(false);
+    expect(
+      sessionRefreshResponseSchema.safeParse({ ...body, user: { ...user, phone: '9800000099' } })
+        .success,
+    ).toBe(false);
+    expect(
+      sessionRefreshResponseSchema.safeParse({ ...body, refresh_token: 'x.y.z' }).success,
+    ).toBe(false);
   });
 });
 

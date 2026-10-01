@@ -60,6 +60,10 @@ export interface RefreshedAccess {
   readonly accessTokenExpiresIn: number;
 }
 
+export interface RefreshedCookieSession extends RefreshedAccess {
+  readonly user: Pick<User, 'id' | 'role' | 'first_name' | 'phone'>;
+}
+
 export interface AuthSecrets {
   readonly accessTokenSecret: string;
   readonly refreshTokenSecret: string;
@@ -160,6 +164,39 @@ export class OtpAuthService {
         this.secrets.accessTokenSecret,
       ),
       accessTokenExpiresIn: ACCESS_TOKEN.ttlSeconds,
+    };
+  }
+
+  /**
+   * POST /api/auth/refresh (Phase 16): the same checks for a refresh token that arrived in the
+   * HttpOnly cookie. Only Super Admin sign-ins are given that cookie, so an account that is no
+   * longer a SUPER_ADMIN gets no token from it (a demotion ends the browser session at the next
+   * refresh). The account is returned too: a reloaded dashboard knows nothing else about itself.
+   */
+  async refreshCookieSession(refreshToken: string): Promise<RefreshedCookieSession> {
+    const { userId } = verifyRefreshToken(refreshToken, this.secrets.refreshTokenSecret);
+    const [user] = await this.db
+      .select({
+        id: users.id,
+        role: users.role,
+        first_name: users.first_name,
+        phone: users.phone,
+      })
+      .from(users)
+      .where(eq(users.id, userId));
+    if (user === undefined) {
+      throw new InvalidRefreshTokenError('account no longer exists');
+    }
+    if (user.role !== 'SUPER_ADMIN') {
+      throw new InvalidRefreshTokenError('cookie sessions are for Super Admins only');
+    }
+    return {
+      accessToken: signAccessToken(
+        { userId: user.id, role: user.role },
+        this.secrets.accessTokenSecret,
+      ),
+      accessTokenExpiresIn: ACCESS_TOKEN.ttlSeconds,
+      user,
     };
   }
 

@@ -220,7 +220,6 @@ describe('createAdminApi', () => {
       phone: '+9779800000099',
       user: { id: vendor.id, role: 'SUPER_ADMIN', first_name: null },
       accessToken: 'a',
-      refreshToken: 'r',
     });
     const api = createAdminApi(createApiClient({ baseUrl: '', fetch, session }));
 
@@ -238,6 +237,80 @@ describe('createAdminApi', () => {
       `POST /api/admin/vendors/${vendor.id}/restore`,
     ]);
   });
+
+  it('signs in, restores and signs out through the cookie endpoints', async () => {
+    const calls: { call: string; body: string | undefined; credentials: string | undefined }[] = [];
+    const user = { id: vendor.id, role: 'SUPER_ADMIN', first_name: null };
+    const tokens = { token_type: 'Bearer', access_token: 'a', access_token_expires_in: 900 };
+    const fetch: FetchLike = (url, init) => {
+      calls.push({
+        call: `${init.method ?? ''} ${url}`,
+        body: typeof init.body === 'string' ? init.body : undefined,
+        credentials: init.credentials,
+      });
+      if (url.endsWith('/logout')) return Promise.resolve(new Response(null, { status: 204 }));
+      const body = url.endsWith('/refresh')
+        ? { ...tokens, user: { ...user, phone: '+9779800000099' } }
+        : { ...tokens, refresh_token_expires_in: 604_800, user, is_new_user: false };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+    };
+    const session = createSessionStore();
+    const api = createAdminApi(createApiClient({ baseUrl: '', fetch, session }));
+
+    // A Super Admin's sign-in body carries no refresh token: it is in the HttpOnly cookie.
+    const verified = await api.verifyOtp('+9779800000099', '123456');
+    expect(verified).not.toHaveProperty('refresh_token');
+    expect(verified.user).toEqual(user);
+
+    await expect(api.restoreSession()).resolves.toBe(true);
+    expect(session.getState().session).toMatchObject({ phone: '+9779800000099', accessToken: 'a' });
+
+    await expect(api.logout()).resolves.toBeUndefined();
+
+    expect(calls).toEqual([
+      {
+        call: 'POST /api/auth/otp/verify',
+        body: '{"phone":"+9779800000099","code":"123456"}',
+        credentials: 'same-origin',
+      },
+      { call: 'POST /api/auth/refresh', body: undefined, credentials: 'same-origin' },
+      { call: 'POST /api/auth/logout', body: undefined, credentials: 'same-origin' },
+    ]);
+  });
+
+  it('still reads the sign-in of another role (refresh token in the body), to refuse it', async () => {
+    const fetch: FetchLike = () =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            token_type: 'Bearer',
+            access_token: 'a',
+            access_token_expires_in: 900,
+            refresh_token: 'r',
+            refresh_token_expires_in: 604_800,
+            user: { id: vendor.id, role: 'VENDOR', first_name: null },
+            is_new_user: false,
+          }),
+          { status: 200 },
+        ),
+      );
+    const api = createAdminApi(
+      createApiClient({ baseUrl: '', fetch, session: createSessionStore() }),
+    );
+
+    const verified = await api.verifyOtp('+9779800000011', '123456');
+
+    expect(isSuperAdmin(verified.user)).toBe(false);
+  });
+
+  it('reports a failed sign-out, so the caller keeps the session', async () => {
+    const fetch: FetchLike = () => Promise.reject(new TypeError('Failed to fetch'));
+    const api = createAdminApi(
+      createApiClient({ baseUrl: '', fetch, session: createSessionStore() }),
+    );
+
+    await expect(api.logout()).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+  });
 });
 
 describe('session store', () => {
@@ -250,10 +323,13 @@ describe('session store', () => {
       phone: '+9779800000099',
       user: { id: vendor.id, role: 'SUPER_ADMIN', first_name: null },
       accessToken: 'a1',
-      refreshToken: 'r1',
     });
     session.getState().setAccessToken('a2');
-    expect(session.getState().session).toMatchObject({ accessToken: 'a2', refreshToken: 'r1' });
+    expect(session.getState().session).toEqual({
+      phone: '+9779800000099',
+      user: { id: vendor.id, role: 'SUPER_ADMIN', first_name: null },
+      accessToken: 'a2',
+    });
 
     session.getState().clear();
     expect(session.getState().session).toBeNull();

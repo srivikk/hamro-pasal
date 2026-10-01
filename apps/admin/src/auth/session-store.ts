@@ -5,7 +5,6 @@ export interface AdminSession {
   readonly phone: string;
   readonly user: AuthUser;
   readonly accessToken: string;
-  readonly refreshToken: string;
 }
 
 export interface SessionState {
@@ -18,9 +17,9 @@ export interface SessionState {
 
 /**
  * The signed-in Super Admin, held in memory only (SPEC implicit requirement 3: access tokens never
- * in unencrypted storage). The refresh token stays in memory too: a browser has no encrypted
- * storage, so reloading the page signs the admin out. An HttpOnly refresh cookie would lift this
- * (see STATE_HANDOFF §8I).
+ * in unencrypted storage). The refresh token is not here at all: it lives in an HttpOnly cookie
+ * that no script can read, and the API client trades it for a new access token (also after a page
+ * reload, STATE_HANDOFF §8J).
  */
 export function createSessionStore(): StoreApi<SessionState> {
   return createStore<SessionState>()((set) => ({

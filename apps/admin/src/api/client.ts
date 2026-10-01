@@ -1,4 +1,4 @@
-import { errorBodySchema, tokenRefreshResponseSchema } from '@hamro-pasal/shared-types';
+import { errorBodySchema, sessionRefreshResponseSchema } from '@hamro-pasal/shared-types';
 import type { z } from 'zod';
 import type { StoreApi } from 'zustand/vanilla';
 
@@ -41,6 +41,11 @@ export interface ApiClient {
   publicRequest<TSchema extends z.ZodType>(
     request: ApiRequest<TSchema>,
   ): Promise<z.output<TSchema>>;
+  /**
+   * The silent refresh on page load: true when the browser still holds a valid refresh cookie (the
+   * session is then in the store), false when it does not. Rejects when the API cannot be reached.
+   */
+  restoreSession(): Promise<boolean>;
 }
 
 /** The body as JSON, or null when it is empty or not JSON (then the contract check reports it). */
@@ -64,7 +69,8 @@ function buildUrl(baseUrl: string, path: string, query: ApiRequest<z.ZodType>['q
  * The dashboard's HTTP layer. Every 2xx body is validated with its shared-types schema (a contract
  * break surfaces as UNEXPECTED_RESPONSE, never as bad data on screen) and every error body is
  * parsed into an ApiError. Token renewal mirrors the mobile app (STATE_HANDOFF §9.3): one refresh
- * for a burst of 401s, one replay, and only a refused refresh (400/401) ends the session.
+ * for a burst of 401s, one replay, and only a refused refresh (400/401) ends the session. Unlike
+ * the mobile app, the refresh token is an HttpOnly cookie the browser attaches by itself (§8J).
  */
 export function createApiClient(options: {
   readonly baseUrl: string;
@@ -86,6 +92,8 @@ export function createApiClient(options: {
       response = await options.fetch(buildUrl(baseUrl, request.path, request.query), {
         method: request.method,
         headers,
+        // The refresh cookie must reach /api/auth (and be stored from it); never another origin.
+        credentials: 'same-origin',
         ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
       });
     } catch (error: unknown) {
@@ -119,27 +127,27 @@ export function createApiClient(options: {
     return parsed.data;
   }
 
+  /**
+   * Trades the HttpOnly refresh cookie (sent by the browser, never visible here) for a new access
+   * token. The answer names the account, so the same call restores a session after a page reload.
+   */
   async function runRefresh(): Promise<string | null> {
-    const refreshToken = session.getState().session?.refreshToken;
-    if (refreshToken === undefined) return null;
-    const stillCurrent = () => session.getState().session?.refreshToken === refreshToken;
+    // Whose session this refresh started for (null: none yet, the page was just loaded).
+    const signedInAs = () => session.getState().session?.user.id ?? null;
+    const startedAs = signedInAs();
     try {
       const body = await send(
-        {
-          method: 'POST',
-          path: '/api/auth/token/refresh',
-          schema: tokenRefreshResponseSchema,
-          body: { refresh_token: refreshToken },
-        },
+        { method: 'POST', path: '/api/auth/refresh', schema: sessionRefreshResponseSchema },
         null,
       );
       // Signed out (or someone else signed in) meanwhile: never revive that session.
-      if (!stillCurrent()) return null;
-      session.getState().setAccessToken(body.access_token);
+      if (signedInAs() !== startedAs) return null;
+      const { phone, ...user } = body.user;
+      session.getState().setSession({ phone, user, accessToken: body.access_token });
       return body.access_token;
     } catch (error: unknown) {
       if (error instanceof ApiError && (error.status === 400 || error.status === 401)) {
-        if (stillCurrent()) session.getState().clear();
+        if (signedInAs() === startedAs) session.getState().clear();
         return null;
       }
       throw error; // network or 5xx: keep the session
@@ -155,6 +163,8 @@ export function createApiClient(options: {
 
   return {
     publicRequest: (request) => send(request, null),
+
+    restoreSession: async () => (await refreshAccessToken()) !== null,
 
     async request(request) {
       const token = session.getState().session?.accessToken ?? null;

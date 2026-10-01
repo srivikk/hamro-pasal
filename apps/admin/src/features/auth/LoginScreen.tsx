@@ -29,7 +29,8 @@ export function LoginScreen() {
     mutationFn: ({ target, otp }: { target: string; otp: string }) => api.verifyOtp(target, otp),
     onSuccess: (body, { target }) => {
       if (!isSuperAdmin(body.user)) {
-        // The tokens are simply dropped: every admin route would answer 403 anyway.
+        // The tokens are simply dropped: every admin route would answer 403 anyway, and only a
+        // Super Admin sign-in sets the refresh cookie.
         setMessage('This number does not belong to a Super Admin.');
         setPhone(null);
         return;
@@ -38,7 +39,6 @@ export function LoginScreen() {
         phone: target,
         user: body.user,
         accessToken: body.access_token,
-        refreshToken: body.refresh_token,
       });
     },
     onError: (error) => {
@@ -125,7 +125,7 @@ export function LoginScreen() {
           </p>
         )}
         <p className="muted small">
-          Your session lives in this tab only: reloading the page signs you out.
+          You stay signed in on this browser for 7 days, or until you sign out.
         </p>
       </div>
     </main>

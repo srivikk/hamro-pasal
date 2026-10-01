@@ -138,6 +138,21 @@ export const vendorRestoredPayloadSchema = z.strictObject({
   restored_at: z.iso.datetime(),
 });
 
+/**
+ * Phase 15: a Super Admin suspended or restored a vendor by hand (SPEC infrastructure §5: vendor
+ * suspension events need an audit record). Written in the transaction of the status change. An
+ * admin suspension is never lifted by paying dues; only an admin RESTORE ends it.
+ */
+export const vendorStatusOverriddenPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  action: z.enum(['SUSPEND', 'RESTORE']),
+  from_status: vendorStatusSchema,
+  to_status: vendorStatusSchema,
+  wallet_balance_npr: z.number(),
+  admin_user_id: z.uuid(),
+  overridden_at: z.iso.datetime(),
+});
+
 /** A balanced journal transaction was posted. One posting per affected account line. */
 export const ledgerMutatedPayloadSchema = z.strictObject({
   transaction_id: z.uuid(),
@@ -197,6 +212,11 @@ export const vendorSuspendedForDebtEventSchema = envelope(
 
 export const vendorRestoredEventSchema = envelope('vendor.restored', vendorRestoredPayloadSchema);
 
+export const vendorStatusOverriddenEventSchema = envelope(
+  'vendor.status_overridden',
+  vendorStatusOverriddenPayloadSchema,
+);
+
 export const domainEventSchema = z.discriminatedUnion('event_type', [
   orderLockedEventSchema,
   orderPlacedEventSchema,
@@ -206,6 +226,7 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   vendorEscalationRequiredEventSchema,
   vendorSuspendedForDebtEventSchema,
   vendorRestoredEventSchema,
+  vendorStatusOverriddenEventSchema,
 ]);
 
 export type OrderLockedEvent = z.infer<typeof orderLockedEventSchema>;
@@ -216,6 +237,7 @@ export type LedgerMutatedEvent = z.infer<typeof ledgerMutatedEventSchema>;
 export type VendorEscalationRequiredEvent = z.infer<typeof vendorEscalationRequiredEventSchema>;
 export type VendorSuspendedForDebtEvent = z.infer<typeof vendorSuspendedForDebtEventSchema>;
 export type VendorRestoredEvent = z.infer<typeof vendorRestoredEventSchema>;
+export type VendorStatusOverriddenEvent = z.infer<typeof vendorStatusOverriddenEventSchema>;
 export type DomainEvent = z.infer<typeof domainEventSchema>;
 export type DomainEventType = DomainEvent['event_type'];
 export type DomainEventPayload<T extends DomainEventType> = Extract<
@@ -232,4 +254,5 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'vendor.escalation.required': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.suspended_for_debt': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.restored': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.status_overridden': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
 };

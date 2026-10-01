@@ -47,6 +47,17 @@ export default tseslint.config(
     rules: reactHooks.configs.recommended.rules,
   },
   {
+    // Phase 15: the Super Admin web dashboard (Vite + React, runs in the browser).
+    files: ['apps/admin/src/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    languageOptions: { globals: globals.browser },
+    rules: reactHooks.configs.recommended.rules,
+  },
+  {
+    files: ['apps/admin/vite.config.ts'],
+    languageOptions: { globals: globals.node },
+  },
+  {
     files: ['**/*.{js,mjs,cjs}'],
     ...tseslint.configs.disableTypeChecked,
     languageOptions: {

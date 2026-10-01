@@ -148,4 +148,178 @@ export class WalletService {
     }
     return changes;
   }
+
+  /**
+   * Phase 15, Super Admin override: takes a vendor offline whatever its wallet says. The previous
+   * status goes to `status_before_admin_suspension`, which only `restoreByAdmin` reads: paying dues
+   * never lifts an admin suspension (applyThreshold restores debt suspensions only). A vendor that
+   * is already SUSPENDED (for debt or by an admin) is refused.
+   */
+  async suspendByAdmin(
+    tx: Transaction,
+    vendorId: string,
+    adminUserId: string,
+  ): Promise<AdminOverride> {
+    const vendor = await lockVendor(tx, vendorId);
+    if (!isActive(vendor.status)) {
+      throw new VendorStatusConflictError(vendorId, vendor.status, 'SUSPEND');
+    }
+    await tx
+      .update(vendors)
+      .set({ status: 'SUSPENDED', status_before_admin_suspension: vendor.status })
+      .where(eq(vendors.id, vendorId));
+    return this.recordOverride(tx, {
+      vendorId,
+      action: 'SUSPEND',
+      fromStatus: vendor.status,
+      toStatus: 'SUSPENDED',
+      walletBalanceNpr: vendor.walletBalanceNpr,
+      adminUserId,
+      overriddenAt: this.now(),
+    });
+  }
+
+  /**
+   * Phase 15, Super Admin override: brings a SUSPENDED vendor back to the status it had before,
+   * whether an admin or wallet debt suspended it. For a debt suspension this lifts it before the
+   * balance is back to 0 (the admin's call), but never while the balance is still below the limit:
+   * SPEC §5 keeps such a vendor locked, and the wallet trigger would refuse the update anyway.
+   */
+  async restoreByAdmin(
+    tx: Transaction,
+    vendorId: string,
+    adminUserId: string,
+  ): Promise<AdminOverride> {
+    const vendor = await lockVendor(tx, vendorId);
+    if (vendor.status !== 'SUSPENDED') {
+      throw new VendorStatusConflictError(vendorId, vendor.status, 'RESTORE');
+    }
+    const restoreTo = vendor.adminRestoreTo ?? vendor.debtRestoreTo;
+    if (restoreTo === null) throw new RestoreStatusUnknownError(vendorId);
+    const limit = await suspensionLimit(tx);
+    if (vendor.walletBalanceNpr < limit) {
+      throw new WalletBelowSuspensionLimitError(vendorId, vendor.walletBalanceNpr, limit);
+    }
+    await tx
+      .update(vendors)
+      .set({
+        status: restoreTo,
+        status_before_admin_suspension: null,
+        status_before_debt_suspension: null,
+      })
+      .where(eq(vendors.id, vendorId));
+    return this.recordOverride(tx, {
+      vendorId,
+      action: 'RESTORE',
+      fromStatus: 'SUSPENDED',
+      toStatus: restoreTo,
+      walletBalanceNpr: vendor.walletBalanceNpr,
+      adminUserId,
+      overriddenAt: this.now(),
+    });
+  }
+
+  /** The audit record of an override (SPEC infrastructure §5), in the override's transaction. */
+  private async recordOverride(tx: Transaction, override: AdminOverride): Promise<AdminOverride> {
+    await enqueueDomainEvent(tx, {
+      type: 'vendor.status_overridden',
+      aggregateId: override.vendorId,
+      occurredAt: override.overriddenAt,
+      payload: {
+        vendor_id: override.vendorId,
+        action: override.action,
+        from_status: override.fromStatus,
+        to_status: override.toStatus,
+        wallet_balance_npr: override.walletBalanceNpr,
+        admin_user_id: override.adminUserId,
+        overridden_at: override.overriddenAt.toISOString(),
+      },
+    });
+    return override;
+  }
+}
+
+/** Locks one vendor row like lockStandings does, for an admin override. */
+async function lockVendor(tx: Transaction, vendorId: string) {
+  const [vendor] = await tx
+    .select({
+      status: vendors.status,
+      walletBalanceNpr: vendors.wallet_balance_npr,
+      debtRestoreTo: vendors.status_before_debt_suspension,
+      adminRestoreTo: vendors.status_before_admin_suspension,
+    })
+    .from(vendors)
+    .where(eq(vendors.id, vendorId))
+    .for('no key update');
+  if (vendor === undefined) throw new AdminVendorNotFoundError(vendorId);
+  return vendor;
+}
+
+async function suspensionLimit(tx: Transaction): Promise<number> {
+  const [settings] = await tx
+    .select({ limit: platformSettings.vendor_wallet_suspension_limit_npr })
+    .from(platformSettings);
+  if (settings === undefined) throw new Error('platform_settings row is missing');
+  return settings.limit;
+}
+
+/** Phase 15: a Super Admin override asked for a status the vendor cannot move to from here. */
+export class VendorStatusConflictError extends Error {
+  constructor(
+    readonly vendorId: string,
+    readonly status: VendorStatus,
+    readonly action: AdminOverrideAction,
+  ) {
+    super(
+      action === 'SUSPEND'
+        ? `Vendor ${vendorId} is already SUSPENDED`
+        : `Vendor ${vendorId} is ${status}, not SUSPENDED`,
+    );
+    this.name = 'VendorStatusConflictError';
+  }
+}
+
+/**
+ * Restoring would leave an active vendor below the suspension limit (SPEC §5): the dues must be
+ * paid first. The enforce_vendor_wallet_limit trigger refuses the same change in the database.
+ */
+export class WalletBelowSuspensionLimitError extends Error {
+  constructor(
+    readonly vendorId: string,
+    readonly walletBalanceNpr: number,
+    readonly suspensionLimitNpr: number,
+  ) {
+    super(
+      `Vendor ${vendorId} is at ${String(walletBalanceNpr)} NPR, below the ${String(suspensionLimitNpr)} NPR limit`,
+    );
+    this.name = 'WalletBelowSuspensionLimitError';
+  }
+}
+
+/** SUSPENDED with no remembered status (set outside the app): nothing says what to restore to. */
+export class RestoreStatusUnknownError extends Error {
+  constructor(readonly vendorId: string) {
+    super(`Vendor ${vendorId} has no status to restore to`);
+    this.name = 'RestoreStatusUnknownError';
+  }
+}
+
+/** The vendor row is gone (or never existed). */
+export class AdminVendorNotFoundError extends Error {
+  constructor(readonly vendorId: string) {
+    super(`Vendor ${vendorId} not found`);
+    this.name = 'AdminVendorNotFoundError';
+  }
+}
+
+export type AdminOverrideAction = 'SUSPEND' | 'RESTORE';
+
+export interface AdminOverride {
+  readonly vendorId: string;
+  readonly action: AdminOverrideAction;
+  readonly fromStatus: VendorStatus;
+  readonly toStatus: VendorStatus;
+  readonly walletBalanceNpr: number;
+  readonly adminUserId: string;
+  readonly overriddenAt: Date;
 }

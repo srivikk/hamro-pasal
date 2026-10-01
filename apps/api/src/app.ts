@@ -1,5 +1,7 @@
 import express, { type Express } from 'express';
 
+import type { AdminVendorService } from './admin/admin-vendor-service';
+import type { DeadLetterService } from './admin/dead-letter-service';
 import type { OtpAuthService } from './auth/otp-auth-service';
 import type { CatalogService } from './catalog/catalog-service';
 import type { CheckoutService } from './checkout/checkout-service';
@@ -14,6 +16,7 @@ import type { KhaltiService } from './payments/khalti/khalti-service';
 import type { ReviewService } from './reviews/review-service';
 import type { VendorTopUpService } from './wallet/vendor-top-up-service';
 import type { VendorWalletService } from './wallet/vendor-wallet-service';
+import { adminRouter } from './routes/admin';
 import { authRouter } from './routes/auth';
 import { cartRouter } from './routes/cart';
 import { driverOrdersRouter } from './routes/driver-orders';
@@ -42,6 +45,9 @@ export interface ApiServices {
   readonly reviews: ReviewService;
   readonly disputes: DisputeService;
   readonly evidence: EvidenceStorage;
+  /** Phase 15: the Super Admin dashboard (apps/admin). */
+  readonly adminDeadLetters: DeadLetterService;
+  readonly adminVendors: AdminVendorService;
 }
 
 /** Builds the HTTP app. Without services only /health is served (used by liveness checks/tests). */
@@ -58,6 +64,11 @@ export function createApp(services?: ApiServices): Express {
   if (services !== undefined) {
     const customerAuth = requireAuth(services.accessTokenSecret, ['CUSTOMER']);
     app.use('/api/auth', authRouter(services.auth));
+    app.use(
+      '/api/admin',
+      requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
+      adminRouter({ deadLetters: services.adminDeadLetters, vendors: services.adminVendors }),
+    );
     // Before the customer catalogue under /api/vendors, which would otherwise claim these paths.
     app.use(
       '/api/vendors/orders',

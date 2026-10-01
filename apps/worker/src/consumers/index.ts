@@ -5,7 +5,7 @@ import type { SmsGateway } from '@hamro-pasal/sms';
 import type { Redis } from 'ioredis';
 
 import type { OrderStateReader } from '../notifications/order-state-reader';
-import { withDeadLetter, type DeadLetterPublisher } from './dead-letter';
+import { withDeadLetter, type DeadLetterPublisher, type DeadLetterStore } from './dead-letter';
 import {
   orderStateFanoutConsumer,
   RedisEventDeduplicator,
@@ -35,6 +35,8 @@ export interface ConsumerDeps {
   readonly orders: OrderStateReader;
   /** Writes `notifications.dlq` (the worker's idempotent producer). */
   readonly deadLetters: DeadLetterPublisher;
+  /** Keeps every dead letter in dead_letter_events for the admin DLQ monitor (Phase 15). */
+  readonly deadLetterStore: DeadLetterStore;
 }
 
 /** Register Kafka topic handlers here. Several may share a topic (see routeByTopic). */
@@ -45,7 +47,8 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
       deduplicator: new RedisEventDeduplicator(deps.redis),
     }),
     vendorSlaSchedulerConsumer({ timers: deps.vendorAcceptanceTimers }),
-    // 1 attempt + 3 retries, then notifications.dlq and the partition moves on (Phase 14).
+    // 1 attempt + 3 retries, then a dead_letter_events row + notifications.dlq, and the partition
+    // moves on (Phases 14 and 15).
     withDeadLetter(
       vendorNotificationConsumer({
         sms: deps.sms,
@@ -58,6 +61,7 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
         name: 'vendor-notifications',
         deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
         publisher: deps.deadLetters,
+        store: deps.deadLetterStore,
       },
     ),
   ];

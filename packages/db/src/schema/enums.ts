@@ -1,4 +1,5 @@
 import {
+  deadLetterStatuses,
   deliveryScopes,
   disputeStatuses,
   fulfillmentModes,
@@ -27,3 +28,4 @@ export const ledgerAccountTypeEnum = pgEnum('ledger_account_type', ledgerAccount
 export const ledgerTransactionKindEnum = pgEnum('ledger_transaction_kind', ledgerTransactionKinds);
 export const disputeStatusEnum = pgEnum('dispute_status', disputeStatuses);
 export const reviewDirectionEnum = pgEnum('review_direction', reviewDirections);
+export const deadLetterStatusEnum = pgEnum('dead_letter_status', deadLetterStatuses);

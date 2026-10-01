@@ -3,6 +3,11 @@ import type { ErrorRequestHandler } from 'express';
 import { MulterError } from 'multer';
 
 import {
+  DeadLetterAlreadyReplayedError,
+  DeadLetterNotFoundError,
+  InvalidDeadLetterCursorError,
+} from '../admin/dead-letter-service';
+import {
   OtpAttemptsExceededError,
   OtpCooldownError,
   OtpExpiredError,
@@ -42,6 +47,12 @@ import {
 } from '../reviews/review-service';
 import { TopUpKeyReusedError, TopUpUnavailableError } from '../wallet/vendor-top-up-service';
 import { InvalidLedgerCursorError } from '../wallet/vendor-wallet-service';
+import {
+  AdminVendorNotFoundError,
+  RestoreStatusUnknownError,
+  VendorStatusConflictError,
+  WalletBelowSuspensionLimitError,
+} from '../wallet/wallet-service';
 import { SmsDeliveryError } from '@hamro-pasal/sms';
 import { InvalidGatewayCallbackError } from '../payments/esewa/esewa-service';
 import { PaymentGatewayError } from '../payments/gateway-http';
@@ -154,6 +165,30 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof InvalidLedgerCursorError) {
     return new HttpError(400, 'INVALID_CURSOR', error.message);
+  }
+  if (error instanceof DeadLetterNotFoundError) {
+    return new HttpError(404, 'DEAD_LETTER_NOT_FOUND', 'Dead letter not found');
+  }
+  if (error instanceof DeadLetterAlreadyReplayedError) {
+    return new HttpError(409, 'DEAD_LETTER_ALREADY_REPLAYED', error.message);
+  }
+  if (error instanceof InvalidDeadLetterCursorError) {
+    return new HttpError(400, 'INVALID_CURSOR', error.message);
+  }
+  if (error instanceof AdminVendorNotFoundError) {
+    return new HttpError(404, 'VENDOR_NOT_FOUND', 'Vendor not found');
+  }
+  if (error instanceof VendorStatusConflictError) {
+    return new HttpError(409, 'VENDOR_STATUS_CONFLICT', error.message, { status: error.status });
+  }
+  if (error instanceof WalletBelowSuspensionLimitError) {
+    return new HttpError(409, 'WALLET_BELOW_SUSPENSION_LIMIT', error.message, {
+      wallet_balance_npr: error.walletBalanceNpr,
+      suspension_limit_npr: error.suspensionLimitNpr,
+    });
+  }
+  if (error instanceof RestoreStatusUnknownError) {
+    return new HttpError(409, 'RESTORE_STATUS_UNKNOWN', error.message);
   }
   if (error instanceof DisputeWindowClosedError) {
     return new HttpError(422, 'DISPUTE_WINDOW_CLOSED', error.message);

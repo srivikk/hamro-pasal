@@ -97,3 +97,13 @@ export type DisputeStatus = z.infer<typeof disputeStatusSchema>;
 export const reviewDirections = ['CUSTOMER_TO_VENDOR', 'VENDOR_TO_CUSTOMER'] as const;
 export const reviewDirectionSchema = z.enum(reviewDirections);
 export type ReviewDirection = z.infer<typeof reviewDirectionSchema>;
+
+/**
+ * Phase 15: lifecycle of a stored dead letter (`dead_letter_events`).
+ * - PENDING: dead-lettered by the worker, waiting for an operator.
+ * - RETRY_REQUESTED: a Super Admin asked for a retry; the worker's replayer republishes it.
+ * - REPLAYED: republished to its source topic. A replay that fails again becomes a new row.
+ */
+export const deadLetterStatuses = ['PENDING', 'RETRY_REQUESTED', 'REPLAYED'] as const;
+export const deadLetterStatusSchema = z.enum(deadLetterStatuses);
+export type DeadLetterStatus = z.infer<typeof deadLetterStatusSchema>;

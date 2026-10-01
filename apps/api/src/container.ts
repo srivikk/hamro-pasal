@@ -7,6 +7,8 @@ import type { ServerEnv, WalletTopUpMode } from '@hamro-pasal/shared-types';
 import { smsGatewayFromEnv, type SmsGateway } from '@hamro-pasal/sms';
 import { Redis } from 'ioredis';
 
+import { AdminVendorService } from './admin/admin-vendor-service';
+import { DeadLetterService } from './admin/dead-letter-service';
 import type { ApiServices } from './app';
 import { OtpAuthService } from './auth/otp-auth-service';
 import { OtpStore, type OtpStoreOptions } from './auth/otp-store';
@@ -102,7 +104,9 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     infra.lockOptions,
   );
   const checkout = new CheckoutService(infra.db, locks, new RedisKeyedMutex(infra.redisPool));
-  const ledger = new LedgerService(new WalletService());
+  // The one WalletService: journals (suspend/restore for debt) and the admin overrides share it.
+  const wallet = new WalletService();
+  const ledger = new LedgerService(wallet);
   const settlement = new SettlementService(infra.db, ledger);
   const confirmation = new PaymentConfirmationService(infra.db, settlement, checkout);
   const khaltiClient = new KhaltiClient(config.khalti, infra.fetch);
@@ -134,6 +138,8 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     reviews: new ReviewService(infra.db),
     disputes: new DisputeService(infra.db),
     evidence: infra.evidence,
+    adminDeadLetters: new DeadLetterService(infra.db),
+    adminVendors: new AdminVendorService(infra.db, wallet),
     async close() {
       await infra.redisPool.close();
       await infra.db.$client.end();

@@ -55,6 +55,8 @@ export const vendors = pgTable(
     wallet_balance_npr: npr().notNull().default(0),
     // Phase 12.5: the status a debt suspension lifts back to (SPEC §5). Null unless SUSPENDED for debt.
     status_before_debt_suspension: vendorStatusEnum().$type<Exclude<VendorStatus, 'SUSPENDED'>>(),
+    // Phase 15: the status a Super Admin Restore returns to. Null unless suspended by an admin.
+    status_before_admin_suspension: vendorStatusEnum().$type<Exclude<VendorStatus, 'SUSPENDED'>>(),
     created_at: createdAt(),
     updated_at: updatedAt(),
   },
@@ -95,6 +97,10 @@ export const vendors = pgTable(
     check(
       'vendors_debt_suspension_check',
       sql`${t.status_before_debt_suspension} IS NULL OR (${t.status} = 'SUSPENDED' AND ${t.status_before_debt_suspension} <> 'SUSPENDED')`,
+    ),
+    check(
+      'vendors_admin_suspension_check',
+      sql`${t.status_before_admin_suspension} IS NULL OR (${t.status} = 'SUSPENDED' AND ${t.status_before_admin_suspension} <> 'SUSPENDED' AND ${t.status_before_debt_suspension} IS NULL)`,
     ),
     check(
       'vendors_wallet_balance_floor_check',

@@ -104,6 +104,11 @@ export const vendorSchema = z.strictObject({
    * negative balance is cleared. Null for any other suspension, which a top-up never lifts.
    */
   status_before_debt_suspension: vendorStatusSchema.exclude(['SUSPENDED']).nullable(),
+  /**
+   * Phase 15: set only while a Super Admin suspension is in force: the status the admin's Restore
+   * returns the vendor to. Never set together with `status_before_debt_suspension`.
+   */
+  status_before_admin_suspension: vendorStatusSchema.exclude(['SUSPENDED']).nullable(),
   created_at: z.date(),
   updated_at: z.date(),
 });

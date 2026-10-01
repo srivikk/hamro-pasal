@@ -31,10 +31,22 @@ export const DEAD_LETTER_HEADERS = {
   errorName: 'dlq_error_name',
   errorMessage: 'dlq_error_message',
   failedAt: 'dlq_failed_at',
+  /**
+   * Phase 15: set by the replayer on a republished message (the id of the dead letter it retries),
+   * so a retry that fails again is linked to the row it came from.
+   */
+  replayOf: 'dlq_replay_of',
 } as const;
+
+/** Every header this module owns starts with it; they are bookkeeping, not the message. */
+const DEAD_LETTER_HEADER_PREFIX = 'dlq_';
 
 /** Longest error message kept in a header. */
 const MAX_ERROR_HEADER_LENGTH = 1_000;
+/** Longest error message kept in the database row. */
+const MAX_ERROR_ROW_LENGTH = 2_000;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Publishes a dead letter; resolves only once the broker acknowledged it. */
 export interface DeadLetterPublisher {
@@ -48,6 +60,84 @@ export class KafkaDeadLetterPublisher implements DeadLetterPublisher {
   async publish(record: KafkaJS.ProducerRecord): Promise<void> {
     await this.producer.send(record);
   }
+}
+
+/** What the database keeps of a dead letter (Phase 15, table dead_letter_events). */
+export interface DeadLetterEntry {
+  readonly consumer: string;
+  readonly deadLetterTopic: string;
+  readonly sourceTopic: string;
+  readonly partition: number;
+  readonly offset: string;
+  /** Key and value byte for byte, so a retry republishes exactly what arrived. */
+  readonly key: Buffer | null;
+  readonly value: Buffer | null;
+  /** The message's own headers, without the dlq_* bookkeeping ones. */
+  readonly headers: Readonly<Record<string, string>>;
+  readonly eventId: string | null;
+  readonly eventType: string | null;
+  /** The dead letter this message was a retry of (its dlq_replay_of header), if any. */
+  readonly replayOfId: string | null;
+  readonly attempts: number;
+  readonly errorName: string;
+  readonly errorMessage: string;
+  readonly failedAt: Date;
+}
+
+/**
+ * Stores a dead letter for the admin monitor. Must be idempotent per (consumer, topic, partition,
+ * offset): a redelivered message that was already stored is not stored again.
+ */
+export interface DeadLetterStore {
+  save(entry: DeadLetterEntry): Promise<void>;
+}
+
+/** A message header as a string (Buffers decoded as UTF-8; for a repeated header, the last one). */
+export function headerText(
+  value: Buffer | string | (Buffer | string)[] | undefined,
+): string | undefined {
+  if (value === undefined) return undefined;
+  const last = Array.isArray(value) ? value.at(-1) : value;
+  return last === undefined ? undefined : last.toString();
+}
+
+/** The message's own headers as strings, dropping the dlq_* ones this module adds. */
+export function ownHeaders(headers: KafkaJS.IHeaders | undefined): Record<string, string> {
+  const own: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (name.startsWith(DEAD_LETTER_HEADER_PREFIX)) continue;
+    const text = headerText(value);
+    if (text !== undefined) own[name] = text;
+  }
+  return own;
+}
+
+/** The database row of a dead letter. */
+export function deadLetterEntry(
+  deadLetterTopic: string,
+  payload: KafkaJS.EachMessagePayload,
+  details: { consumer: string; attempts: number; error: Error; failedAt: Date },
+): DeadLetterEntry {
+  const { message } = payload;
+  const headers = ownHeaders(message.headers);
+  const replayOf = headerText(message.headers?.[DEAD_LETTER_HEADERS.replayOf]);
+  return {
+    consumer: details.consumer,
+    deadLetterTopic,
+    sourceTopic: payload.topic,
+    partition: payload.partition,
+    offset: message.offset,
+    key: message.key ?? null,
+    value: message.value ?? null,
+    headers,
+    eventId: headers.event_id ?? null,
+    eventType: headers.event_type ?? null,
+    replayOfId: replayOf !== undefined && UUID_PATTERN.test(replayOf) ? replayOf : null,
+    attempts: details.attempts,
+    errorName: details.error.name,
+    errorMessage: details.error.message.slice(0, MAX_ERROR_ROW_LENGTH),
+    failedAt: details.failedAt,
+  };
 }
 
 export interface DeadLetterRecord {
@@ -64,6 +154,8 @@ export interface DeadLetterOptions {
   readonly name: string;
   readonly deadLetterTopic: string;
   readonly publisher: DeadLetterPublisher;
+  /** Keeps the row the Super Admin's DLQ monitor reads (Phase 15). Written before the Kafka copy. */
+  readonly store: DeadLetterStore;
   readonly maxRetries?: number;
   readonly retryDelayMs?: (retry: number) => number;
   readonly sleep?: (ms: number) => Promise<void>;
@@ -110,8 +202,9 @@ export function deadLetterRecord(
  * retried. When the attempts run out, the message is copied to `deadLetterTopic` and the handler
  * returns normally, so its offset is committed and the partition moves on.
  *
- * If publishing the dead letter fails, the error propagates: the offset is not committed and
- * Kafka redelivers the message, so nothing is dropped without a copy in the DLQ.
+ * The dead letter is first stored in the database (Phase 15, idempotent per source offset), then
+ * copied to the DLQ topic. If either fails, the error propagates: the offset is not committed and
+ * Kafka redelivers the message, so nothing is dropped without a row and a copy in the DLQ.
  */
 export function withDeadLetter(
   consumer: KafkaConsumerDefinition,
@@ -154,13 +247,15 @@ export function withDeadLetter(
           await sleep(retryDelayMs(attempt));
           continue;
         }
+        const details = {
+          consumer: options.name,
+          attempts: attempt,
+          error: failure,
+          failedAt: now(),
+        };
+        await options.store.save(deadLetterEntry(options.deadLetterTopic, payload, details));
         await options.publisher.publish(
-          deadLetterRecord(options.deadLetterTopic, payload, {
-            consumer: options.name,
-            attempts: attempt,
-            error: failure,
-            failedAt: now(),
-          }),
+          deadLetterRecord(options.deadLetterTopic, payload, details),
         );
         onDeadLettered({
           consumer: options.name,

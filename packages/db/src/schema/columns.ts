@@ -31,3 +31,8 @@ export const geoPoint = customType<{ data: GeoPoint; driverData: string }>({
     return point;
   },
 });
+
+/** PostgreSQL `bytea`, read and written as a Node Buffer (node-postgres returns Buffers for it). */
+export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => 'bytea',
+});

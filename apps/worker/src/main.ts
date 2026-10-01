@@ -8,6 +8,8 @@ import { Redis } from 'ioredis';
 import { loadEnv } from './config/env';
 import { buildConsumers, routeByTopic } from './consumers';
 import { KafkaDeadLetterPublisher } from './consumers/dead-letter';
+import { DeadLetterReplayer } from './dead-letters/dead-letter-replayer';
+import { DatabaseDeadLetterStore } from './dead-letters/dead-letter-store';
 import { BullVendorAcceptanceTimers } from './consumers/vendor-sla-scheduler';
 import { buildBullConnection } from './infra/redis';
 import { Lifecycle } from './lifecycle';
@@ -32,6 +34,12 @@ async function main(): Promise<void> {
   const relay = new OutboxRelay(db, new DomainEventPublisher(producer));
   relay.start();
   lifecycle.register(() => relay.stop());
+  // Dead letters a Super Admin asked to retry (POST /api/admin/dlq/:id/retry) go back to their
+  // source topic through the same idempotent producer (Phase 15).
+  const deadLetterPublisher = new KafkaDeadLetterPublisher(producer);
+  const replayer = new DeadLetterReplayer(db, deadLetterPublisher);
+  replayer.start();
+  lifecycle.register(() => replayer.stop());
 
   // BullMQ timers and crons
   const connection = buildBullConnection(env.REDIS_URL);
@@ -74,7 +82,8 @@ async function main(): Promise<void> {
     // IVR_PROVIDER=MOCK logs "[ivr:mock] Calling +977…" for escalations; DISABLED places no call.
     ivr: ivrGatewayFromEnv(env),
     orders: new DatabaseOrderStateReader(db),
-    deadLetters: new KafkaDeadLetterPublisher(producer),
+    deadLetters: deadLetterPublisher,
+    deadLetterStore: new DatabaseDeadLetterStore(db),
   });
   if (consumers.length > 0) {
     const handlers = routeByTopic(consumers);
@@ -94,7 +103,7 @@ async function main(): Promise<void> {
   }
 
   console.info(
-    `[worker] started: outbox relay, ${String(workers.length)} BullMQ workers, ${String(consumers.length)} Kafka consumer(s)`,
+    `[worker] started: outbox relay, dead-letter replayer, ${String(workers.length)} BullMQ workers, ${String(consumers.length)} Kafka consumer(s)`,
   );
 
   const shutdown = (signal: NodeJS.Signals): void => {

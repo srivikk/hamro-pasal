@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from 'node:crypto';
 
 import {
   createDatabase,
+  deadLetterEvents,
   enqueueDomainEvent,
   orders,
   users,
@@ -33,6 +34,7 @@ import { eq, sql } from 'drizzle-orm';
 import { Redis } from 'ioredis';
 
 import { KafkaDeadLetterPublisher, withDeadLetter } from '../src/consumers/dead-letter';
+import { DatabaseDeadLetterStore } from '../src/dead-letters/dead-letter-store';
 import { RedisEventDeduplicator } from '../src/consumers/order-state-fanout';
 import { vendorNotificationConsumer } from '../src/consumers/vendor-notifications';
 import { DatabaseOrderStateReader } from '../src/notifications/order-state-reader';
@@ -134,6 +136,7 @@ describe('vendor notifications (Kafka → SMS + IVR, stale-order guard, DLQ)', (
         name: 'vendor-notifications',
         deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
         publisher: new KafkaDeadLetterPublisher(producer),
+        store: new DatabaseDeadLetterStore(db),
         retryDelayMs: () => 20,
         onDeadLettered: () => undefined,
       },
@@ -208,6 +211,14 @@ describe('vendor notifications (Kafka → SMS + IVR, stale-order guard, DLQ)', (
 
   function deadLettersFor(key: string): DeadLetter[] {
     return deadLetters.filter((letter) => letter.key === key);
+  }
+
+  /** The dead_letter_events rows (Phase 15) of messages with this Kafka key. */
+  function deadLetterRowsFor(key: string) {
+    return db
+      .select()
+      .from(deadLetterEvents)
+      .where(eq(deadLetterEvents.message_key, Buffer.from(key)));
   }
 
   /** A fresh +977 number per test, so assertions only see their own SMS and calls. */
@@ -477,6 +488,33 @@ describe('vendor notifications (Kafka → SMS + IVR, stale-order guard, DLQ)', (
       // The offset was committed: no further attempt arrives.
       await sleep(1_000);
       expect(requestsTo(phone)).toHaveLength(5);
+
+      // Phase 15: the admin monitor's row, written before the Kafka copy.
+      const rows = await deadLetterRowsFor(vendorId);
+      expect(rows).toHaveLength(1);
+      const [row] = rows;
+      expect(row).toMatchObject({
+        status: 'PENDING',
+        consumer: 'vendor-notifications',
+        source_topic: 'notifications.broadcast',
+        source_partition: Number(letter?.headers.dlq_source_partition),
+        source_offset: letter?.headers.dlq_source_offset,
+        dead_letter_topic: 'notifications.dlq',
+        event_id: failed.event_id,
+        event_type: 'vendor.suspended_for_debt',
+        attempts: 4,
+        error_name: 'SmsDeliveryError',
+        error_message: 'SPARROW SMS failed: HTTP 503',
+        retry_requested_at: null,
+        replayed_at: null,
+        replay_of_id: null,
+      });
+      expect(row?.message_value?.toString()).toBe(letter?.value);
+      expect(row?.headers).toEqual({
+        event_id: failed.event_id,
+        event_type: 'vendor.suspended_for_debt',
+        event_version: '1',
+      });
     }, 90_000);
 
     it('does not dead-letter an event that succeeds on its 3rd retry', async () => {
@@ -491,6 +529,7 @@ describe('vendor notifications (Kafka → SMS + IVR, stale-order guard, DLQ)', (
       expect(requestsTo(phone)).toHaveLength(4);
       await sleep(1_000);
       expect(deadLettersFor(vendorId)).toEqual([]);
+      expect(await deadLetterRowsFor(vendorId)).toEqual([]);
     }, 60_000);
 
     it('dead-letters a poison pill at once, byte for byte, and processes the next message', async () => {
@@ -517,6 +556,15 @@ describe('vendor notifications (Kafka → SMS + IVR, stale-order guard, DLQ)', (
       expect(letter?.headers.dlq_error_message).toMatch(
         /^invalid envelope at partition \d offset \d+$/,
       );
+      const [row] = await deadLetterRowsFor(vendorId);
+      expect(row).toMatchObject({
+        attempts: 1,
+        error_name: 'PoisonMessageError',
+        event_id: null,
+        event_type: null,
+        headers: {},
+      });
+      expect(row?.message_value).toEqual(Buffer.from(poison));
     }, 60_000);
   });
 

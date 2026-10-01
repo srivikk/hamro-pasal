@@ -1,8 +1,8 @@
-# Hamro Pasal: State Handoff (Phases 0–14 complete)
+# Hamro Pasal: State Handoff (Phases 0–15 complete)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 14 (Worker Resiliency & IVR
-Escalation)**, on top of Phase 13 (Notification Worker & SMS Dispatch), 12.5 (Application-Layer Suspension & Top-Ups), 12 (Vendor Wallet &
+work without re-deriving it. It describes the tree at the end of **Phase 15 (Super Admin Web Dashboard &
+DLQ Monitoring)**, on top of Phase 14 (Worker Resiliency & IVR Escalation), 13 (Notification Worker & SMS Dispatch), 12.5 (Application-Layer Suspension & Top-Ups), 12 (Vendor Wallet &
 Debt Reconciliation), 11.5 (Vendor Dispatch UI & Self-Delivery Handoff), 11 (Driver Handoff & OTP Verification), 10 (Vendor Order Management & Audio Alarms), 9.6 (Chat Transcript Read-Back), 9.5 (Chat Persistence & Vendor Review Linkage), 9 (Double-Blind Reviews & Dispute Chat), 8 (Real-Time Order Tracking, Socket.io `/orders`), 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
 Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this file and the code disagree, **the code wins**. When anything disagrees with
 `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
@@ -84,9 +84,21 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 > new shared package **`@hamro-pasal/ivr`**: only a MOCK adapter exists (`IVR_PROVIDER=MOCK` logs
 > `[ivr:mock] Calling +977…: "You have a pending order…"`; the default `DISABLED` places no call)
 > (§8H).
-> **No live device run has happened yet** (§13). Still not built: a real IVR provider (Twilio Voice
+> **Phase 15:** every dead letter is now also a row in the new **`dead_letter_events`** table
+> (written by the worker **before** the Kafka copy, key/value byte for byte, idempotent per source
+> offset). A Super Admin lists them at `GET /api/admin/dlq` and presses Retry
+> (`POST /api/admin/dlq/:id/retry` → 202 `RETRY_REQUESTED`); the worker's new **DeadLetterReplayer**
+> (outbox-style, `FOR UPDATE SKIP LOCKED`) republishes the stored bytes to the source topic and marks
+> the row `REPLAYED`; a replay that fails again becomes a new row linked by `replay_of_id`. Admins
+> also list every vendor with wallet and standing (`GET /api/admin/vendors`) and **Suspend / Restore**
+> them by hand through `WalletService` (new column `vendors.status_before_admin_suspension`; paying
+> dues never lifts an admin suspension; Restore is refused below the wallet limit; each override
+> writes `vendor.status_overridden` + an audit log line). A new **Vite + React web app,
+> `apps/admin`**, signs in with the +977 OTP (SUPER_ADMIN only) and shows both screens (§8I).
+> **No live device run has happened yet** (§13); the admin app and the DLQ retry loop were run live
+> against local infrastructure (§8I). Still not built: a real IVR provider (Twilio Voice
 > or a Nepal SIP trunk; only the mock exists), gig assignment / "Picked Up" / "Reached Location", the ghost-customer timer,
-> dispute resolution and an admin client, R2, refund payouts,
+> dispute resolution (no admin screen for it yet), KYC verification and taxonomy admin, R2, refund payouts,
 > and refresh-token rotation/revocation.
 >
 > **Next priority: the first live end-to-end device run** (§11 item 1), now including a vendor device
@@ -120,18 +132,18 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · `2ae9633` P10 · `e2cb61d` P11 · `5f3fc9a` P11.5 · `81d45ba` P12 · `76b1d7f` P12.5 · `6aa0f73` P13 · Phase 14 (uncommitted) |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Unit tests      | **1015 passing** (`pnpm test`): shared-types 139, api 78, worker 81, sms 21, ivr 7, kafka 7, db 7, mobile 675 (end of Phase 14)                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Integ. tests    | **374 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 286, worker 40, kafka 1 (end of Phase 14). One unexplained `driver-orders-api` failure in the first full Phase 12.5 run; not reproduced in 4 later full runs and 6 runs of the delivery files (the error was not captured). Earlier flakes: once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**: its other-Palika vendor now has its own location.               |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 9                                                                                                                                                                                                                                                                                                                                                                                   |
-| Dev database    | Migrations 0000–0013 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · `2ae9633` P10 · `e2cb61d` P11 · `5f3fc9a` P11.5 · `81d45ba` P12 · `76b1d7f` P12.5 · `6aa0f73` P13 · `aa13ee6` P14 · Phase 15 (uncommitted) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Unit tests      | **1062 passing** (`pnpm test`): shared-types 147, api 78, worker 87, sms 21, ivr 7, kafka 7, db 7, admin 33, mobile 675 (end of Phase 15)                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Integ. tests    | **410 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 47, api 316, worker 46, kafka 1 (end of Phase 15). One unexplained `driver-orders-api` failure in the first full Phase 12.5 run; not reproduced in 4 later full runs and 6 runs of the delivery files (the error was not captured). Earlier flakes: once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**: its other-Palika vendor now has its own location.                               |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 9                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Dev database    | Migrations 0000–0015 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 ### Root commands (`package.json`)
 
@@ -173,6 +185,9 @@ packages/shared-types/src          @hamro-pasal/shared-types (zod only, safe for
                                    orderSnapshotSchema, orderDetailResponseSchema, cancelOrderResponseSchema,
                                    otpSendResponseSchema, authUserSchema, authTokensResponseSchema,
                                    tokenRefreshResponseSchema
+  api/admin.ts                     Phase 15: adminDeadLetterListQuerySchema, deadLetterViewSchema, adminDeadLetterList/Retry
+                                   response schemas, adminVendorViewSchema (suspension NONE|DEBT|ADMIN|UNSPECIFIED),
+                                   adminVendorList/Override response schemas, ADMIN_VENDOR_LIST_LIMIT=500
   domain/{enums,entities,constants}.ts   strict row schemas (users, vendors, products, orders, order_addresses, ...)
                                    constants incl. DELIVERY_RADIUS_GPS_DRIFT_MULTIPLIER=1.1, ORDER_CANCELLATION_WINDOW_SECONDS=60,
                                    OTP_CODE_LENGTH=6, OTP_TTL_SECONDS=120, OTP_RESEND_COOLDOWN_SECONDS=60,
@@ -187,9 +202,9 @@ packages/shared-types/src          @hamro-pasal/shared-types (zod only, safe for
                                    SOCKET_IO_REDIS_KEY, SOCKET_UNAUTHENTICATED, orderSubscribeRequest/Ack schemas,
                                    orderStateUpdateSchema, orderStateUpdateFromEvent (Phase 8)
 packages/db/src                    @hamro-pasal/db: Drizzle schema, client, migrator, outbox writer
-  schema/{columns,enums,users,vendors,orders,ledger,outbox,wallet,disputes,contract}.ts
+  schema/{columns,enums,users,vendors,orders,ledger,outbox,wallet,disputes,dead-letters,contract}.ts
   geo/ewkb.ts · outbox.ts · testing.ts (@hamro-pasal/db/testing) · scripts/{migrate,seed,database-url}.ts
-packages/db/drizzle/               0000–0013 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
+packages/db/drizzle/               0000–0015 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
 packages/kafka/src                 config.ts, producer.ts (DomainEventPublisher), index.ts
 packages/sms/src                   @hamro-pasal/sms (Phase 13, server-only; moved from apps/api/src/sms):
   sms-gateway.ts                   Sparrow / Aakash / Mock adapters (strict +977 via prepareOutboundSms), SmsDeliveryError
@@ -217,6 +232,9 @@ apps/api/src                       Express 5 API
   payments/{gateway-http,payable-order,payment-confirmation}.ts · payments/esewa/* · payments/khalti/*
   routes/{auth,vendors,cart,orders,payments,views}.ts
                                    (SMS: imports @hamro-pasal/sms; buildContainerFromEnv calls smsGatewayFromEnv)
+  admin/dead-letter-service.ts     Phase 15: DeadLetterService (list, requestRetry)
+  admin/admin-vendor-service.ts    Phase 15: AdminVendorService (list, suspend, restore via WalletService, audit line)
+  routes/admin.ts                  Phase 15: /api/admin router (deadLetterView, adminVendorView)
 apps/api/scripts/mint-dev-token.ts
 apps/api/test/                     *.int.test.ts (auth-api, cart-api, checkout-claim, inventory-concurrency, ledger-settlement,
                                    mint-dev-token, orders-api, orders-realtime, payments-api, vendors-api) + global-setup.ts + support/
@@ -224,12 +242,36 @@ apps/worker/src                    main.ts, lifecycle.ts, outbox/ (OutboxRelay),
                                    consumers/ (buildConsumers + routeByTopic; order-state-fanout.ts: Kafka order.lifecycle →
                                    Redis → /orders rooms; vendor-sla-scheduler.ts: PLACED → 90 s BullMQ timer;
                                    vendor-notifications.ts: Kafka notifications.broadcast → vendor SMS + IVR, Phases 13/14;
-                                   dead-letter.ts: withDeadLetter retries + notifications.dlq, Phase 14),
+                                   dead-letter.ts: withDeadLetter retries + dead_letter_events row + notifications.dlq,
+                                   Phases 14/15),
+                                   dead-letters/ (Phase 15: dead-letter-store.ts DatabaseDeadLetterStore,
+                                   dead-letter-replayer.ts DeadLetterReplayer + replayRecord),
                                    notifications/vendor-sms.ts (SMS templates, Phase 13), vendor-ivr.ts (IVR script,
                                    Phase 14), order-state-reader.ts (stale-order guard's DB read, Phase 14),
                                    sla/vendor-escalation.ts (VendorEscalationService, Phase 10)
 apps/worker/test/                  outbox-relay, queues, order-state-fanout, vendor-sla, vendor-debt-reconciliation,
-                                   vendor-notifications (*.int.test.ts)
+                                   vendor-notifications, dead-letter-replayer (*.int.test.ts)
+```
+
+### Admin web workspace (`apps/admin`, `@hamro-pasal/admin`, Phase 15)
+
+```
+package.json              Vite 8 + @vitejs/plugin-react 6, React 19.2.3, TanStack Query 5, Zustand 5, zod, shared-types
+vite.config.ts            dev server :5173, proxies /api to ADMIN_API_PROXY_TARGET (default http://127.0.0.1:4000);
+                          optimizeDeps.include shared-types (a CommonJS workspace package)
+jest.config.cjs           Jest 29 + ts-jest (transpile only, node env); type checking is `tsc --noEmit`
+index.html · src/main.tsx QueryClient, in-memory session store, same-origin API client, cache cleared on sign-out
+src/App.tsx               shell: tabs "Dead letters" (#/dlq) / "Vendors" (#/vendors), phone + Sign out
+src/app-context.tsx       AdminProvider, useAdminApi, useSession, retryTransientFailures
+src/api/client.ts         createApiClient: Zod-validated bodies, ApiError, single-flight refresh on 401 UNAUTHENTICATED
+src/api/admin-api.ts      createAdminApi: sendOtp, verifyOtp, listDeadLetters, retryDeadLetter, listVendors, overrideVendor
+src/auth/session-store.ts createSessionStore (zustand/vanilla, memory only: access + refresh token)
+src/features/auth/        LoginScreen.tsx (+977 number → 6-digit code, SUPER_ADMIN only), login-rules.ts
+src/features/dlq/         DeadLetterScreen.tsx (filters, cards, Retry, Load older, 3 s poll while a retry is queued),
+                          dead-letter-rules.ts
+src/features/vendors/     VendorScreen.tsx (search, table, two-step Suspend / Restore), vendor-rules.ts
+src/lib/format.ts         formatNpr (lakh grouping), formatDateTime (Asia/Kathmandu)
+src/styles.css            light/dark tokens, no CSS framework
 ```
 
 ### Mobile workspace (`apps/mobile`, `@hamro-pasal/mobile`)
@@ -294,6 +336,14 @@ kafka-init`) once, or dead-lettering fails and the message is redelivered instea
   with a seeded number, e.g. 9800000001 (Aarav), and the code from the API log. An unknown number
   becomes a new CUSTOMER. The `__DEV__` token paste (`token:dev`) still works for quick checks, but
   it holds no refresh token, so it lapses after 15 min.
+- **Admin dashboard (Phase 15):** with the API running, `pnpm --filter @hamro-pasal/admin dev` serves
+  http://localhost:5173 and proxies `/api` to `ADMIN_API_PROXY_TARGET` (default
+  `http://127.0.0.1:4000`; set it if the API runs on another port). Sign in with the seeded Super
+  Admin **9800000099** and the code from the API log (`SMS_PROVIDER=MOCK`). Any other role is refused
+  on the sign-in screen (and gets 403 from every `/api/admin` route). Retries need the **worker**
+  running (`pnpm --filter @hamro-pasal/worker dev`): the API only queues them. Reloading the page
+  signs out (the session is memory only). `vite build` writes `apps/admin/dist` (static files; the
+  `/api` path must reach the API on the same origin in production).
 - **Mobile → API:** `apps/mobile/.env` holds only `EXPO_PUBLIC_API_URL`. A device or emulator cannot
   reach the host's `127.0.0.1`. Expo inlines only `EXPO_PUBLIC_*` values into the bundle.
 - The mobile app needs a **development build** (`npx expo prebuild` + `expo run:android`, or EAS),
@@ -319,23 +369,24 @@ kafka-init`) once, or dead-lettering fails and the message is redelivered instea
 
 ### Migrations (apply with `pnpm db:migrate`; drift check `cd packages/db && npx drizzle-kit generate` → "No schema changes")
 
-| File                                       | Content                                                                                                                                                                                                      |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0000_extensions.sql`                      | `CREATE EXTENSION IF NOT EXISTS postgis` (custom)                                                                                                                                                            |
-| `0001_core_schema.sql`                     | enums, users, customer_addresses, vendors, products, orders, order_items, (old) wallet_ledgers, platform_settings, disputes, reviews                                                                         |
-| `0002_wallet_invariant_and_triggers.sql`   | `set_updated_at` triggers, platform_settings seed (-2000), `enforce_vendor_wallet_limit` (auto-suspend + `pg_notify('vendor_wallet_suspended', …)`)                                                          |
-| `0003_rename_vendor_city_to_palika.sql`    | `vendors.city_string` → `municipality_palika_string` (custom RENAME; `meta/0003_snapshot.json` hand-patched)                                                                                                 |
-| `0004_drop_single_entry_wallet_ledger.sql` | drops wallet_ledgers (aborts if it holds rows)                                                                                                                                                               |
-| `0005_double_entry_ledger_and_outbox.sql`  | ledger_accounts, ledger_transactions, ledger_entries, outbox_events, orders.driver_user_id                                                                                                                   |
-| `0006_ledger_integrity_triggers.sql`       | balanced-journal deferred constraint triggers, posting application, projection guards, append-only, seeded system accounts                                                                                   |
-| `0007_checkout_order_links.sql`            | orders.reservation_id (unique), vendors.fulfillment_mode (backfilled SELF_DELIVERY, default dropped)                                                                                                         |
-| `0008_order_addresses_and_refunds.sql`     | **Phase 6.** `order_addresses` table; `orders.refund_required` + `orders_refund_required_paid_check`                                                                                                         |
-| `0009_orders_placed_at.sql`                | **Phase 6.** `orders.placed_at`, hand-added backfill (`placed_at = created_at` for already-placed rows), `orders_placed_at_check`                                                                            |
-| `0010_users_first_name_optional.sql`       | **Phase 7.** `users.first_name` nullable (OTP sign-up knows only the phone); `users_first_name_check` still rejects a blank name                                                                             |
-| `0011_chat_messages.sql`                   | **Phase 9.5.** `chat_messages` table (dispute transcript): FKs to `disputes` and `users`, dedupe key, length/attachment/non-empty CHECKs, index                                                              |
-| `0012_vendor_escalation_index.sql`         | **Phase 10.** Partial unique index `outbox_events_vendor_escalation_uidx` on `aggregate_id` WHERE `event_type = 'vendor.escalation.required'`                                                                |
-| `0013_delivery_otp_nullable.sql`           | **Phase 11.** `orders.delivery_otp` nullable (erased at delivery); `orders_delivery_otp_present_check`: null only in DELIVERED / DISPUTED                                                                    |
-| `0014_vendor_debt_suspension.sql`          | **Phase 12.5.** `vendors.status_before_debt_suspension` (vendor_status, nullable) + `vendors_debt_suspension_check`: set only while SUSPENDED, never SUSPENDED itself. **The wallet trigger is not dropped** |
+| File                                         | Content                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0000_extensions.sql`                        | `CREATE EXTENSION IF NOT EXISTS postgis` (custom)                                                                                                                                                                                                                                                           |
+| `0001_core_schema.sql`                       | enums, users, customer_addresses, vendors, products, orders, order_items, (old) wallet_ledgers, platform_settings, disputes, reviews                                                                                                                                                                        |
+| `0002_wallet_invariant_and_triggers.sql`     | `set_updated_at` triggers, platform_settings seed (-2000), `enforce_vendor_wallet_limit` (auto-suspend + `pg_notify('vendor_wallet_suspended', …)`)                                                                                                                                                         |
+| `0003_rename_vendor_city_to_palika.sql`      | `vendors.city_string` → `municipality_palika_string` (custom RENAME; `meta/0003_snapshot.json` hand-patched)                                                                                                                                                                                                |
+| `0004_drop_single_entry_wallet_ledger.sql`   | drops wallet_ledgers (aborts if it holds rows)                                                                                                                                                                                                                                                              |
+| `0005_double_entry_ledger_and_outbox.sql`    | ledger_accounts, ledger_transactions, ledger_entries, outbox_events, orders.driver_user_id                                                                                                                                                                                                                  |
+| `0006_ledger_integrity_triggers.sql`         | balanced-journal deferred constraint triggers, posting application, projection guards, append-only, seeded system accounts                                                                                                                                                                                  |
+| `0007_checkout_order_links.sql`              | orders.reservation_id (unique), vendors.fulfillment_mode (backfilled SELF_DELIVERY, default dropped)                                                                                                                                                                                                        |
+| `0008_order_addresses_and_refunds.sql`       | **Phase 6.** `order_addresses` table; `orders.refund_required` + `orders_refund_required_paid_check`                                                                                                                                                                                                        |
+| `0009_orders_placed_at.sql`                  | **Phase 6.** `orders.placed_at`, hand-added backfill (`placed_at = created_at` for already-placed rows), `orders_placed_at_check`                                                                                                                                                                           |
+| `0010_users_first_name_optional.sql`         | **Phase 7.** `users.first_name` nullable (OTP sign-up knows only the phone); `users_first_name_check` still rejects a blank name                                                                                                                                                                            |
+| `0011_chat_messages.sql`                     | **Phase 9.5.** `chat_messages` table (dispute transcript): FKs to `disputes` and `users`, dedupe key, length/attachment/non-empty CHECKs, index                                                                                                                                                             |
+| `0012_vendor_escalation_index.sql`           | **Phase 10.** Partial unique index `outbox_events_vendor_escalation_uidx` on `aggregate_id` WHERE `event_type = 'vendor.escalation.required'`                                                                                                                                                               |
+| `0013_delivery_otp_nullable.sql`             | **Phase 11.** `orders.delivery_otp` nullable (erased at delivery); `orders_delivery_otp_present_check`: null only in DELIVERED / DISPUTED                                                                                                                                                                   |
+| `0014_vendor_debt_suspension.sql`            | **Phase 12.5.** `vendors.status_before_debt_suspension` (vendor_status, nullable) + `vendors_debt_suspension_check`: set only while SUSPENDED, never SUSPENDED itself. **The wallet trigger is not dropped**                                                                                                |
+| `0015_dead_letters_and_admin_suspension.sql` | **Phase 15.** `dead_letter_status` enum, `dead_letter_events` table (unique source index, status/retry CHECK, list + replay-queue indexes, FK `retry_requested_by` → users); `vendors.status_before_admin_suspension` + `vendors_admin_suspension_check` (only while SUSPENDED, never with the debt column) |
 
 **Staging rule:** drizzle-kit prompts interactively on renames, which fails in this non-TTY
 environment. Stage schema edits so a single `generate` only adds or only drops. Hand-write renames
@@ -397,6 +448,20 @@ sender_user_id, client_id)` dedupes retried sends; `chat_messages_not_empty_chec
   sender's id). Append-only by convention (no code updates or deletes rows; no trigger enforces it).
   Zod: `chatMessageRowSchema` (`shared-types/domain/entities.ts`), asserted in `contract.ts` and
   parsed in `test/contract.int.test.ts`.
+- **`dead_letter_events`** (Phase 15, migration 0015): one row per dead-lettered message:
+  `consumer`, `source_topic`, `source_partition`, `source_offset` (text, digits only),
+  `dead_letter_topic`, `message_key` / `message_value` (**bytea**, byte for byte; custom `bytea` column in
+  `schema/columns.ts`), `headers jsonb` (the message's own string headers, no `dlq_*`), `event_id` /
+  `event_type` (from the headers; null for a poison pill), `attempts` ≥ 1, `error_name`, `error_message`
+  (≤ 2000), `failed_at`, `status` PENDING | RETRY_REQUESTED | REPLAYED, `retry_requested_at` /
+  `retry_requested_by` (→ users), `replayed_at`, `replay_attempts`, `last_replay_error`, `replay_of_id`
+  (the row a failed retry came from). `UNIQUE (consumer, source_topic, source_partition, source_offset)`
+  makes the worker's insert idempotent; `dead_letter_events_status_check` ties the timestamps to the
+  status. Not in the Zod entity contract (like `outbox_events`): the API view is
+  `deadLetterViewSchema` (§8I).
+- **`vendors.status_before_admin_suspension`** (Phase 15): the status an admin Restore returns to; set
+  only while SUSPENDED by an admin, never together with `status_before_debt_suspension` (CHECK). In the
+  Zod entity (`vendorSchema`) and the compile-time contract.
 - Money is `numeric(12,2)` read as JS `number`. Services compute in integer paisa
   (`apps/api/src/ledger/money.ts`). The mobile app does the same (`src/lib/money.ts`).
 
@@ -436,15 +501,16 @@ EWKB (`geo/ewkb.ts`), because Drizzle 0.45's built-in `geometry()` ignores `srid
   | `vendor.escalation.required` | `notifications.broadcast` | order_id       | **Phase 10.** The worker's 90 s timer found the order still PLACED. Payload: order/vendor ids, `vendor_phone` (+977, for the IVR call/SMS), `placed_at`, `sla_seconds` (90), `escalated_at`. At most one per order (partial unique index, migration 0012). **Phase 13: SMS to the vendor; Phase 14: plus an IVR call (mock), both only while the order is still PLACED.**                                                                                                             |
   | `vendor.suspended_for_debt`  | `notifications.broadcast` | vendor_id      | **Phases 12 / 12.5.** A vendor crossed the suspension limit: written by the API's `WalletService` in the transaction of the posting that crossed it (Phase 12.5), or by the nightly `VENDOR_DEBT_RECONCILIATION` after the limit was tightened (Phase 12). Payload: `vendor_id`, `vendor_phone` (+977), `previous_status` (never SUSPENDED), `wallet_balance_npr` (< 0), `suspension_limit_npr`, `suspended_at`. Once per transition into SUSPENDED. **Phase 13: SMS to the vendor.** |
   | `vendor.restored`            | `notifications.broadcast` | vendor_id      | **Phase 12.5.** A debt-suspended vendor's balance is back to 0 or more (top-up or payout); `WalletService` restored `status_before_debt_suspension`. Payload: `vendor_id`, `vendor_phone`, `restored_status` (never SUSPENDED), `wallet_balance_npr` (≥ 0), `transaction_id` (the clearing journal), `restored_at`. **Phase 13: SMS to the vendor.**                                                                                                                                  |
+  | `vendor.status_overridden`   | `notifications.broadcast` | vendor_id      | **Phase 15.** A Super Admin suspended or restored the vendor by hand (`WalletService.suspendByAdmin` / `restoreByAdmin`, same transaction). Payload: `vendor_id`, `action` SUSPEND\|RESTORE, `from_status`, `to_status`, `wallet_balance_npr`, `admin_user_id`, `overridden_at`. The audit record of SPEC infrastructure §5; no consumer texts it (the notification consumer ignores it).                                                                                             |
 
 - Consumers (`apps/worker/src/consumers/index.ts#buildConsumers`, one handler per topic, group
   `KAFKA_CONSUMER_GROUP_ID`):
 
-  | Consumer                                             | Topic                     | Acts on                                                                      | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-  | ---------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `order-state-fanout.ts#orderStateFanoutConsumer`     | `order.lifecycle`         | `order.state_changed`                                                        | Broadcasts `order:state_update` (`orderStateUpdateFromEvent`) to the rooms of `orderStateUpdateRooms`: `order:{order_id}`, plus `vendor:{vendor_id}` once the order was placed (`placed_at` not null; Phase 10), namespace `/orders`, via `@socket.io/redis-emitter` (key `SOCKET_IO_REDIS_KEY`). Other event types are ignored.                                                                                                                                                                                                |
-  | `vendor-sla-scheduler.ts#vendorSlaSchedulerConsumer` | `order.lifecycle`         | `order.state_changed` to PLACED                                              | **Phase 10.** Schedules the `vendor-acceptance-timeout` job (id = order id, idempotent) with delay `vendorAcceptanceDelayMs(placed_at, now)` = what is left of 90 s from `placed_at` (0 if already past). Throws (redelivery) if Redis refuses.                                                                                                                                                                                                                                                                                 |
-  | `vendor-notifications.ts#vendorNotificationConsumer` | `notifications.broadcast` | `vendor.suspended_for_debt`, `vendor.restored`, `vendor.escalation.required` | **Phase 13.** Renders the template (`notifications/vendor-sms.ts`) and sends it to `vendor_phone` through the `SMS_PROVIDER` adapter; an escalation also places an IVR call (`IVR_PROVIDER`) concurrently, after the stale-order guard found the order still PLACED (Phase 14). Dedupe per channel (`notifications:sms:seen:` / `notifications:ivr:seen:{event_id}`); a failure releases that channel's claim and throws. **Wrapped in `withDeadLetter`** (Phase 14): 3 in-process retries, then `notifications.dlq`. §8G, §8H. |
+  | Consumer                                             | Topic                     | Acts on                                                                      | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+  | ---------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+  | `order-state-fanout.ts#orderStateFanoutConsumer`     | `order.lifecycle`         | `order.state_changed`                                                        | Broadcasts `order:state_update` (`orderStateUpdateFromEvent`) to the rooms of `orderStateUpdateRooms`: `order:{order_id}`, plus `vendor:{vendor_id}` once the order was placed (`placed_at` not null; Phase 10), namespace `/orders`, via `@socket.io/redis-emitter` (key `SOCKET_IO_REDIS_KEY`). Other event types are ignored.                                                                                                                                                                                                                                               |
+  | `vendor-sla-scheduler.ts#vendorSlaSchedulerConsumer` | `order.lifecycle`         | `order.state_changed` to PLACED                                              | **Phase 10.** Schedules the `vendor-acceptance-timeout` job (id = order id, idempotent) with delay `vendorAcceptanceDelayMs(placed_at, now)` = what is left of 90 s from `placed_at` (0 if already past). Throws (redelivery) if Redis refuses.                                                                                                                                                                                                                                                                                                                                |
+  | `vendor-notifications.ts#vendorNotificationConsumer` | `notifications.broadcast` | `vendor.suspended_for_debt`, `vendor.restored`, `vendor.escalation.required` | **Phase 13.** Renders the template (`notifications/vendor-sms.ts`) and sends it to `vendor_phone` through the `SMS_PROVIDER` adapter; an escalation also places an IVR call (`IVR_PROVIDER`) concurrently, after the stale-order guard found the order still PLACED (Phase 14). Dedupe per channel (`notifications:sms:seen:` / `notifications:ivr:seen:{event_id}`); a failure releases that channel's claim and throws. **Wrapped in `withDeadLetter`** (Phase 14): 3 in-process retries, then a `dead_letter_events` row (Phase 15) and `notifications.dlq`. §8G, §8H, §8I. |
   - **Dedupe:** `SET fanout:orders:seen:{event_id} 1 EX 86400 NX` before broadcasting; a redelivery is
     skipped. If the broadcast fails the claim is deleted and the handler throws, so Kafka redelivers.
   - **Publish errors are not swallowed:** the emitter calls `redis.publish` without awaiting it;
@@ -556,6 +622,11 @@ auth). `Infrastructure` now requires an `sms: SmsGateway` (tests inject `MockSms
 | `POST /api/vendors/wallet/top-up`                          | Bearer VENDOR (own shop; SUSPENDED vendors too)               | `walletTopUpRequestSchema {idempotency_key (8–100), amount_npr > 0, ≤ 100 000, whole paisa}`                                                     | 201 new / 200 replay (`no-store`) | `walletTopUpResponseSchema {transaction_id, amount_npr, wallet_balance_npr, status, is_suspended, restored, replayed}`; `409 IDEMPOTENCY_KEY_REUSED` (same key, other amount), `503 TOP_UP_UNAVAILABLE` unless `WALLET_TOP_UP_MODE=MOCK` | `topUpVendorWallet` ("Pay outstanding balance") |
 | `GET /api/orders/:id/chat`                                 | Bearer CUSTOMER, VENDOR or SUPER_ADMIN (order party or admin) | `idParamSchema`                                                                                                                                  | 200 (`no-store`)                  | `chatHistoryResponseSchema {messages: ChatMessage[]}` oldest first; senders `{id, first_name, role}` only; empty without a dispute                                                                                                       | `fetchChatHistory` (dispute screen)             |
 | `GET /uploads/dispute-evidence/:order/:file`               | none (unguessable uuid names)                                 | –                                                                                                                                                | 200                               | the stored image (`express.static`, `nosniff`); only mounted for `LocalEvidenceStorage`                                                                                                                                                  | chat image bubbles                              |
+| `GET /api/admin/dlq?status=&limit=&cursor=`                | Bearer SUPER_ADMIN                                            | `adminDeadLetterListQuerySchema {status?, limit? 1–100 (default 50), cursor? = a row id}`                                                        | 200 (`no-store`)                  | `adminDeadLetterListResponseSchema {dead_letters: DeadLetterView[], next_cursor}` newest failure first; `400 INVALID_CURSOR`                                                                                                             | `listDeadLetters` (admin DLQ screen)            |
+| `POST /api/admin/dlq/:id/retry`                            | Bearer SUPER_ADMIN                                            | `idParamSchema`                                                                                                                                  | **202** (also on repeat)          | `adminDeadLetterRetryResponseSchema {dead_letter}` (RETRY_REQUESTED; the worker replays it); `404 DEAD_LETTER_NOT_FOUND`, `409 DEAD_LETTER_ALREADY_REPLAYED`                                                                             | `retryDeadLetter` (Retry button)                |
+| `GET /api/admin/vendors`                                   | Bearer SUPER_ADMIN                                            | –                                                                                                                                                | 200 (`no-store`)                  | `adminVendorListResponseSchema {vendors: AdminVendorView[] (by name, ≤ 500), suspension_limit_npr}`                                                                                                                                      | `listVendors` (admin Vendors screen)            |
+| `POST /api/admin/vendors/:id/suspend`                      | Bearer SUPER_ADMIN                                            | `idParamSchema`                                                                                                                                  | 200                               | `adminVendorOverrideResponseSchema {vendor, previous_status}`; `409 VENDOR_STATUS_CONFLICT` (already SUSPENDED), `404 VENDOR_NOT_FOUND`                                                                                                  | `overrideVendor(id, 'SUSPEND')`                 |
+| `POST /api/admin/vendors/:id/restore`                      | Bearer SUPER_ADMIN                                            | `idParamSchema`                                                                                                                                  | 200                               | `adminVendorOverrideResponseSchema`; `409 VENDOR_STATUS_CONFLICT` (not SUSPENDED), `409 WALLET_BELOW_SUSPENSION_LIMIT` (details balance + limit), `409 RESTORE_STATUS_UNKNOWN`                                                           | `overrideVendor(id, 'RESTORE')`                 |
 
 - `OrderView = {id, vendor_id, state, payment_method, payment_status, fulfillment, subtotal_npr,
 delivery_fee_npr, total_npr, created_at}` (no OTP hash, gateway ref or commission).
@@ -615,17 +686,17 @@ transaction under `SELECT … FOR UPDATE`:
 **Error envelope** `{ error: { code, message, details? } }` (`errorBodySchema`, emitted by
 `http/errors.ts`). Clients branch on `code`:
 
-| HTTP            | codes                                                                                                                                                                                                                                                                                                                                                                         |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 400             | `VALIDATION_FAILED` (details.issues), `MALFORMED_REQUEST`, `INVALID_CART`, `INVALID_PAYMENT_CALLBACK`, `INVALID_CURSOR` (wallet ledger)                                                                                                                                                                                                                                       |
-| 401 / 403       | `UNAUTHENTICATED` / `FORBIDDEN`; auth: `OTP_INVALID` (details.attempts_remaining), `REFRESH_TOKEN_INVALID`                                                                                                                                                                                                                                                                    |
-| 404             | `NOT_FOUND`, `ORDER_NOT_FOUND`, `PAYMENT_NOT_FOUND`, `VENDOR_NOT_FOUND`                                                                                                                                                                                                                                                                                                       |
-| 409             | `INSUFFICIENT_STOCK` (details.shortfalls), `IDEMPOTENCY_KEY_REUSED`, `WRONG_PAYMENT_METHOD`, `ORDER_NOT_PAYABLE`, `ORDER_STATE_CONFLICT` (also: reviewing an order that is not DELIVERED, details.state), `CHECKOUT_IN_PROGRESS`, `PAYMENT_AMOUNT_MISMATCH`, `PAID_AFTER_SESSION_EXPIRED` (details.order_id, refund_required), `REVIEW_ALREADY_SUBMITTED` (details.review_id) |
-| 410             | `RESERVATION_EXPIRED` (SPEC "Session Expired"), `OTP_EXPIRED` (no valid code: never sent, expired, used or burned)                                                                                                                                                                                                                                                            |
-| 413 / 415       | `FILE_TOO_LARGE` (details.max_bytes) / `UNSUPPORTED_MEDIA_TYPE` (evidence uploads)                                                                                                                                                                                                                                                                                            |
-| 422             | `VENDOR_UNAVAILABLE`, `PRODUCT_UNAVAILABLE` (details.product_ids), `BELOW_MINIMUM_ORDER_VALUE`, `COD_NOT_AVAILABLE`, `CANCELLATION_WINDOW_EXPIRED`, `REVIEW_WINDOW_CLOSED`, `DISPUTE_WINDOW_CLOSED`                                                                                                                                                                           |
-| 429             | `OTP_RESEND_COOLDOWN` (details.retry_after_seconds), `OTP_ATTEMPTS_EXCEEDED`                                                                                                                                                                                                                                                                                                  |
-| 502 / 503 / 500 | `PAYMENT_GATEWAY_ERROR`, `SMS_DELIVERY_FAILED` / `CHECKOUT_BUSY`, `TOP_UP_UNAVAILABLE` / `INTERNAL_SERVER_ERROR`                                                                                                                                                                                                                                                              |
+| HTTP            | codes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400             | `VALIDATION_FAILED` (details.issues), `MALFORMED_REQUEST`, `INVALID_CART`, `INVALID_PAYMENT_CALLBACK`, `INVALID_CURSOR` (wallet ledger, admin DLQ)                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 401 / 403       | `UNAUTHENTICATED` / `FORBIDDEN`; auth: `OTP_INVALID` (details.attempts_remaining), `REFRESH_TOKEN_INVALID`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 404             | `NOT_FOUND`, `ORDER_NOT_FOUND`, `PAYMENT_NOT_FOUND`, `VENDOR_NOT_FOUND`, `DEAD_LETTER_NOT_FOUND`                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 409             | `INSUFFICIENT_STOCK` (details.shortfalls), `IDEMPOTENCY_KEY_REUSED`, `WRONG_PAYMENT_METHOD`, `ORDER_NOT_PAYABLE`, `ORDER_STATE_CONFLICT` (also: reviewing an order that is not DELIVERED, details.state), `CHECKOUT_IN_PROGRESS`, `PAYMENT_AMOUNT_MISMATCH`, `PAID_AFTER_SESSION_EXPIRED` (details.order_id, refund_required), `REVIEW_ALREADY_SUBMITTED` (details.review_id), admin: `DEAD_LETTER_ALREADY_REPLAYED`, `VENDOR_STATUS_CONFLICT` (details.status), `WALLET_BELOW_SUSPENSION_LIMIT` (details.wallet_balance_npr, suspension_limit_npr), `RESTORE_STATUS_UNKNOWN` |
+| 410             | `RESERVATION_EXPIRED` (SPEC "Session Expired"), `OTP_EXPIRED` (no valid code: never sent, expired, used or burned)                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 413 / 415       | `FILE_TOO_LARGE` (details.max_bytes) / `UNSUPPORTED_MEDIA_TYPE` (evidence uploads)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 422             | `VENDOR_UNAVAILABLE`, `PRODUCT_UNAVAILABLE` (details.product_ids), `BELOW_MINIMUM_ORDER_VALUE`, `COD_NOT_AVAILABLE`, `CANCELLATION_WINDOW_EXPIRED`, `REVIEW_WINDOW_CLOSED`, `DISPUTE_WINDOW_CLOSED`                                                                                                                                                                                                                                                                                                                                                                           |
+| 429             | `OTP_RESEND_COOLDOWN` (details.retry_after_seconds), `OTP_ATTEMPTS_EXCEEDED`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 502 / 503 / 500 | `PAYMENT_GATEWAY_ERROR`, `SMS_DELIVERY_FAILED` / `CHECKOUT_BUSY`, `TOP_UP_UNAVAILABLE` / `INTERNAL_SERVER_ERROR`                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 **Access tokens** (`auth/access-token.ts`, `http/auth.ts`): HS256 only, issuer `hamro-pasal-api`,
 audience `hamro-pasal-app`, TTL 900 s, claims `{ sub: user uuid, role }`, `Authorization: Bearer
@@ -655,11 +726,119 @@ routes) must call `enqueueOrderStateChanged(tx, fromState, updatedRow)`** in its
 
 No routes for: saved-address CRUD, profile (name) editing, logout/revocation, order state transitions after PREPARING
 (gig assignment, "Picked Up", "Reached Location", "Delivery Failed"), "Accept with Modifications",
-reading published reviews, dispute resolution (nothing moves a dispute out of OPEN or the order to `DISPUTED`), refunds, admin,
+reading published reviews, dispute resolution (nothing moves a dispute out of OPEN or the order to `DISPUTED`), refunds, admin
+(beyond the Phase 15 DLQ monitor and vendor overrides: KYC approval, taxonomy, logistics toggles, platform settings),
 a driver app, `/metrics`, rate limiting beyond the per-phone OTP cooldown. No push notifications. The
 escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
-(Phase 14; no Twilio / SIP trunk adapter); no DLQ replay tool; the ghost-customer and
+(Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8I. Super Admin dashboard: DLQ monitoring and vendor overrides (Phase 15)
+
+SPEC Super Admin flow and infrastructure §5 (audit records of vendor suspensions); closes the Phase
+14 gap "nothing reads `notifications.dlq`, no replay tool". Code: `apps/worker/src/dead-letters/*`,
+`apps/worker/src/consumers/dead-letter.ts`, `apps/api/src/admin/*`, `apps/api/src/routes/admin.ts`,
+`apps/api/src/wallet/wallet-service.ts` (admin overrides), `packages/shared-types/src/api/admin.ts`,
+`apps/admin`.
+
+```
+worker withDeadLetter (4th failure or poison pill)
+  ├─▶ INSERT dead_letter_events … ON CONFLICT (consumer, topic, partition, offset) DO NOTHING
+  └─▶ Kafka notifications.dlq (unchanged, byte for byte + dlq_* headers)      ── either fails → no commit, redelivery
+
+admin "Retry" ─▶ POST /api/admin/dlq/:id/retry ─▶ row FOR UPDATE: PENDING → RETRY_REQUESTED (202)
+worker DeadLetterReplayer (every 1 s): SELECT … RETRY_REQUESTED FOR UPDATE SKIP LOCKED (≤ 20)
+  ─▶ producer.send(source_topic, key, value, own headers + dlq_replay_of=<row id>) ─▶ REPLAYED (same tx)
+  ─▶ consumer handles it again (event_id dedupe still applies)
+       └─ fails again ─▶ a NEW dead_letter_events row with replay_of_id = <row id>
+```
+
+**Dead letter rows (worker).** `DeadLetterOptions.store` is now required; `withDeadLetter` calls
+`store.save(deadLetterEntry(...))` and only then `publisher.publish(deadLetterRecord(...))`, so a
+message never reaches the DLQ topic without its row. `DatabaseDeadLetterStore` inserts with
+`ON CONFLICT DO NOTHING` on the source index (a redelivery after a crash between the insert and the
+offset commit is stored once). `ownHeaders` keeps the message's headers as strings (last value of a
+repeated header) without `dlq_*`; `dlq_replay_of` becomes `replay_of_id` when it is a uuid.
+
+**Retry = outbox-style, not a Kafka client in the API** (decision): the API only records the request;
+`DeadLetterReplayer` (started in `main.ts` next to the OutboxRelay, same idempotent producer) publishes
+and marks REPLAYED in one transaction after the ack (at-least-once; consumers dedupe on `event_id`).
+A failed publish increments `replay_attempts` and stores `last_replay_error`; after 10 the row waits
+(shown on the card) until an admin presses "Retry again", which resets the count.
+
+| Retry request on…                    | Answer                                                 |
+| ------------------------------------ | ------------------------------------------------------ |
+| PENDING                              | 202, RETRY_REQUESTED, `retry_requested_at/by` recorded |
+| RETRY_REQUESTED, replay_attempts 0   | 202, the same row (idempotent; first requester kept)   |
+| RETRY_REQUESTED, replay_attempts > 0 | 202, `replay_attempts` reset to 0 (re-armed)           |
+| REPLAYED                             | `409 DEAD_LETTER_ALREADY_REPLAYED` (retry the new row) |
+| unknown / malformed id               | `404 DEAD_LETTER_NOT_FOUND` / `400 VALIDATION_FAILED`  |
+
+**List** (`GET /api/admin/dlq`): keyset on `(failed_at, id)` newest first, cursor compared in SQL;
+optional `status`. `DeadLetterView` decodes the key and value as UTF-8 (`raw_value`) and adds
+`payload` = the value parsed as JSON (`z.json()`) or null.
+
+**Vendor overrides** (`WalletService`, the one place that changes a vendor's standing, called by
+`AdminVendorService` inside its transaction; the container now builds one `WalletService` shared with
+`LedgerService`):
+
+| Action  | Allowed when                                                                                                                                        | Effect (vendor row `FOR NO KEY UPDATE`)                                                                                          |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Suspend | status ≠ SUSPENDED (else 409 VENDOR_STATUS_CONFLICT)                                                                                                | SUSPENDED, `status_before_admin_suspension` = previous status                                                                    |
+| Restore | SUSPENDED with a remembered status (admin, else debt; else 409 RESTORE_STATUS_UNKNOWN) and balance ≥ limit (else 409 WALLET_BELOW_SUSPENSION_LIMIT) | the remembered status; both columns cleared. A debt suspension can be lifted early by an admin (balance between the limit and 0) |
+
+- Both write `vendor.status_overridden` in the same transaction and, after the commit, one JSON audit
+  line (`console.warn`, `{"audit":"vendor.status_overridden",…,"admin_user_id"}`).
+- **Paying never lifts an admin suspension:** `applyThreshold` only restores debt suspensions (the
+  debt column), and the admin column is never set together with it. A debt-suspended vendor cannot
+  be suspended by an admin on top (409); restore it or leave it.
+- After an admin restore, SPEC §5 applies as before: the next debit below the limit suspends for
+  debt again (tested).
+- `GET /api/admin/vendors`: one REPEATABLE READ snapshot, by business name, capped at 500 (no
+  pagination), with `suspension` NONE / DEBT / ADMIN / UNSPECIFIED and `restore_status`.
+
+**Admin web app** (`apps/admin`, §2): Vite 8 + React 19 SPA, English only (SPEC's bilingual rule is
+the customer/vendor app's). Sign-in = the existing OTP endpoints; a non-SUPER_ADMIN account is refused
+on the screen and its tokens dropped. Access **and refresh token live in memory only** (a browser has
+no encrypted storage; SPEC wants HTTP-only refresh cookies, which the API does not issue yet): a reload
+signs out. The client renews on a 401 `UNAUTHENTICATED` with one single-flight refresh, like the mobile
+app. Every body is validated with the shared Zod schemas. Screens: **Dead letters** (status chips,
+cards with failure reason, source, key, replay link, message JSON + headers, Retry / "Retry again",
+"Load older", auto-refresh every 3 s while a retry is queued) and **Vendors** (search, status badge,
+suspension reason, wallet balance in red when negative, two-step Suspend / Restore with the reason a
+Restore is disabled). `vite build` → `dist/` (~780 kB JS: zod + shared-types' geography tables; no
+code splitting yet).
+
+**Tests.**
+
+- Worker unit (`dead-letter.test.ts`, 13): row before Kafka, row insert failure → no publish +
+  rethrow, `replay_of` linking and `dlq_*` stripping, non-uuid link ignored, 2000-char row error,
+  header decoding; plus the Phase 14 cases.
+- Worker integration: `vendor-notifications.int.test.ts` now asserts the rows (4 × 503 → one PENDING row
+  equal to the Kafka copy; success on the 3rd retry → no row; poison pill → row with null event id);
+  `dead-letter-replayer.int.test.ts` (6, **real Postgres + Kafka**): republished byte for byte with
+  `dlq_replay_of` and marked REPLAYED, PENDING/REPLAYED untouched, broker refusal keeps
+  RETRY_REQUESTED with the error and stops at `maxAttempts`, 4 concurrent replayers publish once, a
+  failing replay becomes a linked row, 3 concurrent saves of one offset → one row.
+- API integration: `admin-dlq-api.int.test.ts` (13: full view incl. decoded payload, poison pill,
+  paging without gaps + status filter, bad query/cursor, 202 + who/when, idempotent repeat, 4
+  simultaneous admins, a request waiting on another's row lock, re-arm, 409 replayed, 404/400,
+  roles, CHECK), `admin-vendors-api.int.test.ts` (17: list with balances and all four suspension
+  kinds, suspend + event + audit line, 409s, 5 concurrent suspends, an override waiting on another's
+  row lock, top-up does not lift an admin suspension, restore LIVE/APPROVED/SANDBOXED, restore refused
+  below the limit, early lift of a debt suspension then re-suspension by the next debit, 404/400,
+  roles, CHECK).
+- shared-types (`api/admin.test.ts`, 8) and admin app (33: API client renewal branches, endpoint
+  wiring, session store, formatting in Nepal Time, sign-in / DLQ / vendor rules).
+- Mutation-checked: no limit check on restore (1 fails), admin suspension written to the debt column
+  (4), no vendor row lock (1), no DLQ row lock (1), retrying a REPLAYED row (1), replayer without its
+  row lock (1), row stored after the Kafka copy (2).
+- **Live run (local infra, not a device):** API + worker + Vite dev server; a poison pill produced to
+  `notifications.broadcast` → row PENDING → Retry 202 → REPLAYED → failed again → new row with
+  `replay_of_id` → retry of the replayed row 409; suspend / suspend again (409) / restore of a
+  seeded vendor with audit lines; a VENDOR token on `/api/admin` → 403; headless Edge signed in as
+  9800000099 and rendered both screens with that data. Two dead letters with key
+  `live-check-…` were left in the dev database.
 
 ## 8H. Worker resiliency: dead-letter queue, stale-order guard, IVR call (Phase 14)
 
@@ -1841,7 +2020,7 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
    `enqueueOrderStateChanged` in its transaction; the vendor room already receives every update.
    Vendor follow-ups: ~~the IVR/SMS consumer of `vendor.escalation.required`~~ (SMS in Phase 13,
    mock IVR call in Phase 14; still to do: a **real IVR adapter** in `@hamro-pasal/ivr`, Twilio
-   Voice or a Nepal SIP trunk, plus a DLQ replay tool and a DLQ for `order.lifecycle`), SPEC's **3-minute acceptance window**
+   Voice or a Nepal SIP trunk, ~~a DLQ replay tool~~ (Phase 15), and a DLQ for `order.lifecycle`), SPEC's **3-minute acceptance window**
    (auto-reject? not specified), "Accept with Modifications" (partial fulfilment + partial refund),
    Vendor Acceptance Rate (< 85 % penalises feed ranking), refusing decisions from a SUSPENDED
    vendor, background alarm (push with a data-only payload, expo-audio background plugin).
@@ -1865,7 +2044,13 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
 10. **Evidence storage:** replace `LocalEvidenceStorage` with Cloudflare R2 (presigned PUT or
     server-side put) behind the same `EvidenceStorage` interface, and add react-native-compressor on
     the device (SPEC infrastructure §6: WebP, 1200 px, < 300 KB) so large photos are not refused.
-11. Landing pages for `ESEWA_SUCCESS_URL` / `ESEWA_FAILURE_URL` / `KHALTI_RETURN_URL`, eSewa app-to-app
+11. **Admin dashboard follow-ups (Phase 15 built the DLQ monitor and vendor overrides, §8I):**
+    HTTP-only refresh cookie for the web (survive reloads), same-origin hosting of `apps/admin/dist`
+    behind the ALB, an alert when dead letters arrive, a DLQ for `order.lifecycle` stored the same
+    way, KYC approval (SANDBOXED → APPROVED), taxonomy, logistics toggles, the suspension-limit setting,
+    dispute transcripts and resolution, vendor list pagination (capped at 500), and component tests
+    for the React screens (only their logic modules are unit-tested).
+12. Landing pages for `ESEWA_SUCCESS_URL` / `ESEWA_FAILURE_URL` / `KHALTI_RETURN_URL`, eSewa app-to-app
     support, `/metrics` (the Prometheus target is down), rate limiting, worker consumers and timer
     handlers, feed pagination (sections are capped at 100).
 
@@ -1988,6 +2173,25 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
     the limit.
   - Texts are English ASCII (single GSM-7 segment, cheapest); the IVR voice call is out of scope.
 
+- **Phase 15:**
+  - **Retry goes through Postgres, not a Kafka client in the API:** `POST …/retry` answers 202 and the
+    worker's `DeadLetterReplayer` publishes (SPEC infrastructure §1's outbox rule: a database change
+    and a Kafka publish must not disagree). The prompt said "republishes the event"; it does, a moment
+    later.
+  - The worker writes the row **before** the Kafka DLQ copy (both kept); the row is idempotent per
+    source offset. Key and value are `bytea` so a poison pill is replayed exactly.
+  - A replay that fails again is a **new row** linked by `replay_of_id`; a REPLAYED row cannot be
+    retried again (409).
+  - "Existing vendor endpoints" had no admin list, so `GET /api/admin/vendors` was added.
+  - **Admin suspension is its own kind:** new column `status_before_admin_suspension`, never lifted by
+    paying dues; Restore returns to the remembered status and is refused while the wallet is below the
+    limit (SPEC §5; the trigger would refuse it too). An admin may lift a debt suspension early once
+    the balance is within the limit. A vendor SUSPENDED with no remembered status cannot be restored
+    from the dashboard (409 RESTORE_STATUS_UNKNOWN) rather than guessing a status.
+  - Overrides emit `vendor.status_overridden` (outbox) + an audit log line, not SMS.
+  - Admin app: **Vite + React** (not Next.js: no server rendering needed), Jest 29 like the rest of
+    the repo, plain CSS, English only, session in memory only.
+
 - **Phase 14:**
   - "3 retries" = 1 attempt + 3 retries (4 calls), retried **in-process** with 1/2/4 s backoff, not
     counted across Kafka redeliveries (Redis counters per offset would survive a crash but add
@@ -2087,8 +2291,8 @@ CANCELLATION_WINDOW_OPEN` with the seconds left.
   money that was never paid and must stay out of production); ~~`vendor.suspended_for_debt` and
   `vendor.restored` have no consumer (no SMS)~~ (Phase 13 texts the vendor); the API writes no audit log line for suspensions
   (the outbox row is the record); a journal posted outside `LedgerService` would be suspended by
-  the trigger only, with no event and no restore status; there is no admin route to lift or
-  impose a suspension.
+  the trigger only, with no event and no restore status; ~~there is no admin route to lift or
+  impose a suspension~~ (Phase 15: admin Suspend / Restore).
 - **Phase 12:** a SUSPENDED vendor can still accept, dispatch and deliver orders already placed (it
   only drops out of the feed, which lists LIVE vendors); `balance_after_npr` sums the wallet's whole
   history up to each page (fine now, a stored running balance later); an entry committed late with
@@ -2109,7 +2313,15 @@ CANCELLATION_WINDOW_OPEN` with the seconds left.
 - **The escalation's voice call is a mock (Phase 14):** the vendor gets an SMS after 90 s, and
   `IVR_PROVIDER=MOCK` only logs the call; production (`DISABLED`) places no call until a real
   Twilio Voice / SIP trunk adapter is written.
-- **Phase 14:** nothing reads `notifications.dlq` (no alert, no replay tool). A failing message
+- **Phase 15:** the admin session is lost on reload (memory only, no HTTP-only cookie yet); the admin
+  app has no production hosting (the `/api` path must be same-origin) and no component tests; the
+  vendor list stops at 500; no alert fires when a dead letter arrives (it has to be looked at); a
+  retry replays to a consumer whose Redis dedupe claims expire after 24 h, so a retry after a day may
+  repeat a channel that had succeeded (e.g. the SMS when only the IVR call failed); the Kafka
+  `notifications.dlq` copy is still written but nothing consumes it (the table is the source for the
+  monitor).
+- **Phase 14:** ~~nothing reads `notifications.dlq` (no alert, no replay tool)~~ (Phase 15: rows in
+  `dead_letter_events`, admin monitor and replay; still no alert). A failing message
   holds its partition for ~7 s of backoff, so a long provider outage drains the backlog into the
   DLQ at about one message per 7 s per partition. The retry count restarts if the worker crashes
   mid-retries. The stale-order guard reads without a lock, so an accept landing between the read

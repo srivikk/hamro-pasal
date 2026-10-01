@@ -26,6 +26,15 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f91dc398-deb8-4af4-9b50-0210e8cb080f"
+      }
+    },
+    "android": {
+      "package": "com.hamro.pasal"
     }
   }
 }

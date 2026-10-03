@@ -243,6 +243,9 @@ describe('nightly vendor debt reconciliation (real PostgreSQL + BullMQ)', () => 
         createTimerHandlers({
           escalation: new VendorEscalationService(db),
           debtReconciliation: reconciliation,
+          orderReconciliation: {
+            reconcileDeliveredOrders: () => Promise.resolve({ reconciled: [], discrepancies: [] }),
+          },
         }),
       ).midnight,
       { connection, prefix },

@@ -12,12 +12,14 @@
     "lint": "eslint .",
     "test": "jest",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
-    "test:integration": "jest --config jest.integration.config.js --runInBand"
+    "test:integration": "jest --config jest.integration.config.js --runInBand",
+    "reconcile:orders": "tsx --env-file-if-exists=../../.env src/scripts/reconcile-orders.ts"
   },
   "dependencies": {
     "@hamro-pasal/db": "workspace:*",
     "@hamro-pasal/ivr": "workspace:*",
     "@hamro-pasal/kafka": "workspace:*",
+    "@hamro-pasal/ledger": "workspace:*",
     "@hamro-pasal/shared-types": "workspace:*",
     "@hamro-pasal/sms": "workspace:*",
     "@socket.io/redis-emitter": "^5.1.0",

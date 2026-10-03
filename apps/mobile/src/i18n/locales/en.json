@@ -420,7 +420,9 @@
       "ORDER_PAYOUT": "Order payout",
       "COD_COMMISSION_DEBIT": "Commission on a cash order",
       "TOP_UP": "Dues paid",
-      "ADJUSTMENT": "Adjustment"
+      "ADJUSTMENT": "Adjustment",
+      "PAYOUT_HOLD": "Payout requested",
+      "PAYOUT_REVERSAL": "Payout returned"
     },
     "payDues": "Pay outstanding balance (Rs. {{amount, localizedNumber}})",
     "paying": "Paying…",

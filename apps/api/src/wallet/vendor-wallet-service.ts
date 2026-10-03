@@ -89,23 +89,7 @@ export class VendorWalletService {
         .from(platformSettings);
       if (settings === undefined) throw new Error('platform_settings row is missing');
 
-      const [escrow] = await tx
-        .select({
-          // What settlement will credit: subtotal − commission, plus the fee when the shop delivers.
-          total: sql<number>`coalesce(sum(${orders.subtotal} - ${orders.platform_commission_amount}
-              + CASE WHEN ${orders.fulfillment_locked} = 'SELF_DELIVERY'
-                     THEN ${orders.delivery_fee} ELSE 0 END), 0)`.mapWith(Number),
-          count: sql<number>`count(*)`.mapWith(Number),
-        })
-        .from(orders)
-        .where(
-          and(
-            eq(orders.vendor_id, vendor.id),
-            ne(orders.payment_method, 'COD'),
-            eq(orders.payment_status, 'PAID'),
-            inArray(orders.state, [...ESCROW_HELD_STATES]),
-          ),
-        );
+      const escrow = await pendingEscrowOf(tx, vendor.id);
 
       return {
         vendorId: vendor.id,
@@ -113,8 +97,8 @@ export class VendorWalletService {
         suspendedForDebt: vendor.status === 'SUSPENDED' && vendor.restoreTo !== null,
         walletBalanceNpr: vendor.walletBalanceNpr,
         suspensionLimitNpr: settings.limit,
-        pendingEscrowNpr: escrow?.total ?? 0,
-        pendingEscrowOrderCount: escrow?.count ?? 0,
+        pendingEscrowNpr: escrow.totalNpr,
+        pendingEscrowOrderCount: escrow.orderCount,
       };
     });
   }
@@ -255,6 +239,31 @@ async function vendorOf(tx: Transaction, vendorUserId: string) {
   return vendor;
 }
 
+/** The vendor's share of the prepaid money still held in SYSTEM_ESCROW (see ESCROW_HELD_STATES). */
+export async function pendingEscrowOf(
+  tx: Transaction,
+  vendorId: string,
+): Promise<{ readonly totalNpr: number; readonly orderCount: number }> {
+  const [escrow] = await tx
+    .select({
+      // What settlement will credit: subtotal − commission, plus the fee when the shop delivers.
+      total: sql<number>`coalesce(sum(${orders.subtotal} - ${orders.platform_commission_amount}
+          + CASE WHEN ${orders.fulfillment_locked} = 'SELF_DELIVERY'
+                 THEN ${orders.delivery_fee} ELSE 0 END), 0)`.mapWith(Number),
+      count: sql<number>`count(*)`.mapWith(Number),
+    })
+    .from(orders)
+    .where(
+      and(
+        eq(orders.vendor_id, vendorId),
+        ne(orders.payment_method, 'COD'),
+        eq(orders.payment_status, 'PAID'),
+        inArray(orders.state, [...ESCROW_HELD_STATES]),
+      ),
+    );
+  return { totalNpr: escrow?.total ?? 0, orderCount: escrow?.count ?? 0 };
+}
+
 /** What a posting means to the vendor (see walletEntryTypes in shared-types). */
 export function entryTypeOf(kind: LedgerTransactionKind, amountNpr: number): WalletEntryType {
   switch (kind) {
@@ -267,5 +276,9 @@ export function entryTypeOf(kind: LedgerTransactionKind, amountNpr: number): Wal
     case 'PAYMENT_CAPTURE':
       // A capture never touches a vendor wallet; if one ever did, it is a correction to review.
       return 'ADJUSTMENT';
+    case 'VENDOR_PAYOUT':
+      return 'PAYOUT_HOLD';
+    case 'VENDOR_PAYOUT_REVERSAL':
+      return 'PAYOUT_REVERSAL';
   }
 }

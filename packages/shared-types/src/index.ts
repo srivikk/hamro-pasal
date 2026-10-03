@@ -15,4 +15,5 @@ export * from './api/requests';
 export * from './api/responses';
 export * from './api/admin';
 export * from './api/catalog';
+export * from './api/finance';
 export * from './api/notifications';

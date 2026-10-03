@@ -61,6 +61,8 @@ export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
  *   gateway to the platform bank account. It goes negative on capture, as the gateway owes us.
  * - VENDOR_WALLET: one per vendor. Mirrored into vendors.wallet_balance_npr.
  * - DRIVER_WALLET: one per platform-fleet driver. Goes negative while holding COD cash (SPEC float).
+ * - PAYOUT_CLEARING: one account (Phase 22). Money vendors asked to withdraw: credited when a payout
+ *   is requested, debited back when it is rejected. An approved payout stays here as paid out.
  */
 export const ledgerAccountTypes = [
   'SYSTEM_ESCROW',
@@ -68,6 +70,7 @@ export const ledgerAccountTypes = [
   'GATEWAY_CLEARING',
   'VENDOR_WALLET',
   'DRIVER_WALLET',
+  'PAYOUT_CLEARING',
 ] as const;
 export const ledgerAccountTypeSchema = z.enum(ledgerAccountTypes);
 export type LedgerAccountType = z.infer<typeof ledgerAccountTypeSchema>;
@@ -78,15 +81,27 @@ export type LedgerAccountType = z.infer<typeof ledgerAccountTypeSchema>;
  * - ORDER_SETTLEMENT: after DELIVERED. Escrow (or COD cash) split to vendor, driver, platform.
  * - VENDOR_TOP_UP: vendor pays upfront via a gateway to clear a negative wallet (SPEC §5).
  * - ADJUSTMENT: Super Admin correction between accounts.
+ * - VENDOR_PAYOUT: a vendor requested a bank withdrawal. VENDOR_WALLET to PAYOUT_CLEARING (Phase 22).
+ * - VENDOR_PAYOUT_REVERSAL: the request was rejected. PAYOUT_CLEARING back to VENDOR_WALLET.
  */
 export const ledgerTransactionKinds = [
   'PAYMENT_CAPTURE',
   'ORDER_SETTLEMENT',
   'VENDOR_TOP_UP',
   'ADJUSTMENT',
+  'VENDOR_PAYOUT',
+  'VENDOR_PAYOUT_REVERSAL',
 ] as const;
 export const ledgerTransactionKindSchema = z.enum(ledgerTransactionKinds);
 export type LedgerTransactionKind = z.infer<typeof ledgerTransactionKindSchema>;
+
+/**
+ * Payout request state machine (Phase 22): PENDING (amount held out of the wallet) → APPROVED (bank
+ * transfer recorded) or REJECTED (amount posted back). Both outcomes are final.
+ */
+export const payoutStatuses = ['PENDING', 'APPROVED', 'REJECTED'] as const;
+export const payoutStatusSchema = z.enum(payoutStatuses);
+export type PayoutStatus = z.infer<typeof payoutStatusSchema>;
 
 /** Super Admin arbitration outcomes (SPEC Super Admin flow step 3). */
 export const disputeStatuses = ['OPEN', 'REFUNDED_TO_CUSTOMER', 'RELEASED_TO_VENDOR'] as const;

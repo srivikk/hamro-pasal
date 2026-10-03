@@ -343,6 +343,7 @@ h2 {
 }
 
 .status-replayed,
+.status-approved,
 .suspension-none {
   background: var(--ok-bg);
   color: var(--ok-text);

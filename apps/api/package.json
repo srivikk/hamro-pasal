@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@hamro-pasal/db": "workspace:*",
+    "@hamro-pasal/ledger": "workspace:*",
     "@hamro-pasal/shared-types": "workspace:*",
     "@hamro-pasal/sms": "workspace:*",
     "@socket.io/redis-adapter": "^8.3.0",

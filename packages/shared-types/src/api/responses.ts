@@ -512,12 +512,16 @@ export type VendorWalletBalanceResponseBody = z.infer<typeof vendorWalletBalance
  *   collected in cash (SPEC §5 "The COD Problem").
  * - TOP_UP: the vendor paid dues upfront (eSewa).
  * - ADJUSTMENT: a Super Admin correction.
+ * - PAYOUT_HOLD: the vendor requested a bank withdrawal; the amount left the wallet (Phase 22).
+ * - PAYOUT_REVERSAL: that request was rejected; the amount came back.
  */
 export const walletEntryTypes = [
   'ORDER_PAYOUT',
   'COD_COMMISSION_DEBIT',
   'TOP_UP',
   'ADJUSTMENT',
+  'PAYOUT_HOLD',
+  'PAYOUT_REVERSAL',
 ] as const;
 export const walletEntryTypeSchema = z.enum(walletEntryTypes);
 export type WalletEntryType = z.infer<typeof walletEntryTypeSchema>;

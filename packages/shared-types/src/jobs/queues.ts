@@ -31,6 +31,11 @@ export const midnightTasks = [
    * written, so a vendor already in debt when the limit is tightened is caught here.
    */
   'VENDOR_DEBT_RECONCILIATION',
+  /**
+   * SPEC §5 (Phase 22): verify the settlement journal of every DELIVERED order not reconciled yet
+   * (posting it if it is missing) and stamp `orders.reconciled_at`.
+   */
+  'ORDER_RECONCILIATION',
 ] as const;
 export const midnightTaskSchema = z.enum(midnightTasks);
 export type MidnightTask = z.infer<typeof midnightTaskSchema>;

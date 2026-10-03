@@ -9,6 +9,7 @@ import {
   orderStates,
   paymentMethods,
   paymentStatuses,
+  payoutStatuses,
   pricingModels,
   reviewDirections,
   userRoles,
@@ -30,4 +31,5 @@ export const ledgerTransactionKindEnum = pgEnum('ledger_transaction_kind', ledge
 export const disputeStatusEnum = pgEnum('dispute_status', disputeStatuses);
 export const reviewDirectionEnum = pgEnum('review_direction', reviewDirections);
 export const deadLetterStatusEnum = pgEnum('dead_letter_status', deadLetterStatuses);
+export const payoutStatusEnum = pgEnum('payout_status', payoutStatuses);
 export const deliveryStateEnum = pgEnum('delivery_state', deliveryStates);

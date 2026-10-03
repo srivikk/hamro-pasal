@@ -1,6 +1,7 @@
 import { createDatabase } from '@hamro-pasal/db';
 import { ivrGatewayFromEnv } from '@hamro-pasal/ivr';
 import { createIdempotentProducer, createKafka, DomainEventPublisher } from '@hamro-pasal/kafka';
+import { LedgerService, SettlementService, WalletService } from '@hamro-pasal/ledger';
 import { smsGatewayFromEnv } from '@hamro-pasal/sms';
 import { Worker } from 'bullmq';
 import { Redis } from 'ioredis';
@@ -11,6 +12,7 @@ import { KafkaDeadLetterPublisher } from './consumers/dead-letter';
 import { smsFallbackLogFromEnv } from './consumers/order-push-notifications';
 import { DeadLetterReplayer } from './dead-letters/dead-letter-replayer';
 import { DatabaseDeadLetterStore } from './dead-letters/dead-letter-store';
+import { OrderReconciliationService } from './finance/order-reconciliation';
 import { BullVendorAcceptanceTimers } from './consumers/vendor-sla-scheduler';
 import { buildBullConnection } from './infra/redis';
 import { Lifecycle } from './lifecycle';
@@ -52,6 +54,11 @@ async function main(): Promise<void> {
     createTimerHandlers({
       escalation: new VendorEscalationService(db),
       debtReconciliation: new VendorDebtReconciliationService(db),
+      // Phase 22: verifies (and, if missing, posts) the settlement of every DELIVERED order.
+      orderReconciliation: new OrderReconciliationService(
+        db,
+        new SettlementService(db, new LedgerService(new WalletService())),
+      ),
     }),
   );
   const workers = [

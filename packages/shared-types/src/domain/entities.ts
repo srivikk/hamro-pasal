@@ -191,6 +191,8 @@ export const orderSchema = z.strictObject({
   /** Set when the order becomes PLACED; anchors the 60 s cancellation window. */
   placed_at: z.date().nullable(),
   delivered_at: z.date().nullable(),
+  /** Phase 22: when the nightly reconciliation verified this order's settlement journal. */
+  reconciled_at: z.date().nullable(),
   /** A PAID order was canceled; its escrowed payment must go back to the customer's gateway. */
   refund_required: z.boolean(),
   created_at: z.date(),

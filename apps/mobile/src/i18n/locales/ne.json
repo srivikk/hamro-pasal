@@ -420,7 +420,9 @@
       "ORDER_PAYOUT": "अर्डर भुक्तानी",
       "COD_COMMISSION_DEBIT": "नगद अर्डरको कमिसन",
       "TOP_UP": "बक्यौता भुक्तानी",
-      "ADJUSTMENT": "समायोजन"
+      "ADJUSTMENT": "समायोजन",
+      "PAYOUT_HOLD": "रकम निकासी अनुरोध",
+      "PAYOUT_REVERSAL": "निकासी रकम फिर्ता"
     },
     "payDues": "बाँकी रकम तिर्नुहोस् (रु. {{amount, localizedNumber}})",
     "paying": "भुक्तानी हुँदैछ…",

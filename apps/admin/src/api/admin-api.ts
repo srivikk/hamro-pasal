@@ -3,6 +3,8 @@ import {
   adminCategoryResponseSchema,
   adminDeadLetterListResponseSchema,
   adminDeadLetterRetryResponseSchema,
+  adminPayoutDecisionResponseSchema,
+  adminPayoutListResponseSchema,
   adminProductListResponseSchema,
   adminProductResponseSchema,
   adminVendorListResponseSchema,
@@ -10,7 +12,9 @@ import {
   categoryListResponseSchema,
   otpSendResponseSchema,
   otpVerifyResponseSchema,
+  payoutRequestResponseSchema,
   PRODUCT_IMAGE_FILE_FIELD,
+  vendorFinanceLedgerResponseSchema,
   vendorProductListResponseSchema,
   vendorProductResponseSchema,
   type AdminCategoryListResponseBody,
@@ -18,6 +22,8 @@ import {
   type AdminCategoryWriteRequest,
   type AdminDeadLetterListResponseBody,
   type AdminDeadLetterRetryResponseBody,
+  type AdminPayoutDecisionResponseBody,
+  type AdminPayoutListResponseBody,
   type AdminProductListResponseBody,
   type AdminProductResponseBody,
   type AdminVendorListResponseBody,
@@ -26,6 +32,9 @@ import {
   type DeadLetterStatus,
   type OtpSendResponseBody,
   type OtpVerifyResponseBody,
+  type PayoutRequestResponseBody,
+  type PayoutStatus,
+  type VendorFinanceLedgerResponseBody,
   type VendorProductListResponseBody,
   type VendorProductResponseBody,
   type VendorProductUpdateRequest,
@@ -67,6 +76,15 @@ export interface AdminApi {
     cursor?: string | undefined;
   }): Promise<AdminProductListResponseBody>;
   setProductActive(id: string, isActive: boolean): Promise<AdminProductResponseBody>;
+  /** Phase 22: vendors' payout requests, newest first. */
+  listPayouts(query: {
+    status?: PayoutStatus | undefined;
+    cursor?: string | undefined;
+  }): Promise<AdminPayoutListResponseBody>;
+  /** Records the bank transfer that paid the request (the amount was held when it was requested). */
+  approvePayout(id: string, bankReference: string): Promise<AdminPayoutDecisionResponseBody>;
+  /** Returns the held amount to the vendor's wallet. */
+  rejectPayout(id: string, reason: string | null): Promise<AdminPayoutDecisionResponseBody>;
 
   /*
    * Phase 19, the Vendor Portal (VENDOR only): the signed-in vendor's own shop under
@@ -86,6 +104,10 @@ export interface AdminApi {
   setOwnProductStock(id: string, stockQuantity: number): Promise<VendorProductResponseBody>;
   /** multipart/form-data: every file as one `images` part. */
   uploadOwnProductImages(id: string, files: readonly File[]): Promise<VendorProductResponseBody>;
+  /** Phase 22: the shop's balance, reconciled orders and payout requests. */
+  getOwnFinanceLedger(): Promise<VendorFinanceLedgerResponseBody>;
+  /** `idempotencyKey` is one per withdrawal: resending it never holds the amount twice. */
+  requestOwnPayout(amountNpr: number, idempotencyKey: string): Promise<PayoutRequestResponseBody>;
 }
 
 export function createAdminApi(client: ApiClient): AdminApi {
@@ -176,6 +198,27 @@ export function createAdminApi(client: ApiClient): AdminApi {
         schema: adminProductResponseSchema,
         body: { is_active: isActive },
       }),
+    listPayouts: ({ status, cursor }) =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/finance/payouts',
+        schema: adminPayoutListResponseSchema,
+        query: { status, cursor },
+      }),
+    approvePayout: (id, bankReference) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/finance/payouts/${encodeURIComponent(id)}/approve`,
+        schema: adminPayoutDecisionResponseSchema,
+        body: { bank_reference: bankReference },
+      }),
+    rejectPayout: (id, reason) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/finance/payouts/${encodeURIComponent(id)}/reject`,
+        schema: adminPayoutDecisionResponseSchema,
+        body: { reason },
+      }),
     listActiveCategories: () =>
       client.publicRequest({
         method: 'GET',
@@ -222,5 +265,18 @@ export function createAdminApi(client: ApiClient): AdminApi {
         body: form,
       });
     },
+    getOwnFinanceLedger: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/vendor/finance/ledger',
+        schema: vendorFinanceLedgerResponseSchema,
+      }),
+    requestOwnPayout: (amountNpr, idempotencyKey) =>
+      client.request({
+        method: 'POST',
+        path: '/api/vendor/finance/payout',
+        schema: payoutRequestResponseSchema,
+        body: { idempotency_key: idempotencyKey, amount_npr: amountNpr },
+      }),
   };
 }

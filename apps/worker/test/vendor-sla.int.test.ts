@@ -251,6 +251,10 @@ describe('vendor acceptance SLA (real PostgreSQL + BullMQ)', () => {
           createTimerHandlers({
             escalation,
             debtReconciliation: new VendorDebtReconciliationService(db),
+            orderReconciliation: {
+              reconcileDeliveredOrders: () =>
+                Promise.resolve({ reconciled: [], discrepancies: [] }),
+            },
           }),
         ).vendorAcceptance,
         { connection, prefix },

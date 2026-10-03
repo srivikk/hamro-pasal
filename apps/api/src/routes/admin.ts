@@ -1,6 +1,12 @@
 import {
   adminDeadLetterListQuerySchema,
+  adminPayoutApproveRequestSchema,
+  adminPayoutListQuerySchema,
+  adminPayoutRejectRequestSchema,
   idParamSchema,
+  type AdminPayoutDecisionResponseBody,
+  type AdminPayoutListResponseBody,
+  type AdminPayoutView,
   type AdminDeadLetterListResponseBody,
   type AdminDeadLetterRetryResponseBody,
   type AdminVendorListResponseBody,
@@ -16,9 +22,11 @@ import type { AdminVendorRow, AdminVendorService } from '../admin/admin-vendor-s
 import type { DeadLetterRow, DeadLetterService } from '../admin/dead-letter-service';
 import type { CategoryService } from '../catalog/category-service';
 import type { ProductService } from '../catalog/product-service';
+import type { AdminPayoutRow, AdminPayoutService } from '../finance/admin-payout-service';
 import { authOf } from '../http/auth';
 import { parseInput } from '../http/validate';
 import { mountAdminCatalog } from './catalog';
+import { payoutView } from './vendor-finance';
 
 export interface AdminRouterServices {
   readonly deadLetters: DeadLetterService;
@@ -26,6 +34,8 @@ export interface AdminRouterServices {
   /** Phase 17: the Master Category Taxonomy and the products overview. */
   readonly categories: CategoryService;
   readonly products: ProductService;
+  /** Phase 22: vendors' payout requests. */
+  readonly payouts: AdminPayoutService;
 }
 
 const jsonValueSchema = z.json();
@@ -95,6 +105,19 @@ export function adminVendorView(vendor: AdminVendorRow): AdminVendorView {
   };
 }
 
+export function adminPayoutView({ payout, vendor }: AdminPayoutRow): AdminPayoutView {
+  return {
+    ...payoutView(payout),
+    vendor: {
+      id: vendor.id,
+      business_name: vendor.businessName,
+      phone: vendor.phone,
+      wallet_balance_npr: vendor.walletBalanceNpr,
+    },
+    decided_by: payout.decided_by_user_id,
+  };
+}
+
 /**
  * Mounted at /api/admin behind requireAuth(SUPER_ADMIN) (Phase 15): the DLQ monitor and the vendor
  * standing overrides used by apps/admin. Every response is `no-store`.
@@ -104,6 +127,7 @@ export function adminRouter({
   vendors,
   categories,
   products,
+  payouts,
 }: AdminRouterServices): Router {
   const router = Router();
   router.use((_req, res, next) => {
@@ -155,6 +179,34 @@ export function adminRouter({
       vendor: adminVendorView(vendor),
       previous_status: override.fromStatus,
     };
+    res.json(body);
+  });
+
+  router.get('/finance/payouts', async (req, res) => {
+    const query = parseInput(adminPayoutListQuerySchema, { ...req.query });
+    const page = await payouts.list(query);
+    const body: AdminPayoutListResponseBody = {
+      payouts: page.rows.map(adminPayoutView),
+      next_cursor: page.nextCursor,
+    };
+    res.json(body);
+  });
+
+  /** The amount left the wallet when it was requested: approving records the bank transfer. */
+  router.post('/finance/payouts/:id/approve', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const input = parseInput(adminPayoutApproveRequestSchema, req.body);
+    const row = await payouts.approve(authOf(req).userId, id, input.bank_reference);
+    const body: AdminPayoutDecisionResponseBody = { payout: adminPayoutView(row) };
+    res.json(body);
+  });
+
+  /** Posts the held amount back to the vendor's wallet. A body is optional. */
+  router.post('/finance/payouts/:id/reject', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const input = parseInput(adminPayoutRejectRequestSchema, (req.body as unknown) ?? {});
+    const row = await payouts.reject(authOf(req).userId, id, input.reason);
+    const body: AdminPayoutDecisionResponseBody = { payout: adminPayoutView(row) };
     res.json(body);
   });
 

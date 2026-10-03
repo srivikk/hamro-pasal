@@ -8,6 +8,10 @@ import {
 } from '@hamro-pasal/shared-types';
 import type { Job } from 'bullmq';
 
+import type {
+  OrderReconciliationService,
+  ReconciliationDiscrepancy,
+} from '../finance/order-reconciliation';
 import type { VendorEscalationService } from '../sla/vendor-escalation';
 import type {
   DebtSuspension,
@@ -57,14 +61,45 @@ export function auditDebtSuspension(suspension: DebtSuspension): void {
   );
 }
 
+/** A DELIVERED order the nightly reconciliation could not verify: one JSON line for the log shipper. */
+export function auditReconciliationDiscrepancy(discrepancy: ReconciliationDiscrepancy): void {
+  console.warn(
+    JSON.stringify({
+      audit: 'order.reconciliation_discrepancy',
+      order_id: discrepancy.orderId,
+      vendor_id: discrepancy.vendorId,
+      reason: discrepancy.reason,
+      expected_vendor_wallet_npr: discrepancy.expectedVendorWalletNpr,
+      actual_vendor_wallet_npr: discrepancy.actualVendorWalletNpr,
+      message: discrepancy.message,
+    }),
+  );
+}
+
+/**
+ * One ORDER_RECONCILIATION run (the midnight job, or `reconcile:orders` by hand). Discrepancies are
+ * audited and left for the next run; they do not fail the job, or BullMQ would retry them at once.
+ */
+export async function runOrderReconciliation(
+  reconciliation: Pick<OrderReconciliationService, 'reconcileDeliveredOrders'>,
+): Promise<void> {
+  const run = await reconciliation.reconcileDeliveredOrders();
+  run.discrepancies.forEach(auditReconciliationDiscrepancy);
+  const posted = run.reconciled.filter((order) => order.settlementPosted).length;
+  console.info(
+    `[worker] order reconciliation: ${String(run.reconciled.length)} order(s) reconciled (${String(posted)} settlement(s) posted), ${String(run.discrepancies.length)} discrepancy(ies)`,
+  );
+}
+
 /**
  * The handlers the worker runs. The 90 s vendor acceptance timeout is live (Phase 10): it writes
  * `vendor.escalation.required` for an order still PLACED. The midnight VENDOR_DEBT_RECONCILIATION
- * is live (Phase 12). The ghost-customer timer and the subscription downgrade are placeholders.
+ * is live (Phase 12), and so is ORDER_RECONCILIATION (Phase 22). The ghost-customer timer and the subscription downgrade are placeholders.
  */
 export function createTimerHandlers(deps: {
   readonly escalation: Pick<VendorEscalationService, 'escalateIfUnanswered'>;
   readonly debtReconciliation: Pick<VendorDebtReconciliationService, 'suspendIndebtedVendors'>;
+  readonly orderReconciliation: Pick<OrderReconciliationService, 'reconcileDeliveredOrders'>;
 }): TimerHandlers {
   return {
     ...pendingImplementationHandlers,
@@ -78,6 +113,8 @@ export function createTimerHandlers(deps: {
           );
           return;
         }
+        case 'ORDER_RECONCILIATION':
+          return runOrderReconciliation(deps.orderReconciliation);
         case 'SUBSCRIPTION_DOWNGRADE':
           return pendingImplementationHandlers.runMidnightTask(task);
       }

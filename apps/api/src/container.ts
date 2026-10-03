@@ -16,6 +16,8 @@ import { CategoryService } from './catalog/category-service';
 import { ProductService } from './catalog/product-service';
 import { CheckoutService } from './checkout/checkout-service';
 import { DisputeService } from './disputes/dispute-service';
+import { AdminPayoutService } from './finance/admin-payout-service';
+import { VendorFinanceService } from './finance/vendor-finance-service';
 import { RedisKeyedMutex } from './infra/redis-mutex';
 import { RedisConnectionPool } from './infra/redis-pool';
 import {
@@ -161,6 +163,8 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     products: new ProductService(infra.db, infra.productImages),
     productImages: infra.productImages,
     deviceTokens: new DeviceTokenService(infra.db),
+    vendorFinance: new VendorFinanceService(infra.db, ledger),
+    adminPayouts: new AdminPayoutService(infra.db, ledger),
     async close() {
       await infra.redisPool.close();
       await infra.db.$client.end();

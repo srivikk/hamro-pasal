@@ -8,6 +8,8 @@ import type { CategoryService } from './catalog/category-service';
 import type { ProductService } from './catalog/product-service';
 import type { CheckoutService } from './checkout/checkout-service';
 import type { DisputeService } from './disputes/dispute-service';
+import type { AdminPayoutService } from './finance/admin-payout-service';
+import type { VendorFinanceService } from './finance/vendor-finance-service';
 import { requireAuth } from './http/auth';
 import { errorHandler, HttpError } from './http/errors';
 import type { DeviceTokenService } from './notifications/device-token-service';
@@ -30,6 +32,7 @@ import { ordersRouter } from './routes/orders';
 import { paymentsRouter } from './routes/payments';
 import { reviewsRouter } from './routes/reviews';
 import { uploadsRouter } from './routes/uploads';
+import { vendorFinanceRouter } from './routes/vendor-finance';
 import { vendorOrdersRouter } from './routes/vendor-orders';
 import { vendorWalletRouter } from './routes/vendor-wallet';
 import { vendorsRouter } from './routes/vendors';
@@ -65,6 +68,9 @@ export interface ApiServices {
   readonly productImages: ProductImageStorage;
   /** Phase 20: Expo push tokens of signed-in devices. */
   readonly deviceTokens: DeviceTokenService;
+  /** Phase 22: vendor earnings and payout requests, and the Super Admin's decisions on them. */
+  readonly vendorFinance: VendorFinanceService;
+  readonly adminPayouts: AdminPayoutService;
 }
 
 /** Builds the HTTP app. Without services only /health is served (used by liveness checks/tests). */
@@ -89,6 +95,7 @@ export function createApp(services?: ApiServices): Express {
         vendors: services.adminVendors,
         categories: services.categories,
         products: services.products,
+        payouts: services.adminPayouts,
       }),
     );
     // Phase 17. Public reads: the active taxonomy and the active products of LIVE vendors.
@@ -98,6 +105,11 @@ export function createApp(services?: ApiServices): Express {
       '/api/vendor/products',
       requireAuth(services.accessTokenSecret, ['VENDOR']),
       vendorProductsRouter(services.products),
+    );
+    app.use(
+      '/api/vendor/finance',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorFinanceRouter(services.vendorFinance),
     );
     // Before the customer catalogue under /api/vendors, which would otherwise claim these paths.
     app.use(

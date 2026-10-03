@@ -46,6 +46,8 @@ export const orders = pgTable(
     /** When the order became PLACED (COD accepted or payment confirmed). Starts the 60 s window. */
     placed_at: timestamp({ withTimezone: true, mode: 'date' }),
     delivered_at: timestamp({ withTimezone: true, mode: 'date' }),
+    /** Phase 22: stamped by the nightly reconciliation once the settlement journal is verified. */
+    reconciled_at: timestamp({ withTimezone: true, mode: 'date' }),
     refund_required: boolean().notNull().default(false),
     created_at: createdAt(),
     updated_at: updatedAt(),
@@ -61,6 +63,11 @@ export const orders = pgTable(
     unique('orders_reservation_id_key').on(t.reservation_id),
     index('orders_customer_id_idx').on(t.customer_id),
     index('orders_vendor_id_state_idx').on(t.vendor_id, t.state),
+    // The nightly reconciliation's work queue.
+    index('orders_unreconciled_idx')
+      .on(t.delivered_at, t.id)
+      .where(sql`${t.state} = 'DELIVERED' AND ${t.reconciled_at} IS NULL`),
+    index('orders_vendor_id_reconciled_at_idx').on(t.vendor_id, t.reconciled_at),
     check('orders_idempotency_key_check', sql`btrim(${t.idempotency_key}) <> ''`),
     check('orders_subtotal_check', sql`${t.subtotal} >= 0`),
     check('orders_delivery_fee_check', sql`${t.delivery_fee} >= 0`),
@@ -86,6 +93,11 @@ export const orders = pgTable(
     check(
       'orders_placed_at_check',
       sql`CASE ${t.state} WHEN 'PENDING_PAYMENT' THEN ${t.placed_at} IS NULL WHEN 'FAILED' THEN true ELSE ${t.placed_at} IS NOT NULL END`,
+    ),
+    // Only a delivered order's settlement can be reconciled.
+    check(
+      'orders_reconciled_at_check',
+      sql`${t.reconciled_at} IS NULL OR ${t.state} IN ('DELIVERED', 'DISPUTED')`,
     ),
     // Only money that was actually captured can be owed back.
     check(

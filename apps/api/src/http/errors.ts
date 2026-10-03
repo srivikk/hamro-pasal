@@ -43,6 +43,12 @@ import {
 } from '../deliveries/delivery-service';
 import { DisputeWindowClosedError } from '../disputes/dispute-service';
 import {
+  InvalidPayoutCursorError,
+  PayoutAlreadyDecidedError,
+  PayoutNotFoundError,
+} from '../finance/admin-payout-service';
+import { PayoutExceedsBalanceError, PayoutKeyReusedError } from '../finance/vendor-finance-service';
+import {
   InsufficientStockError,
   InvalidCartError,
   ProductUnavailableError,
@@ -200,6 +206,24 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof TopUpKeyReusedError) {
     return new HttpError(409, 'IDEMPOTENCY_KEY_REUSED', error.message);
+  }
+  if (error instanceof PayoutExceedsBalanceError) {
+    return new HttpError(422, 'INSUFFICIENT_BALANCE', 'The payout exceeds the available balance', {
+      requested_npr: error.requestedNpr,
+      available_balance_npr: error.availableBalanceNpr,
+    });
+  }
+  if (error instanceof PayoutKeyReusedError) {
+    return new HttpError(409, 'IDEMPOTENCY_KEY_REUSED', error.message);
+  }
+  if (error instanceof PayoutNotFoundError) {
+    return new HttpError(404, 'PAYOUT_NOT_FOUND', 'Payout request not found');
+  }
+  if (error instanceof PayoutAlreadyDecidedError) {
+    return new HttpError(409, 'PAYOUT_ALREADY_DECIDED', error.message, { status: error.status });
+  }
+  if (error instanceof InvalidPayoutCursorError) {
+    return new HttpError(400, 'INVALID_CURSOR', error.message);
   }
   if (error instanceof InvalidLedgerCursorError) {
     return new HttpError(400, 'INVALID_CURSOR', error.message);

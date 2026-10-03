@@ -103,6 +103,9 @@ describe('vendor acceptance deadline (Phase 10)', () => {
 });
 
 const noDebt = { suspendIndebtedVendors: () => Promise.resolve([]) };
+const noOrders = {
+  reconcileDeliveredOrders: () => Promise.resolve({ reconciled: [], discrepancies: [] }),
+};
 
 describe('createTimerHandlers', () => {
   it('runs the escalation for a fired vendor acceptance timer', async () => {
@@ -113,6 +116,7 @@ describe('createTimerHandlers', () => {
     await createTimerHandlers({
       escalation: { escalateIfUnanswered },
       debtReconciliation: noDebt,
+      orderReconciliation: noOrders,
     }).onVendorAcceptanceTimeout(vendorJob);
 
     expect(escalateIfUnanswered).toHaveBeenCalledWith(vendorJob);
@@ -127,6 +131,7 @@ describe('createTimerHandlers', () => {
       createTimerHandlers({
         escalation: { escalateIfUnanswered },
         debtReconciliation: noDebt,
+        orderReconciliation: noOrders,
       }).onVendorAcceptanceTimeout({
         order_id: randomUUID(),
         vendor_id: randomUUID(),
@@ -137,6 +142,7 @@ describe('createTimerHandlers', () => {
 
 describe('the midnight debt reconciliation handler', () => {
   const escalation = { escalateIfUnanswered: jest.fn() };
+  const orderReconciliation = { reconcileDeliveredOrders: jest.fn() };
 
   it('runs the sweep and writes one structured audit line per suspended vendor', async () => {
     const vendorId = randomUUID();
@@ -155,6 +161,7 @@ describe('the midnight debt reconciliation handler', () => {
     await createTimerHandlers({
       escalation,
       debtReconciliation: { suspendIndebtedVendors },
+      orderReconciliation,
     }).runMidnightTask('VENDOR_DEBT_RECONCILIATION');
 
     expect(suspendIndebtedVendors).toHaveBeenCalledTimes(1);
@@ -178,6 +185,7 @@ describe('the midnight debt reconciliation handler', () => {
       createTimerHandlers({
         escalation,
         debtReconciliation: { suspendIndebtedVendors },
+        orderReconciliation,
       }).runMidnightTask('VENDOR_DEBT_RECONCILIATION'),
     ).rejects.toThrow('database down');
   });
@@ -189,9 +197,94 @@ describe('the midnight debt reconciliation handler', () => {
     await createTimerHandlers({
       escalation,
       debtReconciliation: { suspendIndebtedVendors },
+      orderReconciliation,
     }).runMidnightTask('SUBSCRIPTION_DOWNGRADE');
 
     expect(suspendIndebtedVendors).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('the midnight order reconciliation handler', () => {
+  const escalation = { escalateIfUnanswered: jest.fn() };
+
+  it('runs the reconciliation, audits each discrepancy and does not fail the job for them', async () => {
+    const orderId = randomUUID();
+    const vendorId = randomUUID();
+    const reconcileDeliveredOrders = jest.fn().mockResolvedValue({
+      reconciled: [
+        {
+          status: 'RECONCILED',
+          orderId: randomUUID(),
+          vendorId,
+          vendorWalletNpr: 900,
+          commissionNpr: 100,
+          settlementPosted: true,
+          reconciledAt: new Date('2026-10-02T18:15:00.000Z'),
+        },
+      ],
+      discrepancies: [
+        {
+          status: 'DISCREPANCY',
+          orderId,
+          vendorId,
+          reason: 'SETTLEMENT_MISMATCH',
+          expectedVendorWalletNpr: 900,
+          actualVendorWalletNpr: 800,
+          message: 'settlement journal posted 800 NPR to the vendor, the order gives 900 NPR',
+        },
+      ],
+    });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const info = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await createTimerHandlers({
+      escalation,
+      debtReconciliation: noDebt,
+      orderReconciliation: { reconcileDeliveredOrders },
+    }).runMidnightTask('ORDER_RECONCILIATION');
+
+    expect(reconcileDeliveredOrders).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toEqual({
+      audit: 'order.reconciliation_discrepancy',
+      order_id: orderId,
+      vendor_id: vendorId,
+      reason: 'SETTLEMENT_MISMATCH',
+      expected_vendor_wallet_npr: 900,
+      actual_vendor_wallet_npr: 800,
+      message: 'settlement journal posted 800 NPR to the vendor, the order gives 900 NPR',
+    });
+    expect(info).toHaveBeenCalledWith(
+      '[worker] order reconciliation: 1 order(s) reconciled (1 settlement(s) posted), 1 discrepancy(ies)',
+    );
+    warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it('fails the job when the scan itself fails (BullMQ retries it)', async () => {
+    const reconcileDeliveredOrders = jest.fn().mockRejectedValue(new Error('database down'));
+
+    await expect(
+      createTimerHandlers({
+        escalation,
+        debtReconciliation: noDebt,
+        orderReconciliation: { reconcileDeliveredOrders },
+      }).runMidnightTask('ORDER_RECONCILIATION'),
+    ).rejects.toThrow('database down');
+  });
+
+  it('does not reconcile orders for the other midnight tasks', async () => {
+    const reconcileDeliveredOrders = jest.fn();
+    const info = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await createTimerHandlers({
+      escalation,
+      debtReconciliation: noDebt,
+      orderReconciliation: { reconcileDeliveredOrders },
+    }).runMidnightTask('VENDOR_DEBT_RECONCILIATION');
+
+    expect(reconcileDeliveredOrders).not.toHaveBeenCalled();
+    info.mockRestore();
   });
 });

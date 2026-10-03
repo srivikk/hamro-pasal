@@ -203,7 +203,7 @@ describe('vendors API', () => {
   });
 
   describe('GET /api/vendors/:id/products', () => {
-    it('returns the active catalogue with real database ids, name-sorted, with stock flags', async () => {
+    it('returns the active catalogue with real database ids, name-sorted, with the exact stock', async () => {
       const vendorId = await radiusVendorAt(2_000);
       const tea = await createProduct(db(), vendorId, 10, 450);
       const rice = await createProduct(db(), vendorId, 0, 1150);
@@ -219,8 +219,14 @@ describe('vendors API', () => {
       expect(body.vendor.id).toBe(vendorId);
       expect(body.serviceable).toBe(true);
       expect(body.products).toEqual([
-        { id: tea, name: 'A Ilam Tea 500g', price_npr: 450, in_stock: true },
-        { id: rice, name: 'B Basmati Rice 5kg', price_npr: 1150, in_stock: false },
+        { id: tea, name: 'A Ilam Tea 500g', price_npr: 450, in_stock: true, stock_quantity: 10 },
+        {
+          id: rice,
+          name: 'B Basmati Rice 5kg',
+          price_npr: 1150,
+          in_stock: false,
+          stock_quantity: 0,
+        },
       ]);
     });
 

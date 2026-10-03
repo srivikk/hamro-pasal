@@ -1,4 +1,8 @@
-import { MAX_DISPUTE_EVIDENCE_BYTES, type ErrorBody } from '@hamro-pasal/shared-types';
+import {
+  MAX_DISPUTE_EVIDENCE_BYTES,
+  MAX_PRODUCT_IMAGES,
+  type ErrorBody,
+} from '@hamro-pasal/shared-types';
 import type { ErrorRequestHandler } from 'express';
 import { MulterError } from 'multer';
 
@@ -26,6 +30,7 @@ import {
 import {
   CategoryUnavailableError,
   InvalidProductCursorError,
+  ProductImageLimitError,
   ProductNameTakenError,
   ProductNotFoundError,
 } from '../catalog/product-service';
@@ -236,6 +241,12 @@ export function toHttpError(error: unknown): HttpError {
   if (error instanceof ProductNameTakenError) {
     return new HttpError(409, 'PRODUCT_NAME_TAKEN', error.message);
   }
+  if (error instanceof ProductImageLimitError) {
+    return new HttpError(422, 'PRODUCT_IMAGE_LIMIT', error.message, {
+      max_images: error.maxImages,
+      current_images: error.currentImages,
+    });
+  }
   if (error instanceof InvalidProductCursorError) {
     return new HttpError(400, 'INVALID_CURSOR', error.message);
   }
@@ -243,11 +254,18 @@ export function toHttpError(error: unknown): HttpError {
     return new HttpError(422, 'DISPUTE_WINDOW_CLOSED', error.message);
   }
   if (error instanceof MulterError) {
-    return error.code === 'LIMIT_FILE_SIZE'
-      ? new HttpError(413, 'FILE_TOO_LARGE', 'Evidence images may be at most 5 MB', {
-          max_bytes: MAX_DISPUTE_EVIDENCE_BYTES,
-        })
-      : new HttpError(400, 'MALFORMED_REQUEST', `Upload rejected: ${error.code}`);
+    // Dispute evidence and product photos share the 5 MB limit.
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return new HttpError(413, 'FILE_TOO_LARGE', 'Images may be at most 5 MB', {
+        max_bytes: MAX_DISPUTE_EVIDENCE_BYTES,
+      });
+    }
+    if (error.code === 'LIMIT_FILE_COUNT') {
+      return new HttpError(422, 'PRODUCT_IMAGE_LIMIT', 'Too many images in one upload', {
+        max_images: MAX_PRODUCT_IMAGES,
+      });
+    }
+    return new HttpError(400, 'MALFORMED_REQUEST', `Upload rejected: ${error.code}`);
   }
   if (error instanceof PaymentNotFoundError) {
     return new HttpError(404, 'PAYMENT_NOT_FOUND', 'Payment not found');

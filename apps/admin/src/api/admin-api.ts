@@ -7,8 +7,12 @@ import {
   adminProductResponseSchema,
   adminVendorListResponseSchema,
   adminVendorOverrideResponseSchema,
+  categoryListResponseSchema,
   otpSendResponseSchema,
   otpVerifyResponseSchema,
+  PRODUCT_IMAGE_FILE_FIELD,
+  vendorProductListResponseSchema,
+  vendorProductResponseSchema,
   type AdminCategoryListResponseBody,
   type AdminCategoryResponseBody,
   type AdminCategoryWriteRequest,
@@ -18,15 +22,22 @@ import {
   type AdminProductResponseBody,
   type AdminVendorListResponseBody,
   type AdminVendorOverrideResponseBody,
+  type CategoryListResponseBody,
   type DeadLetterStatus,
   type OtpSendResponseBody,
   type OtpVerifyResponseBody,
+  type VendorProductListResponseBody,
+  type VendorProductResponseBody,
+  type VendorProductUpdateRequest,
 } from '@hamro-pasal/shared-types';
 import { z } from 'zod';
 
 import type { ApiClient } from './client';
 
-/** The endpoints the dashboard calls (all under /api/admin, SUPER_ADMIN only, except sign-in). */
+/**
+ * The endpoints this web app calls: sign-in, the dashboard's (under /api/admin, SUPER_ADMIN only)
+ * and, since Phase 19, the Vendor Portal's (under /api/vendor/products, VENDOR only).
+ */
 export interface AdminApi {
   sendOtp(phone: string): Promise<OtpSendResponseBody>;
   /** A Super Admin's refresh token arrives as an HttpOnly cookie, not in this body. */
@@ -56,6 +67,25 @@ export interface AdminApi {
     cursor?: string | undefined;
   }): Promise<AdminProductListResponseBody>;
   setProductActive(id: string, isActive: boolean): Promise<AdminProductResponseBody>;
+
+  /*
+   * Phase 19, the Vendor Portal (VENDOR only): the signed-in vendor's own shop under
+   * /api/vendor/products. The server takes the shop from the token; none of these names one.
+   */
+
+  /** The active taxonomy (public), for the category picker. */
+  listActiveCategories(): Promise<CategoryListResponseBody>;
+  listOwnProducts(query: { cursor?: string | undefined }): Promise<VendorProductListResponseBody>;
+  /** PUT: replaces the details; the stock is untouched, the photos only when listed. */
+  updateOwnProduct(
+    id: string,
+    input: VendorProductUpdateRequest,
+  ): Promise<VendorProductResponseBody>;
+  /** DELETE: hides the product from customers (a soft delete). */
+  hideOwnProduct(id: string): Promise<void>;
+  setOwnProductStock(id: string, stockQuantity: number): Promise<VendorProductResponseBody>;
+  /** multipart/form-data: every file as one `images` part. */
+  uploadOwnProductImages(id: string, files: readonly File[]): Promise<VendorProductResponseBody>;
 }
 
 export function createAdminApi(client: ApiClient): AdminApi {
@@ -146,5 +176,51 @@ export function createAdminApi(client: ApiClient): AdminApi {
         schema: adminProductResponseSchema,
         body: { is_active: isActive },
       }),
+    listActiveCategories: () =>
+      client.publicRequest({
+        method: 'GET',
+        path: '/api/categories',
+        schema: categoryListResponseSchema,
+      }),
+    listOwnProducts: ({ cursor }) =>
+      client.request({
+        method: 'GET',
+        path: '/api/vendor/products',
+        schema: vendorProductListResponseSchema,
+        query: { cursor },
+      }),
+    updateOwnProduct: (id, input) =>
+      client.request({
+        method: 'PUT',
+        path: `/api/vendor/products/${encodeURIComponent(id)}`,
+        schema: vendorProductResponseSchema,
+        body: input,
+      }),
+    hideOwnProduct: async (id) => {
+      // 204 No Content: the client reads an empty body as null.
+      await client.request({
+        method: 'DELETE',
+        path: `/api/vendor/products/${encodeURIComponent(id)}`,
+        schema: z.null(),
+      });
+    },
+    setOwnProductStock: (id, stockQuantity) =>
+      client.request({
+        method: 'PATCH',
+        path: `/api/vendor/products/${encodeURIComponent(id)}/stock`,
+        schema: vendorProductResponseSchema,
+        body: { stock_quantity: stockQuantity },
+      }),
+    uploadOwnProductImages: (id, files) => {
+      // The client sends a FormData untouched, so the browser writes the multipart boundary.
+      const form = new FormData();
+      for (const file of files) form.append(PRODUCT_IMAGE_FILE_FIELD, file, file.name);
+      return client.request({
+        method: 'POST',
+        path: `/api/vendor/products/${encodeURIComponent(id)}/images`,
+        schema: vendorProductResponseSchema,
+        body: form,
+      });
+    },
   };
 }

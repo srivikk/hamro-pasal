@@ -1,4 +1,4 @@
-import { fireEvent, screen, within } from '@testing-library/react-native';
+import { act, fireEvent, screen, within } from '@testing-library/react-native';
 import { http, HttpResponse } from 'msw';
 
 import VendorMenuScreen from '../../../app/vendor/[id]';
@@ -10,6 +10,7 @@ import { useCheckoutStore } from '../../store/useCheckoutStore';
 import {
   checkoutResponse,
   errorBody,
+  menuProduct,
   MUSTARD_OIL_ID,
   NOODLES,
   PATAN_VENDOR,
@@ -85,16 +86,75 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
     });
   });
 
-  it('refuses to add past the stock the cart line already knows (Phase 18)', async () => {
+  it("caps a line added from the menu at the menu's own stock_quantity (Phase 19)", async () => {
+    serveMenu(THAMEL, () =>
+      HttpResponse.json(
+        vendorMenu({ products: [menuProduct(RICE.id, RICE.name, RICE.unitPriceNpr, 2)] }),
+      ),
+    );
+    renderMenu(THAMEL);
+    const add = await screen.findByRole('button', { name: 'Add Basmati Rice 5kg' });
+
+    fireEvent.press(add);
+    fireEvent.press(add);
+    expect(screen.queryByTestId('menu-banner')).toBeNull();
+    fireEvent.press(add);
+
+    expect(screen.getByTestId('menu-banner')).toHaveTextContent(
+      'No more of this item is in stock.',
+    );
+    expect(useCartStore.getState().lines).toEqual([
+      {
+        productId: RICE.id,
+        name: 'Basmati Rice 5kg',
+        unitPriceNpr: 1150,
+        quantity: 2,
+        availableStock: 2,
+      },
+    ]);
+  });
+
+  it('a menu-added line cannot be raised past the stock in the cart either', async () => {
+    serveMenu(THAMEL, () =>
+      HttpResponse.json(
+        vendorMenu({ products: [menuProduct(RICE.id, RICE.name, RICE.unitPriceNpr, 3)] }),
+      ),
+    );
+    renderMenu(THAMEL);
+
+    fireEvent.press(await screen.findByRole('button', { name: 'Add Basmati Rice 5kg' }));
+    act(() => {
+      useCartStore.getState().setQuantity(RICE.id, 9);
+    });
+
+    expect(useCartStore.getState().lines[0]).toMatchObject({ quantity: 3, availableStock: 3 });
+  });
+
+  it('the menu refreshes what a cart line knows: a restocked product can be added again', async () => {
     useCartStore.getState().addItem(THAMEL_VENDOR, { ...RICE, availableStock: 1 }, 1);
     renderMenu(THAMEL);
 
     fireEvent.press(await screen.findByRole('button', { name: 'Add Basmati Rice 5kg' }));
 
-    expect(screen.getByTestId('menu-banner')).toHaveTextContent(
-      'No more of this item is in stock.',
+    expect(screen.queryByTestId('menu-banner')).toBeNull();
+    expect(useCartStore.getState().lines[0]).toMatchObject({ quantity: 2, availableStock: 12 });
+  });
+
+  it('treats a product as sold out by its stock_quantity, not by the flag alone', async () => {
+    serveMenu(THAMEL, () =>
+      HttpResponse.json(
+        vendorMenu({
+          products: [
+            { id: RICE.id, name: RICE.name, price_npr: 1150, in_stock: true, stock_quantity: 0 },
+          ],
+        }),
+      ),
     );
-    expect(useCartStore.getState().lines[0]).toMatchObject({ quantity: 1, availableStock: 1 });
+    renderMenu(THAMEL);
+
+    const rice = await screen.findByTestId(`menu-product-${RICE.id}`);
+    expect(within(rice).getByText('Out of stock')).toBeOnTheScreen();
+    expect(within(rice).queryByRole('button')).toBeNull();
   });
 
   it('adds a product with the vendor snapshot the cart summary needs', async () => {
@@ -115,7 +175,7 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
         name: 'Basmati Rice 5kg',
         unitPriceNpr: 1150,
         quantity: 2,
-        availableStock: null,
+        availableStock: 12,
       },
     ]);
     expect(screen.getByText('2 in cart')).toBeOnTheScreen();
@@ -159,6 +219,7 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
               name: 'Local Honey 500g',
               price_npr: 900,
               in_stock: true,
+              stock_quantity: 14,
             },
           ],
         }),

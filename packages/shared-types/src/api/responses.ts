@@ -174,6 +174,11 @@ export const menuProductSchema = z.strictObject({
   name: z.string().min(1),
   price_npr: z.number().positive(),
   in_stock: z.boolean(),
+  /**
+   * The vendor's on-hand count (Phase 19), so the app can cap what a cart line may hold, as the
+   * public product list does. Other customers' 600 s checkout locks are not subtracted.
+   */
+  stock_quantity: z.number().int().nonnegative(),
 });
 export type MenuProduct = z.infer<typeof menuProductSchema>;
 

@@ -1,4 +1,8 @@
-import { errorBodySchema, sessionRefreshResponseSchema } from '@hamro-pasal/shared-types';
+import {
+  errorBodySchema,
+  sessionRefreshResponseSchema,
+  tokenRefreshResponseSchema,
+} from '@hamro-pasal/shared-types';
 import type { z } from 'zod';
 import type { StoreApi } from 'zustand/vanilla';
 
@@ -31,6 +35,7 @@ export interface ApiRequest<TSchema extends z.ZodType> {
   readonly path: string;
   readonly schema: TSchema;
   readonly query?: Readonly<Record<string, string | undefined>>;
+  /** Sent as JSON; a FormData is sent as it is (multipart/form-data, for file uploads). */
   readonly body?: unknown;
 }
 
@@ -86,7 +91,10 @@ export function createApiClient(options: {
   ): Promise<z.output<TSchema>> {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (accessToken !== null) headers.authorization = `Bearer ${accessToken}`;
-    if (request.body !== undefined) headers['content-type'] = 'application/json';
+    // A FormData body gets no Content-Type from us: the browser must write it, because only it
+    // knows the multipart boundary it generates ("multipart/form-data; boundary=…").
+    const form = request.body instanceof FormData ? request.body : null;
+    if (request.body !== undefined && form === null) headers['content-type'] = 'application/json';
     let response: Response;
     try {
       response = await options.fetch(buildUrl(baseUrl, request.path, request.query), {
@@ -94,7 +102,7 @@ export function createApiClient(options: {
         headers,
         // The refresh cookie must reach /api/auth (and be stored from it); never another origin.
         credentials: 'same-origin',
-        ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+        ...(request.body === undefined ? {} : { body: form ?? JSON.stringify(request.body) }),
       });
     } catch (error: unknown) {
       throw new ApiError(
@@ -130,12 +138,29 @@ export function createApiClient(options: {
   /**
    * Trades the HttpOnly refresh cookie (sent by the browser, never visible here) for a new access
    * token. The answer names the account, so the same call restores a session after a page reload.
+   * A vendor has no cookie: the refresh token of their sign-in (in memory) goes in the body of
+   * POST /api/auth/token/refresh instead, as in the mobile app.
    */
   async function runRefresh(): Promise<string | null> {
     // Whose session this refresh started for (null: none yet, the page was just loaded).
     const signedInAs = () => session.getState().session?.user.id ?? null;
     const startedAs = signedInAs();
+    const refreshToken = session.getState().session?.refreshToken;
     try {
+      if (refreshToken !== undefined) {
+        const renewed = await send(
+          {
+            method: 'POST',
+            path: '/api/auth/token/refresh',
+            schema: tokenRefreshResponseSchema,
+            body: { refresh_token: refreshToken },
+          },
+          null,
+        );
+        if (signedInAs() !== startedAs) return null;
+        session.getState().setAccessToken(renewed.access_token);
+        return renewed.access_token;
+      }
       const body = await send(
         { method: 'POST', path: '/api/auth/refresh', schema: sessionRefreshResponseSchema },
         null,

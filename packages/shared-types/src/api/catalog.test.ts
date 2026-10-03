@@ -12,6 +12,7 @@ import {
   slugifyCategoryName,
   vendorProductCreateRequestSchema,
   vendorProductStockRequestSchema,
+  vendorProductUpdateRequestSchema,
 } from './catalog';
 
 const item = (id: string, parentId: string | null, order: number, name = id) => ({
@@ -187,6 +188,48 @@ describe('vendorProductCreateRequestSchema', () => {
     expect(parse({ metadata: { brand: 'Ilam', weight_g: 500, tags: ['tea'] } }).success).toBe(true);
     expect(parse({ metadata: ['tea'] }).success).toBe(false);
     expect(parse({ metadata: { note: 'x'.repeat(MAX_PRODUCT_METADATA_BYTES) } }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('vendorProductUpdateRequestSchema', () => {
+  const categoryId = randomUUID();
+  const base = { category_id: categoryId, name: 'Ilam Tea 500g', price_npr: 450 };
+
+  it('fills the same defaults as create, but leaves the photos alone when none are named', () => {
+    expect(vendorProductUpdateRequestSchema.parse(base)).toEqual({
+      category_id: categoryId,
+      name: 'Ilam Tea 500g',
+      description: null,
+      price_npr: 450,
+      unit: 'piece',
+      is_active: true,
+      metadata: {},
+    });
+  });
+
+  it('takes a replacement photo list of at most 8 http(s) URLs', () => {
+    const url = (n: number) => `http://localhost:4000/uploads/product-images/p/${String(n)}.jpg`;
+    const parse = (imageUrls: unknown) =>
+      vendorProductUpdateRequestSchema.safeParse({ ...base, image_urls: imageUrls });
+
+    expect(parse([]).success).toBe(true);
+    expect(parse([url(1), url(2)]).success).toBe(true);
+    expect(parse(Array.from({ length: 9 }, (_, n) => url(n))).success).toBe(false);
+    expect(parse(['file:///etc/passwd']).success).toBe(false);
+  });
+
+  it('refuses the stock (it has its own endpoint), a vendor id and a bad price', () => {
+    const parse = (extra: Record<string, unknown>) =>
+      vendorProductUpdateRequestSchema.safeParse({ ...base, ...extra });
+
+    expect(parse({ stock_quantity: 5 }).success).toBe(false);
+    expect(parse({ vendor_id: randomUUID() }).success).toBe(false);
+    expect(parse({ price_npr: 0 }).success).toBe(false);
+    expect(parse({ price_npr: 10.005 }).success).toBe(false);
+    expect(parse({ name: '  ' }).success).toBe(false);
+    expect(vendorProductUpdateRequestSchema.safeParse({ name: 'Tea', price_npr: 1 }).success).toBe(
       false,
     );
   });

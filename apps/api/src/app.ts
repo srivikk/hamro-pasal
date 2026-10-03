@@ -32,6 +32,10 @@ import { vendorOrdersRouter } from './routes/vendor-orders';
 import { vendorWalletRouter } from './routes/vendor-wallet';
 import { vendorsRouter } from './routes/vendors';
 import { LocalEvidenceStorage, type EvidenceStorage } from './uploads/evidence-storage';
+import {
+  LocalProductImageStorage,
+  type ProductImageStorage,
+} from './uploads/product-image-storage';
 
 export interface ApiServices {
   readonly accessTokenSecret: string;
@@ -54,6 +58,8 @@ export interface ApiServices {
   /** Phase 17: the admin taxonomy, and products with their stock. */
   readonly categories: CategoryService;
   readonly products: ProductService;
+  /** Phase 19: where product photos are stored (served statically when it is the local disk). */
+  readonly productImages: ProductImageStorage;
 }
 
 /** Builds the HTTP app. Without services only /health is served (used by liveness checks/tests). */
@@ -119,11 +125,21 @@ export function createApp(services?: ApiServices): Express {
     );
     app.use('/api/reviews', customerAuth, reviewsRouter(services.reviews));
     app.use('/api/uploads', customerAuth, uploadsRouter(services.disputes, services.evidence));
-    if (services.evidence instanceof LocalEvidenceStorage) {
-      // Development stand-in for the R2/CDN origin: stored evidence is served as static files.
+    // Development stand-in for the R2/CDN origin: dispute evidence and product photos are served
+    // as static files. Both storages normally share one directory and path, mounted once.
+    const mounted = new Set<string>();
+    for (const storage of [services.evidence, services.productImages]) {
+      if (!(
+        storage instanceof LocalEvidenceStorage || storage instanceof LocalProductImageStorage
+      )) {
+        continue;
+      }
+      const mount = `${storage.mountPath}\n${storage.rootDir}`;
+      if (mounted.has(mount)) continue;
+      mounted.add(mount);
       app.use(
-        services.evidence.mountPath,
-        express.static(services.evidence.rootDir, {
+        storage.mountPath,
+        express.static(storage.rootDir, {
           index: false,
           dotfiles: 'deny',
           setHeaders: (res) => {

@@ -79,11 +79,13 @@ export default function VendorMenuScreen() {
       id: product.id,
       name: product.name,
       unitPriceNpr: product.price_npr,
+      // Phase 19: the menu carries the exact stock, so a line added here is capped like one added
+      // from the product list (and the cart's stepper knows its ceiling).
+      availableStock: product.stock_quantity,
     });
     // 'vendor_conflict' needs no handling here: the store raises the root ReplaceCartModal.
     if (result === 'quantity_limit') setNotice(t('menu.quantityLimit', { max: MAX_LINE_QUANTITY }));
     else if (result === 'cart_full') setNotice(t('menu.cartFull', { max: MAX_CART_LINES }));
-    // The menu has no stock count; the cart line may (from the product list or a refused checkout).
     else if (result === 'stock_limit') setNotice(t('menu.stockLimit'));
     else setNotice(null);
   };
@@ -129,7 +131,7 @@ export default function VendorMenuScreen() {
                   </Text>
                 ) : null}
               </View>
-              {product.in_stock ? (
+              {product.stock_quantity > 0 ? (
                 <Button
                   label={t('menu.add')}
                   size="sm"

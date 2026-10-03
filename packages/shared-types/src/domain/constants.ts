@@ -94,6 +94,12 @@ export const MAX_PRODUCT_NAME_LENGTH = 120;
 export const MAX_PRODUCT_DESCRIPTION_LENGTH = 2000;
 export const MAX_PRODUCT_UNIT_LENGTH = 20;
 export const MAX_PRODUCT_IMAGES = 8;
+/** Largest product photo accepted by POST /api/vendor/products/:id/images (5 MB, Phase 19). */
+export const MAX_PRODUCT_IMAGE_BYTES = 5 * 1024 * 1024;
+/** Image types accepted as product photos (checked against the file's own bytes). */
+export const PRODUCT_IMAGE_CONTENT_TYPES = DISPUTE_EVIDENCE_CONTENT_TYPES;
+/** The multipart field that carries the photos of POST /api/vendor/products/:id/images. */
+export const PRODUCT_IMAGE_FILE_FIELD = 'images';
 export const MAX_PRODUCT_PRICE_NPR = 1_000_000;
 export const MAX_PRODUCT_STOCK_QUANTITY = 1_000_000;
 /** The unit of a product whose vendor named none (and of every product created before Phase 17). */

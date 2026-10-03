@@ -7,17 +7,23 @@ import {
 } from '@hamro-pasal/db';
 import {
   ADMIN_PRODUCT_LIST_DEFAULT_LIMIT,
+  MAX_PRODUCT_IMAGES,
   PRODUCT_LIST_DEFAULT_LIMIT,
   type AdminProductListQuery,
   type ProductListQuery,
   type VendorProductCreate,
   type VendorProductListQuery,
+  type VendorProductUpdate,
   type VendorStatus,
 } from '@hamro-pasal/shared-types';
 import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
 
 import { isForeignKeyViolation, isUniqueViolation } from '../infra/pg-errors';
 import { VendorAccountNotFoundError } from '../orders/vendor-order-service';
+import type {
+  ProductImageContentType,
+  ProductImageStorage,
+} from '../uploads/product-image-storage';
 import { CategoryNotFoundError } from './category-service';
 
 export type ProductRow = typeof products.$inferSelect;
@@ -65,6 +71,22 @@ export class CategoryUnavailableError extends Error {
   }
 }
 
+/** The upload would give the product more than MAX_PRODUCT_IMAGES photos. */
+export class ProductImageLimitError extends Error {
+  readonly maxImages = MAX_PRODUCT_IMAGES;
+
+  constructor(readonly currentImages: number) {
+    super(`A product can have at most ${String(MAX_PRODUCT_IMAGES)} photos`);
+    this.name = 'ProductImageLimitError';
+  }
+}
+
+/** One uploaded photo, its type already read from its own bytes. */
+export interface ProductImageUpload {
+  readonly bytes: Buffer;
+  readonly contentType: ProductImageContentType;
+}
+
 /** The `cursor` is not a product of the list being paged. */
 export class InvalidProductCursorError extends Error {
   constructor(readonly cursor: string) {
@@ -99,20 +121,20 @@ function page<T>(rows: readonly T[], limit: number, idOf: (row: T) => string): P
  * Products and their stock (Phase 17). Vendors create SKUs mapped to the admin taxonomy and keep
  * `stock_quantity` current; customers browse active products of LIVE vendors; a Super Admin sees
  * everything and can hide a product. Checkout (CheckoutService) reads the same `stock_quantity`.
+ * Phase 19: vendors also edit, hide and photograph their own products.
  *
  * Every list is keyset-paginated on a product id, with the cursor row compared in SQL.
  */
 export class ProductService {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly images: ProductImageStorage,
+  ) {}
 
   /** POST /api/vendor/products. Any vendor status may build its catalogue (vendor flow step 3). */
   async create(vendorUserId: string, input: VendorProductCreate): Promise<ProductRow> {
     const vendorId = await this.vendorIdOf(vendorUserId);
-    const [category] = await this.db
-      .select({ id: categories.id })
-      .from(categories)
-      .where(and(eq(categories.id, input.category_id), eq(categories.is_active, true)));
-    if (category === undefined) throw new CategoryUnavailableError(input.category_id);
+    await this.assertCategoryActive(input.category_id);
     try {
       const [created] = await this.db
         .insert(products)
@@ -150,6 +172,136 @@ export class ProductService {
       .returning();
     if (updated === undefined) throw new ProductNotFoundError(productId);
     return updated;
+  }
+
+  /**
+   * PUT /api/vendor/products/:id (Phase 19): replaces the details of the caller's own product.
+   * The vendor is part of the WHERE of every statement, so another shop's product is "not found"
+   * and stays untouched. The stock is never written here; the photos only when a list is given.
+   */
+  async update(
+    vendorUserId: string,
+    productId: string,
+    input: VendorProductUpdate,
+  ): Promise<ProductRow> {
+    const vendorId = await this.vendorIdOf(vendorUserId);
+    const scope = and(eq(products.id, productId), eq(products.vendor_id, vendorId));
+    const [current] = await this.db
+      .select({ category_id: products.category_id, image_urls: products.image_urls })
+      .from(products)
+      .where(scope);
+    if (current === undefined) throw new ProductNotFoundError(productId);
+    // A product may stay in a category the Super Admin has since hidden; it cannot move into one.
+    if (input.category_id !== current.category_id) {
+      await this.assertCategoryActive(input.category_id);
+    }
+    const { image_urls: imageUrls, ...fields } = input;
+    let updated: ProductRow | undefined;
+    try {
+      [updated] = await this.db
+        .update(products)
+        .set(imageUrls === undefined ? fields : { ...fields, image_urls: imageUrls })
+        .where(scope)
+        .returning();
+    } catch (error: unknown) {
+      if (isUniqueViolation(error, 'products_vendor_id_name_key')) {
+        throw new ProductNameTakenError(input.name);
+      }
+      if (isForeignKeyViolation(error, 'products_category_id_categories_id_fk')) {
+        throw new CategoryUnavailableError(input.category_id);
+      }
+      throw error;
+    }
+    if (updated === undefined) throw new ProductNotFoundError(productId);
+    if (imageUrls !== undefined) {
+      // Best effort: a photo the vendor dropped from the list no longer needs its file.
+      const kept = new Set(imageUrls);
+      await this.discard(
+        productId,
+        current.image_urls.filter((url) => !kept.has(url)),
+      );
+    }
+    return updated;
+  }
+
+  /**
+   * DELETE /api/vendor/products/:id (Phase 19): a soft delete. The row stays (order history and
+   * `order_items` point at it) with `is_active = false`: gone from customers' lists, menus and
+   * checkout. Repeating it changes nothing; PUT with `is_active: true` shows the product again.
+   */
+  async hide(vendorUserId: string, productId: string): Promise<void> {
+    const vendorId = await this.vendorIdOf(vendorUserId);
+    const [hidden] = await this.db
+      .update(products)
+      .set({ is_active: false })
+      .where(and(eq(products.id, productId), eq(products.vendor_id, vendorId)))
+      .returning({ id: products.id });
+    if (hidden === undefined) throw new ProductNotFoundError(productId);
+  }
+
+  /**
+   * POST /api/vendor/products/:id/images (Phase 19): stores the photos and appends their URLs to
+   * the caller's own product, at most MAX_PRODUCT_IMAGES in all. Ownership and the limit are
+   * checked before anything is written to disk, and again in the UPDATE itself (a concurrent
+   * upload cannot push the product past the limit); files of a refused upload are deleted.
+   */
+  async addImages(
+    vendorUserId: string,
+    productId: string,
+    images: readonly ProductImageUpload[],
+  ): Promise<ProductRow> {
+    const vendorId = await this.vendorIdOf(vendorUserId);
+    const scope = and(eq(products.id, productId), eq(products.vendor_id, vendorId));
+    const imageCount = async (): Promise<number> => {
+      const [product] = await this.db
+        .select({ image_urls: products.image_urls })
+        .from(products)
+        .where(scope);
+      if (product === undefined) throw new ProductNotFoundError(productId);
+      return product.image_urls.length;
+    };
+    const current = await imageCount();
+    if (current + images.length > MAX_PRODUCT_IMAGES) throw new ProductImageLimitError(current);
+
+    const urls: string[] = [];
+    try {
+      for (const image of images) {
+        urls.push(await this.images.save(productId, image.bytes, image.contentType));
+      }
+      const added = sql.join(
+        urls.map((url) => sql`${url}`),
+        sql`, `,
+      );
+      const [updated] = await this.db
+        .update(products)
+        .set({ image_urls: sql`array_cat(${products.image_urls}, ARRAY[${added}]::text[])` })
+        .where(
+          and(
+            scope,
+            sql`cardinality(${products.image_urls}) + ${urls.length} <= ${MAX_PRODUCT_IMAGES}`,
+          ),
+        )
+        .returning();
+      // Photos added by another request since the first check left no room (or the product went).
+      if (updated === undefined) throw new ProductImageLimitError(await imageCount());
+      return updated;
+    } catch (error: unknown) {
+      await this.discard(productId, urls);
+      throw error;
+    }
+  }
+
+  /** Deletes stored photos without failing the request that no longer needs them. */
+  private async discard(productId: string, urls: readonly string[]): Promise<void> {
+    await Promise.allSettled(urls.map((url) => this.images.remove(productId, url)));
+  }
+
+  private async assertCategoryActive(categoryId: string): Promise<void> {
+    const [category] = await this.db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(and(eq(categories.id, categoryId), eq(categories.is_active, true)));
+    if (category === undefined) throw new CategoryUnavailableError(categoryId);
   }
 
   /** GET /api/vendor/products: the caller's own products, inactive included, by name. */

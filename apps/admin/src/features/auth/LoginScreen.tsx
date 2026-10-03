@@ -2,9 +2,12 @@ import { useMutation } from '@tanstack/react-query';
 import { useState, type SubmitEvent } from 'react';
 
 import { useAdminApi, useSessionStore } from '../../app-context';
-import { isOtpCode, isSuperAdmin, signInErrorMessage, toNepalPhone } from './login-rules';
+import { isOtpCode, portalOf, signInErrorMessage, toNepalPhone } from './login-rules';
 
-/** Two steps, like the mobile app: +977 number → SMS code. Only SUPER_ADMIN accounts get in. */
+/**
+ * Two steps, like the mobile app: +977 number → SMS code. Super Admins open the dashboard, vendors
+ * the Vendor Portal (Phase 19); every other account is turned away.
+ */
 export function LoginScreen() {
   const api = useAdminApi();
   const sessionStore = useSessionStore();
@@ -28,10 +31,9 @@ export function LoginScreen() {
   const verify = useMutation({
     mutationFn: ({ target, otp }: { target: string; otp: string }) => api.verifyOtp(target, otp),
     onSuccess: (body, { target }) => {
-      if (!isSuperAdmin(body.user)) {
-        // The tokens are simply dropped: every admin route would answer 403 anyway, and only a
-        // Super Admin sign-in sets the refresh cookie.
-        setMessage('This number does not belong to a Super Admin.');
+      if (portalOf(body.user) === null) {
+        // The tokens are simply dropped: every route of this app would answer 403 anyway.
+        setMessage('This number does not belong to a Super Admin or a vendor.');
         setPhone(null);
         return;
       }
@@ -39,6 +41,8 @@ export function LoginScreen() {
         phone: target,
         user: body.user,
         accessToken: body.access_token,
+        // A vendor's refresh token comes in the body; a Super Admin's is the HttpOnly cookie.
+        ...('refresh_token' in body ? { refreshToken: body.refresh_token } : {}),
       });
     },
     onError: (error) => {
@@ -69,7 +73,8 @@ export function LoginScreen() {
   return (
     <main className="login">
       <div className="login-card">
-        <h1>Hamro Pasal Admin</h1>
+        <h1>Hamro Pasal</h1>
+        <p className="muted small">Super Admin dashboard and Vendor Portal</p>
         {phone === null ? (
           <form onSubmit={onSendCode}>
             <label htmlFor="phone">Mobile number</label>
@@ -125,7 +130,8 @@ export function LoginScreen() {
           </p>
         )}
         <p className="muted small">
-          You stay signed in on this browser for 7 days, or until you sign out.
+          Super Admins stay signed in on this browser for 7 days, or until they sign out. Vendors
+          sign in again after reloading the page.
         </p>
       </div>
     </main>

@@ -14,6 +14,7 @@ import type { OtpStoreOptions } from '../../src/auth/otp-store';
 import type { FetchLike } from '../../src/payments/gateway-http';
 import { MockSmsGateway, type OutboundSms, type SmsGateway } from '@hamro-pasal/sms';
 import { LocalEvidenceStorage } from '../../src/uploads/evidence-storage';
+import { LocalProductImageStorage } from '../../src/uploads/product-image-storage';
 import { testDatabase, testRedisPool } from './fixtures';
 
 export const ACCESS_SECRET = 'integration-access-secret-0123456789abcdef';
@@ -100,6 +101,10 @@ export function buildTestApp(
         : { deliveryOtpOptions: { lockoutMs: options.deliveryOtpLockoutMs } }),
       sms,
       evidence: new LocalEvidenceStorage(
+        options.uploadsDir ?? TEST_UPLOADS_DIR,
+        TEST_UPLOADS_BASE_URL,
+      ),
+      productImages: new LocalProductImageStorage(
         options.uploadsDir ?? TEST_UPLOADS_DIR,
         TEST_UPLOADS_BASE_URL,
       ),

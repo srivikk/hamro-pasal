@@ -1,6 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { resolve } from 'node:path';
 
 import { createDatabase, type Database } from '@hamro-pasal/db';
 import type { ServerEnv, WalletTopUpMode } from '@hamro-pasal/shared-types';
@@ -44,6 +43,10 @@ import { KhaltiService } from './payments/khalti/khalti-service';
 import { PaymentConfirmationService } from './payments/payment-confirmation';
 import { ReviewService } from './reviews/review-service';
 import { LocalEvidenceStorage, type EvidenceStorage } from './uploads/evidence-storage';
+import {
+  LocalProductImageStorage,
+  type ProductImageStorage,
+} from './uploads/product-image-storage';
 
 export interface ApiConfig {
   readonly accessTokenSecret: string;
@@ -68,6 +71,8 @@ export interface Infrastructure {
   readonly deliveryOtpOptions?: DeliveryOtpAttemptOptions;
   /** Where dispute evidence images are stored (local disk until Cloudflare R2 is wired). */
   readonly evidence: EvidenceStorage;
+  /** Where product photos are stored (the same local directory until R2 is wired). */
+  readonly productImages: ProductImageStorage;
 }
 
 export interface ApiContainer extends ApiServices {
@@ -143,7 +148,8 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     adminDeadLetters: new DeadLetterService(infra.db),
     adminVendors: new AdminVendorService(infra.db, wallet),
     categories: new CategoryService(infra.db),
-    products: new ProductService(infra.db),
+    products: new ProductService(infra.db, infra.productImages),
+    productImages: infra.productImages,
     async close() {
       await infra.redisPool.close();
       await infra.db.$client.end();
@@ -159,14 +165,21 @@ function otpPepper(accessTokenSecret: string): Buffer {
   return createHmac('sha256', accessTokenSecret).update('hamro-pasal:otp-digest:v1').digest();
 }
 
+/**
+ * Where uploads go when UPLOADS_DIR is unset: `uploads/` at the API root (apps/api/uploads,
+ * git-ignored). This file sits in src/ (tsx) or dist/ (node), one level below that root.
+ */
+export const DEFAULT_UPLOADS_DIR = resolve(__dirname, '..', 'uploads');
+
 export function buildContainerFromEnv(env: ServerEnv): ApiContainer {
+  const uploadsDir = env.UPLOADS_DIR ?? DEFAULT_UPLOADS_DIR;
+  const uploadsBaseUrl =
+    env.UPLOADS_PUBLIC_BASE_URL ?? `http://localhost:${String(env.API_PORT)}/uploads`;
   return buildContainer(apiConfigFromEnv(env), {
     db: createDatabase(env.DATABASE_URL),
     redisPool: new RedisConnectionPool(() => new Redis(env.REDIS_URL), 20),
     sms: smsGatewayFromEnv(env),
-    evidence: new LocalEvidenceStorage(
-      env.UPLOADS_DIR ?? join(tmpdir(), 'uploads'),
-      env.UPLOADS_PUBLIC_BASE_URL ?? `http://localhost:${String(env.API_PORT)}/uploads`,
-    ),
+    evidence: new LocalEvidenceStorage(uploadsDir, uploadsBaseUrl),
+    productImages: new LocalProductImageStorage(uploadsDir, uploadsBaseUrl),
   });
 }

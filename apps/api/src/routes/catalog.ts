@@ -3,10 +3,14 @@ import {
   adminProductActiveRequestSchema,
   adminProductListQuerySchema,
   idParamSchema,
+  MAX_PRODUCT_IMAGE_BYTES,
+  MAX_PRODUCT_IMAGES,
+  PRODUCT_IMAGE_FILE_FIELD,
   productListQuerySchema,
   vendorProductCreateRequestSchema,
   vendorProductListQuerySchema,
   vendorProductStockRequestSchema,
+  vendorProductUpdateRequestSchema,
   type AdminCategoryListResponseBody,
   type AdminCategoryResponseBody,
   type AdminCategoryView,
@@ -22,16 +26,20 @@ import {
   type VendorProductView,
 } from '@hamro-pasal/shared-types';
 import { Router } from 'express';
+import multer from 'multer';
 
 import type { AdminCategoryRow, CategoryRow, CategoryService } from '../catalog/category-service';
 import type {
   AdminProductRow,
+  ProductImageUpload,
   ProductRow,
   ProductService,
   PublicProductRow,
 } from '../catalog/product-service';
 import { authOf } from '../http/auth';
+import { HttpError } from '../http/errors';
 import { parseInput } from '../http/validate';
+import { sniffEvidenceType } from '../uploads/evidence-storage';
 
 export function categoryView(row: CategoryRow): CategoryView {
   return {
@@ -140,6 +148,13 @@ export function productsRouter(products: ProductService): Router {
  */
 export function vendorProductsRouter(products: ProductService): Router {
   const router = Router();
+  // Held in memory (at most 8 x 5 MB) so every type is checked before anything touches the disk.
+  // A larger file is refused by multer while streaming (413 FILE_TOO_LARGE); form fields are not
+  // part of this upload.
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_PRODUCT_IMAGE_BYTES, files: MAX_PRODUCT_IMAGES, fields: 0 },
+  });
   router.use((_req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     next();
@@ -170,6 +185,54 @@ export function vendorProductsRouter(products: ProductService): Router {
       product: vendorProductView(await products.setStock(authOf(req).userId, id, stockQuantity)),
     };
     res.json(body);
+  });
+
+  /** Phase 19: replaces the product's details (not its stock; photos only when listed). */
+  router.put('/:id', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const input = parseInput(vendorProductUpdateRequestSchema, req.body);
+    const body: VendorProductResponseBody = {
+      product: vendorProductView(await products.update(authOf(req).userId, id, input)),
+    };
+    res.json(body);
+  });
+
+  /** Phase 19: a soft delete (`is_active = false`); the row and its order history stay. */
+  router.delete('/:id', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    await products.hide(authOf(req).userId, id);
+    res.status(204).end();
+  });
+
+  /**
+   * Phase 19: multipart/form-data with 1 to 8 `images` parts (JPEG, PNG or WebP by their own
+   * bytes, 5 MB each). The stored files' URLs are appended to the product's `image_urls`.
+   */
+  router.post('/:id/images', upload.array(PRODUCT_IMAGE_FILE_FIELD), async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (files.length === 0) {
+      throw new HttpError(400, 'VALIDATION_FAILED', 'Request validation failed', {
+        issues: [
+          { path: PRODUCT_IMAGE_FILE_FIELD, message: 'At least one image file is required' },
+        ],
+      });
+    }
+    const images = files.map((file): ProductImageUpload => {
+      const contentType = sniffEvidenceType(file.buffer);
+      if (contentType === null) {
+        throw new HttpError(
+          415,
+          'UNSUPPORTED_MEDIA_TYPE',
+          'Product photos must be JPEG, PNG or WebP images',
+        );
+      }
+      return { bytes: file.buffer, contentType };
+    });
+    const body: VendorProductResponseBody = {
+      product: vendorProductView(await products.addImages(authOf(req).userId, id, images)),
+    };
+    res.status(201).json(body);
   });
 
   return router;

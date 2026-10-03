@@ -19,6 +19,9 @@ apps/mobile/ios/
 *.key
 *.mobileprovision
 
+# Local uploads (dispute evidence, product photos): stand-in for Cloudflare R2
+apps/api/uploads/
+
 # OS / editor
 .DS_Store
 Thumbs.db

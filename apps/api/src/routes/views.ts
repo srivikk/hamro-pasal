@@ -107,6 +107,7 @@ export function menuView(menu: CatalogMenu): VendorMenu {
       name: p.name,
       price_npr: p.priceNpr,
       in_stock: p.inStock,
+      stock_quantity: p.stockQuantity,
     })),
   };
 }

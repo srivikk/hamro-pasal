@@ -140,7 +140,13 @@ describe('feed and menu schemas', () => {
   });
 
   it('accept a menu with real product uuids only', () => {
-    const product = { id: randomUUID(), name: 'Ilam Tea 500g', price_npr: 450, in_stock: true };
+    const product = {
+      id: randomUUID(),
+      name: 'Ilam Tea 500g',
+      price_npr: 450,
+      in_stock: true,
+      stock_quantity: 12,
+    };
 
     expect(
       vendorMenuSchema.parse({ vendor, serviceable: true, products: [product] }),
@@ -152,6 +158,21 @@ describe('feed and menu schemas', () => {
         products: [{ ...product, id: 'p-1' }],
       }).success,
     ).toBe(false);
+  });
+
+  it('refuse a menu product without its exact stock (Phase 19)', () => {
+    const product = { id: randomUUID(), name: 'Ilam Tea 500g', price_npr: 450, in_stock: true };
+    const menuWith = (stock: Record<string, unknown>) =>
+      vendorMenuSchema.safeParse({
+        vendor,
+        serviceable: true,
+        products: [{ ...product, ...stock }],
+      }).success;
+
+    expect(menuWith({})).toBe(false);
+    expect(menuWith({ stock_quantity: -1 })).toBe(false);
+    expect(menuWith({ stock_quantity: 1.5 })).toBe(false);
+    expect(menuWith({ stock_quantity: 0 })).toBe(true);
   });
 });
 

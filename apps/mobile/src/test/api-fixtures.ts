@@ -40,6 +40,7 @@ import {
   type OrderSnapshotView,
   type OtpSendResponseBody,
   type OrderView,
+  type MenuProduct,
   type VendorMenu,
   type VendorOrderDecisionResponseBody,
   type VendorOrderView,
@@ -190,14 +191,24 @@ export function feedResponse(overrides: Partial<FeedResponse> = {}): FeedRespons
 
 export const MUSTARD_OIL_ID = '7a2b3c40-0011-4000-8000-000000000004';
 
+/** One menu line as the API sends it: the exact stock, and `in_stock` derived from it. */
+export function menuProduct(
+  id: string,
+  name: string,
+  priceNpr: number,
+  stock: number,
+): MenuProduct {
+  return { id, name, price_npr: priceNpr, in_stock: stock > 0, stock_quantity: stock };
+}
+
 export function vendorMenu(overrides: Partial<VendorMenu> = {}): VendorMenu {
   return vendorMenuSchema.parse({
     vendor: feedVendor(),
     serviceable: true,
     products: [
-      { id: NOODLES.id, name: NOODLES.name, price_npr: NOODLES.unitPriceNpr, in_stock: true },
-      { id: RICE.id, name: RICE.name, price_npr: RICE.unitPriceNpr, in_stock: true },
-      { id: MUSTARD_OIL_ID, name: 'Mustard Oil 1L', price_npr: 320, in_stock: false },
+      menuProduct(NOODLES.id, NOODLES.name, NOODLES.unitPriceNpr, 20),
+      menuProduct(RICE.id, RICE.name, RICE.unitPriceNpr, 12),
+      menuProduct(MUSTARD_OIL_ID, 'Mustard Oil 1L', 320, 0),
     ],
     ...overrides,
   });

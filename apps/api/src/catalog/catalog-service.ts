@@ -46,6 +46,8 @@ export interface MenuProduct {
   readonly name: string;
   readonly priceNpr: number;
   readonly inStock: boolean;
+  /** The vendor's on-hand count (Phase 19: the app caps cart lines added from the menu with it). */
+  readonly stockQuantity: number;
 }
 
 export interface VendorMenu {
@@ -108,6 +110,7 @@ export class CatalogService {
         // Stock held by other customers' 600 s locks is not subtracted here: checkout re-checks
         // availability under the lock and answers INSUFFICIENT_STOCK precisely.
         inStock: p.stock_quantity > 0,
+        stockQuantity: p.stock_quantity,
       })),
     };
   }

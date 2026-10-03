@@ -114,8 +114,8 @@ export const serverEnvSchema = z
     // IVR voice calls for the vendor escalation (Phase 14, read by the worker)
     IVR_PROVIDER: z.enum(ivrProviders).default('DISABLED'),
 
-    // Dispute evidence uploads. Cloudflare R2 is not wired yet: the API stores files on local disk
-    // (default <os tmpdir>/uploads, i.e. /tmp/uploads on Linux/macOS) and serves them under
+    // Uploads (dispute evidence, product photos). Cloudflare R2 is not wired yet: the API stores
+    // files on local disk (default: uploads/ at the API root, apps/api/uploads) and serves them under
     // /uploads. The public base URL defaults to http://localhost:<API_PORT>/uploads; set it to the
     // host's LAN address when a phone or emulator has to load the images.
     UPLOADS_DIR: optionalNonEmpty,

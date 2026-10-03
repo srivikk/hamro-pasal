@@ -171,11 +171,8 @@ const wholePaisa = (amount: number) => Math.abs(amount * 100 - Math.round(amount
 /** Largest serialised `metadata` object a vendor may store with a product. */
 export const MAX_PRODUCT_METADATA_BYTES = 4000;
 
-/**
- * POST /api/vendor/products (VENDOR): a new SKU of the caller's own shop, mapped to an active
- * category of the admin taxonomy (SPEC vendor flow step 3).
- */
-export const vendorProductCreateRequestSchema = z.strictObject({
+/** The product fields a vendor writes, shared by create (POST) and edit (PUT). */
+const vendorProductFields = {
   category_id: z.uuid(),
   name: z.string().trim().min(1).max(MAX_PRODUCT_NAME_LENGTH),
   /** Trimmed; a blank one is stored as null. */
@@ -191,8 +188,6 @@ export const vendorProductCreateRequestSchema = z.strictObject({
     .max(MAX_PRODUCT_PRICE_NPR)
     .refine(wholePaisa, 'price_npr must be a whole number of paisa'),
   unit: z.string().trim().min(1).max(MAX_PRODUCT_UNIT_LENGTH).default(DEFAULT_PRODUCT_UNIT),
-  stock_quantity: z.number().int().min(0).max(MAX_PRODUCT_STOCK_QUANTITY).default(0),
-  image_urls: z.array(imageUrlSchema).max(MAX_PRODUCT_IMAGES).default([]),
   is_active: z.boolean().default(true),
   metadata: z
     .record(z.string().min(1).max(60), jsonValueSchema)
@@ -201,9 +196,34 @@ export const vendorProductCreateRequestSchema = z.strictObject({
       `metadata may be at most ${String(MAX_PRODUCT_METADATA_BYTES)} characters of JSON`,
     )
     .default({}),
+};
+
+/**
+ * POST /api/vendor/products (VENDOR): a new SKU of the caller's own shop, mapped to an active
+ * category of the admin taxonomy (SPEC vendor flow step 3).
+ */
+export const vendorProductCreateRequestSchema = z.strictObject({
+  ...vendorProductFields,
+  stock_quantity: z.number().int().min(0).max(MAX_PRODUCT_STOCK_QUANTITY).default(0),
+  image_urls: z.array(imageUrlSchema).max(MAX_PRODUCT_IMAGES).default([]),
 });
 export type VendorProductCreateRequest = z.input<typeof vendorProductCreateRequestSchema>;
 export type VendorProductCreate = z.output<typeof vendorProductCreateRequestSchema>;
+
+/**
+ * PUT /api/vendor/products/:id (VENDOR, Phase 19): replaces the details of the caller's own
+ * product; an omitted optional field takes its default (`is_active: true` shows a hidden product
+ * again). Two things are deliberately not replaced by default:
+ *  - the stock, which has its own endpoint (a `stock_quantity` here is refused);
+ *  - the photos: `image_urls` is kept when omitted; when given it becomes the list (to remove or
+ *    reorder photos). New photos are added with POST /api/vendor/products/:id/images.
+ */
+export const vendorProductUpdateRequestSchema = z.strictObject({
+  ...vendorProductFields,
+  image_urls: z.array(imageUrlSchema).max(MAX_PRODUCT_IMAGES).optional(),
+});
+export type VendorProductUpdateRequest = z.input<typeof vendorProductUpdateRequestSchema>;
+export type VendorProductUpdate = z.output<typeof vendorProductUpdateRequestSchema>;
 
 /**
  * PATCH /api/vendor/products/:id/stock (VENDOR): the on-hand quantity the vendor counted. It
@@ -244,7 +264,10 @@ export const vendorProductViewSchema = z.strictObject({
 });
 export type VendorProductView = z.infer<typeof vendorProductViewSchema>;
 
-/** POST /api/vendor/products (201) and PATCH /api/vendor/products/:id/stock (200). */
+/**
+ * POST /api/vendor/products (201), PUT /api/vendor/products/:id (200), PATCH …/:id/stock (200) and
+ * POST …/:id/images (201).
+ */
 export const vendorProductResponseSchema = z.strictObject({
   product: vendorProductViewSchema,
 });

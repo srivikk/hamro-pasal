@@ -22,6 +22,19 @@ export function isSuperAdmin(user: AuthUser): boolean {
   return user.role === 'SUPER_ADMIN';
 }
 
+/** The two sides of this web app. */
+export type Portal = 'ADMIN' | 'VENDOR';
+
+/**
+ * Which side an account opens (Phase 19): the dashboard for a Super Admin, the Vendor Portal for a
+ * vendor, nothing for customers and riders. The API enforces the same split (403).
+ */
+export function portalOf(user: AuthUser): Portal | null {
+  if (user.role === 'SUPER_ADMIN') return 'ADMIN';
+  if (user.role === 'VENDOR') return 'VENDOR';
+  return null;
+}
+
 /** What to show for a failed sign-in step. */
 export function signInErrorMessage(error: unknown): string {
   if (!(error instanceof ApiError)) return 'Something went wrong. Try again.';

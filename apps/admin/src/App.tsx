@@ -3,9 +3,11 @@ import { useEffect, useState } from 'react';
 
 import { useAdminApi, useSession, useSessionStore } from './app-context';
 import { LoginScreen } from './features/auth/LoginScreen';
+import { portalOf } from './features/auth/login-rules';
 import { CategoryScreen } from './features/categories/CategoryScreen';
 import { DeadLetterScreen } from './features/dlq/DeadLetterScreen';
 import { ProductScreen } from './features/products/ProductScreen';
+import { VendorProductScreen } from './features/vendor-portal/VendorProductScreen';
 import { VendorScreen } from './features/vendors/VendorScreen';
 import { TABS, tabFromHash, type Tab } from './tabs';
 
@@ -72,10 +74,14 @@ export function App() {
   const restored = useSessionRestore();
   const [tab, setTab] = useHashTab();
 
+  // Phase 19: a vendor gets the Vendor Portal instead of the dashboard's tabs.
+  const vendor = session !== null && portalOf(session.user) === 'VENDOR';
+
   // The access token is forgotten only once the server has cleared the refresh cookie: otherwise
-  // the next page load would sign the admin straight back in.
+  // the next page load would sign the admin straight back in. A vendor has no cookie (their tokens
+  // live in memory only), so there is nothing to clear on the server.
   const signOut = useMutation({
-    mutationFn: () => api.logout(),
+    mutationFn: () => (vendor ? Promise.resolve() : api.logout()),
     onSuccess: () => {
       sessionStore.getState().clear();
     },
@@ -96,22 +102,28 @@ export function App() {
     <div className="shell">
       <header className="topbar">
         <div className="brand">
-          Hamro Pasal <span className="brand-sub">Super Admin</span>
+          Hamro Pasal <span className="brand-sub">{vendor ? 'Vendor Portal' : 'Super Admin'}</span>
         </div>
         <nav className="tabs" aria-label="Sections">
-          {TABS.map(({ id, label }) => (
-            <button
-              key={id}
-              type="button"
-              className="tab"
-              aria-current={tab === id ? 'page' : undefined}
-              onClick={() => {
-                setTab(id);
-              }}
-            >
-              {label}
+          {vendor ? (
+            <button type="button" className="tab" aria-current="page">
+              My products
             </button>
-          ))}
+          ) : (
+            TABS.map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                className="tab"
+                aria-current={tab === id ? 'page' : undefined}
+                onClick={() => {
+                  setTab(id);
+                }}
+              >
+                {label}
+              </button>
+            ))
+          )}
         </nav>
         <div className="account">
           {signOut.isError && (
@@ -132,9 +144,7 @@ export function App() {
           </button>
         </div>
       </header>
-      <main className="content">
-        <Screen tab={tab} />
-      </main>
+      <main className="content">{vendor ? <VendorProductScreen /> : <Screen tab={tab} />}</main>
     </div>
   );
 }

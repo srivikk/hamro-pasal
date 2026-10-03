@@ -171,6 +171,21 @@ describe('GET /api/vendors/:id/products', () => {
     expect(received[0]?.headers.get('authorization')).toBe(`Bearer ${TEST_ACCESS_TOKEN}`);
     expect(queryOf(received[0])).toMatchObject({ lat: '27.7154', lng: '85.3123' });
     expect(menu.products.map((p) => p.in_stock)).toEqual([true, true, false]);
+    expect(menu.products.map((p) => p.stock_quantity)).toEqual([20, 12, 0]);
+  });
+
+  it('rejects a menu whose products lack stock_quantity (the pre-Phase-19 contract)', async () => {
+    const { products, ...rest } = vendorMenu();
+    endpoint(vendorProductsPath(THAMEL_VENDOR.id), () =>
+      HttpResponse.json({
+        ...rest,
+        products: products.map(({ stock_quantity: _dropped, ...product }) => product),
+      }),
+    );
+
+    await expect(fetchVendorMenu(THAMEL_VENDOR.id, THAMEL_FALLBACK_LOCATION)).rejects.toMatchObject(
+      { code: 'UNEXPECTED_RESPONSE' },
+    );
   });
 
   it('surfaces 404 VENDOR_NOT_FOUND without retrying (useVendorMenuQuery)', async () => {

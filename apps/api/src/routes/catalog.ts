@@ -71,7 +71,7 @@ export function vendorProductView(row: ProductRow): VendorProductView {
   };
 }
 
-/** The customer's view: no exact stock (as on vendor menus), no timestamps. */
+/** The customer's view: the on-hand stock (Phase 18, for the quantity picker), no timestamps. */
 export function publicProductView({
   product,
   vendorBusinessName,
@@ -86,6 +86,7 @@ export function publicProductView({
     unit: product.unit,
     // Stock held by other customers' 600 s locks is not subtracted; checkout re-checks.
     in_stock: product.stock_quantity > 0,
+    stock_quantity: product.stock_quantity,
     image_urls: product.image_urls,
     metadata: product.metadata,
   };

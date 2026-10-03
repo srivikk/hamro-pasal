@@ -236,3 +236,146 @@ describe('Cart screen when signed out', () => {
     expect(screen.getByRole('button', { name: 'चेकआउट गर्न साइन इन गर्नुहोस्' })).toBeOnTheScreen();
   });
 });
+
+describe('Cart screen: 409 INSUFFICIENT_STOCK (Phase 18)', () => {
+  /** Refuses the first checkout for lack of stock, then accepts. */
+  function shortOfStock(shortfalls: { productId: string; requested: number; available: number }[]) {
+    const received: CapturedRequest[] = [];
+    server.use(
+      http.post(apiUrl(CHECKOUT_PATH), async ({ request }) => {
+        received.push(await capture(request));
+        return received.length === 1
+          ? HttpResponse.json(errorBody('INSUFFICIENT_STOCK', { shortfalls }), { status: 409 })
+          : HttpResponse.json(
+              checkoutResponse({ order: { state: 'PLACED', payment_method: 'COD' } }),
+              { status: 201 },
+            );
+      }),
+    );
+    return received;
+  }
+
+  async function checkoutWithCod() {
+    fireEvent.press(screen.getByTestId('payment-method-COD'));
+    fireEvent.press(screen.getByRole('button', { name: 'Proceed to Checkout' }));
+    await screen.findByTestId('checkout-error');
+  }
+
+  it('highlights the short line, records its stock and asks for a lower quantity', async () => {
+    shortOfStock([{ productId: RICE.id, requested: 5, available: 2 }]);
+    useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 5);
+    useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 1);
+    renderWithProviders(<CartScreen />);
+
+    await checkoutWithCod();
+
+    expect(screen.getByTestId('checkout-error')).toHaveTextContent(
+      'Some items no longer have enough stock. Reduce the quantity and try again.',
+    );
+    const notice = screen.getByTestId(`cart-line-stock-${RICE.id}`);
+    expect(within(notice).getByText('Only 2 left in stock. Lower the quantity.')).toBeOnTheScreen();
+    expect(screen.queryByTestId(`cart-line-stock-${NOODLES.id}`)).toBeNull();
+    // The store knows the stock; the quantity is still the customer's to change.
+    expect(useCartStore.getState().lines).toEqual([
+      expect.objectContaining({ productId: RICE.id, quantity: 5, availableStock: 2 }),
+      expect.objectContaining({ productId: NOODLES.id, quantity: 1, availableStock: null }),
+    ]);
+    expect(screen.getByRole('button', { name: 'Proceed to Checkout' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: `Add one ${RICE.name}` })).toBeDisabled();
+  });
+
+  it('checks out again once the quantity is set to what is left', async () => {
+    const received = shortOfStock([{ productId: RICE.id, requested: 5, available: 2 }]);
+    useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 5);
+    renderWithProviders(<CartScreen />);
+    await checkoutWithCod();
+
+    fireEvent.press(screen.getByRole('button', { name: `Set ${RICE.name} to 2` }));
+
+    expect(screen.queryByTestId(`cart-line-stock-${RICE.id}`)).toBeNull();
+    expect(screen.queryByTestId('checkout-error')).toBeNull();
+    expect(useCartStore.getState().lines[0]).toMatchObject({ quantity: 2, availableStock: 2 });
+    // At the stock: no further increase.
+    expect(screen.getByRole('button', { name: `Add one ${RICE.name}` })).toBeDisabled();
+
+    fireEvent.press(screen.getByRole('button', { name: 'Proceed to Checkout' }));
+    expect(await screen.findByText('Order placed!')).toBeOnTheScreen();
+
+    const bodies = received.map(
+      (request) => request.body as { idempotency_key: string; items: unknown },
+    );
+    expect(bodies[1]?.items).toEqual([{ product_id: RICE.id, quantity: 2 }]);
+    // A changed cart is a new attempt, not a replay of the refused one.
+    expect(bodies[1]?.idempotency_key).not.toBe(bodies[0]?.idempotency_key);
+  });
+
+  it('keeps the line highlighted while it is stepped down, until it fits', () => {
+    useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 4);
+    useCartStore.getState().syncStock([{ productId: RICE.id, available: 2 }]);
+    renderWithProviders(<CartScreen />);
+
+    // No refusal on screen (e.g. after a relaunch): the cart still says what to do.
+    expect(screen.getByTestId('stock-required')).toHaveTextContent(
+      'Lower the highlighted items to continue.',
+    );
+    fireEvent.press(screen.getByRole('button', { name: `Remove one ${RICE.name}` }));
+    expect(screen.getByTestId(`cart-line-stock-${RICE.id}`)).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: 'Proceed to Checkout' })).toBeDisabled();
+
+    fireEvent.press(screen.getByRole('button', { name: `Remove one ${RICE.name}` }));
+    expect(screen.queryByTestId(`cart-line-stock-${RICE.id}`)).toBeNull();
+    expect(screen.queryByTestId('stock-required')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Proceed to Checkout' })).toBeEnabled();
+  });
+
+  it('asks to remove a line whose product sold out', async () => {
+    shortOfStock([{ productId: NOODLES.id, requested: 1, available: 0 }]);
+    useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 1);
+    useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 1);
+    renderWithProviders(<CartScreen />);
+    await checkoutWithCod();
+
+    const notice = screen.getByTestId(`cart-line-stock-${NOODLES.id}`);
+    expect(
+      within(notice).getByText('Out of stock. Remove this item to continue.'),
+    ).toBeOnTheScreen();
+
+    fireEvent.press(screen.getByRole('button', { name: `Remove ${NOODLES.name}` }));
+
+    expect(useCartStore.getState().lines.map((line) => line.productId)).toEqual([RICE.id]);
+    expect(screen.getByRole('button', { name: 'Proceed to Checkout' })).toBeEnabled();
+  });
+
+  it('highlights every short line the server names', async () => {
+    shortOfStock([
+      { productId: RICE.id, requested: 3, available: 1 },
+      { productId: NOODLES.id, requested: 4, available: 3 },
+    ]);
+    useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 3);
+    useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 4);
+    renderWithProviders(<CartScreen />);
+    await checkoutWithCod();
+
+    expect(screen.getByText('Only 1 left in stock. Lower the quantity.')).toBeOnTheScreen();
+    expect(screen.getByText('Only 3 left in stock. Lower the quantity.')).toBeOnTheScreen();
+  });
+
+  it('shows only the message when the server names no lines', async () => {
+    shortOfStock([]);
+    useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 1);
+    renderWithProviders(<CartScreen />);
+    await checkoutWithCod();
+
+    expect(screen.queryByTestId(`cart-line-stock-${RICE.id}`)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Proceed to Checkout' })).toBeEnabled();
+  });
+
+  it('prompts in Nepali with Devanagari numerals', () => {
+    useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 4);
+    useCartStore.getState().syncStock([{ productId: RICE.id, available: 2 }]);
+    renderWithProviders(<CartScreen />, { locale: 'ne' });
+
+    expect(screen.getByText('स्टकमा २ वटा मात्र बाँकी छन्। परिमाण घटाउनुहोस्।')).toBeOnTheScreen();
+    expect(screen.getByText('२ वटा राख्नुहोस्')).toBeOnTheScreen();
+  });
+});

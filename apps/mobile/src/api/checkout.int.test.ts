@@ -25,7 +25,8 @@ import {
   setupApiTestEnvironment,
   type CapturedRequest,
 } from '../test/msw';
-import { renderHookWithProviders } from '../test/render';
+import { PRODUCTS_QUERY_KEY } from '../features/discovery/useProductSearch';
+import { createTestQueryClient, renderHookWithProviders } from '../test/render';
 import { CLIENT_ERROR_CODES } from './http';
 import { CHECKOUT_PATH, NO_DELIVERY_ADDRESS, useCheckout } from './mutations';
 
@@ -319,6 +320,34 @@ describe('useCheckout → POST /api/cart/checkout', () => {
     });
     expect(useCartStore.getState().lines).toHaveLength(2);
     expect(useCheckoutStore.getState().session).toBeNull();
+  });
+
+  it('records the stock of a 409 INSUFFICIENT_STOCK on the cart and drops the product lists', async () => {
+    checkoutEndpoint(() =>
+      HttpResponse.json(
+        errorBody('INSUFFICIENT_STOCK', {
+          shortfalls: [{ productId: RICE.id, requested: 1, available: 0 }],
+        }),
+        { status: 409 },
+      ),
+    );
+    fillCart();
+    const queryClient = createTestQueryClient();
+    const cachedList = [...PRODUCTS_QUERY_KEY, null, 'rice'];
+    queryClient.setQueryData(cachedList, { pages: [], pageParams: [] });
+    const { result } = renderHookWithProviders(() => useCheckout(), { queryClient });
+
+    await act(async () => {
+      await result.current.mutateAsync('COD').catch(() => undefined);
+    });
+
+    expect(useCartStore.getState().lines).toEqual([
+      expect.objectContaining({ productId: NOODLES.id, quantity: 2, availableStock: null }),
+      expect.objectContaining({ productId: RICE.id, quantity: 1, availableStock: 0 }),
+    ]);
+    expect(queryClient.getQueryState(cachedList)?.isInvalidated).toBe(true);
+    // The key survives: only a changed cart starts a new attempt.
+    expect(useCheckoutStore.getState().attempt).not.toBeNull();
   });
 
   it('rejects a success body that breaks the response contract', async () => {

@@ -47,9 +47,16 @@ export function renderWithProviders(
   return render(ui, { wrapper: providers(locale, queryClient) });
 }
 
-export function renderHookWithProviders<Result>(
-  hook: () => Result,
-  { locale = 'en' }: { locale?: AppLocale } = {},
+export function renderHookWithProviders<Result, Props = undefined>(
+  hook: (props: Props) => Result,
+  {
+    locale = 'en',
+    initialProps,
+    queryClient,
+  }: { locale?: AppLocale; initialProps?: Props; queryClient?: QueryClient } = {},
 ) {
-  return renderHook(hook, { wrapper: providers(locale) });
+  return renderHook(hook, {
+    wrapper: providers(locale, queryClient),
+    ...(initialProps === undefined ? {} : { initialProps }),
+  });
 }

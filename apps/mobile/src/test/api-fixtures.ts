@@ -1,5 +1,11 @@
 import {
   authTokensResponseSchema,
+  categoryListResponseSchema,
+  productListResponseSchema,
+  type CategoryListResponseBody,
+  type CategoryView,
+  type ProductListResponseBody,
+  type PublicProduct,
   chatMessageSchema,
   disputeEvidenceUploadResponseSchema,
   deliveryConfirmedResponseSchema,
@@ -460,4 +466,70 @@ export function walletLedgerPage(
   nextCursor: string | null = null,
 ): VendorWalletLedgerResponseBody {
   return vendorWalletLedgerResponseSchema.parse({ entries, next_cursor: nextCursor });
+}
+
+/*
+ * Phase 18: the public taxonomy and product list (GET /api/categories, GET /api/products).
+ */
+
+export const GROCERIES_ID = '8b3c4d50-0000-4000-8000-000000000001';
+export const TEA_COFFEE_ID = '8b3c4d50-0000-4000-8000-000000000002';
+export const ELECTRONICS_ID = '8b3c4d50-0000-4000-8000-000000000003';
+
+/** Two roots (Groceries with one subcategory, Electronics), in the server's tree order. */
+export function categoryList(
+  categories: CategoryView[] = [
+    category({ id: GROCERIES_ID, name: 'Groceries', slug: 'groceries' }),
+    category({
+      id: TEA_COFFEE_ID,
+      name: 'Tea & Coffee',
+      slug: 'tea-coffee',
+      parent_id: GROCERIES_ID,
+    }),
+    category({ id: ELECTRONICS_ID, name: 'Electronics', slug: 'electronics', display_order: 1 }),
+  ],
+): CategoryListResponseBody {
+  return categoryListResponseSchema.parse({ categories });
+}
+
+export function category(overrides: Partial<CategoryView> = {}): CategoryView {
+  return {
+    id: GROCERIES_ID,
+    name: 'Groceries',
+    slug: 'groceries',
+    parent_id: null,
+    icon_url: null,
+    display_order: 0,
+    ...overrides,
+  };
+}
+
+export const TEA_ID = '7a2b3c40-0011-4000-8000-000000000003';
+export const HONEY_ID = '7a2b3c40-0012-4000-8000-000000000001';
+
+/** Ilam Tea of the Thamel shop (which delivers to the test customer), 12 in stock, by default. */
+export function publicProduct(overrides: Partial<PublicProduct> = {}): PublicProduct {
+  const stock = overrides.stock_quantity ?? 12;
+  return {
+    id: TEA_ID,
+    vendor: { id: THAMEL_VENDOR.id, business_name: THAMEL_VENDOR.name },
+    category_id: TEA_COFFEE_ID,
+    name: 'Ilam Tea 500g',
+    description: 'Orthodox black tea from Ilam.',
+    price_npr: 450,
+    unit: 'pack',
+    in_stock: stock > 0,
+    stock_quantity: stock,
+    image_urls: [],
+    metadata: {},
+    ...overrides,
+  };
+}
+
+/** GET /api/products: one page. */
+export function productList(
+  products: PublicProduct[] = [publicProduct()],
+  nextCursor: string | null = null,
+): ProductListResponseBody {
+  return productListResponseSchema.parse({ products, next_cursor: nextCursor });
 }

@@ -4,9 +4,12 @@ import {
   CART_STORE_KEY,
   CART_STORE_VERSION,
   createCartStore,
+  isOverStock,
   MAX_CART_LINES,
   MAX_LINE_QUANTITY,
+  maxLineQuantity,
   selectCartTotal,
+  selectHasOverStockLine,
   selectIsReplaceCartPromptVisible,
   selectItemCount,
   type CartStore,
@@ -44,7 +47,13 @@ describe('cart store', () => {
 
       expect(store.getState().vendor).toEqual(THAMEL);
       expect(store.getState().lines).toEqual([
-        { productId: RICE.id, name: RICE.name, unitPriceNpr: RICE.unitPriceNpr, quantity: 1 },
+        {
+          productId: RICE.id,
+          name: RICE.name,
+          unitPriceNpr: RICE.unitPriceNpr,
+          quantity: 1,
+          availableStock: null,
+        },
       ]);
     });
 
@@ -94,7 +103,13 @@ describe('cart store', () => {
       expect(store.getState().pendingAddition).toBeNull();
       expect(store.getState().vendor).toEqual(PATAN);
       expect(store.getState().lines).toEqual([
-        { productId: HONEY.id, name: HONEY.name, unitPriceNpr: HONEY.unitPriceNpr, quantity: 3 },
+        {
+          productId: HONEY.id,
+          name: HONEY.name,
+          unitPriceNpr: HONEY.unitPriceNpr,
+          quantity: 3,
+          availableStock: null,
+        },
       ]);
     });
 
@@ -247,6 +262,150 @@ describe('cart store', () => {
     });
   });
 
+  describe('stock safeguards (Phase 18)', () => {
+    const riceWithStock = (availableStock: number) => ({ ...RICE, availableStock });
+
+    it('records the stock the product list reported on the line', () => {
+      store.getState().addItem(THAMEL, riceWithStock(7), 2);
+
+      expect(store.getState().lines[0]).toMatchObject({ quantity: 2, availableStock: 7 });
+    });
+
+    it('adds up to exactly the stock, and refuses one more', () => {
+      expect(store.getState().addItem(THAMEL, riceWithStock(3), 3)).toBe('added');
+
+      expect(store.getState().addItem(THAMEL, riceWithStock(3))).toBe('stock_limit');
+      expect(selectItemCount(store.getState())).toBe(3);
+    });
+
+    it('refuses a first add above the stock and leaves the cart empty', () => {
+      expect(store.getState().addItem(THAMEL, riceWithStock(2), 3)).toBe('stock_limit');
+
+      expect(store.getState()).toMatchObject({ vendor: null, lines: [] });
+    });
+
+    it('refuses any add of a sold-out product', () => {
+      expect(store.getState().addItem(THAMEL, riceWithStock(0))).toBe('stock_limit');
+      expect(store.getState().lines).toHaveLength(0);
+    });
+
+    it('counts what the cart already holds against the stock', () => {
+      store.getState().addItem(THAMEL, riceWithStock(5), 4);
+
+      expect(store.getState().addItem(THAMEL, riceWithStock(5), 2)).toBe('stock_limit');
+      expect(store.getState().addItem(THAMEL, riceWithStock(5), 1)).toBe('added');
+    });
+
+    it('takes the newest stock on a re-add (a restock lifts the limit)', () => {
+      store.getState().addItem(THAMEL, riceWithStock(2), 2);
+
+      expect(store.getState().addItem(THAMEL, riceWithStock(10), 3)).toBe('added');
+      expect(store.getState().lines[0]).toMatchObject({ quantity: 5, availableStock: 10 });
+    });
+
+    it('keeps the known stock when a screen without a count (the vendor menu) adds', () => {
+      store.getState().addItem(THAMEL, riceWithStock(2), 2);
+
+      expect(store.getState().addItem(THAMEL, RICE)).toBe('stock_limit');
+      expect(store.getState().lines[0]).toMatchObject({ quantity: 2, availableStock: 2 });
+    });
+
+    it('reports the per-line limit before the stock when both are passed', () => {
+      store.getState().addItem(THAMEL, riceWithStock(500), MAX_LINE_QUANTITY);
+
+      expect(store.getState().addItem(THAMEL, riceWithStock(500))).toBe('quantity_limit');
+    });
+
+    it('carries the stock through the replace-cart prompt', () => {
+      store.getState().addItem(THAMEL, RICE);
+      store.getState().addItem(PATAN, { ...HONEY, availableStock: 4 }, 2);
+
+      store.getState().confirmReplaceCart();
+
+      expect(store.getState().lines[0]).toMatchObject({ quantity: 2, availableStock: 4 });
+    });
+
+    it('clamps setQuantity to the known stock', () => {
+      store.getState().addItem(THAMEL, riceWithStock(4), 1);
+
+      store.getState().setQuantity(RICE.id, 9);
+
+      expect(selectItemCount(store.getState())).toBe(4);
+    });
+
+    it('syncStock records what the server says is left without changing quantities', () => {
+      store.getState().addItem(THAMEL, RICE, 5);
+      store.getState().addItem(THAMEL, OIL, 2);
+
+      store.getState().syncStock([{ productId: RICE.id, available: 2 }]);
+
+      expect(store.getState().lines).toEqual([
+        expect.objectContaining({ productId: RICE.id, quantity: 5, availableStock: 2 }),
+        expect.objectContaining({ productId: OIL.id, quantity: 2, availableStock: null }),
+      ]);
+      expect(store.getState().lines.map(isOverStock)).toEqual([true, false]);
+      expect(selectHasOverStockLine(store.getState())).toBe(true);
+    });
+
+    it('lets an over-stock line step down one at a time, but never back up', () => {
+      store.getState().addItem(THAMEL, RICE, 5);
+      store.getState().syncStock([{ productId: RICE.id, available: 2 }]);
+
+      store.getState().setQuantity(RICE.id, 4);
+      expect(selectItemCount(store.getState())).toBe(4);
+      store.getState().setQuantity(RICE.id, 5);
+      expect(selectItemCount(store.getState())).toBe(4);
+
+      store.getState().setQuantity(RICE.id, 2);
+      expect(selectHasOverStockLine(store.getState())).toBe(false);
+      store.getState().setQuantity(RICE.id, 3);
+      expect(selectItemCount(store.getState())).toBe(2);
+    });
+
+    it('flags a line whose product sold out, until it is removed', () => {
+      store.getState().addItem(THAMEL, RICE, 1);
+      store.getState().addItem(THAMEL, OIL, 1);
+
+      store.getState().syncStock([{ productId: RICE.id, available: 0 }]);
+      expect(selectHasOverStockLine(store.getState())).toBe(true);
+
+      store.getState().setQuantity(RICE.id, 0);
+      expect(selectHasOverStockLine(store.getState())).toBe(false);
+      expect(store.getState().lines.map((line) => line.productId)).toEqual([OIL.id]);
+    });
+
+    it('ignores stock for products that are not in the cart', () => {
+      store.getState().addItem(THAMEL, RICE, 1);
+      const before = store.getState().lines;
+
+      store.getState().syncStock([{ productId: HONEY.id, available: 0 }]);
+
+      expect(store.getState().lines).toEqual(before);
+    });
+
+    it.each([-1, 1.5, Number.NaN])('rejects a stock of %p', (available) => {
+      store.getState().addItem(THAMEL, RICE, 1);
+
+      expect(() => {
+        store.getState().syncStock([{ productId: RICE.id, available }]);
+      }).toThrow(RangeError);
+      expect(store.getState().lines[0]?.availableStock).toBeNull();
+    });
+
+    it('maxLineQuantity is the smaller of the stock and the per-line limit', () => {
+      expect(maxLineQuantity(null)).toBe(MAX_LINE_QUANTITY);
+      expect(maxLineQuantity(4)).toBe(4);
+      expect(maxLineQuantity(0)).toBe(0);
+      expect(maxLineQuantity(5000)).toBe(MAX_LINE_QUANTITY);
+    });
+
+    it('a line at exactly its stock is not over stock; unknown stock never is', () => {
+      expect(isOverStock({ quantity: 3, availableStock: 3 })).toBe(false);
+      expect(isOverStock({ quantity: 4, availableStock: 3 })).toBe(true);
+      expect(isOverStock({ quantity: 99, availableStock: null })).toBe(false);
+    });
+  });
+
   describe('MMKV persistence', () => {
     it('persists vendor and lines but never the transient prompt', () => {
       store.getState().addItem(THAMEL, RICE, 2);
@@ -257,10 +416,54 @@ describe('cart store', () => {
       expect(JSON.parse(raw ?? '')).toEqual({
         state: {
           vendor: THAMEL,
-          lines: [{ productId: RICE.id, name: RICE.name, unitPriceNpr: 120.5, quantity: 2 }],
+          lines: [
+            {
+              productId: RICE.id,
+              name: RICE.name,
+              unitPriceNpr: 120.5,
+              quantity: 2,
+              availableStock: null,
+            },
+          ],
         },
         version: CART_STORE_VERSION,
       });
+    });
+
+    it('persists the known stock, so an over-stock line is still flagged after a relaunch', () => {
+      store.getState().addItem(THAMEL, RICE, 5);
+      store.getState().syncStock([{ productId: RICE.id, available: 2 }]);
+
+      const relaunched = createCartStore(mmkvStateStorage(engine));
+
+      expect(relaunched.getState().lines[0]).toMatchObject({ quantity: 5, availableStock: 2 });
+      expect(selectHasOverStockLine(relaunched.getState())).toBe(true);
+    });
+
+    it('keeps a v2 cart (no stock on its lines), reading the stock as unknown', () => {
+      engine.set(
+        CART_STORE_KEY,
+        JSON.stringify({
+          state: {
+            vendor: THAMEL,
+            lines: [{ productId: RICE.id, name: RICE.name, unitPriceNpr: 120.5, quantity: 2 }],
+          },
+          version: 2,
+        }),
+      );
+
+      const upgraded = createCartStore(mmkvStateStorage(engine));
+
+      expect(upgraded.getState().vendor).toEqual(THAMEL);
+      expect(upgraded.getState().lines).toEqual([
+        {
+          productId: RICE.id,
+          name: RICE.name,
+          unitPriceNpr: 120.5,
+          quantity: 2,
+          availableStock: null,
+        },
+      ]);
     });
 
     it('restores the cart after a relaunch', () => {
@@ -304,6 +507,13 @@ describe('cart store', () => {
       [
         'an over-limit quantity',
         { vendor: THAMEL, lines: [{ productId: 'p', name: 'n', unitPriceNpr: 1, quantity: 100 }] },
+      ],
+      [
+        'a negative stock',
+        {
+          vendor: THAMEL,
+          lines: [{ productId: 'p', name: 'n', unitPriceNpr: 1, quantity: 1, availableStock: -1 }],
+        },
       ],
       [
         'a smuggled pending prompt',

@@ -1,3 +1,4 @@
+import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 
 import { API_URL } from '../config/api';
@@ -7,10 +8,16 @@ import { useCartStore } from '../store/useCartStore';
 import { useCheckoutStore } from '../store/useCheckoutStore';
 import { THAMEL_ADDRESS } from './api-fixtures';
 
-/** Intercepts every fetch; an unexpected request fails the test instead of reaching the network. */
-export const server = setupServer();
-
 export const apiUrl = (path: string): string => `${API_URL}${path}`;
+
+/**
+ * Intercepts every fetch; an unexpected request fails the test instead of reaching the network.
+ * The one standing answer is an empty taxonomy: the Home screen always asks for the category pills
+ * (Phase 18), and most of its tests are about something else. `server.use` overrides it.
+ */
+export const server = setupServer(
+  http.get(apiUrl('/api/categories'), () => HttpResponse.json({ categories: [] })),
+);
 
 export interface CapturedRequest {
   method: string;

@@ -250,15 +250,19 @@ describe('product views', () => {
     metadata: { brand: 'Ilam' },
   };
 
-  it('the public product carries no exact stock', () => {
+  it('the public product carries the on-hand stock, but no vendor-only fields', () => {
     const product = {
       ...view,
       vendor: { id: randomUUID(), business_name: 'Thamel Kirana Pasal' },
       in_stock: true,
+      stock_quantity: 60,
     };
 
     expect(publicProductSchema.parse(product)).toEqual(product);
-    expect(publicProductSchema.safeParse({ ...product, stock_quantity: 60 }).success).toBe(false);
+    expect(publicProductSchema.safeParse({ ...product, stock_quantity: -1 }).success).toBe(false);
+    expect(publicProductSchema.safeParse({ ...product, stock_quantity: 1.5 }).success).toBe(false);
+    expect(publicProductSchema.safeParse({ ...view, in_stock: true }).success).toBe(false);
+    expect(publicProductSchema.safeParse({ ...product, is_active: true }).success).toBe(false);
   });
 
   it('the admin product names its vendor, standing and category', () => {

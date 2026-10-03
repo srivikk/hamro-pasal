@@ -83,6 +83,8 @@ export default function VendorMenuScreen() {
     // 'vendor_conflict' needs no handling here: the store raises the root ReplaceCartModal.
     if (result === 'quantity_limit') setNotice(t('menu.quantityLimit', { max: MAX_LINE_QUANTITY }));
     else if (result === 'cart_full') setNotice(t('menu.cartFull', { max: MAX_CART_LINES }));
+    // The menu has no stock count; the cart line may (from the product list or a refused checkout).
+    else if (result === 'stock_limit') setNotice(t('menu.stockLimit'));
     else setNotice(null);
   };
 

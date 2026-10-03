@@ -21,7 +21,10 @@ export interface CartSummary {
  * Client-side estimate of what the server will charge. Display only: the server re-prices every
  * line from the database, and its `total_npr` is authoritative.
  */
-export function computeCartSummary(vendor: CartVendor, lines: readonly CartLine[]): CartSummary {
+export function computeCartSummary(
+  vendor: CartVendor,
+  lines: readonly Pick<CartLine, 'unitPriceNpr' | 'quantity'>[],
+): CartSummary {
   const subtotal = lines.reduce((sum, line) => sum + toPaisa(line.unitPriceNpr) * line.quantity, 0);
   const deliveryFee = toPaisa(vendor.deliveryFeeNpr);
   const platformFee = toPaisa(CUSTOMER_PLATFORM_FEE_NPR);

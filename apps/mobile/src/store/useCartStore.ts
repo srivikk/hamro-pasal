@@ -12,7 +12,8 @@ export const CART_STORE_KEY = 'hamro-pasal.cart';
  * v2 added the vendor's delivery fee and MOV to the snapshot. A v1 cart cannot be upgraded (the
  * fee is unknown), so it fails the strict schema below and starts empty.
  */
-export const CART_STORE_VERSION = 2;
+/** v3 (Phase 18) added each line's last known stock; a v2 line is read with it unknown (null). */
+export const CART_STORE_VERSION = 3;
 
 /** The checkout API's limits (shared-types): 1-99 of each product, at most 50 products per order. */
 export { MAX_CART_LINES, MAX_LINE_QUANTITY };
@@ -32,6 +33,11 @@ const cartLineSchema = z.strictObject({
   /** Display price only. The server re-prices every line from the database at checkout. */
   unitPriceNpr: z.number().positive(),
   quantity: z.number().int().min(1).max(MAX_LINE_QUANTITY),
+  /**
+   * The product's stock as last reported by the server (the product list, or a checkout refused
+   * with 409 INSUFFICIENT_STOCK). Null when unknown (added from a vendor menu, which has no count).
+   */
+  availableStock: z.number().int().nonnegative().nullable().default(null),
 });
 
 const persistedCartSchema = z.union([
@@ -49,6 +55,14 @@ export interface CartProduct {
   id: string;
   name: string;
   unitPriceNpr: number;
+  /** The server's on-hand count when the screen knows it; omitted keeps the line's known value. */
+  availableStock?: number | null;
+}
+
+/** What the server says is left of one product (checkout's `details.shortfalls`). */
+export interface StockLevel {
+  productId: string;
+  available: number;
 }
 
 /** An addition held back because it comes from a different vendor than the current cart. */
@@ -66,7 +80,9 @@ export type AddItemResult =
   /** The line would exceed MAX_LINE_QUANTITY. Nothing changed. */
   | 'quantity_limit'
   /** The cart already holds MAX_CART_LINES products. Nothing changed. */
-  | 'cart_full';
+  | 'cart_full'
+  /** The line would exceed the product's known stock. Nothing changed. */
+  | 'stock_limit';
 
 export interface CartState {
   /** The single vendor every line belongs to (SPEC edge case 4). Null exactly when the cart is empty. */
@@ -75,8 +91,14 @@ export interface CartState {
   /** Set when an add was refused for being from another vendor; drives the replace-cart modal. */
   pendingAddition: PendingCartAddition | null;
   addItem: (vendor: CartVendor, product: CartProduct, quantity?: number) => AddItemResult;
-  /** Sets a line's quantity, capped at MAX_LINE_QUANTITY. Zero removes the line. */
+  /**
+   * Sets a line's quantity. Zero removes the line. An increase is capped at MAX_LINE_QUANTITY and
+   * at the line's known stock; a decrease is always taken as given, so a line the server found
+   * over stock can be stepped down.
+   */
   setQuantity: (productId: string, quantity: number) => void;
+  /** Records the server's stock for the lines it names. Quantities are left for the user to lower. */
+  syncStock: (levels: readonly StockLevel[]) => void;
   removeItem: (productId: string) => void;
   clearCart: () => void;
   /** User accepted the prompt: empty the cart, then add the pending item from the new vendor. */
@@ -123,6 +145,20 @@ export function selectItemCount(state: Pick<CartState, 'lines'>): number {
   return state.lines.reduce((sum, line) => sum + line.quantity, 0);
 }
 
+/** The most units a line may hold: the checkout limit, lowered to the known stock. */
+export function maxLineQuantity(availableStock: number | null): number {
+  return availableStock === null ? MAX_LINE_QUANTITY : Math.min(MAX_LINE_QUANTITY, availableStock);
+}
+
+/** A line asking for more than the server says is left: checkout would answer 409. */
+export function isOverStock(line: Pick<CartLine, 'quantity' | 'availableStock'>): boolean {
+  return line.availableStock !== null && line.quantity > line.availableStock;
+}
+
+export function selectHasOverStockLine(state: Pick<CartState, 'lines'>): boolean {
+  return state.lines.some(isOverStock);
+}
+
 export function selectIsReplaceCartPromptVisible(
   state: Pick<CartState, 'pendingAddition'>,
 ): boolean {
@@ -150,6 +186,11 @@ export function createCartStore(storage: StateStorage<void>): CartStore {
           if (existing === undefined && lines.length >= MAX_CART_LINES) return 'cart_full';
           const nextQuantity = (existing?.quantity ?? 0) + quantity;
           if (nextQuantity > MAX_LINE_QUANTITY) return 'quantity_limit';
+          const availableStock =
+            product.availableStock === undefined
+              ? (existing?.availableStock ?? null)
+              : product.availableStock;
+          if (availableStock !== null && nextQuantity > availableStock) return 'stock_limit';
 
           // The latest name and price win, so a re-add refreshes a stale snapshot.
           const line: CartLine = {
@@ -157,6 +198,7 @@ export function createCartStore(storage: StateStorage<void>): CartStore {
             name: product.name,
             unitPriceNpr: product.unitPriceNpr,
             quantity: nextQuantity,
+            availableStock,
           };
           set({
             vendor,
@@ -179,11 +221,29 @@ export function createCartStore(storage: StateStorage<void>): CartStore {
             get().removeItem(productId);
             return;
           }
-          const capped = Math.min(quantity, MAX_LINE_QUANTITY);
           set(({ lines }) => ({
-            lines: lines.map((line) =>
-              line.productId === productId ? { ...line, quantity: capped } : line,
-            ),
+            lines: lines.map((line) => {
+              if (line.productId !== productId) return line;
+              // Never raised past the limits, and never forced down by them either.
+              const ceiling = Math.max(line.quantity, maxLineQuantity(line.availableStock));
+              return { ...line, quantity: Math.min(quantity, ceiling) };
+            }),
+          }));
+        },
+
+        syncStock: (levels) => {
+          const known = new Map<string, number>();
+          for (const { productId, available } of levels) {
+            if (!Number.isInteger(available) || available < 0) {
+              throw new RangeError(`Invalid stock ${String(available)} for product ${productId}`);
+            }
+            known.set(productId, available);
+          }
+          set(({ lines }) => ({
+            lines: lines.map((line) => {
+              const available = known.get(line.productId);
+              return available === undefined ? line : { ...line, availableStock: available };
+            }),
           }));
         },
 

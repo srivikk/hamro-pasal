@@ -54,7 +54,32 @@
     "addAddress": "Add delivery address",
     "changeAddress": "Change",
     "addressRequired": "Add a delivery address to continue.",
-    "signInToCheckout": "Sign in to Checkout"
+    "signInToCheckout": "Sign in to Checkout",
+    "stockLeft_one": "Only {{count, localizedNumber}} left in stock. Lower the quantity.",
+    "stockLeft_other": "Only {{count, localizedNumber}} left in stock. Lower the quantity.",
+    "soldOut": "Out of stock. Remove this item to continue.",
+    "setTo": "Set to {{count, localizedNumber}}",
+    "setToNamed": "Set {{name}} to {{count, localizedNumber}}",
+    "removeItem": "Remove",
+    "removeItemNamed": "Remove {{name}}",
+    "fixStock": "Lower the highlighted items to continue."
+  },
+  "discovery": {
+    "searchPlaceholder": "Search products",
+    "shops": "Shops",
+    "loadError": "Couldn't load products. Check your connection.",
+    "loadMoreError": "Couldn't load more products.",
+    "empty": "No products found.",
+    "priceUnit": "Rs. {{amount, localizedNumber}} / {{unit}}",
+    "inStock_one": "{{count, localizedNumber}} in stock",
+    "inStock_other": "{{count, localizedNumber}} in stock",
+    "outOfStock": "Out of Stock",
+    "increase": "Increase quantity of {{name}}",
+    "decrease": "Decrease quantity of {{name}}",
+    "stockLimit_one": "Only {{count, localizedNumber}} is in stock.",
+    "stockLimit_other": "Only {{count, localizedNumber}} are in stock.",
+    "maxInCart": "All the available stock is already in your cart.",
+    "signInToOrder": "Sign in to order."
   },
   "cartConflict": {
     "title": "Start a new cart?",
@@ -77,6 +102,7 @@
     "empty": "This shop has no products yet.",
     "quantityLimit": "You can add at most {{max, localizedNumber}} of one item.",
     "cartFull": "Your cart can hold at most {{max, localizedNumber}} different items.",
+    "stockLimit": "No more of this item is in stock.",
     "checkoutPending": "Finish your current checkout before adding more items."
   },
   "checkout": {

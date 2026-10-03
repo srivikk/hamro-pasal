@@ -100,7 +100,7 @@ describe('Public catalog API', () => {
   });
 
   describe('GET /api/products', () => {
-    it('returns active products of LIVE vendors only, without the exact stock', async () => {
+    it('returns active products of LIVE vendors only, with the on-hand stock', async () => {
       const word = marker();
       const live = await createVendor(db, { businessName: 'Thamel Kirana Pasal' });
       const approved = await createVendor(db, { status: 'APPROVED' });
@@ -134,11 +134,16 @@ describe('Public catalog API', () => {
         price_npr: 450.5,
         unit: 'pack',
         in_stock: true,
+        stock_quantity: 7,
         image_urls: ['https://cdn.hamropasal.test/p/tea.webp'],
         metadata: { brand: 'Ilam' },
       });
-      expect(body.products[1]).toMatchObject({ in_stock: false, category_id: null });
-      expect(JSON.stringify(res.body)).not.toContain('stock_quantity');
+      expect(body.products[1]).toMatchObject({
+        in_stock: false,
+        stock_quantity: 0,
+        category_id: null,
+      });
+      expect(JSON.stringify(res.body)).not.toContain('is_active');
     });
 
     it('filters by vendor', async () => {

@@ -85,6 +85,18 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
     });
   });
 
+  it('refuses to add past the stock the cart line already knows (Phase 18)', async () => {
+    useCartStore.getState().addItem(THAMEL_VENDOR, { ...RICE, availableStock: 1 }, 1);
+    renderMenu(THAMEL);
+
+    fireEvent.press(await screen.findByRole('button', { name: 'Add Basmati Rice 5kg' }));
+
+    expect(screen.getByTestId('menu-banner')).toHaveTextContent(
+      'No more of this item is in stock.',
+    );
+    expect(useCartStore.getState().lines[0]).toMatchObject({ quantity: 1, availableStock: 1 });
+  });
+
   it('adds a product with the vendor snapshot the cart summary needs', async () => {
     renderMenu(THAMEL);
 
@@ -98,7 +110,13 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
       minOrderValueNpr: 500,
     });
     expect(useCartStore.getState().lines).toEqual([
-      { productId: RICE.id, name: 'Basmati Rice 5kg', unitPriceNpr: 1150, quantity: 2 },
+      {
+        productId: RICE.id,
+        name: 'Basmati Rice 5kg',
+        unitPriceNpr: 1150,
+        quantity: 2,
+        availableStock: null,
+      },
     ]);
     expect(screen.getByText('2 in cart')).toBeOnTheScreen();
   });

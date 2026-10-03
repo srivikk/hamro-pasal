@@ -1,90 +1,62 @@
-import { router } from 'expo-router';
-import { ActivityIndicator, SectionList, Text, View } from 'react-native';
+import { MAX_PRODUCT_SEARCH_LENGTH } from '@hamro-pasal/shared-types';
+import { useState } from 'react';
+import { TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { ApiError, CLIENT_ERROR_CODES } from '../../src/api/http';
-import { Button } from '../../src/components/Button';
-import { VendorCard } from '../../src/components/VendorCard';
-import { toFeedSections } from '../../src/features/feed/feed-sections';
+import { CategoryPills } from '../../src/features/discovery/CategoryPills';
+import { rootCategories } from '../../src/features/discovery/discovery-rules';
+import { ProductResults } from '../../src/features/discovery/ProductResults';
+import { useCategoriesQuery } from '../../src/features/discovery/useCategoriesQuery';
+import { useProductSearch } from '../../src/features/discovery/useProductSearch';
+import { ShopsFeed } from '../../src/features/feed/ShopsFeed';
 import { useFeedQuery } from '../../src/features/feed/useFeedQuery';
 import { useCustomerLocation } from '../../src/features/location/customer-location';
 
+/**
+ * Home: the vendor feed, plus product discovery (Phase 18). Typing in the search field or choosing
+ * a category pill swaps the feed for the public product list; clearing both brings the shops back.
+ */
 export default function FeedScreen() {
   const { t } = useTranslation();
   // The saved delivery address's pin (Thamel until one is saved); live GPS comes in a later phase.
   const feed = useFeedQuery(useCustomerLocation());
+  const categories = useCategoriesQuery();
+  const [searchInput, setSearchInput] = useState('');
+  const [chosenCategoryId, setChosenCategoryId] = useState<string | null>(null);
 
-  if (feed.isPending) {
-    return (
-      <View className="flex-1 items-center justify-center bg-neutral-50">
-        <ActivityIndicator testID="feed-loading" />
-      </View>
-    );
-  }
-
-  if (feed.isError) {
-    // No session (never signed in, or the 15-min access token has lapsed): offer sign-in, which
-    // returns here afterwards.
-    const needsSignIn =
-      feed.error instanceof ApiError &&
-      (feed.error.code === CLIENT_ERROR_CODES.notSignedIn || feed.error.status === 401);
-    if (needsSignIn) {
-      return (
-        <View className="flex-1 items-center justify-center gap-4 bg-neutral-50 px-6">
-          <Text className="text-center text-base text-neutral-700">{t('feed.signInPrompt')}</Text>
-          <Button
-            label={t('auth.title')}
-            onPress={() => {
-              router.push('/login');
-            }}
-          />
-        </View>
-      );
-    }
-    return (
-      <View className="flex-1 items-center justify-center gap-4 bg-neutral-50 px-6">
-        <Text className="text-center text-base text-neutral-700">{t('feed.loadError')}</Text>
-        <Button label={t('common.retry')} onPress={() => void feed.refetch()} />
-      </View>
-    );
-  }
+  const roots = rootCategories(categories.data?.categories ?? []);
+  // A category that left the taxonomy (hidden by an admin) stops filtering as soon as it is gone.
+  const categoryId = roots.some((category) => category.id === chosenCategoryId)
+    ? chosenCategoryId
+    : null;
+  const search = useProductSearch(searchInput, categoryId);
 
   return (
-    <SectionList
-      className="flex-1 bg-neutral-50"
-      contentContainerClassName="pb-6"
-      sections={toFeedSections(feed.data)}
-      keyExtractor={(entry) => entry.vendor.id}
-      stickySectionHeadersEnabled={false}
-      refreshing={feed.isRefetching}
-      onRefresh={() => void feed.refetch()}
-      renderSectionHeader={({ section }) =>
-        section.key === 'serviceable' ? (
-          <View className="px-4 pb-2 pt-4">
-            <Text className="text-lg font-bold text-neutral-900">
-              {t('feed.serviceableHeading')}
-            </Text>
-            {section.data.length === 0 ? (
-              <Text className="mt-1 text-sm text-neutral-600">{t('feed.empty')}</Text>
-            ) : null}
-          </View>
-        ) : (
-          <View className="px-4 pb-2 pt-6" testID="explore-further-header">
-            <Text className="text-lg font-bold text-neutral-500">
-              {t('feed.exploreFurtherHeading')}
-            </Text>
-            <Text className="mt-1 text-sm text-neutral-500">{t('feed.exploreFurtherHint')}</Text>
-          </View>
-        )
-      }
-      renderItem={({ item }) => (
-        <VendorCard
-          entry={item}
-          onPress={(vendorId) => {
-            router.push({ pathname: '/vendor/[id]', params: { id: vendorId } });
-          }}
+    <View className="flex-1 bg-neutral-50">
+      <View className="px-4 pb-3 pt-3">
+        <TextInput
+          testID="product-search"
+          value={searchInput}
+          onChangeText={setSearchInput}
+          placeholder={t('discovery.searchPlaceholder')}
+          accessibilityLabel={t('discovery.searchPlaceholder')}
+          maxLength={MAX_PRODUCT_SEARCH_LENGTH}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
+          className="rounded-xl border border-neutral-300 bg-white px-3 py-3 text-base text-neutral-900"
         />
+      </View>
+      {/* Without the taxonomy (still loading, or the request failed) search alone still works. */}
+      {roots.length === 0 ? null : (
+        <CategoryPills categories={roots} selectedId={categoryId} onSelect={setChosenCategoryId} />
       )}
-    />
+      {search.active ? (
+        <ProductResults search={search} feed={feed.data} />
+      ) : (
+        <ShopsFeed feed={feed} />
+      )}
+    </View>
   );
 }

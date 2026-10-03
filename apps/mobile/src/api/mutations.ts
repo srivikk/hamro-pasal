@@ -5,8 +5,10 @@ import {
   type CheckoutResponseBody,
   type PaymentMethod,
 } from '@hamro-pasal/shared-types';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
+import { stockLevelsFromDetails } from '../features/cart/stock-shortfalls';
+import { PRODUCTS_QUERY_KEY } from '../features/discovery/useProductSearch';
 import { useAddressStore } from '../store/useAddressStore';
 import { useCartStore } from '../store/useCartStore';
 import { useDeliveryOtpStore } from '../store/useDeliveryOtpStore';
@@ -66,9 +68,17 @@ export function submitCheckout(paymentMethod: PaymentMethod): Promise<CheckoutRe
   });
 }
 
-function onCheckoutError(error: ApiError): void {
+function onCheckoutError(error: ApiError, queryClient: QueryClient): void {
   const checkout = useCheckoutStore.getState();
   switch (error.code) {
+    case 'INSUFFICIENT_STOCK':
+      // The server names every short line and what is left of it: record that on the cart lines
+      // (the cart screen highlights them and asks for a lower quantity) and drop the product
+      // lists, whose stock counts are now known to be stale. The key is kept: lowering a quantity
+      // changes the fingerprint, so the corrected cart gets a new one.
+      useCartStore.getState().syncStock(stockLevelsFromDetails(error.details));
+      void queryClient.invalidateQueries({ queryKey: PRODUCTS_QUERY_KEY });
+      break;
     case 'RESERVATION_EXPIRED':
       // SPEC §3: the lock lapsed; purge the cart and show "Session Expired".
       checkout.expireSession();
@@ -78,13 +88,14 @@ function onCheckoutError(error: ApiError): void {
       checkout.discardAttempt();
       break;
     default:
-      // Anything else (network, 5xx, CHECKOUT_IN_PROGRESS, stock, MOV...) keeps the key, so a
+      // Anything else (network, 5xx, CHECKOUT_IN_PROGRESS, MOV...) keeps the key, so a
       // retry of the same cart replays the same attempt instead of creating a second order.
       break;
   }
 }
 
 export function useCheckout() {
+  const queryClient = useQueryClient();
   return useMutation<CheckoutResponseBody, ApiError, PaymentMethod>({
     mutationKey: ['checkout'],
     mutationFn: submitCheckout,
@@ -95,7 +106,11 @@ export function useCheckout() {
         useDeliveryOtpStore.getState().setOtp(response.order.id, response.delivery_otp);
       }
       useCheckoutStore.getState().startSession(response);
+      // The order holds (or has taken) stock: product lists show the old counts until refetched.
+      void queryClient.invalidateQueries({ queryKey: PRODUCTS_QUERY_KEY });
     },
-    onError: onCheckoutError,
+    onError: (error) => {
+      onCheckoutError(error, queryClient);
+    },
   });
 }

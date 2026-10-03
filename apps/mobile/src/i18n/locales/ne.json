@@ -54,7 +54,32 @@
     "addAddress": "डेलिभरी ठेगाना थप्नुहोस्",
     "changeAddress": "परिवर्तन गर्नुहोस्",
     "addressRequired": "अगाडि बढ्न डेलिभरी ठेगाना थप्नुहोस्।",
-    "signInToCheckout": "चेकआउट गर्न साइन इन गर्नुहोस्"
+    "signInToCheckout": "चेकआउट गर्न साइन इन गर्नुहोस्",
+    "stockLeft_one": "स्टकमा {{count, localizedNumber}} वटा मात्र बाँकी छ। परिमाण घटाउनुहोस्।",
+    "stockLeft_other": "स्टकमा {{count, localizedNumber}} वटा मात्र बाँकी छन्। परिमाण घटाउनुहोस्।",
+    "soldOut": "स्टकमा छैन। अगाडि बढ्न यो सामान हटाउनुहोस्।",
+    "setTo": "{{count, localizedNumber}} वटा राख्नुहोस्",
+    "setToNamed": "{{name}} {{count, localizedNumber}} वटा राख्नुहोस्",
+    "removeItem": "हटाउनुहोस्",
+    "removeItemNamed": "{{name}} हटाउनुहोस्",
+    "fixStock": "अगाडि बढ्न रातो चिन्ह लागेका सामानको परिमाण घटाउनुहोस्।"
+  },
+  "discovery": {
+    "searchPlaceholder": "सामान खोज्नुहोस्",
+    "shops": "पसलहरू",
+    "loadError": "सामानहरू लोड गर्न सकिएन। इन्टरनेट जडान जाँच गर्नुहोस्।",
+    "loadMoreError": "थप सामान लोड गर्न सकिएन।",
+    "empty": "कुनै सामान भेटिएन।",
+    "priceUnit": "रु. {{amount, localizedNumber}} / {{unit}}",
+    "inStock_one": "स्टकमा {{count, localizedNumber}} वटा",
+    "inStock_other": "स्टकमा {{count, localizedNumber}} वटा",
+    "outOfStock": "स्टकमा छैन",
+    "increase": "{{name}} को परिमाण बढाउनुहोस्",
+    "decrease": "{{name}} को परिमाण घटाउनुहोस्",
+    "stockLimit_one": "स्टकमा {{count, localizedNumber}} वटा मात्र छ।",
+    "stockLimit_other": "स्टकमा {{count, localizedNumber}} वटा मात्र छन्।",
+    "maxInCart": "उपलब्ध सबै स्टक तपाईंको कार्टमा छ।",
+    "signInToOrder": "अर्डर गर्न साइन इन गर्नुहोस्।"
   },
   "cartConflict": {
     "title": "नयाँ कार्ट सुरु गर्ने?",
@@ -77,6 +102,7 @@
     "empty": "यो पसलमा अहिलेसम्म कुनै सामान छैन।",
     "quantityLimit": "एउटै सामान बढीमा {{max, localizedNumber}} वटा मात्र थप्न सकिन्छ।",
     "cartFull": "कार्टमा बढीमा {{max, localizedNumber}} प्रकारका सामान मात्र राख्न सकिन्छ।",
+    "stockLimit": "यो सामान स्टकमा थप छैन।",
     "checkoutPending": "थप सामान राख्नुअघि हालको चेकआउट पूरा गर्नुहोस्।"
   },
   "checkout": {

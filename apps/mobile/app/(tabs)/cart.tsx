@@ -21,7 +21,12 @@ import { formatLocalizedNumber } from '../../src/i18n/format-number';
 import { toNpr, toPaisa } from '../../src/lib/money';
 import { useAddressStore } from '../../src/store/useAddressStore';
 import { selectHasSession, useAuthStore } from '../../src/store/useAuthStore';
-import { MAX_LINE_QUANTITY, useCartStore, useItemCount } from '../../src/store/useCartStore';
+import {
+  isOverStock,
+  maxLineQuantity,
+  useCartStore,
+  useItemCount,
+} from '../../src/store/useCartStore';
 import { selectIsCheckoutPending, useCheckoutStore } from '../../src/store/useCheckoutStore';
 
 const KNOWN_CHECKOUT_ERRORS = [
@@ -114,6 +119,12 @@ export default function CartScreen() {
   // While a reservation waits for payment (or the checkout call is in flight), the cart is frozen.
   const locked = checkoutPending || checkout.isPending;
   const error = errorMessage(checkout.error);
+  const hasOverStock = lines.some(isOverStock);
+  // Editing the cart answers the last refusal (stock, minimum order...): its message goes away.
+  const changeQuantity = (productId: string, quantity: number): void => {
+    setQuantity(productId, quantity);
+    if (checkout.isError) checkout.reset();
+  };
 
   return (
     <View className="flex-1 bg-neutral-50">
@@ -129,47 +140,77 @@ export default function CartScreen() {
             </Text>
           </>
         }
-        renderItem={({ item: line }) => (
-          <View
-            testID={`cart-line-${line.productId}`}
-            className="mx-4 mb-3 flex-row items-center rounded-2xl border border-neutral-200 bg-white p-4"
-          >
-            <View className="flex-1">
-              <Text className="text-base font-semibold text-neutral-900">{line.name}</Text>
-              <Text className="mt-1 text-sm text-neutral-600">
-                {t('common.price', { amount: line.unitPriceNpr })}
-              </Text>
+        renderItem={({ item: line }) => {
+          // The server refused this line (409 INSUFFICIENT_STOCK) and said how many are left.
+          const overStock = isOverStock(line);
+          const left = line.availableStock ?? 0;
+          return (
+            <View
+              testID={`cart-line-${line.productId}`}
+              className={`mx-4 mb-3 rounded-2xl border p-4 ${
+                overStock ? 'border-red-500 bg-red-50' : 'border-neutral-200 bg-white'
+              }`}
+            >
+              <View className="flex-row items-center">
+                <View className="flex-1">
+                  <Text className="text-base font-semibold text-neutral-900">{line.name}</Text>
+                  <Text className="mt-1 text-sm text-neutral-600">
+                    {t('common.price', { amount: line.unitPriceNpr })}
+                  </Text>
+                </View>
+                <View className="flex-row items-center gap-2">
+                  <Button
+                    label="−"
+                    size="sm"
+                    variant="secondary"
+                    disabled={locked}
+                    accessibilityLabel={t('cart.decrease', { name: line.name })}
+                    onPress={() => {
+                      changeQuantity(line.productId, line.quantity - 1);
+                    }}
+                  />
+                  <Text className="min-w-6 text-center text-base font-semibold text-neutral-900">
+                    {formatLocalizedNumber(line.quantity, locale)}
+                  </Text>
+                  <Button
+                    label="+"
+                    size="sm"
+                    variant="secondary"
+                    disabled={locked || line.quantity >= maxLineQuantity(line.availableStock)}
+                    accessibilityLabel={t('cart.increase', { name: line.name })}
+                    onPress={() => {
+                      changeQuantity(line.productId, line.quantity + 1);
+                    }}
+                  />
+                </View>
+                <Text className="ml-3 min-w-20 text-right text-base font-semibold text-neutral-900">
+                  {t('common.price', { amount: toNpr(toPaisa(line.unitPriceNpr) * line.quantity) })}
+                </Text>
+              </View>
+              {overStock ? (
+                <View className="mt-3 gap-2" testID={`cart-line-stock-${line.productId}`}>
+                  <Text className="text-sm font-semibold text-red-700">
+                    {left === 0 ? t('cart.soldOut') : t('cart.stockLeft', { count: left })}
+                  </Text>
+                  <Button
+                    label={left === 0 ? t('cart.removeItem') : t('cart.setTo', { count: left })}
+                    size="sm"
+                    variant="secondary"
+                    disabled={locked}
+                    accessibilityLabel={
+                      left === 0
+                        ? t('cart.removeItemNamed', { name: line.name })
+                        : t('cart.setToNamed', { name: line.name, count: left })
+                    }
+                    onPress={() => {
+                      changeQuantity(line.productId, left);
+                    }}
+                  />
+                </View>
+              ) : null}
             </View>
-            <View className="flex-row items-center gap-2">
-              <Button
-                label="−"
-                size="sm"
-                variant="secondary"
-                disabled={locked}
-                accessibilityLabel={t('cart.decrease', { name: line.name })}
-                onPress={() => {
-                  setQuantity(line.productId, line.quantity - 1);
-                }}
-              />
-              <Text className="min-w-6 text-center text-base font-semibold text-neutral-900">
-                {formatLocalizedNumber(line.quantity, locale)}
-              </Text>
-              <Button
-                label="+"
-                size="sm"
-                variant="secondary"
-                disabled={locked || line.quantity >= MAX_LINE_QUANTITY}
-                accessibilityLabel={t('cart.increase', { name: line.name })}
-                onPress={() => {
-                  setQuantity(line.productId, line.quantity + 1);
-                }}
-              />
-            </View>
-            <Text className="ml-3 min-w-20 text-right text-base font-semibold text-neutral-900">
-              {t('common.price', { amount: toNpr(toPaisa(line.unitPriceNpr) * line.quantity) })}
-            </Text>
-          </View>
-        )}
+          );
+        }}
       />
 
       <View className="gap-3 border-t border-neutral-200 bg-white p-4" testID="cart-summary">
@@ -234,11 +275,19 @@ export default function CartScreen() {
                 {error}
               </Text>
             )}
+            {hasOverStock && error === null ? (
+              <Text className="text-sm text-red-700" testID="stock-required">
+                {t('cart.fixStock')}
+              </Text>
+            ) : null}
             {signedIn ? (
               <Button
                 label={t('cart.proceed')}
                 // SPEC Nepal localizations §3: no checkout without a valid delivery address.
-                disabled={checkout.isPending || summary.shortOfMinimumNpr > 0 || !hasAddress}
+                // A line above the stock the server reported would only be refused again.
+                disabled={
+                  checkout.isPending || summary.shortOfMinimumNpr > 0 || !hasAddress || hasOverStock
+                }
                 onPress={() => {
                   checkout.mutate(paymentMethod, {
                     // Prepaid orders wait in PENDING_PAYMENT: open the gateway straight away.

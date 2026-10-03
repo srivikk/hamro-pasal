@@ -272,7 +272,11 @@ export const productListQuerySchema = z.strictObject({
 });
 export type ProductListQuery = z.output<typeof productListQuerySchema>;
 
-/** A product as a customer sees it: no exact stock, only whether any is on hand. */
+/**
+ * A product as a customer sees it. `stock_quantity` (Phase 18) is the vendor's on-hand count, so
+ * the app can cap the quantity picker; units held by other customers' 600 s checkout locks are
+ * not subtracted, and checkout stays the authority (409 INSUFFICIENT_STOCK).
+ */
 export const publicProductSchema = z.strictObject({
   /** The products.id to send as `product_id` at checkout. */
   id: z.uuid(),
@@ -283,6 +287,7 @@ export const publicProductSchema = z.strictObject({
   price_npr: z.number().positive(),
   unit: z.string().min(1),
   in_stock: z.boolean(),
+  stock_quantity: z.number().int().nonnegative(),
   image_urls: z.array(z.string().min(1)),
   metadata: z.record(z.string(), jsonValueSchema),
 });

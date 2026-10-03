@@ -31,6 +31,15 @@ jest.mock('react-native-webview', () =>
 // (src/test/fake-audio.ts), so the vendor alarm tests can assert play / pause / seekTo.
 jest.mock('expo-audio', () => jest.requireActual<Record<string, unknown>>('./src/test/fake-audio'));
 
+// expo-notifications and expo-task-manager are native. One stand-in (src/test/fake-notifications.ts)
+// answers permission, token, channel, handler and task calls and records them.
+jest.mock('expo-notifications', () =>
+  jest.requireActual<Record<string, unknown>>('./src/test/fake-notifications'),
+);
+jest.mock('expo-task-manager', () =>
+  jest.requireActual<Record<string, unknown>>('./src/test/fake-notifications'),
+);
+
 // Icon fonts load asynchronously and re-render the icon when ready, outside any test's act().
 // A plain view keeps renders deterministic; no test depends on the glyph.
 jest.mock('@expo/vector-icons/Ionicons', () => {

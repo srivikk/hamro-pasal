@@ -8,12 +8,15 @@ import { Redis } from 'ioredis';
 import { loadEnv } from './config/env';
 import { buildConsumers, routeByTopic } from './consumers';
 import { KafkaDeadLetterPublisher } from './consumers/dead-letter';
+import { smsFallbackLogFromEnv } from './consumers/order-push-notifications';
 import { DeadLetterReplayer } from './dead-letters/dead-letter-replayer';
 import { DatabaseDeadLetterStore } from './dead-letters/dead-letter-store';
 import { BullVendorAcceptanceTimers } from './consumers/vendor-sla-scheduler';
 import { buildBullConnection } from './infra/redis';
 import { Lifecycle } from './lifecycle';
 import { DatabaseOrderStateReader } from './notifications/order-state-reader';
+import { DatabasePushRecipients } from './notifications/push-recipients';
+import { ExpoPushGateway } from './push/expo-push';
 import { OutboxRelay } from './outbox/outbox-relay';
 import { allTimerQueues, createTimerQueues, registerMidnightJobs } from './queues/definitions';
 import { createProcessors, createTimerHandlers } from './queues/processors';
@@ -67,7 +70,8 @@ async function main(): Promise<void> {
   }
 
   // Kafka consumers: order state fan-out to the API's Socket.io rooms through Redis, the 90 s
-  // vendor acceptance timer for every order that becomes PLACED, and vendor SMS for
+  // vendor acceptance timer for every order that becomes PLACED, Expo pushes for order state
+  // changes (best effort), and vendor SMS for
   // notifications.broadcast (suspension, restore, SLA escalation + IVR call; failures go to
   // notifications.dlq after 3 retries).
   const redis = new Redis(env.REDIS_URL);
@@ -84,6 +88,13 @@ async function main(): Promise<void> {
     orders: new DatabaseOrderStateReader(db),
     deadLetters: deadLetterPublisher,
     deadLetterStore: new DatabaseDeadLetterStore(db),
+    // Order pushes go to https://exp.host/--/api/v2/push/send for every registered device.
+    push: new ExpoPushGateway(
+      env.EXPO_ACCESS_TOKEN === undefined ? {} : { accessToken: env.EXPO_ACCESS_TOKEN },
+    ),
+    pushRecipients: new DatabasePushRecipients(db),
+    // SMS_PROVIDER=MOCK also logs "[sms:mock] to +977…: <text>" beside each push attempt.
+    pushSmsFallbackLog: smsFallbackLogFromEnv(env),
   });
   if (consumers.length > 0) {
     const handlers = routeByTopic(consumers);

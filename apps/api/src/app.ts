@@ -10,6 +10,7 @@ import type { CheckoutService } from './checkout/checkout-service';
 import type { DisputeService } from './disputes/dispute-service';
 import { requireAuth } from './http/auth';
 import { errorHandler, HttpError } from './http/errors';
+import type { DeviceTokenService } from './notifications/device-token-service';
 import type { DriverOrderService } from './orders/driver-order-service';
 import type { OrderService } from './orders/order-service';
 import type { VendorOrderService } from './orders/vendor-order-service';
@@ -24,6 +25,7 @@ import { cartRouter } from './routes/cart';
 import { categoriesRouter, productsRouter, vendorProductsRouter } from './routes/catalog';
 import { driverOrdersRouter } from './routes/driver-orders';
 import { orderChatRouter } from './routes/order-chat';
+import { notificationsRouter } from './routes/notifications';
 import { ordersRouter } from './routes/orders';
 import { paymentsRouter } from './routes/payments';
 import { reviewsRouter } from './routes/reviews';
@@ -60,6 +62,8 @@ export interface ApiServices {
   readonly products: ProductService;
   /** Phase 19: where product photos are stored (served statically when it is the local disk). */
   readonly productImages: ProductImageStorage;
+  /** Phase 20: Expo push tokens of signed-in devices. */
+  readonly deviceTokens: DeviceTokenService;
 }
 
 /** Builds the HTTP app. Without services only /health is served (used by liveness checks/tests). */
@@ -124,6 +128,12 @@ export function createApp(services?: ApiServices): Express {
       paymentsRouter({ esewa: services.esewa, khalti: services.khalti, customerAuth }),
     );
     app.use('/api/reviews', customerAuth, reviewsRouter(services.reviews));
+    // Phase 20. Every role registers its device: customers, vendors and riders all get pushes.
+    app.use(
+      '/api/notifications',
+      requireAuth(services.accessTokenSecret),
+      notificationsRouter(services.deviceTokens),
+    );
     app.use('/api/uploads', customerAuth, uploadsRouter(services.disputes, services.evidence));
     // Development stand-in for the R2/CDN origin: dispute evidence and product photos are served
     // as static files. Both storages normally share one directory and path, mounted once.

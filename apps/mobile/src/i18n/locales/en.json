@@ -404,5 +404,8 @@
     "paidPartly": "Payment received. Your shop stays offline until the balance is cleared.",
     "payUnavailable": "Paying dues in the app isn't available yet.",
     "payFailed": "Couldn't complete the payment. Please try again."
+  },
+  "notifications": {
+    "orderChannel": "Order updates"
   }
 }

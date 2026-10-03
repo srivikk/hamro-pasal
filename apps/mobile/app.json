@@ -10,6 +10,13 @@
       "expo-router",
       "expo-secure-store",
       [
+        "expo-notifications",
+        {
+          "defaultChannel": "orders",
+          "enableBackgroundRemoteNotifications": true
+        }
+      ],
+      [
         "expo-location",
         {
           "locationWhenInUsePermission": "Hamro Pasal uses your location to confirm that service is available in Nepal and to pin your delivery address."

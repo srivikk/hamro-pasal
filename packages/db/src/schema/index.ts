@@ -1,5 +1,6 @@
 export * from './categories';
 export * from './dead-letters';
+export * from './device-tokens';
 export * from './disputes';
 export * from './enums';
 export * from './ledger';

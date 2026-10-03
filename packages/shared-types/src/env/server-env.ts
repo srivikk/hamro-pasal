@@ -114,6 +114,10 @@ export const serverEnvSchema = z
     // IVR voice calls for the vendor escalation (Phase 14, read by the worker)
     IVR_PROVIDER: z.enum(ivrProviders).default('DISABLED'),
 
+    // Expo push notifications (Phase 20, read by the worker). Only needed when the Expo project
+    // has "enhanced push security" on; without it the push API takes unauthenticated requests.
+    EXPO_ACCESS_TOKEN: optionalNonEmpty,
+
     // Uploads (dispute evidence, product photos). Cloudflare R2 is not wired yet: the API stores
     // files on local disk (default: uploads/ at the API root, apps/api/uploads) and serves them under
     // /uploads. The public base URL defaults to http://localhost:<API_PORT>/uploads; set it to the

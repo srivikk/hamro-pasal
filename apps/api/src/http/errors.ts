@@ -46,6 +46,7 @@ import {
 } from '../inventory/errors';
 import { MutexTimeoutError } from '../infra/redis-mutex';
 import { toNpr } from '../ledger/money';
+import { DeviceTokenOwnerNotFoundError } from '../notifications/device-token-service';
 import { SettlementNotAllowedError } from '../ledger/settlement-service';
 import { CancellationWindowExpiredError, OrderNotCancelableError } from '../orders/order-service';
 import {
@@ -126,6 +127,10 @@ export function toHttpError(error: unknown): HttpError {
   if (error instanceof InvalidRefreshTokenError) {
     // Deliberately vague: forged, expired, wrong audience and deleted account all look the same.
     return new HttpError(401, 'REFRESH_TOKEN_INVALID', 'Refresh token is invalid or expired');
+  }
+  if (error instanceof DeviceTokenOwnerNotFoundError) {
+    // The same answer as a dead access token: the app's refresh then ends the session.
+    return new HttpError(401, 'UNAUTHENTICATED', 'Invalid or expired token');
   }
   if (error instanceof SmsDeliveryError) {
     return new HttpError(502, 'SMS_DELIVERY_FAILED', 'The code could not be sent; try again');

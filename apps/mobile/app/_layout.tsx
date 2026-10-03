@@ -13,6 +13,8 @@ import { ReplaceCartModal } from '../src/components/ReplaceCartModal';
 import { ToastHost } from '../src/components/Toast';
 import { useSessionExpiryHandler } from '../src/features/auth/useSessionExpiryHandler';
 import { CheckoutSessionWatcher } from '../src/features/checkout/CheckoutSessionWatcher';
+import { configureForegroundNotifications } from '../src/features/notifications/notification-handler';
+import { PushNotifications } from '../src/features/notifications/PushNotifications';
 import { ReviewPrompt } from '../src/features/review/ReviewPrompt';
 import { TerritoryGate } from '../src/features/territory/TerritoryGate';
 import { bindLocale, createI18n } from '../src/i18n/i18n';
@@ -21,6 +23,9 @@ import { useAuthStore } from '../src/store/useAuthStore';
 // The auth store hydrates synchronously from MMKV, so the persisted locale is known here.
 const i18n = createI18n(useAuthStore.getState().locale);
 bindLocale(i18n, useAuthStore);
+
+// Phase 20: without a handler, a push that arrives while the app is open shows nothing.
+configureForegroundNotifications();
 
 /** Hooks that need the i18n provider live below it. */
 function SessionExpiryHandler({ queryClient }: { queryClient: QueryClient }) {
@@ -35,6 +40,8 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <I18nextProvider i18n={i18n}>
         <SessionExpiryHandler queryClient={queryClient} />
+        {/* Asks for the notification permission and registers the push token once signed in. */}
+        <PushNotifications />
         <Stack screenOptions={{ headerShown: false }} />
         {/* Mounted above every route: tabs and the vendor menu both add to the cart. */}
         <ReplaceCartModal />

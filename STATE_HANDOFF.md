@@ -1,9 +1,9 @@
-# Hamro Pasal: State Handoff (Phases 0–19 complete)
+# Hamro Pasal: State Handoff (Phases 0–20 complete)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 19 (Vendor Catalog
-Management & Asset Uploads)**, on top of Phase 18 (Mobile Customer Discovery & Live Inventory
-Integration), 17 (Catalog, Taxonomy & Inventory Management), 16 (Authentication Hardening & HTTP-Only Cookies), 15 (Super Admin Web Dashboard & DLQ Monitoring), 14 (Worker Resiliency & IVR Escalation), 13 (Notification Worker & SMS Dispatch), 12.5 (Application-Layer Suspension & Top-Ups), 12 (Vendor Wallet &
+work without re-deriving it. It describes the tree at the end of **Phase 20 (Push Notifications &
+Event Alerting)**, on top of Phase 19 (Vendor Catalog Management & Asset Uploads), 18 (Mobile
+Customer Discovery & Live Inventory Integration), 17 (Catalog, Taxonomy & Inventory Management), 16 (Authentication Hardening & HTTP-Only Cookies), 15 (Super Admin Web Dashboard & DLQ Monitoring), 14 (Worker Resiliency & IVR Escalation), 13 (Notification Worker & SMS Dispatch), 12.5 (Application-Layer Suspension & Top-Ups), 12 (Vendor Wallet &
 Debt Reconciliation), 11.5 (Vendor Dispatch UI & Self-Delivery Handoff), 11 (Driver Handoff & OTP Verification), 10 (Vendor Order Management & Audio Alarms), 9.6 (Chat Transcript Read-Back), 9.5 (Chat Persistence & Vendor Review Linkage), 9 (Double-Blind Reviews & Dispute Chat), 8 (Real-Time Order Tracking, Socket.io `/orders`), 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
 Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this file and the code disagree, **the code wins**. When anything disagrees with
 `SPEC.md`, **SPEC.md wins** (see `CLAUDE.md`).
@@ -143,8 +143,23 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 > ceiling). The web app (`apps/admin`) now also admits **vendors**: they land on a **Vendor Portal**
 > ("My products": stock per row, Hide / Show, an Edit modal with details, category and photo upload).
 > No cloud storage was added (user decision: local infrastructure only) (§8L).
+> **Phase 20:** order updates reach phones as **Expo push notifications**. New table
+> **`device_tokens`** (migration 0017: one row per app installation, unique Expo push token → user)
+> and **`POST /api/notifications/device-token`** (any signed-in role; upsert, a phone follows the
+> account that signed in on it last). The app asks for the notification permission once a session
+> exists (launch or right after sign-in), fetches its token with `expo-notifications` and registers
+> it; a foreground handler shows banners while the app is open. The worker has a third consumer
+> on `order.lifecycle`, **`order-push-notifications`**: for every `order.state_changed` it reads
+> the customer's / vendor's tokens from Postgres and POSTs to
+> `https://exp.host/--/api/v2/push/send` with plain `fetch` (new order → vendor; accepted,
+> dispatched, delivered, failed → customer; cancelled → both). **New orders and dispatches are
+> data-only pushes** (SPEC implicit requirement 1); the app's background task posts their visible
+> notification. Push is **best effort** (claimed once per event, a failure is logged and never
+> blocks the partition); a token Expo reports `DeviceNotRegistered` is deleted. With
+> `SMS_PROVIDER=MOCK` the worker also logs `[sms:mock] to +977…: Hamro Pasal: New order. …` beside
+> each push attempt (no SMS is ever sent for an order push) (§8M, §9.17).
 > **No live device run has happened yet** (§13); the admin app and the DLQ retry loop were run live
-> against local infrastructure (§8I), as were the cookie session (§8J), the catalog screens (§8K) and the Vendor Portal with a real upload (§8L) in headless Edge. Still not built: a real IVR provider (Twilio Voice
+> against local infrastructure (§8I), as were the cookie session (§8J), the catalog screens (§8K) and the Vendor Portal with a real upload (§8L) in headless Edge. **No push has been delivered to a real device** (the Expo API is mocked in every test; FCM / APNs credentials are not set up). Still not built: a real IVR provider (Twilio Voice
 > or a Nepal SIP trunk; only the mock exists), gig assignment / "Picked Up" / "Reached Location", the ghost-customer timer,
 > dispute resolution (no admin screen for it yet), KYC verification, R2, refund payouts,
 > and refresh-token rotation/revocation.
@@ -180,18 +195,18 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · `2ae9633` P10 · `e2cb61d` P11 · `5f3fc9a` P11.5 · `81d45ba` P12 · `76b1d7f` P12.5 · `6aa0f73` P13 · `aa13ee6` P14 · `95b0272` P15 · `c937775` P16 · `5253be9` P17 · `b8e2edd` P18 · Phase 19 (uncommitted) |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Unit tests      | **1279 passing** (`pnpm test`): shared-types 182, api 103, worker 87, sms 21, ivr 7, kafka 7, db 7, admin 93, mobile 772 (end of Phase 19; every suite rerun)                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Integ. tests    | **529 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 61, api 421, worker 46, kafka 1 (end of Phase 19; every suite rerun, no failure). One unexplained `driver-orders-api` failure in the first full Phase 12.5 run; not reproduced in 4 later full runs and 6 runs of the delivery files (the error was not captured). Earlier flakes: once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**: its other-Palika vendor now has its own location.                                                                |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 9                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Dev database    | Migrations 0000–0016 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · `2ae9633` P10 · `e2cb61d` P11 · `5f3fc9a` P11.5 · `81d45ba` P12 · `76b1d7f` P12.5 · `6aa0f73` P13 · `aa13ee6` P14 · `95b0272` P15 · `c937775` P16 · `5253be9` P17 · `b8e2edd` P18 · Phases 19 and 20 (uncommitted) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Unit tests      | **1376 passing** (`pnpm test`): shared-types 196, api 103, worker 131, sms 21, ivr 7, kafka 7, db 7, admin 93, mobile 811 (end of Phase 20; every suite rerun)                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Integ. tests    | **553 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 61, api 438, worker 53, kafka 1 (end of Phase 20; every suite rerun, no failure). One unexplained `driver-orders-api` failure in the first full Phase 12.5 run; not reproduced in 4 later full runs and 6 runs of the delivery files (the error was not captured). Earlier flakes: once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**: its other-Palika vendor now has its own location.                                                                        |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 20                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Dev database    | Migrations 0000–0017 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ### Root commands (`package.json`)
 
@@ -237,6 +252,9 @@ packages/shared-types/src          @hamro-pasal/shared-types (zod only, safe for
   api/admin.ts                     Phase 15: adminDeadLetterListQuerySchema, deadLetterViewSchema, adminDeadLetterList/Retry
                                    response schemas, adminVendorViewSchema (suspension NONE|DEBT|ADMIN|UNSPECIFIED),
                                    adminVendorList/Override response schemas, ADMIN_VENDOR_LIST_LIMIT=500
+  api/notifications.ts             Phase 20: expoPushTokenSchema (EXPO_PUSH_TOKEN_PATTERN), devicePlatformSchema
+                                   (ANDROID | IOS), deviceTokenRegisterRequest / Response schemas,
+                                   orderPushDataSchema (the `data` of every order push), ORDER_PUSH_CHANNEL_ID='orders'
   api/catalog.ts                   (publicProductSchema carries stock_quantity since Phase 18)
                                    Phase 17: adminCategoryWriteRequestSchema, category / adminCategory view + list schemas,
                                    buildCategoryTree, flattenCategoryTree, slugifyCategoryName, vendorProductCreate / Stock /
@@ -256,9 +274,10 @@ packages/shared-types/src          @hamro-pasal/shared-types (zod only, safe for
                                    SOCKET_IO_REDIS_KEY, SOCKET_UNAUTHENTICATED, orderSubscribeRequest/Ack schemas,
                                    orderStateUpdateSchema, orderStateUpdateFromEvent (Phase 8)
 packages/db/src                    @hamro-pasal/db: Drizzle schema, client, migrator, outbox writer
-  schema/{columns,enums,categories,users,vendors,orders,ledger,outbox,wallet,disputes,dead-letters,contract}.ts
+  schema/{columns,enums,categories,users,vendors,orders,ledger,outbox,wallet,disputes,dead-letters,
+          device-tokens,contract}.ts
   geo/ewkb.ts · outbox.ts · testing.ts (@hamro-pasal/db/testing) · scripts/{migrate,seed,database-url}.ts
-packages/db/drizzle/               0000–0016 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
+packages/db/drizzle/               0000–0017 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
 packages/kafka/src                 config.ts, producer.ts (DomainEventPublisher), index.ts
 packages/sms/src                   @hamro-pasal/sms (Phase 13, server-only; moved from apps/api/src/sms):
   sms-gateway.ts                   Sparrow / Aakash / Mock adapters (strict +977 via prepareOutboundSms), SmsDeliveryError
@@ -304,6 +323,10 @@ apps/api/src                       Express 5 API
                                    (<UPLOADS_DIR>/product-images/<product>/<uuid>.<ext>)
   container.ts                     Phase 19: DEFAULT_UPLOADS_DIR = <api root>/uploads; one directory and base URL
                                    for both local storages
+  notifications/device-token-service.ts  Phase 20: DeviceTokenService.register (upsert on the token),
+                                   DeviceTokenOwnerNotFoundError (→ 401)
+  routes/notifications.ts          Phase 20: notificationsRouter (POST /device-token), mounted at /api/notifications
+                                   behind requireAuth with no role filter
 apps/api/scripts/mint-dev-token.ts
 apps/api/test/                     *.int.test.ts (auth-api, auth-cookie-api, cart-api, checkout-claim, inventory-concurrency, ledger-settlement,
                                    mint-dev-token, orders-api, orders-realtime, payments-api, vendors-api) + global-setup.ts + support/
@@ -317,9 +340,14 @@ apps/worker/src                    main.ts, lifecycle.ts, outbox/ (OutboxRelay),
                                    dead-letter-replayer.ts DeadLetterReplayer + replayRecord),
                                    notifications/vendor-sms.ts (SMS templates, Phase 13), vendor-ivr.ts (IVR script,
                                    Phase 14), order-state-reader.ts (stale-order guard's DB read, Phase 14),
-                                   sla/vendor-escalation.ts (VendorEscalationService, Phase 10)
+                                   sla/vendor-escalation.ts (VendorEscalationService, Phase 10),
+                                   Phase 20: consumers/order-push-notifications.ts (Kafka order.lifecycle → Expo push,
+                                   smsFallbackLogFromEnv), push/expo-push.ts (ExpoPushGateway: fetch to exp.host,
+                                   batches of 100, tickets), notifications/order-push.ts (orderPushes: who is told
+                                   what, expoMessages: data-only vs visible), notifications/push-recipients.ts
+                                   (DatabasePushRecipients: tokens + phone of a customer / vendor, remove)
 apps/worker/test/                  outbox-relay, queues, order-state-fanout, vendor-sla, vendor-debt-reconciliation,
-                                   vendor-notifications, dead-letter-replayer (*.int.test.ts)
+                                   vendor-notifications, dead-letter-replayer, order-push (*.int.test.ts)
 ```
 
 ### Admin web workspace (`apps/admin`, `@hamro-pasal/admin`, Phase 15)
@@ -402,7 +430,15 @@ Phase 18:       src/api/catalog.ts (+ fetchCategories, fetchProducts, CATEGORY_N
                 src/features/feed/ShopsFeed.tsx (the vendor feed, moved out of app/(tabs)/index.tsx)
                 src/features/cart/stock-shortfalls.ts (stockLevelsFromDetails)
 Phase 19:       app/vendor/[id].tsx passes the menu's stock_quantity to the cart (availableStock)
+Phase 20:       index.ts (the app entry, package.json "main": registers the push task, then loads expo-router/entry)
+                src/api/notifications.ts (registerDeviceToken)
+                src/features/notifications/ (push-registration.ts: permission → token → API;
+                usePushRegistration.ts; notification-handler.ts: foreground banners + Android channel;
+                order-push-task.ts + register-order-push-task.ts: data-only pushes → local notification;
+                PushNotifications.tsx, mounted in app/_layout.tsx)
+                app.json plugin expo-notifications (defaultChannel orders, enableBackgroundRemoteNotifications)
 src/test/       msw.ts · api-fixtures.ts (+ menuProduct) · render.tsx · in-memory-mmkv.ts · mock-webview.tsx · fake-socket.ts
+                · fake-notifications.ts (Phase 20: expo-notifications + expo-task-manager stand-in)
 ```
 
 ## 3. Local environment
@@ -442,6 +478,17 @@ kafka-init`) once, or dead-lettering fails and the message is redelivered instea
   `http://localhost:<API_PORT>/uploads`) into the stored URLs: **absolute URLs are saved in
   Postgres**, so set the LAN address before uploading anything a phone must load, and expect URLs
   saved earlier to keep the old host.
+- **Push notifications (Phase 20):** the worker sends through Expo's public push API and needs no
+  key (`EXPO_ACCESS_TOKEN` only if the Expo project enforces "enhanced push security"). Locally,
+  with no device registered, the worker makes **no request to exp.host**; set `SMS_PROVIDER=MOCK`
+  to see, for every order state change, `[sms:mock] to +977…: Hamro Pasal: <title>. <body>` in the
+  worker log (and `{"notification":"push.sent",…}` / `"push.failed"` once a device is
+  registered). **A real push needs a development build on a physical device** (emulators without
+  Play services and iOS simulators get no token), the EAS project in `app.json`
+  (`extra.eas.projectId`), and **FCM V1 credentials (Android) / an APNs key (iOS) uploaded to that
+  EAS project**, plus `google-services.json` for the Android build. None of that is in the
+  repository. `expo-notifications` and `expo-task-manager` are native: rebuild the dev client
+  (`npx expo prebuild` + `expo run:android`) after pulling Phase 20.
 - **Vendor Portal (Phase 19):** the same web app (`pnpm --filter @hamro-pasal/admin dev`,
   http://localhost:5173). Sign in with a **vendor** number, e.g. **9800000011** (Thamel Kirana
   Pasal) and the code from the API log (`SMS_PROVIDER=MOCK`): the app opens "My products" instead
@@ -502,6 +549,8 @@ kafka-init`) once, or dead-lettering fails and the message is redelivered instea
 | `0014_vendor_debt_suspension.sql`            | **Phase 12.5.** `vendors.status_before_debt_suspension` (vendor_status, nullable) + `vendors_debt_suspension_check`: set only while SUSPENDED, never SUSPENDED itself. **The wallet trigger is not dropped**                                                                                                                                                                                                                                           |
 | `0015_dead_letters_and_admin_suspension.sql` | **Phase 15.** `dead_letter_status` enum, `dead_letter_events` table (unique source index, status/retry CHECK, list + replay-queue indexes, FK `retry_requested_by` → users); `vendors.status_before_admin_suspension` + `vendors_admin_suspension_check` (only while SUSPENDED, never with the debt column)                                                                                                                                            |
 | `0016_catalog_taxonomy.sql`                  | **Phase 17.** `categories` table (unique slug, slug / name / order CHECKs, self-parent CHECK, RESTRICT parent FK, `(parent_id, display_order)` index, hand-added `set_updated_at` trigger); `products` + `category_id` (RESTRICT FK), `description`, `unit` (default `piece`), `image_urls text[]`, `metadata jsonb` with CHECKs; `products_vendor_id_idx` replaced by `(vendor_id, is_active)`; `(category_id, is_active)`; GIN `products_search_idx` |
+
+| `0017_device_tokens.sql` | **Phase 20.** `device_tokens` table (FK `user_id` → users CASCADE, unique `token`, `user_id` index, token-format + length CHECK, platform CHECK, hand-added `set_updated_at` trigger) |
 
 **Staging rule:** drizzle-kit prompts interactively on renames, which fails in this non-TTY
 environment. Stage schema edits so a single `generate` only adds or only drops. Hand-write renames
@@ -588,6 +637,13 @@ sender_user_id, client_id)` dedupes retried sends; `chat_messages_not_empty_chec
   makes the worker's insert idempotent; `dead_letter_events_status_check` ties the timestamps to the
   status. Not in the Zod entity contract (like `outbox_events`): the API view is
   `deadLetterViewSchema` (§8I).
+- **`device_tokens`** (Phase 20, migration 0017): `id`, `user_id` → users (**CASCADE**), `token`
+  (**UNIQUE**; CHECK `~ '^Expo(nent)?PushToken\[.+\]$'` and ≤ 255 chars, the shared
+  `EXPO_PUSH_TOKEN_PATTERN`), `platform` (text, CHECK `ANDROID | IOS`), `created_at`, `updated_at`
+  (trigger; also set by every re-registration). Index `(user_id)`. One row per app installation:
+  the token is the key, so a phone has one owner at a time and an account may have many phones.
+  A vendor is reached through `vendors.user_id`. Not in the Zod entity contract (like
+  `outbox_events`); the API contract is `api/notifications.ts`.
 - **`vendors.status_before_admin_suspension`** (Phase 15): the status an admin Restore returns to; set
   only while SUSPENDED by an admin, never together with `status_before_debt_suspension` (CHECK). In the
   Zod entity (`vendorSchema`) and the compile-time contract.
@@ -635,11 +691,12 @@ EWKB (`geo/ewkb.ts`), because Drizzle 0.45's built-in `geometry()` ignores `srid
 - Consumers (`apps/worker/src/consumers/index.ts#buildConsumers`, one handler per topic, group
   `KAFKA_CONSUMER_GROUP_ID`):
 
-  | Consumer                                             | Topic                     | Acts on                                                                      | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-  | ---------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-  | `order-state-fanout.ts#orderStateFanoutConsumer`     | `order.lifecycle`         | `order.state_changed`                                                        | Broadcasts `order:state_update` (`orderStateUpdateFromEvent`) to the rooms of `orderStateUpdateRooms`: `order:{order_id}`, plus `vendor:{vendor_id}` once the order was placed (`placed_at` not null; Phase 10), namespace `/orders`, via `@socket.io/redis-emitter` (key `SOCKET_IO_REDIS_KEY`). Other event types are ignored.                                                                                                                                                                                                                                               |
-  | `vendor-sla-scheduler.ts#vendorSlaSchedulerConsumer` | `order.lifecycle`         | `order.state_changed` to PLACED                                              | **Phase 10.** Schedules the `vendor-acceptance-timeout` job (id = order id, idempotent) with delay `vendorAcceptanceDelayMs(placed_at, now)` = what is left of 90 s from `placed_at` (0 if already past). Throws (redelivery) if Redis refuses.                                                                                                                                                                                                                                                                                                                                |
-  | `vendor-notifications.ts#vendorNotificationConsumer` | `notifications.broadcast` | `vendor.suspended_for_debt`, `vendor.restored`, `vendor.escalation.required` | **Phase 13.** Renders the template (`notifications/vendor-sms.ts`) and sends it to `vendor_phone` through the `SMS_PROVIDER` adapter; an escalation also places an IVR call (`IVR_PROVIDER`) concurrently, after the stale-order guard found the order still PLACED (Phase 14). Dedupe per channel (`notifications:sms:seen:` / `notifications:ivr:seen:{event_id}`); a failure releases that channel's claim and throws. **Wrapped in `withDeadLetter`** (Phase 14): 3 in-process retries, then a `dead_letter_events` row (Phase 15) and `notifications.dlq`. §8G, §8H, §8I. |
+  | Consumer                                                    | Topic                     | Acts on                                                                                   | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+  | ----------------------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+  | `order-state-fanout.ts#orderStateFanoutConsumer`            | `order.lifecycle`         | `order.state_changed`                                                                     | Broadcasts `order:state_update` (`orderStateUpdateFromEvent`) to the rooms of `orderStateUpdateRooms`: `order:{order_id}`, plus `vendor:{vendor_id}` once the order was placed (`placed_at` not null; Phase 10), namespace `/orders`, via `@socket.io/redis-emitter` (key `SOCKET_IO_REDIS_KEY`). Other event types are ignored.                                                                                                                                                                                                                                               |
+  | `vendor-sla-scheduler.ts#vendorSlaSchedulerConsumer`        | `order.lifecycle`         | `order.state_changed` to PLACED                                                           | **Phase 10.** Schedules the `vendor-acceptance-timeout` job (id = order id, idempotent) with delay `vendorAcceptanceDelayMs(placed_at, now)` = what is left of 90 s from `placed_at` (0 if already past). Throws (redelivery) if Redis refuses.                                                                                                                                                                                                                                                                                                                                |
+  | `vendor-notifications.ts#vendorNotificationConsumer`        | `notifications.broadcast` | `vendor.suspended_for_debt`, `vendor.restored`, `vendor.escalation.required`              | **Phase 13.** Renders the template (`notifications/vendor-sms.ts`) and sends it to `vendor_phone` through the `SMS_PROVIDER` adapter; an escalation also places an IVR call (`IVR_PROVIDER`) concurrently, after the stale-order guard found the order still PLACED (Phase 14). Dedupe per channel (`notifications:sms:seen:` / `notifications:ivr:seen:{event_id}`); a failure releases that channel's claim and throws. **Wrapped in `withDeadLetter`** (Phase 14): 3 in-process retries, then a `dead_letter_events` row (Phase 15) and `notifications.dlq`. §8G, §8H, §8I. |
+  | `order-push-notifications.ts#orderPushNotificationConsumer` | `order.lifecycle`         | `order.state_changed` to PLACED, PREPARING, OUT_FOR_DELIVERY, DELIVERED, CANCELED, FAILED | **Phase 20.** Reads the recipient's device tokens (`device_tokens`; a vendor through `vendors.user_id`) and POSTs the pushes to `https://exp.host/--/api/v2/push/send`. Registered **last** on the topic and **never throws**: claimed once per event (`notifications:push:seen:{event_id}`, kept on failure), failures logged as `push.failed`. `DeviceNotRegistered` tokens are deleted. With `SMS_PROVIDER=MOCK` logs the SMS each push stands in for. §8M.                                                                                                                 |
   - **Dedupe:** `SET fanout:orders:seen:{event_id} 1 EX 86400 NX` before broadcasting; a redelivery is
     skipped. If the broadcast fails the claim is deleted and the handler throws, so Kafka redelivers.
   - **Publish errors are not swallowed:** the emitter calls `redis.publish` without awaiting it;
@@ -767,6 +824,7 @@ auth). `Infrastructure` now requires an `sms: SmsGateway` (tests inject `MockSms
 | `DELETE /api/vendor/products/:id` (Phase 19)                       | Bearer VENDOR (own product)                                       | `idParamSchema`                                                                                                                                                                                                                   | **204** (also on repeat)                    | no body; soft delete (`is_active = false`); `404 PRODUCT_NOT_FOUND` (also another shop's)                                                                                                                                                                                                                         | `hideOwnProduct` (Vendor Portal: Hide)                                      |
 | `POST /api/vendor/products/:id/images` (Phase 19)                  | Bearer VENDOR (own product)                                       | `idParamSchema` + multipart/form-data: 1–8 parts named `images` (JPEG / PNG / WebP by magic bytes, ≤ 5 MB each); no other field                                                                                                   | 201 (`no-store`)                            | `vendorProductResponseSchema` (the new URLs appended to `image_urls`); `404 PRODUCT_NOT_FOUND`, `422 PRODUCT_IMAGE_LIMIT` (details.max_images 8, current_images), `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `400 VALIDATION_FAILED` (no file) / `MALFORMED_REQUEST` (another field or part name)        | `uploadOwnProductImages` (Vendor Portal: Upload)                            |
 | `GET /uploads/product-images/:product/:file` (Phase 19)            | none (unguessable uuid names)                                     | –                                                                                                                                                                                                                                 | 200                                         | the stored photo (`express.static`, `nosniff`); same mount as the dispute evidence                                                                                                                                                                                                                                | product thumbnails (Vendor Portal); `image_urls` of the public product list |
+| `POST /api/notifications/device-token` (Phase 20)                  | Bearer, **any role**                                              | `deviceTokenRegisterRequestSchema {token: Expo push token (≤ 255), platform: ANDROID \| IOS}`; a `user_id` in the body → 400                                                                                                      | 200 (`no-store`; new, repeat or taken over) | `deviceTokenRegisterResponseSchema {device_token{token, platform, updated_at}}`; `400 VALIDATION_FAILED`, `401 UNAUTHENTICATED` (also when the token's account was deleted)                                                                                                                                       | `registerDeviceToken` (`usePushRegistration`)                               |
 | `GET /api/admin/categories`                                        | Bearer SUPER_ADMIN                                                | –                                                                                                                                                                                                                                 | 200 (`no-store`)                            | `adminCategoryListResponseSchema {categories[CategoryView + is_active, product_count, created_at, updated_at]}` the whole taxonomy in tree order                                                                                                                                                                  | `listCategories` (admin Categories screen)                                  |
 | `POST /api/admin/categories`                                       | Bearer SUPER_ADMIN                                                | `adminCategoryWriteRequestSchema {name, slug, parent_id? (null), icon_url? (null), display_order? (0), is_active? (true)}`                                                                                                        | 201                                         | `adminCategoryResponseSchema {category}`; `409 CATEGORY_SLUG_TAKEN`, `422 CATEGORY_PARENT_NOT_FOUND`, `422 CATEGORY_TOO_DEEP`                                                                                                                                                                                     | `createCategory`                                                            |
 | `PUT /api/admin/categories/:id`                                    | Bearer SUPER_ADMIN                                                | `idParamSchema` + `adminCategoryWriteRequestSchema` (replaces every field)                                                                                                                                                        | 200                                         | `adminCategoryResponseSchema`; the POST errors plus `409 CATEGORY_CYCLE`, `404 CATEGORY_NOT_FOUND`                                                                                                                                                                                                                | `updateCategory`                                                            |
@@ -876,10 +934,150 @@ No routes for: saved-address CRUD, profile (name) editing, refresh-token revocat
 (gig assignment, "Picked Up", "Reached Location", "Delivery Failed"), "Accept with Modifications",
 reading published reviews, dispute resolution (nothing moves a dispute out of OPEN or the order to `DISPUTED`), refunds, admin
 (beyond the Phase 15 DLQ monitor and vendor overrides and the Phase 17 taxonomy and products overview: KYC approval, logistics toggles, platform settings),
-a driver app, `/metrics`, rate limiting beyond the per-phone OTP cooldown. No push notifications. The
+a driver app, `/metrics`, rate limiting beyond the per-phone OTP cooldown. Push notifications exist
+for order state changes only (Phase 20, §8M; no chat, wallet or rider pushes, no unregister route). The
 escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8M. Push notifications: device tokens and order alerts (Phase 20)
+
+SPEC implicit requirement 1 ("Use Expo Push Notifications. Critical states (Order Arrivals,
+Dispatches) must use `data-only` payloads…") and infrastructure §1 (push fan-out). Code:
+`packages/shared-types/src/api/notifications.ts`, `packages/db/src/schema/device-tokens.ts`
+(migration 0017), `apps/api/src/notifications/device-token-service.ts`,
+`apps/api/src/routes/notifications.ts`, `apps/worker/src/consumers/order-push-notifications.ts`,
+`apps/worker/src/push/expo-push.ts`, `apps/worker/src/notifications/{order-push,push-recipients}.ts`,
+`apps/mobile/src/features/notifications/*` (§9.17).
+
+```
+app (session exists) ─ permission ─ getExpoPushTokenAsync({projectId}) ─▶ "ExponentPushToken[…]"
+   └─ POST /api/notifications/device-token {token, platform} ─▶ INSERT … ON CONFLICT (token) DO UPDATE
+                                                                 device_tokens(user_id, token, platform)
+
+order state change ──(same tx)──▶ outbox order.state_changed ──relay──▶ Kafka order.lifecycle
+  ──worker: 1. order-state-fanout (Socket.io)  2. vendor-sla-scheduler  3. order-push-notifications
+       orderPushes(event) → who is told what           (none → return, nothing claimed)
+       SET notifications:push:seen:{event_id} NX       (redelivery → return)
+       per push: recipient = users / vendors ⋈ device_tokens (phone + tokens)
+                 SMS_PROVIDER=MOCK → log "[sms:mock] to +977…: Hamro Pasal: <title>. <body>"
+       one POST https://exp.host/--/api/v2/push/send  [ {to, …}, … ]   (≤ 100 per request)
+       tickets: DeviceNotRegistered → DELETE FROM device_tokens WHERE token IN (…)
+       any failure → log {"notification":"push.failed",…}; never thrown
+```
+
+**Device tokens (API).** `POST /api/notifications/device-token`, mounted behind `requireAuth`
+**without a role list** (customers, vendors, riders and admins all register).
+
+- The account is the access token's subject; the strict body takes only `token` and `platform`
+  (a `user_id` is `400 VALIDATION_FAILED`). `token` must match `EXPO_PUSH_TOKEN_PATTERN`
+  (`ExponentPushToken[…]` or `ExpoPushToken[…]`, ≤ 255 chars); the same pattern is the table's CHECK.
+- One statement: `INSERT … ON CONFLICT (token) DO UPDATE SET user_id, platform, updated_at = now()`.
+  A repeat keeps the row (tested: 5 simultaneous registrations → one row); **a phone on which
+  another account signs in moves to that account** and the previous one stops getting its pushes.
+  Always 200, `Cache-Control: no-store`.
+- An access token whose account was deleted hits the foreign key → `401 UNAUTHENTICATED` (the
+  app's refresh then ends the session). Rows are deleted with their user (CASCADE).
+- **Nothing unregisters a token on sign-out** (§13): the row stays with the last account until
+  another one registers on that phone or Expo reports the token dead.
+
+**Notification event triggers** (`notifications/order-push.ts#orderPushes`; the prompt's
+`order.created` / `order.status_changed` are the existing `order.state_changed`):
+
+| `to_state`                | Recipient                                 | Kind          | Title / body (`#CODE` = last 6 hex digits of the order id, as both apps show)                                          |
+| ------------------------- | ----------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| PLACED                    | vendor                                    | **data-only** | New order / Order #CODE is waiting. Open the app to accept or reject it.                                               |
+| PREPARING                 | customer                                  | visible       | Order accepted / The shop is preparing order #CODE.                                                                    |
+| OUT_FOR_DELIVERY          | customer                                  | **data-only** | Your order is on its way / Order #CODE has left the shop. Keep your 4-digit delivery code ready.                       |
+| DELIVERED                 | customer                                  | visible       | Order delivered / Order #CODE was delivered. Rate the shop in the app.                                                 |
+| CANCELED                  | customer, and the vendor if it was placed | visible       | Order cancelled / Order #CODE was cancelled. (+ "A refund of your payment has been initiated." when `refund_required`) |
+| FAILED                    | customer                                  | visible       | Order not completed / Order #CODE could not be completed. Open the app for details.                                    |
+| PENDING_PAYMENT, DISPUTED | nobody                                    | –             | –                                                                                                                      |
+
+- **Recipients** (`DatabasePushRecipients`): the customer is `users.id = customer_id` (phone
+  `users.phone`); the vendor is the shop's own user, `vendors.user_id` (phone `vendors.phone`, the
+  number the vendor SMS go to). Every device of the account gets the push. An unknown user or
+  vendor is skipped.
+- A cancellation does not say who cancelled (the event does not carry it), so **the side that
+  cancelled is told too**.
+- Riders get no push (no gig assignment exists; nothing in the event names a rider).
+- Texts are English (the server does not know the app language), like the vendor SMS.
+
+**The two message shapes** (`expoMessages`), one per device token:
+
+```jsonc
+// visible (accepted, delivered, cancelled, failed): the OS draws it; in the foreground the handler shows a banner
+{ "to": "ExponentPushToken[…]", "title": "Order accepted", "body": "The shop is preparing order #1F8A11.",
+  "sound": "default", "priority": "high", "channelId": "orders", "data": { … } }
+// data-only (new order, dispatch; SPEC): no title/body/sound, wakes the app, which posts the notification
+{ "to": "ExponentPushToken[…]", "priority": "high", "_contentAvailable": true, "data": { … } }
+// data = orderPushDataSchema, identical in both:
+{ "type": "order.state_changed", "notification_id": "<event_id>", "order_id": "…", "state": "PREPARING",
+  "audience": "CUSTOMER" | "VENDOR", "data_only": false | true, "title": "…", "body": "…" }
+```
+
+**Expo gateway** (`ExpoPushGateway`, plain `fetch`, no Expo server SDK): `POST
+https://exp.host/--/api/v2/push/send`, JSON array body, `Accept` + `Content-Type:
+application/json`, `Authorization: Bearer <EXPO_ACCESS_TOKEN>` only when that optional env var is
+set, `AbortSignal.timeout(5000)`, batches of 100. The answer's `data[i]` is the ticket of message
+`i`: `ok` or `error` (+ `details.error`). A non-2xx answer, a network error, a non-JSON body or a
+ticket count that differs from the batch is a `PushDeliveryError`. **Push receipts are not
+fetched** (a ticket only means Expo accepted the message, §13).
+
+**Delivery guarantees (decision).** Best effort, **at most once**:
+
+- The event is claimed in Redis (`notifications:push:seen:{event_id}`, 24 h) before anything is
+  read or sent, and **the claim is kept on failure**: a Kafka redelivery (caused by another
+  consumer of the topic) never sends a late or duplicate push.
+- The handler **never throws**. `order.lifecycle` also carries the live tracking fan-out and the
+  90 s vendor timer and has no DLQ; a retried push would hold their partition back (up to the 5 s
+  timeout per attempt). The consumer is registered last, so both run first for every message.
+- So a push is **lost** when Expo or Postgres is down at that moment. The vendor's safety net for
+  a new order is the 90 s SMS + IVR escalation (§8D, §8G, §8H); the customer's is the tracking
+  screen's socket and its catch-up refetch.
+- Events that push nothing (other event types, PENDING_PAYMENT, DISPUTED) claim nothing.
+- One JSON log line per event that reached Expo:
+  `{"notification":"push.sent","sent","rejected","removed_tokens","event_type","event_id","aggregate_id","to_state"}`
+  (no token, no phone, no text), or `"push.failed"` with the error.
+
+**SMS / IVR fallback logging.** `smsFallbackLogFromEnv(env)`: with `SMS_PROVIDER=MOCK` the consumer
+prints, beside each push attempt and **also when the recipient has no device registered**,
+`[sms:mock] to +9779800000011: Hamro Pasal: New order. Order #1F8A11 is waiting. Open the app to
+accept or reject it.` (the same `mockSmsLogLine` format as every other mock SMS). With SPARROW /
+AAKASH it is `null`: **an order push never sends or bills an SMS**. No IVR line is logged here:
+the only voice call is the 90 s escalation's (`IVR_PROVIDER=MOCK`, §8H), unchanged.
+
+**Tests.**
+
+- shared-types `api/notifications.test.ts` (14): token formats, request strictness (no user id),
+  strict response, push data (extra keys tolerated, other type / unknown state / blank title refused).
+- API integration `device-tokens-api.int.test.ts` (17, real Express + PostgreSQL): stored for the
+  caller with the contract, every role, repeat keeps one row, **takeover by another account**,
+  several devices, 5 concurrent registrations, five validation refusals storing nothing, 401
+  without a token and for a deleted account, cascade with the user, the two CHECKs.
+- Worker unit: `push/expo-push.test.ts` (10: **the literal URL**, method, headers, body, bearer
+  token, ticket pairing, 150 messages → 100 + 50, no request for none, HTTP / network / malformed
+  answers); `notifications/order-push.test.ts` (15: every row of the table above verbatim, both
+  message shapes, data accepted by the app's schema for every state);
+  `consumers/order-push-notifications.test.ts` (19, **the real gateway over a fake `fetch`**: the
+  exact request when an order is placed, visible push on accept, both sides on cancel, redelivery
+  once, no device / unknown recipient → no request, ignored events claim nothing, Expo 503 and an
+  unreadable database swallowed, `DeviceNotRegistered` removed, the mock SMS line with and without
+  a device, once per event, off for real providers, `smsFallbackLogFromEnv`, and the wiring:
+  through `buildConsumers` the fan-out and the 90 s timer still run when the push fails).
+- Worker integration `order-push.int.test.ts` (7, **real Postgres rows + OutboxRelay + Kafka +
+  Redis, Expo mocked at `fetch`**): a placed order → one data-only request to
+  `https://exp.host/--/api/v2/push/send` for both vendor devices and none for the customer; accept
+  → visible push to the customer; cancel → both; the `[sms:mock]` lines with the phones from
+  Postgres; a republished envelope sent once; a `DeviceNotRegistered` token deleted from
+  `device_tokens`; Expo 503 → not retried and the next event on the partition still pushed.
+- Mobile: §9.17.
+- **Mutation-checked** (each fails at least one test): no dedupe claim (5), rethrowing a failure
+  (3), critical pushes sent with a title (2), `data_only` always false (2), dead tokens kept (1),
+  vendor / customer swapped (10), SMS log for every provider (3), another URL (2), no batching (1),
+  no bearer header (1), vendor told of an unplaced order's end (4); API: a registration not moving
+  the device (1).
+- **Not run against the real Expo service or a device.**
 
 ## 8L. Vendor catalogue management and local uploads (Phase 19)
 
@@ -2158,7 +2356,7 @@ fingerprint includes it, and the territory gate reads the shared `NEPAL_BOUNDING
 | `/driver/dashboard`   | `app/(driver)/driver/dashboard.tsx` | yes (DRIVER)                    | `GET /api/driver/orders`, `POST /api/driver/orders/:id/deliver`                                                                                | orders out for delivery (shop, ward/tole/palika, items, cash to collect or "paid online"), 4-digit code field + Confirm delivery per order, pull to refresh, sign out (Phase 11)                                                                                                                                                                                    |
 | `/wallet` (vendor)    | `app/(vendor)/wallet.tsx`           | yes (VENDOR)                    | `GET /api/vendors/wallet/balance`, `GET /api/vendors/wallet/ledger` (infinite)                                                                 | red "Your shop is offline" banner when suspended (dues and limit, or a support message when not about dues), balance (red when negative), money in escrow, transactions (label, order #, ± amount, commission, time, balance after), loads older pages at the end, pull to refresh (Phase 12)                                                                       |
 | `/dashboard` (vendor) | `app/(vendor)/dashboard.tsx`        | yes (VENDOR)                    | `GET /api/vendors/orders`, Socket.io `/orders` (`vendor:subscribe`), `POST /api/vendors/orders/:id/accept` / `reject` / `dispatch` / `deliver` | new orders (items, total, payment, ward/tole/palika) with Accept / Reject, Preparing list with Dispatch, Out for delivery list (own deliveries) with the 4-digit code field, red alarm banner + looping expo-audio alarm while any order waits, sign out (Phases 10, 11.5)                                                                                          |
-| (root overlays)       | `app/_layout.tsx`                   | –                               | lock-status (via `CheckoutSessionWatcher`), `POST /api/reviews`                                                                                | territory gate (topmost), replace-cart modal, review prompt, toasts, session-expiry handler                                                                                                                                                                                                                                                                         |
+| (root overlays)       | `app/_layout.tsx`                   | –                               | lock-status (via `CheckoutSessionWatcher`), `POST /api/reviews`, `POST /api/notifications/device-token` (Phase 20, once signed in)             | territory gate (topmost), replace-cart modal, review prompt, toasts, session-expiry handler                                                                                                                                                                                                                                                                         |
 
 ### 9.1 Storage
 
@@ -2709,6 +2907,71 @@ deployed together** for this phase.
 - **Not run on a device or against the live API** (msw only; the API integration test covers the
   new field).
 
+### 9.17 Push notifications (Phase 20)
+
+SPEC implicit requirement 1. Code: `index.ts`, `app/_layout.tsx`, `src/api/notifications.ts`,
+`src/features/notifications/*`, `app.json`. Dependencies: **`expo-notifications` ~57.0.21** and
+**`expo-task-manager` ~57.0.21** (both native: a new development build is needed).
+
+- **Registration** (`push-registration.ts#registerForPushNotifications`, never throws):
+  1. `devicePlatform()` (android → `ANDROID`, ios → `IOS`, anything else → `unavailable`) and
+     `easProjectId()` (`Constants.expoConfig.extra.eas.projectId`, else `Constants.easConfig`);
+  2. `getPermissionsAsync`; if not granted and `canAskAgain`, `requestPermissionsAsync` (the OS
+     prompt; Android 13+ and iOS). Refused → `permission_denied`, nothing else happens;
+  3. `getExpoPushTokenAsync({ projectId })`; a device that cannot get one (emulator without Play
+     services, simulator, missing FCM setup) → `unavailable`;
+  4. `registerDeviceToken({ token, platform })` → `POST /api/notifications/device-token` through
+     `apiRequest` (Bearer token, Zod-validated; a non-Expo token is refused on the device).
+     Server or network failure → `failed`.
+- **When** (`usePushRegistration`, mounted once by `PushNotifications` in the root layout): only
+  while `selectHasSession`, so the prompt appears **at launch with a stored session or right after
+  sign-in**, never on a signed-out first launch. It runs again when the refresh token changes (a
+  new sign-in, possibly another account) but not when only the access token is renewed. A `failed`
+  attempt is repeated when the app next returns to the foreground (`AppState` → `active`); the
+  other results are not retried until the next launch or sign-in.
+- **Foreground banners** (`notification-handler.ts`): `configureForegroundNotifications()` runs at
+  module scope of `app/_layout.tsx` and installs `setNotificationHandler`: a notification with a
+  title or body → `shouldShowBanner`, `shouldShowList`, `shouldPlaySound` (no badge); one with
+  neither (a raw data-only push) → nothing. Without a handler Expo shows nothing while the app is
+  open.
+- **Android channel**: `ensureOrderNotificationChannel(t('notifications.orderChannel'))` creates
+  `orders` (`ORDER_PUSH_CHANNEL_ID`, importance HIGH, default sound), named "Order updates" /
+  "अर्डर अपडेट" in the app language; the worker's visible pushes name the same `channelId`, and
+  `app.json` sets it as the plugin's `defaultChannel`.
+- **Data-only pushes** (`order-push-task.ts`): `registerOrderPushTask()` defines the TaskManager
+  task `hamro-pasal.order-push` and registers it with `Notifications.registerTaskAsync`. It runs
+  for every remote notification (foreground, background, terminated). `orderPushFromTaskPayload`
+  finds the worker's `data` wherever the platform put it (`data.dataString` or `data.body` as a
+  JSON string on Android, `data.body` as an object on iOS, or `data` itself), validates it with
+  `orderPushDataSchema`, ignores notification taps, and **only when `data_only` is true** posts a
+  local notification (`scheduleNotificationAsync`: the event's title and body, default sound, the
+  `orders` channel on Android, `identifier = notification_id` so a push delivered twice replaces
+  itself). That local notification then passes the foreground handler like any other.
+- **App entry**: `package.json` `"main": "index.ts"`, which imports
+  `register-order-push-task` **before** `expo-router/entry`. A terminated app is started headless
+  for a data-only push and no component mounts, so the task cannot be defined in a layout.
+- `app.json`: plugin `["expo-notifications", { "defaultChannel": "orders",
+"enableBackgroundRemoteNotifications": true }]` (the iOS `remote-notification` background mode
+  that `_contentAvailable` needs).
+- **Not built:** opening the order when a notification is tapped, unregistering on sign-out, a
+  settings switch, localised push text, notification icon / colour.
+- **Tests** (+39, `src/features/notifications/`): `push-registration.test.tsx` (16, msw + the
+  `fake-notifications` stand-in, `expo-constants` fed the real `app.json`): permission → token
+  with the project id → the exact POST (Bearer, `{token, platform: 'ANDROID'}`), no second prompt
+  when granted, `IOS`, refused prompt, cannot ask again, no token, web, 503 → `failed`, a non-Expo
+  token never sent; the hook: registers at launch with a session, **nothing while signed out then
+  registers after sign-in**, again after sign-out + sign-in, not on an access-token renewal,
+  retry on foreground after a failure, listener removed on unmount. `notifications.test.ts` (23):
+  banner behaviour, handler installed, channel on Android only, the four payload shapes, six
+  payloads ignored, the local notification verbatim, iOS trigger, identifier, a visible push left
+  to the system, `Failed` when posting throws, task defined once and registered, nothing on web.
+- **Mutation-checked** (each fails at least one test): no banner (2), registering while signed out
+  (1), posting every push locally (1), no retry on foreground (1), retrying always (1), always
+  prompting (1), the posted copy still `data_only` (1), a banner for an empty notification (1), no
+  project id (1).
+- **Not run on a device.** The payload shapes the task reads come from the Expo documentation and
+  types, not from an observed delivery.
+
 ## 10. Mock inventory (what the app still fakes)
 
 Phase 6.5 removed every catalogue, order and cancellation mock. What remains:
@@ -2779,7 +3042,17 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
     support, `/metrics` (the Prometheus target is down), rate limiting, worker consumers and timer
     handlers, feed pagination (sections are capped at 100).
 
-13. **Catalog follow-ups (Phase 17 built the taxonomy, vendor create / stock / list, the public
+13. **Push follow-ups (Phase 20 built the device-token endpoint, the worker's order pushes and the
+    app's registration, foreground handler and data-only task, §8M, §9.17):** FCM V1 / APNs
+    credentials on the EAS project and the first real delivery (part of item 1); **unregister on
+    sign-out** (`DELETE /api/notifications/device-token`); open the order when a notification is
+    tapped; poll Expo push receipts and drop tokens that fail there; a looping alarm for a vendor
+    whose app is closed (a custom channel sound, or a full-screen intent); pushes for dispute chat
+    messages, wallet suspension / restore and, once gigs exist, riders; localised text (store the
+    app language with the device token); a retry path for failed pushes that does not sit on the
+    `order.lifecycle` partition (their own topic or a BullMQ queue).
+
+14. **Catalog follow-ups (Phase 17 built the taxonomy, vendor create / stock / list, the public
     reads, the checkout stock guard and the two admin screens, §8K; Phase 18 the customer's
     category pills, product search and stock safeguards, §9.16; Phase 19 the vendor's edit / hide /
     photo upload routes, the web Vendor Portal and `stock_quantity` on vendor menus, §8L):** a
@@ -2938,6 +3211,30 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
     checkout (hiding a category removes navigation to it, it does not delist products).
   - The admin `dev` script became `vite --force` (stale pre-bundled `shared-types`, §3).
 
+- **Phase 20:**
+  - **A `device_tokens` table**, not a column on users / vendors (the prompt allowed either): an
+    account has several devices, and a vendor is reached through its user.
+  - **The token is the unique key**: registering it again moves the device to the caller. One
+    endpoint for every role; the account comes from the access token.
+  - The prompt's `order.created` / `order.status_changed` are the existing **`order.state_changed`**
+    events on `order.lifecycle`; no new event or topic was added.
+  - **SPEC over simplicity: new orders and dispatches are data-only pushes** (SPEC implicit
+    requirement 1, "Order Arrivals, Dispatches"; "arrival" is read as an order arriving at the
+    shop, since no ARRIVED state exists). The other transitions are ordinary visible pushes. Not
+    asked of the user. The app posts the visible notification for a data-only push from a
+    background task, and `data_only` in the payload tells it which pushes those are.
+  - **Push is best effort** (no retry, no DLQ, never throws): it shares `order.lifecycle` with
+    the live tracking and the 90 s timer, which must not wait for Expo. Not asked of the user.
+  - **Plain `fetch`** to `https://exp.host/--/api/v2/push/send` (the prompt), no `expo-server-sdk`;
+    `EXPO_ACCESS_TOKEN` is optional.
+  - "Fallback logging for SMS/IVR" = a **log line only**, and only for `SMS_PROVIDER=MOCK`: order
+    pushes never send a real SMS (cost) and add no IVR call. It is logged whether or not the
+    recipient has a device.
+  - Dead tokens (`DeviceNotRegistered`) are deleted by the worker; receipts are not polled.
+  - The permission is requested **once a session exists** (the prompt's "post-login"), because the
+    endpoint needs one and a prompt before sign-in has no context.
+  - The app entry became `index.ts` so the background task is defined before any UI loads.
+  - Unregistering on sign-out and tap-to-open were not requested and were not built (§13).
 - **Phase 19:**
   - **Local storage only (the prompt):** no S3 / R2. `UPLOADS_DIR` now defaults to `uploads/` at the
     API root (the prompt's location) instead of the OS temp directory, for dispute evidence too:
@@ -3117,6 +3414,37 @@ CANCELLATION_WINDOW_OPEN` with the seconds left.
 
 ## 13. Known gaps and risks
 
+- **Phase 20:**
+  - **Never delivered to a device.** The Expo push API is mocked at `fetch` in every test and the
+    app side runs against a stand-in for `expo-notifications`. FCM V1 / APNs credentials and
+    `google-services.json` are not set up, so a real build cannot receive a push yet (§3).
+  - **The data-only path is unverified on hardware.** How Android and iOS hand a data-only Expo
+    push to the background task (`data.dataString` / `data.body`) is taken from Expo's docs and
+    types. If a device shows nothing for a new order or a dispatch, look at
+    `orderPushFromTaskPayload` first. Budget Android phones that kill background apps may also
+    drop data-only messages (Doze, vendor battery savers); iOS throttles `content-available`
+    pushes and does not deliver them to a force-quit app. **If this proves unreliable, the
+    fallback is one line: send those two pushes with a title and body** (set `critical: false`
+    in `orderPushes`), which contradicts SPEC implicit requirement 1 and is the user's call.
+  - **Push is best effort and at most once** (§8M): an Expo or Postgres outage loses the pushes of
+    the events processed meanwhile; nothing retries or dead-letters them. A slow Expo delays the
+    `order.lifecycle` partition by up to 5 s per event (the fan-out for that event has already run).
+  - **Push receipts are not checked.** A ticket `ok` means Expo accepted the message, not that FCM
+    / APNs delivered it; tokens that only fail at the receipt stage are not cleaned up.
+  - **Sign-out does not unregister the device.** The last account to register on a phone keeps
+    receiving its order pushes after signing out, until another account signs in there (the token
+    moves) or the app is uninstalled. On a shared phone this can show one person's order status to
+    another. An authenticated `DELETE /api/notifications/device-token` called by `useSignOut` (and
+    by the session-expiry path, which has no valid token left) is the fix.
+  - Both sides are told of a cancellation, including the one who cancelled. Riders get no pushes.
+  - Push text is English only; the Android channel name follows the app language at launch.
+  - Tapping a notification only opens the app (no deep link to the order).
+  - A vendor whose app is closed now gets the "New order" push, but **the looping alarm still
+    rings only in the foreground**; the push plays the default sound once.
+  - Any signed-in account can register any number of tokens (no per-user cap, no rate limit), and
+    a token is only checked for its format, not for belonging to this Expo project.
+  - With `SMS_PROVIDER=MOCK` the worker log now carries customer phone numbers (the mock SMS
+    line); development only, MOCK is refused in production.
 - **Phase 19:**
   - **A vendor can undo a Super Admin's Hide.** `products.is_active` is one flag: the admin's
     `PATCH /api/admin/products/:id/active` and the vendor's PUT / DELETE both write it, so a vendor
@@ -3271,4 +3599,4 @@ CANCELLATION_WINDOW_OPEN` with the seconds left.
 - Tightening the wallet limit does not retroactively suspend vendors until their next posting.
 - Sparrow/Aakash payloads use +977 per SPEC; the providers may expect the 10-digit national format.
 - The small-cart surcharge amount is undefined in SPEC; carts below MOV are rejected.
-- **Push notifications, Sentry, OTA updates and the Mapbox pin-drop** are not started.
+- **Sentry, OTA updates and the Mapbox pin-drop** are not started.

@@ -5,7 +5,13 @@ import type { SmsGateway } from '@hamro-pasal/sms';
 import type { Redis } from 'ioredis';
 
 import type { OrderStateReader } from '../notifications/order-state-reader';
+import type { DeviceTokenRemover, PushRecipientReader } from '../notifications/push-recipients';
+import type { PushGateway } from '../push/expo-push';
 import { withDeadLetter, type DeadLetterPublisher, type DeadLetterStore } from './dead-letter';
+import {
+  ORDER_PUSH_DEDUPE_PREFIX,
+  orderPushNotificationConsumer,
+} from './order-push-notifications';
 import {
   orderStateFanoutConsumer,
   RedisEventDeduplicator,
@@ -37,6 +43,12 @@ export interface ConsumerDeps {
   readonly deadLetters: DeadLetterPublisher;
   /** Keeps every dead letter in dead_letter_events for the admin DLQ monitor (Phase 15). */
   readonly deadLetterStore: DeadLetterStore;
+  /** Sends order pushes to the Expo push service (Phase 20). */
+  readonly push: PushGateway;
+  /** Device tokens and phone numbers of an order's customer and vendor. */
+  readonly pushRecipients: PushRecipientReader & DeviceTokenRemover;
+  /** Set when SMS_PROVIDER=MOCK: logs the SMS each order push stands in for. null otherwise. */
+  readonly pushSmsFallbackLog: ((line: string) => void) | null;
 }
 
 /** Register Kafka topic handlers here. Several may share a topic (see routeByTopic). */
@@ -47,6 +59,14 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
       deduplicator: new RedisEventDeduplicator(deps.redis),
     }),
     vendorSlaSchedulerConsumer({ timers: deps.vendorAcceptanceTimers }),
+    // Last on order.lifecycle and never throwing: a push can not hold back the two above.
+    orderPushNotificationConsumer({
+      recipients: deps.pushRecipients,
+      tokens: deps.pushRecipients,
+      push: deps.push,
+      deduplicator: new RedisEventDeduplicator(deps.redis, ORDER_PUSH_DEDUPE_PREFIX),
+      smsFallbackLog: deps.pushSmsFallbackLog,
+    }),
     // 1 attempt + 3 retries, then a dead_letter_events row + notifications.dlq, and the partition
     // moves on (Phases 14 and 15).
     withDeadLetter(

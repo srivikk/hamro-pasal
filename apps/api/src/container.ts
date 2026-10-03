@@ -25,6 +25,7 @@ import {
 import { DrizzleStockReader } from './inventory/stock-reader';
 import { LedgerService } from './ledger/ledger-service';
 import { SettlementService } from './ledger/settlement-service';
+import { DeviceTokenService } from './notifications/device-token-service';
 import { VendorTopUpService } from './wallet/vendor-top-up-service';
 import { VendorWalletService } from './wallet/vendor-wallet-service';
 import { WalletService } from './wallet/wallet-service';
@@ -150,6 +151,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     categories: new CategoryService(infra.db),
     products: new ProductService(infra.db, infra.productImages),
     productImages: infra.productImages,
+    deviceTokens: new DeviceTokenService(infra.db),
     async close() {
       await infra.redisPool.close();
       await infra.db.$client.end();

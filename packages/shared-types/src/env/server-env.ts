@@ -145,6 +145,19 @@ export const serverEnvSchema = z
       });
     }
 
+    // A token-signing key is never also a payment gateway key: leaking one must not expose the other.
+    for (const jwtKey of ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'] as const) {
+      for (const gatewayKey of ['ESEWA_SECRET_KEY', 'KHALTI_SECRET_KEY'] as const) {
+        if (env[jwtKey] === env[gatewayKey]) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [jwtKey],
+            message: `Must differ from ${gatewayKey}`,
+          });
+        }
+      }
+    }
+
     if (env.KAFKA_SASL_MECHANISM !== undefined) {
       requireKeys(['KAFKA_SASL_USERNAME', 'KAFKA_SASL_PASSWORD'], 'KAFKA_SASL_MECHANISM is set');
     }

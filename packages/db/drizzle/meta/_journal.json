@@ -141,6 +141,13 @@
       "when": 1791045462383,
       "tag": "0019_reconciliation_and_payouts",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791047530270,
+      "tag": "0020_audit_indexes",
+      "breakpoints": true
     }
   ]
 }

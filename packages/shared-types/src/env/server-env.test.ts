@@ -80,6 +80,18 @@ describe('parseServerEnv', () => {
     );
   });
 
+  it('rejects a JWT secret that is also a payment gateway key', () => {
+    const shared = 'g'.repeat(32);
+    expectInvalid(
+      { ...validEnv, JWT_ACCESS_SECRET: shared, ESEWA_SECRET_KEY: shared },
+      'Must differ from ESEWA_SECRET_KEY',
+    );
+    expectInvalid(
+      { ...validEnv, JWT_REFRESH_SECRET: shared, KHALTI_SECRET_KEY: shared },
+      'Must differ from KHALTI_SECRET_KEY',
+    );
+  });
+
   it('requires SASL credentials when a SASL mechanism is set', () => {
     expectInvalid({ ...validEnv, KAFKA_SASL_MECHANISM: 'plain' }, 'KAFKA_SASL_USERNAME');
   });

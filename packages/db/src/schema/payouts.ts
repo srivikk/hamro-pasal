@@ -47,6 +47,13 @@ export const payoutRequests = pgTable(
     index('payout_requests_vendor_id_created_at_idx').on(t.vendor_id, t.created_at),
     index('payout_requests_created_at_idx').on(t.created_at, t.id),
     index('payout_requests_status_created_at_idx').on(t.status, t.created_at, t.id),
+    // Phase 23: the two foreign keys only a decided request carries.
+    index('payout_requests_reversal_transaction_id_idx')
+      .on(t.reversal_transaction_id)
+      .where(sql`${t.reversal_transaction_id} IS NOT NULL`),
+    index('payout_requests_decided_by_user_id_idx')
+      .on(t.decided_by_user_id)
+      .where(sql`${t.decided_by_user_id} IS NOT NULL`),
     check('payout_requests_amount_check', sql`${t.amount_npr} > 0`),
     check('payout_requests_idempotency_key_check', sql`btrim(${t.idempotency_key}) <> ''`),
     // PENDING is undecided; APPROVED names the bank transfer; REJECTED names the reversing journal.

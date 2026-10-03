@@ -1,7 +1,7 @@
-# Hamro Pasal: State Handoff (Phases 0–22 complete)
+# Hamro Pasal: State Handoff (Phases 0–23 complete, feature development closed)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 22 (Financial Reconciliation & Payouts)**, on top of Phase 21 (Rider Dispatch &
+work without re-deriving it. It describes the tree at the end of **Phase 23 (End-to-End System Audit & Failure Mode Hardening)**, the last planned development phase, on top of Phase 22 (Financial Reconciliation & Payouts), 21 (Rider Dispatch &
 Geolocation Telemetry), 20 (Push Notifications & Event Alerting), 19 (Vendor Catalog Management & Asset Uploads), 18 (Mobile
 Customer Discovery & Live Inventory Integration), 17 (Catalog, Taxonomy & Inventory Management), 16 (Authentication Hardening & HTTP-Only Cookies), 15 (Super Admin Web Dashboard & DLQ Monitoring), 14 (Worker Resiliency & IVR Escalation), 13 (Notification Worker & SMS Dispatch), 12.5 (Application-Layer Suspension & Top-Ups), 12 (Vendor Wallet &
 Debt Reconciliation), 11.5 (Vendor Dispatch UI & Self-Delivery Handoff), 11 (Driver Handoff & OTP Verification), 10 (Vendor Order Management & Audio Alarms), 9.6 (Chat Transcript Read-Back), 9.5 (Chat Persistence & Vendor Review Linkage), 9 (Double-Blind Reviews & Dispute Chat), 8 (Real-Time Order Tracking, Socket.io `/orders`), 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
@@ -196,6 +196,17 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 > SettlementService, WalletService, the settlement plan, money) moved from the API into a shared
 > package, **`@hamro-pasal/ledger`**, so the worker posts with the same code. The web app has a
 > **Payouts** tab (Super Admin) and an **Earnings** tab in the Vendor Portal (§8O).
+> **Phase 23 (the last planned phase; feature development is closed):** an audit, no new feature.
+> `apps/api/test/e2e-lifecycle.int.test.ts` walks **one order through the whole platform over the
+> public HTTP API** (browse → checkout → eSewa payment → vendor accept → dispatch → rider accept →
+> pickup → doorstep code → settlement) and then runs the **midnight reconciliation by its manual
+> command**; `apps/api/test/inventory-stress.int.test.ts` fires **100 concurrent checkouts at 5
+> units: exactly 5 orders, 95 × `409 INSUFFICIENT_STOCK`, stock 0**. The schema audit found **7
+> foreign keys without an index**; migration **`0020_audit_indexes`** adds them (the two the prompt
+> named, the order's customer and `deliveries.rider_id`, were already indexed). The JWT audit found
+> the access and refresh keys correctly separated and added one startup check (a JWT secret may not
+> equal a payment gateway key). **"Closed" means the planned phases 0–23 are done, not that every
+> line of SPEC.md is built**: the list at the end of this paragraph still stands (§8P, §13).
 > **No live device run has happened yet** (§13); the admin app and the DLQ retry loop were run live
 > against local infrastructure (§8I), as were the cookie session (§8J), the catalog screens (§8K) and the Vendor Portal with a real upload (§8L) in headless Edge. **No push has been delivered to a real device** (the Expo API is mocked in every test; FCM / APNs credentials are not set up). Still not built: a real IVR provider (Twilio Voice
 > or a Nepal SIP trunk; only the mock exists), gig broadcast by distance / "Reached Location" / "Delivery Failed", the ghost-customer timer,
@@ -234,18 +245,18 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · `2ae9633` P10 · `e2cb61d` P11 · `5f3fc9a` P11.5 · `81d45ba` P12 · `76b1d7f` P12.5 · `6aa0f73` P13 · `aa13ee6` P14 · `95b0272` P15 · `c937775` P16 · `5253be9` P17 · `b8e2edd` P18 · `bbac3a9` P19 · `27898bf` P19 + P20 · `9d2f5f6` P21 · Phase 22 (uncommitted) |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Unit tests      | **1435 passing** (`pnpm test`): shared-types 211, api 92, worker 134, sms 21, ivr 7, kafka 7, db 7, ledger 11, admin 106, mobile 839 (end of Phase 22; every suite rerun). The API count fell by 11 because the settlement-plan tests moved to `@hamro-pasal/ledger`                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Integ. tests    | **631 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 61, api 503, worker 66, kafka 1 (end of Phase 22; every suite rerun, no failure). One unexplained `driver-orders-api` failure in the first full Phase 12.5 run; not reproduced in 4 later full runs and 6 runs of the delivery files (the error was not captured). Earlier flakes: once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**: its other-Palika vendor now has its own location.                                                                                                                      |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 22                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| Dev database    | Migrations 0000–0019 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · `2ae9633` P10 · `e2cb61d` P11 · `5f3fc9a` P11.5 · `81d45ba` P12 · `76b1d7f` P12.5 · `6aa0f73` P13 · `aa13ee6` P14 · `95b0272` P15 · `c937775` P16 · `5253be9` P17 · `b8e2edd` P18 · `bbac3a9` P19 · `27898bf` P19 + P20 · `9d2f5f6` P21 · `745ed08` P22 · Phase 23 (uncommitted) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Unit tests      | **1436 passing** (`pnpm test`): shared-types 212, api 92, worker 134, sms 21, ivr 7, kafka 7, db 7, ledger 11, admin 106, mobile 839 (end of Phase 23; every suite rerun)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Integ. tests    | **644 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 64, api 513, worker 66, kafka 1 (end of Phase 23; every suite rerun, no failure). Earlier flakes, none reproduced since: one unexplained `driver-orders-api` failure in the first full Phase 12.5 run (that suite was replaced in Phase 21); once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**                                                                                                                                                                                                                               |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 23                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Dev database    | Migrations 0000–0020 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### Root commands (`package.json`)
 
@@ -317,7 +328,7 @@ packages/db/src                    @hamro-pasal/db: Drizzle schema, client, migr
   schema/{columns,enums,categories,users,vendors,orders,ledger,outbox,wallet,disputes,dead-letters,
           device-tokens,deliveries,contract}.ts
   geo/ewkb.ts · outbox.ts · testing.ts (@hamro-pasal/db/testing) · scripts/{migrate,seed,database-url}.ts
-packages/db/drizzle/               0000–0019 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
+packages/db/drizzle/               0000–0020 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
 packages/kafka/src                 config.ts, producer.ts (DomainEventPublisher), index.ts
 packages/sms/src                   @hamro-pasal/sms (Phase 13, server-only; moved from apps/api/src/sms):
   sms-gateway.ts                   Sparrow / Aakash / Mock adapters (strict +977 via prepareOutboundSms), SmsDeliveryError
@@ -390,6 +401,9 @@ apps/api/src                       Express 5 API
                                    payoutView. The admin routes are in routes/admin.ts (adminPayoutView)
   wallet/vendor-wallet-service.ts  + pendingEscrowOf (shared by the wallet balance and the finance ledger)
 apps/api/scripts/mint-dev-token.ts
+apps/api/test/e2e-lifecycle.int.test.ts      Phase 23: one order through every role over HTTP, then the manual reconciliation
+apps/api/test/inventory-stress.int.test.ts   Phase 23: 100 concurrent POST /api/cart/checkout on 5 units
+packages/db/test/foreign-key-indexes.int.test.ts   Phase 23: the index audit as a test (no FK without a leading index)
 apps/api/test/                     *.int.test.ts (auth-api, auth-cookie-api, cart-api, checkout-claim, inventory-concurrency, ledger-settlement,
                                    mint-dev-token, orders-api, orders-realtime, payments-api, vendors-api) + global-setup.ts + support/
 apps/worker/src                    main.ts, lifecycle.ts, outbox/ (OutboxRelay), queues/, config/, infra/,
@@ -627,6 +641,7 @@ kafka-init`) once, or dead-lettering fails and the message is redelivered instea
 | `0017_device_tokens.sql` | **Phase 20.** `device_tokens` table (FK `user_id` → users CASCADE, unique `token`, `user_id` index, token-format + length CHECK, platform CHECK, hand-added `set_updated_at` trigger) |
 | `0018_deliveries.sql` | **Phase 21.** `delivery_state` enum, `deliveries` table (FK `order_id` → orders CASCADE, unique per order; FK `rider_id` → users RESTRICT; five CHECKs tying rider and timestamps to the state; `(rider_id, state)` and `(state)` indexes; hand-added `set_updated_at` trigger) and a **hand-added backfill**: every fleet order already OUT_FOR_DELIVERY gets an OFFERED row |
 | `0019_reconciliation_and_payouts.sql` | **Phase 22.** `payout_status` enum; `ledger_account_type` + `PAYOUT_CLEARING`; `ledger_transaction_kind` + `VENDOR_PAYOUT`, `VENDOR_PAYOUT_REVERSAL` (**added, not used in the file**: PostgreSQL cannot use a new value of an existing enum before commit, and Drizzle runs every pending migration in one transaction); `payout_requests` table (FKs to vendors, users and twice to ledger_transactions, all RESTRICT; unique `(vendor_id, idempotency_key)` and `hold_transaction_id`; amount, key and status CHECKs; three indexes; hand-added `set_updated_at` trigger); `orders.reconciled_at` + `orders_reconciled_at_check` + the partial index `orders_unreconciled_idx` and `orders_vendor_id_reconciled_at_idx` |
+| `0020_audit_indexes.sql` | **Phase 23.** Seven `CREATE INDEX` statements, one per foreign key that had no index led by its column: `orders_driver_user_id_idx`, `disputes_opened_by_user_id_idx`, `disputes_resolved_by_user_id_idx`, `chat_messages_sender_user_id_idx`, `payout_requests_reversal_transaction_id_idx`, `payout_requests_decided_by_user_id_idx`, `dead_letter_events_retry_requested_by_idx`. The five on usually-NULL columns are **partial** (`WHERE … IS NOT NULL`). No table, column or constraint change; generated by drizzle-kit, renamed, header comment added |
 
 **Staging rule:** drizzle-kit prompts interactively on renames, which fails in this non-TTY
 environment. Stage schema edits so a single `generate` only adds or only drops. Hand-write renames
@@ -1059,6 +1074,141 @@ for order state changes only (Phase 20, §8M; no chat, wallet or rider pushes, n
 escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8P. End-to-end audit and failure-mode hardening (Phase 23)
+
+The last planned phase. It adds tests, seven indexes and one startup check; **no route, table,
+column, event or screen changed**. Code: `apps/api/test/e2e-lifecycle.int.test.ts`,
+`apps/api/test/inventory-stress.int.test.ts`, `packages/db/test/foreign-key-indexes.int.test.ts`,
+`packages/db/drizzle/0020_audit_indexes.sql` (+ the four schema files),
+`packages/shared-types/src/env/server-env.ts`.
+
+**What "feature development is 100 % complete" means here.** Every phase that was planned and
+requested (0–23) is built, tested and documented. It does **not** mean SPEC.md is fully implemented.
+Still unbuilt from SPEC: the 8-minute ghost-customer timer and "Delivery Failed", "Reached Location",
+gig broadcast by distance, "Accept with Modifications" (partial fulfilment + partial refund), the
+3-minute vendor acceptance window, the Emergency Rider override, refunds actually paid through
+eSewa / Khalti, dispute resolution, KYC approval, the subscription lock-in and midnight downgrade,
+a real IVR provider, Cloudflare R2 and image compression, the eSewa app-to-app intent, the Mapbox
+pin-drop, Sentry / APM / Winston, the CI/CD and EAS pipelines, and refresh-token rotation. And
+**nothing has run on a physical device** (§13).
+
+### 8P.1 End-to-end lifecycle (`e2e-lifecycle.int.test.ts`, 8 steps, real Express + PostgreSQL + Redis)
+
+One prepaid order from a PLATFORM_FLEET shop at 10 % commission, 2 × 500 NPR + 50 NPR fee = 1050 NPR.
+Every step is an HTTP request with the role's own token, parsed with the shared-types response schema;
+the steps share state and run in order.
+
+| #   | Actor    | Calls                                                                                                        | Asserted                                                                                                                                                                                                 |
+| --- | -------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | customer | `GET /api/categories`, `GET /api/products?category_id=`, `GET /api/vendors`, `GET /api/vendors/:id/products` | the category, the product with `stock_quantity` 10, the shop in the serviceable section, the menu                                                                                                        |
+| 2   | customer | `POST /api/cart/checkout` (ESEWA), `GET /api/cart/lock-status`                                               | 201 PENDING_PAYMENT, total 1050, a 4-digit code, lock ACTIVE with 590–600 s left, PostgreSQL stock still 10                                                                                              |
+| 3   | customer | `POST /api/payments/esewa/initiate`, `POST /api/payments/esewa/webhook` (signed with the UAT key)            | PLACED + PAID, **stock 8**, SYSTEM_ESCROW +1050, vendor wallet still 0                                                                                                                                   |
+| 4   | vendor   | `GET /api/vendors/orders`, `POST …/accept`                                                                   | the order listed, PREPARING                                                                                                                                                                              |
+| 5   | vendor   | `POST …/dispatch`                                                                                            | 422 inside the 60 s window; after it OUT_FOR_DELIVERY and one OFFERED delivery with no rider                                                                                                             |
+| 6   | rider    | `POST /api/deliveries/:id/accept`, `GET /api/deliveries`, `POST …/pickup`                                    | ASSIGNED and `assigned_to_me`, PICKED_UP, `orders.driver_user_id` = the rider                                                                                                                            |
+| 7   | rider    | `POST …/complete { delivery_otp }`, then the customer's `GET /api/orders/:id`                                | DELIVERED, hash erased, **one** settlement journal: vendor +900, rider +50, PLATFORM_REVENUE +100, escrow back to its starting balance; the five `order.state_changed` events in order                   |
+| 8   | operator | the manual reconciliation, twice; the vendor's `GET /api/vendor/finance/ledger` before and after             | `reconciled_at` stamped, still one journal, wallet still 900 (**nobody paid twice**), the order under `reconciled_orders` with cut 900, `unreconciled_order_count` 1 → 0; the second run changes nothing |
+
+- **Mapping to the prompt's wording.** "Wallet authorized" is read as the customer's payment being
+  captured into escrow (step 3): no customer wallet exists in SPEC. "Settle the ledger" at midnight is
+  Phase 22's verify-and-stamp: the money moved in step 7's commit, and step 8 proves the cron does not
+  move it again.
+- **The reconciliation is run as the documented manual command**, in its own process:
+  `node <tsx cli> src/scripts/reconcile-orders.ts` with `cwd` = `apps/worker`, i.e. exactly what
+  `pnpm --filter @hamro-pasal/worker reconcile:orders` runs, minus the `.env` file: the test passes
+  every server variable itself and points `DATABASE_URL` at the API test database. The API package
+  does not import worker code.
+- **The one shortcut:** the test does not wait 60 s. It first proves the dispatch is refused (422),
+  then moves `placed_at` 61 s back with the existing `backdatePlacement` fixture.
+- Not covered by this file (each has its own suite): COD, Khalti, SELF_DELIVERY, cancellation,
+  wrong codes, sockets, Kafka fan-out, push, SMS. The outbox rows are asserted; no relay runs.
+- The reconciliation command scans the **whole** test database, so in a full run it also processes
+  DELIVERED fixture orders that earlier suites left behind (it reconciles some and logs
+  discrepancies for the rest). The file asserts only on its own order, and measures the shared
+  escrow and revenue accounts before that step.
+
+### 8P.2 Concurrency stress (`inventory-stress.int.test.ts`, 2 tests)
+
+100 customers, one product, 100 simultaneous `POST /api/cart/checkout` (COD, so each success is
+claimed in the same request) against one listening server: the stock guard, the Redis 600 s lock
+(WATCH / MULTI / EXEC) and the guarded decrement together.
+
+| Test             | Stock | Requests        | Result (every run so far)                                                                                                                             |
+| ---------------- | ----- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| exact sell-out   | 5     | 100 × 1 unit    | **5 × 201 (all PLACED), 95 × 409, every refusal `INSUFFICIENT_STOCK`, `products.stock_quantity` = 0**, 5 order lines of 1 unit, no hold left in Redis |
+| mixed quantities | 25    | 100 × 1–4 units | only 201 / 409; units sold + stock left = 25; stock ≥ 0; the subtotals answered = the units sold; no hold left in Redis                               |
+
+- No `503 CHECKOUT_BUSY` and no 500 appeared: the lock's retry budget was enough for 100 contenders
+  on one SKU with the test app's 10 Redis and 30 PostgreSQL connections.
+- **Mutation-checked:** availability computed without the live holds → 19 orders instead of 5 (both
+  tests fail). Removing the Phase 17 stock guard alone does **not** fail it, as expected: the Redis
+  lock is the layer that decides between concurrent customers (§8K).
+- **Finding (not a defect of correctness, left as designed): a short under-allocation window.**
+  The claim commits the PostgreSQL decrement and only then deletes its Redis hold. In between, another
+  checkout counts that unit twice (stock already lowered, hold still there) and can be refused although
+  a unit is free. It can never oversell. In the sell-out test the refused customer is one of 95 who
+  would be refused anyway, so the count stayed at exactly 5 in every run; **in theory the last unit
+  could stay unsold if the final request of a burst lands in that window**, which would show as 4
+  orders and stock 1. Not observed. Releasing the hold first would trade this for an oversell attempt
+  caught only by the guarded decrement (after the order row exists), so the order was kept.
+
+### 8P.3 Index audit and migration 0020
+
+Method: a catalog query over `pg_constraint` (every foreign key) against `pg_index` (a valid index
+whose leading columns are the key's columns), run on the migrated dev database. It is now a test,
+`foreign-key-indexes.int.test.ts`, so **a future foreign key without an index fails CI**.
+
+| Foreign key (all `ON DELETE RESTRICT`)    | Parent              | Index added                                   | Partial       |
+| ----------------------------------------- | ------------------- | --------------------------------------------- | ------------- |
+| `orders.driver_user_id`                   | users               | `orders_driver_user_id_idx`                   | yes           |
+| `disputes.opened_by_user_id`              | users               | `disputes_opened_by_user_id_idx`              | no (NOT NULL) |
+| `disputes.resolved_by_user_id`            | users               | `disputes_resolved_by_user_id_idx`            | yes           |
+| `chat_messages.sender_user_id`            | users               | `chat_messages_sender_user_id_idx`            | no (NOT NULL) |
+| `payout_requests.reversal_transaction_id` | ledger_transactions | `payout_requests_reversal_transaction_id_idx` | yes           |
+| `payout_requests.decided_by_user_id`      | users               | `payout_requests_decided_by_user_id_idx`      | yes           |
+| `dead_letter_events.retry_requested_by`   | users               | `dead_letter_events_retry_requested_by_idx`   | yes           |
+
+- **Why it matters:** deleting a parent row (or changing its key) makes PostgreSQL look for
+  referencing rows in each child table; without an index that is a sequential scan per child table,
+  done while the parent row is locked. Six of the seven guard deletes from `users`.
+- **The prompt's two examples were already covered:** `orders` has no `user_id`; its customer column
+  `customer_id` has `orders_customer_id_idx` (Phase 2), and `deliveries.rider_id` leads
+  `deliveries_rider_id_state_idx` (Phase 21). Every other foreign key (23 of the 30) was already led by an
+  index or a unique constraint.
+- Partial indexes hold only the rows that name a parent. The foreign key check filters on
+  `column = $1`, which implies `IS NOT NULL`, so the planner can use them (tested with `EXPLAIN`
+  on `orders.driver_user_id`).
+- `orders_driver_user_id_idx` also serves a future "this rider's orders" query; nothing reads it
+  that way yet.
+- `dead_letter_events.replay_of_id` is a plain uuid, not a foreign key, and was left without an index.
+- **Deploy note:** the indexes are built with plain `CREATE INDEX` (Drizzle runs all pending
+  migrations in one transaction, so `CONCURRENTLY` is impossible there). Writes to each table wait
+  while its index builds: instant on today's data, a short write stall on a large `orders` table.
+- Tests (db, +3): no foreign key without a leading index; the seven indexes exist with the right
+  partial / full shape; the `EXPLAIN`.
+
+### 8P.4 JWT secret isolation audit
+
+| Checked                    | Result                                                                                                                                                                                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Two keys                   | `JWT_ACCESS_SECRET` signs only access tokens, `JWT_REFRESH_SECRET` only refresh tokens (`auth/access-token.ts`, `auth/refresh-token.ts`); `parseServerEnv` refuses equal values and anything under 32 characters                                                      |
+| Cross-use                  | each verifier pins HS256, the issuer and **its own audience** (`hamro-pasal-app` / `hamro-pasal-refresh`); the refresh token also needs `typ: refresh`. A token of one kind fails the other verifier on the key **and** the audience (tested both ways since Phase 7) |
+| Where the refresh key goes | only `OtpAuthService` (sign at verify, verify at refresh). Request authentication (`requireAuth`) and both Socket.io namespaces receive the access key only                                                                                                           |
+| Derived keys               | the OTP digest pepper is `HMAC-SHA256(JWT_ACCESS_SECRET, "hamro-pasal:otp-digest:v1")`: domain-separated, the JWT key itself is never used as the pepper                                                                                                              |
+| Logging                    | no `console.*` call prints a secret or a token; `token:dev` prints a token on purpose and refuses to run in production                                                                                                                                                |
+| Repository                 | `.env` is git-ignored; `.env.example` has empty secret values                                                                                                                                                                                                         |
+
+- **Added:** `parseServerEnv` now also refuses a JWT secret equal to `ESEWA_SECRET_KEY` or
+  `KHALTI_SECRET_KEY` ("Must differ from …"), so one leaked key can never be both a signing key and a
+  gateway key (shared-types, +1 unit test).
+- **Left as found (reported, not changed):**
+  - the **worker** parses the same `serverEnvSchema`, so it must be given both JWT secrets although
+    no worker code reads them. Strict isolation would give the worker its own schema without them;
+  - rotating `JWT_ACCESS_SECRET` also changes the OTP pepper (outstanding login codes die; harmless,
+    they last 2 minutes);
+  - keys are static: no `kid`, no rotation with overlap, and refresh tokens still cannot be revoked
+    (§13, backlog item 2).
 
 ## 8O. Financial reconciliation and payouts (Phase 22)
 
@@ -3794,6 +3944,23 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
     checkout (hiding a category removes navigation to it, it does not delist products).
   - The admin `dev` script became `vite --force` (stale pre-bundled `shared-types`, §3).
 
+- **Phase 23:**
+  - **"Feature development complete" is stated for the planned phases, not for all of SPEC.md**; the
+    unbuilt SPEC items are listed in §8P and §13 rather than hidden behind the declaration.
+  - The lifecycle test uses a **prepaid (eSewa) fleet order**, the path that exercises escrow, the
+    Redis lock, the rider and all three wallets. "Wallet authorized" = payment captured into escrow.
+  - The midnight job is triggered **as the manual command in a child process**, not by importing
+    worker code into the API tests and not through BullMQ (Phase 22 already tests the queue path).
+  - The stress test goes through **HTTP with COD** (the prompt's "stock exactly 0" needs the claim in
+    the same request); the Redis-only race test from Phase 3 was kept beside it.
+  - The claim's commit-then-release order was **kept** although it allows a brief under-allocation
+    (never an oversell); see §8P.2.
+  - Usually-NULL foreign keys got **partial** indexes; the audit query is kept as a test.
+  - The prompt's `orders.user_id` does not exist; the customer column is `customer_id` and was
+    already indexed. No index was added that the audit did not call for.
+  - The JWT audit added one check (JWT secret ≠ gateway key) and did not split the worker's env schema
+    (a wider change than an audit; reported in §8P.4).
+
 - **Phase 22:**
   - **Double-entry is kept; no `vendor_balances` table** (asked; user chose). SPEC §5 prohibits
     single-entry wallet tables and `vendors.wallet_balance_npr` already is the projection.
@@ -4046,6 +4213,20 @@ CANCELLATION_WINDOW_OPEN` with the seconds left.
     the server answers; a failed answer makes it ring again.
 
 ## 13. Known gaps and risks
+
+- **Phase 23:**
+  - **Feature development is closed, the product is not launch-ready.** Nothing has run on a physical
+    device, no real eSewa / Khalti sandbox session has happened, and the SPEC items listed in §8P are
+    unbuilt (refunds are flagged but never paid; disputes cannot be resolved; no KYC approval).
+  - The lifecycle and stress tests run against local Docker with one API process. They say nothing
+    about several API instances, a managed Redis with failover, or real network latency.
+  - **Under-allocation window at the claim** (§8P.2): a customer can get a `409 INSUFFICIENT_STOCK`
+    for a unit that is free a few milliseconds later, and in theory the last unit of a burst can stay
+    unsold. The sell-out test asserts exactly 5 orders; if it ever reports 4 with stock 1, this is why.
+  - The lifecycle test's reconciliation step runs over the whole shared test database and takes
+    longer as earlier suites leave more DELIVERED fixture orders behind.
+  - The worker process is still handed both JWT secrets it never uses (§8P.4).
+  - Migration 0020 builds its indexes without `CONCURRENTLY` (§8P.3).
 
 - **Phase 22:**
   - **Not run live.** The endpoints, the midnight job and the two web tabs are covered by tests

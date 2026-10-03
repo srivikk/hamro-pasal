@@ -68,6 +68,10 @@ export const orders = pgTable(
       .on(t.delivered_at, t.id)
       .where(sql`${t.state} = 'DELIVERED' AND ${t.reconciled_at} IS NULL`),
     index('orders_vendor_id_reconciled_at_idx').on(t.vendor_id, t.reconciled_at),
+    // Phase 23: serves the users FK check (and a rider's own orders); most orders have no rider.
+    index('orders_driver_user_id_idx')
+      .on(t.driver_user_id)
+      .where(sql`${t.driver_user_id} IS NOT NULL`),
     check('orders_idempotency_key_check', sql`btrim(${t.idempotency_key}) <> ''`),
     check('orders_subtotal_check', sql`${t.subtotal} >= 0`),
     check('orders_delivery_fee_check', sql`${t.delivery_fee} >= 0`),

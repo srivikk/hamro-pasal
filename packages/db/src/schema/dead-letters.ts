@@ -69,6 +69,10 @@ export const deadLetterEvents = pgTable(
     index('dead_letter_events_retry_requested_idx')
       .on(t.retry_requested_at, t.id)
       .where(sql`${t.status} = 'RETRY_REQUESTED'`),
+    // Phase 23: serves the users FK check; only a row someone retried names an admin.
+    index('dead_letter_events_retry_requested_by_idx')
+      .on(t.retry_requested_by)
+      .where(sql`${t.retry_requested_by} IS NOT NULL`),
     check('dead_letter_events_offset_check', sql`${t.source_offset} ~ '^[0-9]+$'`),
     check('dead_letter_events_partition_check', sql`${t.source_partition} >= 0`),
     check('dead_letter_events_attempts_check', sql`${t.attempts} >= 1`),

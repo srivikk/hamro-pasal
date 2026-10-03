@@ -38,6 +38,11 @@ export const disputes = pgTable(
   },
   (t) => [
     index('disputes_status_idx').on(t.status),
+    // Phase 23: every foreign key has an index its parent's delete / key update can use.
+    index('disputes_opened_by_user_id_idx').on(t.opened_by_user_id),
+    index('disputes_resolved_by_user_id_idx')
+      .on(t.resolved_by_user_id)
+      .where(sql`${t.resolved_by_user_id} IS NOT NULL`),
     check('disputes_reason_check', sql`btrim(${t.reason}) <> ''`),
     // An OPEN dispute has no resolution, and a resolved one records who resolved it and when.
     check(
@@ -75,6 +80,7 @@ export const chatMessages = pgTable(
       t.client_id,
     ),
     index('chat_messages_dispute_id_created_at_idx').on(t.dispute_id, t.created_at),
+    index('chat_messages_sender_user_id_idx').on(t.sender_user_id),
     check('chat_messages_client_id_check', sql`length(${t.client_id}) BETWEEN 1 AND 100`),
     check('chat_messages_body_check', sql`length(${t.body}) <= 2000`),
     check(

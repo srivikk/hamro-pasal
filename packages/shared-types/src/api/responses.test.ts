@@ -6,7 +6,8 @@ import {
   errorBodySchema,
   checkoutResponseSchema,
   deliveryConfirmedResponseSchema,
-  driverOrderListResponseSchema,
+  deliveryListResponseSchema,
+  deliveryResponseSchema,
   feedResponseSchema,
   lockStatusResponseSchema,
   orderDetailResponseSchema,
@@ -349,7 +350,6 @@ describe('dispatch and driver schemas', () => {
         quantity: 1,
       },
     ],
-    assigned_to_me: false,
   };
 
   it('accept only OUT_FOR_DELIVERY as a dispatch result', () => {
@@ -361,19 +361,41 @@ describe('dispatch and driver schemas', () => {
     ).toBe(false);
   });
 
-  it('list orders out for delivery without the customer or the OTP hash', () => {
-    const parse = (overrides: Record<string, unknown>) =>
-      driverOrderListResponseSchema.safeParse({ orders: [{ ...driverOrder, ...overrides }] })
-        .success;
+  const delivery = {
+    id: randomUUID(),
+    state: 'OFFERED',
+    assigned_to_me: false,
+    accepted_at: null,
+    picked_up_at: null,
+    order: driverOrder,
+  };
 
-    expect(driverOrderListResponseSchema.parse({ orders: [driverOrder] })).toEqual({
-      orders: [driverOrder],
+  it('list deliveries without the customer or the OTP hash', () => {
+    const parseOrder = (overrides: Record<string, unknown>) =>
+      deliveryListResponseSchema.safeParse({
+        deliveries: [{ ...delivery, order: { ...driverOrder, ...overrides } }],
+      }).success;
+
+    expect(deliveryListResponseSchema.parse({ deliveries: [delivery] })).toEqual({
+      deliveries: [delivery],
     });
-    expect(parse({ state: 'PREPARING' })).toBe(false);
-    expect(parse({ customer_id: randomUUID() })).toBe(false);
-    expect(parse({ customer_phone: '+9779800000001' })).toBe(false);
-    expect(parse({ delivery_otp: '$2b$10$abc' })).toBe(false);
-    expect(parse({ items: [] })).toBe(false);
+    expect(parseOrder({ state: 'PREPARING' })).toBe(false);
+    expect(parseOrder({ customer_id: randomUUID() })).toBe(false);
+    expect(parseOrder({ customer_phone: '+9779800000001' })).toBe(false);
+    expect(parseOrder({ delivery_otp: '$2b$10$abc' })).toBe(false);
+    expect(parseOrder({ items: [] })).toBe(false);
+  });
+
+  it('show a rider only deliveries still to act on, without the rider id or a code', () => {
+    const parse = (overrides: Record<string, unknown>) =>
+      deliveryResponseSchema.safeParse({ delivery: { ...delivery, ...overrides } }).success;
+
+    expect(parse({ state: 'ASSIGNED', assigned_to_me: true })).toBe(true);
+    expect(parse({ state: 'PICKED_UP', picked_up_at: '2026-10-03T10:00:00.000Z' })).toBe(true);
+    expect(parse({ state: 'DELIVERED' })).toBe(false);
+    expect(parse({ state: 'FAILED' })).toBe(false);
+    expect(parse({ rider_id: randomUUID() })).toBe(false);
+    expect(parse({ handoff_otp: '1234' })).toBe(false);
   });
 
   it('accept a delivery only as DELIVERED with its time', () => {

@@ -9,6 +9,7 @@ import {
   SOCKET_IO_REDIS_KEY,
   SOCKET_PING_INTERVAL_MS,
   vendorRoom,
+  type OrderRiderLocation,
   type OrderStateUpdate,
   type OrderSubscribeAck,
   type UserRole,
@@ -25,10 +26,16 @@ import {
   type ChatNamespace,
   type ChatNamespaceOptions,
 } from './chat-namespace';
+import {
+  serveRiderTelemetry,
+  type RiderTelemetry,
+  type RiderTelemetryOptions,
+} from './rider-telemetry';
 import { socketAuth, type AuthenticatedSocketData } from './socket-auth';
 
 export interface OrdersServerToClientEvents {
   'order:state_update': (update: OrderStateUpdate) => void;
+  'order:rider_location': (update: OrderRiderLocation) => void;
 }
 
 /** Payloads are `unknown` on arrival: every one is validated before use. */
@@ -36,6 +43,7 @@ export interface OrdersClientToServerEvents {
   'orders:subscribe': (payload: unknown, ack?: unknown) => void;
   'orders:unsubscribe': (payload: unknown) => void;
   'vendor:subscribe': (payload: unknown, ack?: unknown) => void;
+  'rider:location': (payload: unknown, ack?: unknown) => void;
 }
 
 export type OrdersSocketData = AuthenticatedSocketData;
@@ -66,6 +74,8 @@ export interface RealtimeOptions {
   readonly redis?: { readonly pub: Redis; readonly sub: Redis; readonly key?: string };
   /** Serves the `/chat` dispute namespace on the same server (and Redis adapter). */
   readonly chat?: Omit<ChatNamespaceOptions, 'accessTokenSecret'>;
+  /** Phase 21: riders stream their GPS position; customers get their order's rider pushed. */
+  readonly riders?: RiderTelemetryOptions;
 }
 
 export interface RealtimeServer {
@@ -73,15 +83,18 @@ export interface RealtimeServer {
   readonly orders: OrdersNamespace;
   /** The `/chat` namespace, when `options.chat` was given. */
   readonly chat: ChatNamespace | null;
+  /** Rider telemetry, when `options.riders` was given. */
+  readonly riders: RiderTelemetry | null;
   /** Disconnects every client and closes the HTTP server it is attached to. */
   close(): Promise<void>;
 }
 
 /**
  * Customers track their own orders; vendors follow their shop's incoming orders (vendor flow
- * step 6). The REST routes apply the same split.
+ * step 6); riders only report their position (Phase 21: `rider:location`, they join no room).
+ * The REST routes apply the same split.
  */
-const ALLOWED_ROLES: readonly UserRole[] = ['CUSTOMER', 'VENDOR'];
+const ALLOWED_ROLES: readonly UserRole[] = ['CUSTOMER', 'VENDOR', 'DRIVER'];
 
 /**
  * Attaches Socket.io to the API's HTTP server and serves the `/orders` namespace
@@ -190,6 +203,9 @@ export function attachRealtime(httpServer: HttpServer, options: RealtimeOptions)
     // Rooms are per connection: Socket.io drops them on disconnect, nothing to clean up here.
   });
 
+  // Riders stream GPS in; subscribed customers get their order's rider pushed out.
+  const riders = options.riders === undefined ? null : serveRiderTelemetry(orders, options.riders);
+
   let chat: ChatNamespace | null = null;
   if (options.chat !== undefined) {
     // Same server, so /chat shares the Redis adapter above: a message reaches every instance.
@@ -201,8 +217,10 @@ export function attachRealtime(httpServer: HttpServer, options: RealtimeOptions)
     io,
     orders,
     chat,
+    riders,
     close: () =>
       new Promise<void>((resolve, reject) => {
+        riders?.stop();
         void io.close((error) => {
           // Already closed (or never listening) is fine at shutdown.
           if (

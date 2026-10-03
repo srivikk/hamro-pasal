@@ -1,8 +1,8 @@
-# Hamro Pasal: State Handoff (Phases 0–20 complete)
+# Hamro Pasal: State Handoff (Phases 0–21 complete)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
-work without re-deriving it. It describes the tree at the end of **Phase 20 (Push Notifications &
-Event Alerting)**, on top of Phase 19 (Vendor Catalog Management & Asset Uploads), 18 (Mobile
+work without re-deriving it. It describes the tree at the end of **Phase 21 (Rider Dispatch &
+Geolocation Telemetry)**, on top of Phase 20 (Push Notifications & Event Alerting), 19 (Vendor Catalog Management & Asset Uploads), 18 (Mobile
 Customer Discovery & Live Inventory Integration), 17 (Catalog, Taxonomy & Inventory Management), 16 (Authentication Hardening & HTTP-Only Cookies), 15 (Super Admin Web Dashboard & DLQ Monitoring), 14 (Worker Resiliency & IVR Escalation), 13 (Notification Worker & SMS Dispatch), 12.5 (Application-Layer Suspension & Top-Ups), 12 (Vendor Wallet &
 Debt Reconciliation), 11.5 (Vendor Dispatch UI & Self-Delivery Handoff), 11 (Driver Handoff & OTP Verification), 10 (Vendor Order Management & Audio Alarms), 9.6 (Chat Transcript Read-Back), 9.5 (Chat Persistence & Vendor Review Linkage), 9 (Double-Blind Reviews & Dispute Chat), 8 (Real-Time Order Tracking, Socket.io `/orders`), 7.5 (Token Refresh Flow & Auth Polish), 7 (OTP
 Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this file and the code disagree, **the code wins**. When anything disagrees with
@@ -158,9 +158,28 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 > blocks the partition); a token Expo reports `DeviceNotRegistered` is deleted. With
 > `SMS_PROVIDER=MOCK` the worker also logs `[sms:mock] to +977…: Hamro Pasal: New order. …` beside
 > each push attempt (no SMS is ever sent for an order push) (§8M, §9.17).
+> **Phase 21:** platform riders now work through **deliveries**. New table **`deliveries`**
+> (migration 0018: one per fleet order, `OFFERED → ASSIGNED → PICKED_UP → DELIVERED`, `FAILED`
+> reserved) is created when a shop dispatches a PLATFORM_FLEET / EMERGENCY_FLEET order. A rider
+> lists open gigs and their own at `GET /api/deliveries`, takes one at
+> `POST /api/deliveries/:id/accept` (row-locked: one of several riders wins, the others get
+> `409 DELIVERY_ALREADY_ASSIGNED`), marks it `POST …/pickup`, and hands it over at
+> `POST …/complete { delivery_otp }`. **The doorstep code is still the order's
+> `orders.delivery_otp`** (user decision: no `handoff_otp` column), checked by the unchanged
+> `DeliveryHandoff` (bcrypt, 5-try Redis lockout, DELIVERED + hash erased + settlement in one
+> commit). **The Phase 11 routes `/api/driver/orders` are removed** (user decision): a fleet order
+> can only be delivered by the rider who accepted it, after pickup. **Rider GPS:** DRIVER accounts
+> now connect to Socket.io `/orders` (user decision: no new namespace) and emit
+> `rider:location { latitude, longitude }`; the API stores it with **`GEOADD riders:active`** (+ a
+> hash of report times) and every 5 s pushes **`order:rider_location`** to the customers subscribed
+> to an order whose delivery a rider has accepted. The mobile rider dashboard has Accept / Picked up
+> / code field per delivery and a **"Simulate GPS" switch** (mock positions, testing only); the
+> Profile tab has a `__DEV__` **Rider Mode** entry that signs out and opens sign-in for a rider
+> number. The customer app does **not** show the pushed position yet (§8N, §9.14).
 > **No live device run has happened yet** (§13); the admin app and the DLQ retry loop were run live
 > against local infrastructure (§8I), as were the cookie session (§8J), the catalog screens (§8K) and the Vendor Portal with a real upload (§8L) in headless Edge. **No push has been delivered to a real device** (the Expo API is mocked in every test; FCM / APNs credentials are not set up). Still not built: a real IVR provider (Twilio Voice
-> or a Nepal SIP trunk; only the mock exists), gig assignment / "Picked Up" / "Reached Location", the ghost-customer timer,
+> or a Nepal SIP trunk; only the mock exists), gig broadcast by distance / "Reached Location" / "Delivery Failed", the ghost-customer timer,
+> a customer screen for the rider's position,
 > dispute resolution (no admin screen for it yet), KYC verification, R2, refund payouts,
 > and refresh-token rotation/revocation.
 >
@@ -195,18 +214,18 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 
 ## 1. Snapshot
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · `2ae9633` P10 · `e2cb61d` P11 · `5f3fc9a` P11.5 · `81d45ba` P12 · `76b1d7f` P12.5 · `6aa0f73` P13 · `aa13ee6` P14 · `95b0272` P15 · `c937775` P16 · `5253be9` P17 · `b8e2edd` P18 · Phases 19 and 20 (uncommitted) |
-| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Unit tests      | **1376 passing** (`pnpm test`): shared-types 196, api 103, worker 131, sms 21, ivr 7, kafka 7, db 7, admin 93, mobile 811 (end of Phase 20; every suite rerun)                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Integ. tests    | **553 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 61, api 438, worker 53, kafka 1 (end of Phase 20; every suite rerun, no failure). One unexplained `driver-orders-api` failure in the first full Phase 12.5 run; not reproduced in 4 later full runs and 6 runs of the delivery files (the error was not captured). Earlier flakes: once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**: its other-Palika vendor now has its own location.                                                                        |
-| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 20                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Dev database    | Migrations 0000–0017 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Commits         | `a85082d` init · `e5dc38d` P1 infra · `b4adafe` P2 DB · `204239a` P3 concurrency/ledger/Kafka · `140e82b` + `6c06575` P4 gateways/HTTP/contracts · `d396d8b` 5.1 · `22fe6b6` 5.2 · `142e6f4` 5.3 · `9f23735` 5.4 · `72d56ac` 5.5 · `50b2e4b` 5.6 · `f6f6630` 5.7 · `d8d62c6` handoff · `77a980c` P6 · `a9fc049` P6.5 · `5f1e0f5` P7 + 7.5 · `1be7a71` P8 · `136f184` P9 · `eb2ec80` P9.5 · `1f50027` P9.6 · `2ae9633` P10 · `e2cb61d` P11 · `5f3fc9a` P11.5 · `81d45ba` P12 · `76b1d7f` P12.5 · `6aa0f73` P13 · `aa13ee6` P14 · `95b0272` P15 · `c937775` P16 · `5253be9` P17 · `b8e2edd` P18 · `bbac3a9` P19 · `27898bf` P19 + P20 · Phase 21 (uncommitted) |
+| Node            | 24 (`.nvmrc`), engines `>=24`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Package manager | pnpm 12.6.0 via corepack. Run `corepack enable pnpm` once (Turbo needs `pnpm` on PATH)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Unit tests      | **1410 passing** (`pnpm test`): shared-types 202, api 103, worker 131, sms 21, ivr 7, kafka 7, db 7, admin 93, mobile 839 (end of Phase 21; every suite rerun)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Integ. tests    | **590 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 61, api 475, worker 53, kafka 1 (end of Phase 21; every suite rerun, no failure). One unexplained `driver-orders-api` failure in the first full Phase 12.5 run; not reproduced in 4 later full runs and 6 runs of the delivery files (the error was not captured). Earlier flakes: once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**: its other-Palika vendor now has its own location.                                                                                                      |
+| Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 21                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Dev database    | Migrations 0000–0018 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### Root commands (`package.json`)
 
@@ -275,9 +294,9 @@ packages/shared-types/src          @hamro-pasal/shared-types (zod only, safe for
                                    orderStateUpdateSchema, orderStateUpdateFromEvent (Phase 8)
 packages/db/src                    @hamro-pasal/db: Drizzle schema, client, migrator, outbox writer
   schema/{columns,enums,categories,users,vendors,orders,ledger,outbox,wallet,disputes,dead-letters,
-          device-tokens,contract}.ts
+          device-tokens,deliveries,contract}.ts
   geo/ewkb.ts · outbox.ts · testing.ts (@hamro-pasal/db/testing) · scripts/{migrate,seed,database-url}.ts
-packages/db/drizzle/               0000–0017 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
+packages/db/drizzle/               0000–0018 SQL migrations (+ meta/ snapshots, 0003 hand-patched)
 packages/kafka/src                 config.ts, producer.ts (DomainEventPublisher), index.ts
 packages/sms/src                   @hamro-pasal/sms (Phase 13, server-only; moved from apps/api/src/sms):
   sms-gateway.ts                   Sparrow / Aakash / Mock adapters (strict +977 via prepareOutboundSms), SmsDeliveryError
@@ -327,6 +346,14 @@ apps/api/src                       Express 5 API
                                    DeviceTokenOwnerNotFoundError (→ 401)
   routes/notifications.ts          Phase 20: notificationsRouter (POST /device-token), mounted at /api/notifications
                                    behind requireAuth with no role filter
+  deliveries/delivery-service.ts   Phase 21: DeliveryService (list, accept, pickUp, complete, ridersOnTheRoad),
+                                   offerDelivery (called by the vendor's dispatch), FLEET_FULFILLMENT_MODES
+  deliveries/rider-location-store.ts  Phase 21: RiderLocationStore (GEOADD riders:active + riders:active:seen;
+                                   record, latest, remove), riderLocationKeys
+  routes/deliveries.ts             Phase 21: deliveriesRouter, mounted at /api/deliveries behind requireAuth(DRIVER)
+                                   (orders/driver-order-service.ts and routes/driver-orders.ts are deleted)
+  realtime/rider-telemetry.ts      Phase 21: serveRiderTelemetry on /orders (rider:location in, the periodic
+                                   order:rider_location push out)
 apps/api/scripts/mint-dev-token.ts
 apps/api/test/                     *.int.test.ts (auth-api, auth-cookie-api, cart-api, checkout-claim, inventory-concurrency, ledger-settlement,
                                    mint-dev-token, orders-api, orders-realtime, payments-api, vendors-api) + global-setup.ts + support/
@@ -437,6 +464,9 @@ Phase 20:       index.ts (the app entry, package.json "main": registers the push
                 order-push-task.ts + register-order-push-task.ts: data-only pushes → local notification;
                 PushNotifications.tsx, mounted in app/_layout.tsx)
                 app.json plugin expo-notifications (defaultChannel orders, enableBackgroundRemoteNotifications)
+Phase 21:       src/api/deliveries.ts (fetchDeliveries, advanceDelivery, completeDelivery; driver-orders.ts deleted)
+                src/features/driver/ (useDeliveries.ts, DeliveryCard.tsx, rider-gps-simulator.ts,
+                RiderGpsSimulator.tsx, RiderModeEntry.tsx; useDriverOrders.ts and DriverOrderCard.tsx deleted)
 src/test/       msw.ts · api-fixtures.ts (+ menuProduct) · render.tsx · in-memory-mmkv.ts · mock-webview.tsx · fake-socket.ts
                 · fake-notifications.ts (Phase 20: expo-notifications + expo-task-manager stand-in)
 ```
@@ -551,6 +581,7 @@ kafka-init`) once, or dead-lettering fails and the message is redelivered instea
 | `0016_catalog_taxonomy.sql`                  | **Phase 17.** `categories` table (unique slug, slug / name / order CHECKs, self-parent CHECK, RESTRICT parent FK, `(parent_id, display_order)` index, hand-added `set_updated_at` trigger); `products` + `category_id` (RESTRICT FK), `description`, `unit` (default `piece`), `image_urls text[]`, `metadata jsonb` with CHECKs; `products_vendor_id_idx` replaced by `(vendor_id, is_active)`; `(category_id, is_active)`; GIN `products_search_idx` |
 
 | `0017_device_tokens.sql` | **Phase 20.** `device_tokens` table (FK `user_id` → users CASCADE, unique `token`, `user_id` index, token-format + length CHECK, platform CHECK, hand-added `set_updated_at` trigger) |
+| `0018_deliveries.sql` | **Phase 21.** `delivery_state` enum, `deliveries` table (FK `order_id` → orders CASCADE, unique per order; FK `rider_id` → users RESTRICT; five CHECKs tying rider and timestamps to the state; `(rider_id, state)` and `(state)` indexes; hand-added `set_updated_at` trigger) and a **hand-added backfill**: every fleet order already OUT_FOR_DELIVERY gets an OFFERED row |
 
 **Staging rule:** drizzle-kit prompts interactively on renames, which fails in this non-TTY
 environment. Stage schema edits so a single `generate` only adds or only drops. Hand-write renames
@@ -644,6 +675,18 @@ sender_user_id, client_id)` dedupes retried sends; `chat_messages_not_empty_chec
   the token is the key, so a phone has one owner at a time and an account may have many phones.
   A vendor is reached through `vendors.user_id`. Not in the Zod entity contract (like
   `outbox_events`); the API contract is `api/notifications.ts`.
+- **`deliveries`** (Phase 21, migration 0018): `id`, `order_id` → orders (**CASCADE**, **UNIQUE**: one
+  delivery per order), `rider_id` → users (RESTRICT, null only while OFFERED), `state`
+  `delivery_state` (OFFERED | ASSIGNED | PICKED_UP | DELIVERED | FAILED, default OFFERED),
+  `accepted_at`, `picked_up_at`, `completed_at`, `created_at`, `updated_at` (trigger). CHECKs:
+  `deliveries_rider_check` and `deliveries_accepted_at_check` (OFFERED ⇔ no rider ⇔ no
+  `accepted_at`), `deliveries_picked_up_at_check` (none before PICKED_UP),
+  `deliveries_completed_at_check` (set ⇔ DELIVERED or FAILED),
+  `deliveries_delivered_picked_up_check` (a DELIVERED row was picked up). Indexes
+  `(rider_id, state)`, `(state)`. **No code column**: the doorstep code is `orders.delivery_otp`.
+  Only fleet orders have a row (SELF_DELIVERY orders never do); fleet orders delivered before
+  Phase 21 have none. `orders.driver_user_id` is now set at **accept** (it was set at delivery).
+  Not in the Zod entity contract (like `device_tokens`); the API contract is `deliveryViewSchema`.
 - **`vendors.status_before_admin_suspension`** (Phase 15): the status an admin Restore returns to; set
   only while SUSPENDED by an admin, never together with `status_before_debt_suspension` (CHECK). In the
   Zod entity (`vendorSchema`) and the compile-time contract.
@@ -802,8 +845,10 @@ auth). `Infrastructure` now requires an `sms: SmsGateway` (tests inject `MockSms
 | `POST /api/vendors/orders/:id/reject`                              | Bearer VENDOR (order's vendor)                                    | `idParamSchema`                                                                                                                                                                                                                   | 200 (also on repeat)                        | `vendorOrderDecisionResponseSchema {order_id, state:'CANCELED', refund_required}`                                                                                                                                                                                                                                 | `decideVendorOrder` (Reject)                                                |
 | `POST /api/vendors/orders/:id/dispatch`                            | Bearer VENDOR (order's vendor)                                    | `idParamSchema`                                                                                                                                                                                                                   | 200 (also on repeat)                        | `vendorOrderDispatchResponseSchema {order_id, state:'OUT_FOR_DELIVERY'}`; `422 CANCELLATION_WINDOW_OPEN` (details.retry_after_seconds) inside the 60 s window                                                                                                                                                     | `dispatchVendorOrder` (Dispatch)                                            |
 | `POST /api/vendors/orders/:id/deliver`                             | Bearer VENDOR (order's vendor, SELF_DELIVERY orders only)         | `idParamSchema` + `deliveryOtpRequestSchema {delivery_otp: 4 ASCII digits}`                                                                                                                                                       | 200 (also on repeat)                        | `deliveryConfirmedResponseSchema {order_id, state:'DELIVERED', delivered_at}`; 401 `INVALID_OTP`, 429 `DELIVERY_OTP_LOCKED`, 409 `WRONG_FULFILLMENT_MODE`                                                                                                                                                         | `deliverVendorOrder` (vendor handoff)                                       |
-| `GET /api/driver/orders`                                           | Bearer DRIVER                                                     | –                                                                                                                                                                                                                                 | 200 (`no-store`)                            | `driverOrderListResponseSchema {orders: DriverOrderView[]}` (fleet orders OUT_FOR_DELIVERY, unclaimed or the rider's)                                                                                                                                                                                             | `fetchDriverOrders` (rider dashboard)                                       |
-| `POST /api/driver/orders/:id/deliver`                              | Bearer DRIVER (fleet order, unclaimed or the rider's)             | `idParamSchema` + `deliveryOtpRequestSchema`                                                                                                                                                                                      | 200 (also on repeat)                        | `deliveryConfirmedResponseSchema`; 401 `INVALID_OTP`, 429 `DELIVERY_OTP_LOCKED`                                                                                                                                                                                                                                   | `deliverDriverOrder` (rider handoff)                                        |
+| `GET /api/deliveries` (Phase 21)                                   | Bearer DRIVER                                                     | –                                                                                                                                                                                                                                 | 200 (`no-store`)                            | `deliveryListResponseSchema {deliveries[{id, state OFFERED\|ASSIGNED\|PICKED_UP, assigned_to_me, accepted_at\|null, picked_up_at\|null, order{OrderView + vendor_business_name, delivery_address, items}}]}`: open gigs and the rider's own, oldest dispatch first, max 100                                       | `fetchDeliveries` (rider dashboard)                                         |
+| `POST /api/deliveries/:id/accept` (Phase 21)                       | Bearer DRIVER                                                     | `idParamSchema` (the **delivery** id)                                                                                                                                                                                             | 200 (also on repeat by the same rider)      | `deliveryResponseSchema {delivery}` (ASSIGNED); `409 DELIVERY_ALREADY_ASSIGNED` (another rider), `409 DELIVERY_STATE_CONFLICT` (details.state), `404 DELIVERY_NOT_FOUND`                                                                                                                                          | `advanceDelivery(id, 'accept')`                                             |
+| `POST /api/deliveries/:id/pickup` (Phase 21)                       | Bearer DRIVER (the delivery's rider)                              | `idParamSchema`                                                                                                                                                                                                                   | 200 (also on repeat)                        | `deliveryResponseSchema` (PICKED_UP); `404 DELIVERY_NOT_FOUND` (open gig, another rider's, unknown), `409 DELIVERY_STATE_CONFLICT`                                                                                                                                                                                | `advanceDelivery(id, 'pickup')`                                             |
+| `POST /api/deliveries/:id/complete` (Phase 21)                     | Bearer DRIVER (the delivery's rider, state PICKED_UP)             | `idParamSchema` + `deliveryOtpRequestSchema {delivery_otp: 4 ASCII digits}`                                                                                                                                                       | 200 (also on repeat)                        | `deliveryConfirmedResponseSchema {order_id, state:'DELIVERED', delivered_at}`; 401 `INVALID_OTP`, 429 `DELIVERY_OTP_LOCKED`, 409 `DELIVERY_STATE_CONFLICT` (not picked up yet; no attempt counted), 404 `DELIVERY_NOT_FOUND`                                                                                      | `completeDelivery` (rider handoff)                                          |
 | `POST /api/uploads/dispute-evidence`                               | Bearer CUSTOMER (order owner)                                     | multipart: field `order_id` (`disputeEvidenceUploadFieldsSchema`) + part `file` (JPEG/PNG/WebP by magic bytes, ≤ 5 MB)                                                                                                            | 201                                         | `disputeEvidenceUploadResponseSchema {url, content_type}` (= a chat attachment)                                                                                                                                                                                                                                   | `uploadDisputeEvidence` (dispute screen)                                    |
 | `GET /api/vendors/wallet/balance`                                  | Bearer VENDOR (own shop; SUSPENDED vendors too)                   | –                                                                                                                                                                                                                                 | 200 (`no-store`)                            | `vendorWalletBalanceResponseSchema {vendor_id, status, is_suspended, suspended_for_debt, wallet_balance_npr, suspension_limit_npr, pending_escrow_npr, pending_escrow_order_count}`; `404 VENDOR_NOT_FOUND` for a shopless vendor                                                                                 | `fetchVendorWalletBalance` (wallet screen)                                  |
 | `GET /api/vendors/wallet/ledger?limit=&cursor=`                    | Bearer VENDOR (own shop)                                          | `vendorWalletLedgerQuerySchema {limit? 1–50 (default 20), cursor? = an entry id}`                                                                                                                                                 | 200 (`no-store`)                            | `vendorWalletLedgerResponseSchema {entries[{id, transaction_id, kind, entry_type, amount_npr, balance_after_npr, description, created_at, order\|null}], next_cursor}`; `400 INVALID_CURSOR` (not an entry of this wallet)                                                                                        | `fetchVendorWalletLedger` (wallet screen)                                   |
@@ -892,17 +937,17 @@ transaction under `SELECT … FOR UPDATE`:
 **Error envelope** `{ error: { code, message, details? } }` (`errorBodySchema`, emitted by
 `http/errors.ts`). Clients branch on `code`:
 
-| HTTP            | codes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 400             | `VALIDATION_FAILED` (details.issues), `MALFORMED_REQUEST`, `INVALID_CART`, `INVALID_PAYMENT_CALLBACK`, `INVALID_CURSOR` (wallet ledger, admin DLQ, product lists)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| 401 / 403       | `UNAUTHENTICATED` / `FORBIDDEN`; auth: `OTP_INVALID` (details.attempts_remaining), `REFRESH_TOKEN_INVALID`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 404             | `NOT_FOUND`, `ORDER_NOT_FOUND`, `PAYMENT_NOT_FOUND`, `VENDOR_NOT_FOUND`, `DEAD_LETTER_NOT_FOUND`, `CATEGORY_NOT_FOUND`, `PRODUCT_NOT_FOUND`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 409             | `INSUFFICIENT_STOCK` (details.shortfalls), `IDEMPOTENCY_KEY_REUSED`, `WRONG_PAYMENT_METHOD`, `ORDER_NOT_PAYABLE`, `ORDER_STATE_CONFLICT` (also: reviewing an order that is not DELIVERED, details.state), `CHECKOUT_IN_PROGRESS`, `PAYMENT_AMOUNT_MISMATCH`, `PAID_AFTER_SESSION_EXPIRED` (details.order_id, refund_required), `REVIEW_ALREADY_SUBMITTED` (details.review_id), admin: `DEAD_LETTER_ALREADY_REPLAYED`, `VENDOR_STATUS_CONFLICT` (details.status), `WALLET_BELOW_SUSPENSION_LIMIT` (details.wallet_balance_npr, suspension_limit_npr), `RESTORE_STATUS_UNKNOWN`, catalog: `CATEGORY_SLUG_TAKEN` (details.slug), `CATEGORY_CYCLE`, `CATEGORY_IN_USE` (details.child_count, product_count), `PRODUCT_NAME_TAKEN` |
-| 410             | `RESERVATION_EXPIRED` (SPEC "Session Expired"), `OTP_EXPIRED` (no valid code: never sent, expired, used or burned)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 413 / 415       | `FILE_TOO_LARGE` (details.max_bytes) / `UNSUPPORTED_MEDIA_TYPE` (evidence uploads, product photos)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 422             | `VENDOR_UNAVAILABLE`, `PRODUCT_UNAVAILABLE` (details.product_ids), `BELOW_MINIMUM_ORDER_VALUE`, `COD_NOT_AVAILABLE`, `CANCELLATION_WINDOW_EXPIRED`, `REVIEW_WINDOW_CLOSED`, `DISPUTE_WINDOW_CLOSED`, `CATEGORY_PARENT_NOT_FOUND`, `CATEGORY_TOO_DEEP` (details.max_depth), `CATEGORY_UNAVAILABLE` (details.category_id), `PRODUCT_IMAGE_LIMIT` (details.max_images, current_images)                                                                                                                                                                                                                                                                                                                                          |
-| 429             | `OTP_RESEND_COOLDOWN` (details.retry_after_seconds), `OTP_ATTEMPTS_EXCEEDED`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 502 / 503 / 500 | `PAYMENT_GATEWAY_ERROR`, `SMS_DELIVERY_FAILED` / `CHECKOUT_BUSY`, `TOP_UP_UNAVAILABLE` / `INTERNAL_SERVER_ERROR`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| HTTP            | codes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 400             | `VALIDATION_FAILED` (details.issues), `MALFORMED_REQUEST`, `INVALID_CART`, `INVALID_PAYMENT_CALLBACK`, `INVALID_CURSOR` (wallet ledger, admin DLQ, product lists)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 401 / 403       | `UNAUTHENTICATED` / `FORBIDDEN`; auth: `OTP_INVALID` (details.attempts_remaining), `REFRESH_TOKEN_INVALID`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 404             | `NOT_FOUND`, `ORDER_NOT_FOUND`, `PAYMENT_NOT_FOUND`, `VENDOR_NOT_FOUND`, `DEAD_LETTER_NOT_FOUND`, `CATEGORY_NOT_FOUND`, `PRODUCT_NOT_FOUND`, `DELIVERY_NOT_FOUND`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 409             | `INSUFFICIENT_STOCK` (details.shortfalls), `IDEMPOTENCY_KEY_REUSED`, `WRONG_PAYMENT_METHOD`, `ORDER_NOT_PAYABLE`, `ORDER_STATE_CONFLICT` (also: reviewing an order that is not DELIVERED, details.state), `CHECKOUT_IN_PROGRESS`, `PAYMENT_AMOUNT_MISMATCH`, `PAID_AFTER_SESSION_EXPIRED` (details.order_id, refund_required), `REVIEW_ALREADY_SUBMITTED` (details.review_id), admin: `DEAD_LETTER_ALREADY_REPLAYED`, `VENDOR_STATUS_CONFLICT` (details.status), `WALLET_BELOW_SUSPENSION_LIMIT` (details.wallet_balance_npr, suspension_limit_npr), `RESTORE_STATUS_UNKNOWN`, catalog: `CATEGORY_SLUG_TAKEN` (details.slug), `CATEGORY_CYCLE`, `CATEGORY_IN_USE` (details.child_count, product_count), `PRODUCT_NAME_TAKEN`, deliveries: `DELIVERY_ALREADY_ASSIGNED`, `DELIVERY_STATE_CONFLICT` (details.state) |
+| 410             | `RESERVATION_EXPIRED` (SPEC "Session Expired"), `OTP_EXPIRED` (no valid code: never sent, expired, used or burned)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 413 / 415       | `FILE_TOO_LARGE` (details.max_bytes) / `UNSUPPORTED_MEDIA_TYPE` (evidence uploads, product photos)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 422             | `VENDOR_UNAVAILABLE`, `PRODUCT_UNAVAILABLE` (details.product_ids), `BELOW_MINIMUM_ORDER_VALUE`, `COD_NOT_AVAILABLE`, `CANCELLATION_WINDOW_EXPIRED`, `REVIEW_WINDOW_CLOSED`, `DISPUTE_WINDOW_CLOSED`, `CATEGORY_PARENT_NOT_FOUND`, `CATEGORY_TOO_DEEP` (details.max_depth), `CATEGORY_UNAVAILABLE` (details.category_id), `PRODUCT_IMAGE_LIMIT` (details.max_images, current_images)                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 429             | `OTP_RESEND_COOLDOWN` (details.retry_after_seconds), `OTP_ATTEMPTS_EXCEEDED`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 502 / 503 / 500 | `PAYMENT_GATEWAY_ERROR`, `SMS_DELIVERY_FAILED` / `CHECKOUT_BUSY`, `TOP_UP_UNAVAILABLE` / `INTERNAL_SERVER_ERROR`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 **Access tokens** (`auth/access-token.ts`, `http/auth.ts`): HS256 only, issuer `hamro-pasal-api`,
 audience `hamro-pasal-app`, TTL 900 s, claims `{ sub: user uuid, role }`, `Authorization: Bearer
@@ -916,22 +961,22 @@ Only these code paths change `orders.state`, and each writes `order.state_change
 transaction (Phase 8), which `/orders` streams to the app (§8B). **Any new transition (the lifecycle
 routes) must call `enqueueOrderStateChanged(tx, fromState, updatedRow)`** in its transaction.
 
-| From → to                     | Where                                       | Trigger                                    | Outbox event today                                                              |
-| ----------------------------- | ------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
-| (new) → PENDING_PAYMENT       | `CheckoutService.checkout`                  | `POST /api/cart/checkout`                  | `order.state_changed` (from null) + `order.locked` (aggregate = reservation_id) |
-| PENDING_PAYMENT → PLACED      | `CheckoutService.claim` (sets `placed_at`)  | COD checkout, eSewa webhook, Khalti lookup | `order.state_changed` + `order.placed`                                          |
-| PENDING_PAYMENT → FAILED      | `PaymentConfirmationService.placeIfPending` | paid after the 600 s lock expired          | `order.state_changed` (update + event in one transaction)                       |
-| PLACED / PREPARING → CANCELED | `OrderService.cancel`                       | `POST /api/orders/:id/cancel` (≤ 60 s)     | `order.state_changed` always; plus `order.canceled_refund_due` if PAID          |
-| PLACED → PREPARING            | `VendorOrderService.accept` (Phase 10)      | `POST /api/vendors/orders/:id/accept`      | `order.state_changed`                                                           |
-| PLACED → CANCELED             | `VendorOrderService.reject` (Phase 10)      | `POST /api/vendors/orders/:id/reject`      | `order.state_changed` always; plus `order.canceled_refund_due` if PAID          |
-| PREPARING → OUT_FOR_DELIVERY  | `VendorOrderService.dispatch` (Phase 11)    | `POST /api/vendors/orders/:id/dispatch`    | `order.state_changed`                                                           |
-| OUT_FOR_DELIVERY → DELIVERED  | `DriverOrderService.deliver` (Phase 11)     | `POST /api/driver/orders/:id/deliver`      | `order.state_changed` (+ `ledger.mutated` of the settlement journal)            |
-| OUT_FOR_DELIVERY → DELIVERED  | `VendorOrderService.deliver` (Phase 11.5)   | `POST /api/vendors/orders/:id/deliver`     | `order.state_changed` (+ `ledger.mutated` of the settlement journal)            |
+| From → to                     | Where                                                                   | Trigger                                    | Outbox event today                                                              |
+| ----------------------------- | ----------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
+| (new) → PENDING_PAYMENT       | `CheckoutService.checkout`                                              | `POST /api/cart/checkout`                  | `order.state_changed` (from null) + `order.locked` (aggregate = reservation_id) |
+| PENDING_PAYMENT → PLACED      | `CheckoutService.claim` (sets `placed_at`)                              | COD checkout, eSewa webhook, Khalti lookup | `order.state_changed` + `order.placed`                                          |
+| PENDING_PAYMENT → FAILED      | `PaymentConfirmationService.placeIfPending`                             | paid after the 600 s lock expired          | `order.state_changed` (update + event in one transaction)                       |
+| PLACED / PREPARING → CANCELED | `OrderService.cancel`                                                   | `POST /api/orders/:id/cancel` (≤ 60 s)     | `order.state_changed` always; plus `order.canceled_refund_due` if PAID          |
+| PLACED → PREPARING            | `VendorOrderService.accept` (Phase 10)                                  | `POST /api/vendors/orders/:id/accept`      | `order.state_changed`                                                           |
+| PLACED → CANCELED             | `VendorOrderService.reject` (Phase 10)                                  | `POST /api/vendors/orders/:id/reject`      | `order.state_changed` always; plus `order.canceled_refund_due` if PAID          |
+| PREPARING → OUT_FOR_DELIVERY  | `VendorOrderService.dispatch` (Phase 11)                                | `POST /api/vendors/orders/:id/dispatch`    | `order.state_changed`                                                           |
+| OUT_FOR_DELIVERY → DELIVERED  | `DeliveryService.complete` (Phase 21; fleet orders, delivery PICKED_UP) | `POST /api/deliveries/:id/complete`        | `order.state_changed` (+ `ledger.mutated` of the settlement journal)            |
+| OUT_FOR_DELIVERY → DELIVERED  | `VendorOrderService.deliver` (Phase 11.5)                               | `POST /api/vendors/orders/:id/deliver`     | `order.state_changed` (+ `ledger.mutated` of the settlement journal)            |
 
 ### Not implemented (backend)
 
-No routes for: saved-address CRUD, profile (name) editing, refresh-token revocation (the Phase 16 logout only clears the browser cookie), order state transitions after PREPARING
-(gig assignment, "Picked Up", "Reached Location", "Delivery Failed"), "Accept with Modifications",
+No routes for: saved-address CRUD, profile (name) editing, refresh-token revocation (the Phase 16 logout only clears the browser cookie), the rest of the rider flow
+(gig broadcast by distance, "Reached Location", "Delivery Failed"; accept, pickup and complete exist since Phase 21, §8N), "Accept with Modifications",
 reading published reviews, dispute resolution (nothing moves a dispute out of OPEN or the order to `DISPUTED`), refunds, admin
 (beyond the Phase 15 DLQ monitor and vendor overrides and the Phase 17 taxonomy and products overview: KYC approval, logistics toggles, platform settings),
 a driver app, `/metrics`, rate limiting beyond the per-phone OTP cooldown. Push notifications exist
@@ -939,6 +984,187 @@ for order state changes only (Phase 20, §8M; no chat, wallet or rider pushes, n
 escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8N. Rider dispatch and geolocation telemetry (Phase 21)
+
+SPEC delivery partner flow steps 1, 2 and 5, customer journey 10, implicit requirement 4 and the
+tech stack's "WebSockets … for real-time discrete driver tracking updates". Code:
+`packages/db/src/schema/deliveries.ts` (migration 0018),
+`apps/api/src/deliveries/{delivery-service,rider-location-store}.ts`,
+`apps/api/src/routes/deliveries.ts`, `apps/api/src/realtime/rider-telemetry.ts`,
+`packages/shared-types/src/realtime/orders-socket.ts`, `packages/shared-types/src/api/responses.ts`,
+`apps/mobile/src/features/driver/*` (§9.14).
+
+```
+vendor POST /api/vendors/orders/:id/dispatch (fleet order) ─ same tx ─▶ INSERT deliveries (OFFERED, no rider)
+rider  GET  /api/deliveries                      open gigs + own ASSIGNED / PICKED_UP
+rider  POST /api/deliveries/:id/accept           OFFERED → ASSIGNED, rider_id, orders.driver_user_id
+rider  POST /api/deliveries/:id/pickup           ASSIGNED → PICKED_UP
+rider  POST /api/deliveries/:id/complete {otp}   PICKED_UP → DeliveryHandoff (orders.delivery_otp) → DELIVERED + settlement
+
+rider socket /orders ─ rider:location {latitude, longitude} ─▶ MULTI
+                                                                  GEOADD riders:active <lng> <lat> <rider id>
+                                                                  HSET   riders:active:seen <rider id> <epoch ms>
+                                                                EXEC ─▶ ack {ok, recorded_at}
+API instance, every 5 s:
+  order ids of the rooms its own sockets are in (order:{id})
+  ─▶ SELECT order_id, rider_id FROM deliveries ⋈ orders        (ASSIGNED | PICKED_UP, order OUT_FOR_DELIVERY)
+  ─▶ GEOPOS riders:active <riders…>  +  HMGET riders:active:seen <riders…>   (drop anything older than 120 s)
+  ─▶ emit order:rider_location {order_id, latitude, longitude, recorded_at}  to room order:{id}, local sockets only
+```
+
+**User decisions (asked before building).**
+
+| Prompt said                                             | Built                                                                                                                                                              |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `deliveries` stores a 4-digit `handoff_otp`             | **No code column.** The one doorstep code is SPEC's `orders.delivery_otp` (bcrypt, shown to the customer); completing a delivery verifies it via `DeliveryHandoff` |
+| a WebSocket namespace for riders, another for customers | **Both on `/orders`** (SPEC names exactly `/orders` and `/chat`): DRIVER admitted, events `rider:location` and `order:rider_location`                              |
+| `POST /api/deliveries/:id/accept` and `…/complete`      | Those, plus **`GET /api/deliveries`** (the rider must find the id) and **`POST …/pickup`** (so PICKED_UP is reachable)                                             |
+| (silent on the Phase 11 routes)                         | **`/api/driver/orders` removed**; the only way to deliver a fleet order is its delivery                                                                            |
+| states ASSIGNED, PICKED_UP, DELIVERED, FAILED           | plus **OFFERED** (dispatched, no rider yet; not asked of the user: the row has to exist before `/accept` can name it)                                              |
+
+**Delivery lifecycle (`DeliveryService`).** Every step runs in one transaction that locks the
+**order row first, then the delivery row** (`FOR UPDATE`), the order the dispatch and the handoff
+also use.
+
+| Step       | From → to             | Who                  | Effect                                                                                                       | Repeat / refusals                                                                                                                                                        |
+| ---------- | --------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| (dispatch) | – → OFFERED           | the vendor           | `offerDelivery`: `INSERT … ON CONFLICT DO NOTHING` in the dispatching transaction; nothing for SELF_DELIVERY | a repeated dispatch keeps one row                                                                                                                                        |
+| accept     | OFFERED → ASSIGNED    | any DRIVER           | `rider_id`, `accepted_at = now()`, `orders.driver_user_id = rider`                                           | own delivery again → 200 same body; another rider's → `409 DELIVERY_ALREADY_ASSIGNED`; unknown → `404 DELIVERY_NOT_FOUND`. 5 riders at once → one 200, four 409 (tested) |
+| pickup     | ASSIGNED → PICKED_UP  | the delivery's rider | `picked_up_at = now()`                                                                                       | PICKED_UP → 200 same body; open gig or another rider's → 404 (ids cannot be probed); other state → `409 DELIVERY_STATE_CONFLICT` `details.state`                         |
+| complete   | PICKED_UP → DELIVERED | the delivery's rider | `DeliveryHandoff.handOver` (below), then `state = DELIVERED`, `completed_at = now()`, all in one commit      | DELIVERED → 200 same body; ASSIGNED → 409 **before any code is looked at** (no attempt counted); not the rider → 404 (also for the right code)                           |
+
+- No step changes `orders.state` except complete, so accept and pickup write no outbox event and
+  nothing is pushed or broadcast for them.
+- `GET /api/deliveries`: `deliveries ⋈ orders ⋈ vendors` where the order is OUT_FOR_DELIVERY and the
+  delivery is OFFERED or (the caller's and ASSIGNED / PICKED_UP), by `created_at`, capped at 100.
+  `DeliveryView` is strict: no customer id, name or phone, no rider id, no hash.
+- FAILED is in the enum and the CHECKs but **no code sets it** (the ghost-customer timer is not built).
+
+**OTP verification flow** (customer journey 10; "require a valid handoff OTP to reach DELIVERED").
+
+1. Checkout creates the 4-digit code (CSPRNG), stores its **bcrypt hash** in `orders.delivery_otp`
+   and returns the raw code once to the customer's app (encrypted MMKV, shown on the tracking
+   screen). Unchanged since Phase 4.
+2. `POST /api/deliveries/:id/complete { delivery_otp }`: `requireAuth(DRIVER)`, then the strict body
+   (4 ASCII digits, else `400 VALIDATION_FAILED`, nothing counted).
+3. Under the order + delivery row locks: the caller must be `deliveries.rider_id` (else 404) and the
+   delivery PICKED_UP (else 409).
+4. `DeliveryHandoff.handOver(tx, order, otp, riderId)`, the same object the vendor's SELF_DELIVERY
+   handoff uses (§8E): order must be OUT_FOR_DELIVERY; a locked order is `429 DELIVERY_OTP_LOCKED`
+   even for the right code; `bcrypt.compare`; a wrong code is counted in Redis
+   (`delivery-otp:failures:{order}`, 15 min) → `401 INVALID_OTP` `details.attempts_remaining` 4 → 1,
+   the 5th → 429.
+5. A match: `orders.state = DELIVERED`, `delivered_at = now()`, **`delivery_otp = NULL`** (no replay),
+   escrow settled (`settleOrderInTransaction`), `order.state_changed` written, and the delivery row
+   closed, in one commit. After it the Redis counter is deleted.
+
+- **Every path to DELIVERED checks the code:** `DeliveryService.complete` (fleet) and
+  `VendorOrderService.deliver` (SELF_DELIVERY) are the only code that sets the state, and both go
+  through `handOver`. There is **no database trigger** tying `orders.state = DELIVERED` to a
+  `deliveries` row (test fixtures still set DELIVERED by hand).
+- The row locks serialise guesses (10 concurrent wrong codes → four 401s, six 429s; 5 concurrent
+  right codes → one delivery, one settlement journal; tested).
+
+**Redis geospatial architecture (`RiderLocationStore`).**
+
+| Key                  | Type           | Written by                                           | Read by                             |
+| -------------------- | -------------- | ---------------------------------------------------- | ----------------------------------- |
+| `riders:active`      | geo set (zset) | `GEOADD riders:active <lng> <lat> <rider user id>`   | `GEOPOS riders:active <rider>…`     |
+| `riders:active:seen` | hash           | `HSET riders:active:seen <rider user id> <epoch ms>` | `HMGET riders:active:seen <rider>…` |
+
+- **Why Redis, not PostgreSQL:** a position is overwritten every few seconds and is worthless when
+  old; nothing durable depends on it (flushing Redis loses no order, as §8A's boundary says).
+- **One member per rider**: `GEOADD` on an existing member moves it, so the set holds each rider's
+  last report only. Redis takes **longitude first**; the store converts from / to
+  `{ latitude, longitude }` (mutation-checked: swapping them fails 17 tests).
+- **Staleness without TTLs:** members of a sorted set cannot expire, so the report time is written
+  to the hash in the **same `MULTI`** and `latest()` drops anything older than
+  `RIDER_LOCATION_MAX_AGE_SECONDS` (120 s). A position is never returned without its age.
+- **Precision:** Redis stores a 52-bit geohash; a round trip is exact to under a metre (tests
+  compare to 5 decimals).
+- **Nothing is ever removed** in production (`remove()` exists and is tested but unused): the set
+  grows to one member per rider that ever reported, and old ones are simply ignored. Nothing uses
+  `GEOSEARCH` yet either; the set is ready for broadcasting gigs by distance (§11).
+- The server clock stamps `recorded_at` (when the report arrived), not the device.
+
+**WebSocket payload contracts** (namespace `/orders`, `packages/shared-types/src/realtime/orders-socket.ts`;
+handshake, transports and heartbeat as in §8B).
+
+| Event                  | Direction                  | Payload                                                                                                      | Ack / notes                                                                                                                                                                                               |
+| ---------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rider:location`       | rider → server             | `riderLocationRequestSchema` (strict) `{ latitude: number, longitude: number }`, inside `NEPAL_BOUNDING_BOX` | optional ack `riderLocationAckSchema`: `{ ok: true, recorded_at }` or `{ ok: false, error: { code, message } }` with code `VALIDATION_FAILED` \| `FORBIDDEN` \| `RATE_LIMITED` \| `INTERNAL_SERVER_ERROR` |
+| `order:rider_location` | server → order's customers | `orderRiderLocationSchema` (strict) `{ order_id, latitude, longitude, recorded_at }`                         | no ack. Carries **no rider id, name or phone**                                                                                                                                                            |
+
+```jsonc
+// rider → server
+socket.emit('rider:location', { "latitude": 27.7154, "longitude": 85.3123 }, ack)
+// ack
+{ "ok": true, "recorded_at": "2026-10-03T10:45:00.000Z" }
+{ "ok": false, "error": { "code": "RATE_LIMITED", "message": "Position sent too soon" } }
+// server → sockets in room order:{order_id}
+{ "order_id": "4a1c…", "latitude": 27.7154, "longitude": 85.3123, "recorded_at": "2026-10-03T10:45:00.000Z" }
+```
+
+- **The rider is the handshake's token subject.** The strict payload has no rider field (a
+  `rider_id` key is `VALIDATION_FAILED`), so nobody can report for someone else. A CUSTOMER or
+  VENDOR socket emitting the event gets `FORBIDDEN` and nothing is stored.
+- **Rate limit:** one report per connection per `RIDER_LOCATION_MIN_INTERVAL_MS` (1 s, kept in the
+  socket's closure, not in Redis); a sooner one is `RATE_LIMITED` and not stored.
+- **Any signed-in rider may report**, with or without a delivery (the set is meant for gig
+  broadcast later). What a customer can see is decided at push time.
+- **Push** (`serveRiderTelemetry`, one `setInterval` per API instance,
+  `RIDER_LOCATION_PUSH_INTERVAL_MS` = 5 s, rounds never overlap):
+  - the customer subscribes exactly as before (`orders:subscribe`, ownership-checked); there is
+    no new subscription event. The push goes to whoever is in `order:{id}`;
+  - only an order with a delivery **ASSIGNED or PICKED_UP** and state OUT_FOR_DELIVERY has a rider
+    to show: nothing while the gig is open, nothing after delivery (both tested);
+  - **one push per report:** a position whose `recorded_at` was already pushed to that room is not
+    sent again; a customer who subscribes later gets the rider's last fresh position on the next
+    round (tested);
+  - emitted with `namespace.local`, so each instance serves its own sockets and nothing is
+    duplicated through the Redis adapter. Cost per round per instance: one SQL query and two Redis
+    commands, none when no order room exists.
+- `RealtimeOptions.riders` (`{ locations, deliveries, pushIntervalMs?, minReportIntervalMs? }`)
+  switches it on; `server.ts` passes `container.riderLocations` and `container.deliveries`.
+
+**Tests.**
+
+- shared-types (+6): `orders-socket.test.ts` (event names, the request inside Nepal only and with
+  no extra key, the ack codes, the push without identity, the three intervals' order),
+  `responses.test.ts` (delivery list and view strictness).
+- API integration `deliveries-api.int.test.ts` (35, real Express + PostgreSQL + Redis; replaces
+  `driver-orders-api`): dispatch opens one OFFERED row (repeat, SELF_DELIVERY, before dispatch);
+  accept (assignment + `driver_user_id`, repeat, second rider 409, **5 riders at once**, 404 / 400,
+  roles); pickup (once, hidden from others); complete (delivered + hash erased + delivery closed +
+  event, COD and prepaid settlement, retry, 5 concurrent, counter cleared); **the constraints:
+  right code before pickup → 409 with no attempt counted, right code from a rider who never
+  accepted → 404, from another rider → 404 before and after, the old routes are 404, the table's
+  CHECK and unique constraints**; wrong codes (401, neighbours, countdown + lockout, 10 concurrent,
+  per order, expiry, roles, validation); the list (open / mine / picked up / others' hidden,
+  dropped when completed, no identity, roles).
+- API integration `rider-telemetry.int.test.ts` (25, **real Redis GEOADD** + Socket.io with the
+  Redis adapter): the key is a zset and GEOPOS returns the position (longitude first) with its
+  time in the hash; **GEODIST Thamel–Patan ≈ 4.9 km and GEOSEARCH BYRADIUS 1 km finds only the
+  Thamel rider**; one position per rider; several riders and unknown ones; the 120 s bound at
+  exactly the boundary; remove; 10 racing reports; then over sockets: stored under the token's
+  rider with the acked time, without an ack, six invalid payloads, CUSTOMER / VENDOR refused, the
+  rate limit; the push to the order's customer without identity, one push per report, nothing
+  for an open gig then starting at accept, never another rider's position, orders kept apart,
+  stops at delivery, a late subscriber.
+- `orders-realtime.int.test.ts`: SUPER_ADMIN still refused; a rider is admitted and gets no room.
+  `vendor-delivery-api.int.test.ts`: its two rider cases now go through `/api/deliveries`.
+  **Every other order state machine suite passes unchanged** (orders, vendor orders, vendor
+  delivery, payments, cart, ledger settlement, worker).
+- Mobile: §9.14.
+- **Mutation-checked** (each fails at least one test): complete without the PICKED_UP check (1),
+  `lockOwn` ignoring the rider (3), accept ignoring an existing rider (2), dispatch offering no
+  delivery (30), latitude / longitude swapped in GEOADD (17), no staleness bound (1), unchanged
+  positions re-sent (2), no role check on `rider:location` (2), no rate limit (1). One mutant
+  **survives by design**: dropping the delivery-state filter in `ridersOnTheRoad` (an open gig has
+  no rider and a finished delivery's order is no longer OUT_FOR_DELIVERY, so two other conditions
+  cover it).
+- **Not run on a device or with a real GPS;** the API was not started live for this phase.
 
 ## 8M. Push notifications: device tokens and order alerts (Phase 20)
 
@@ -1887,6 +2113,14 @@ on the row's current status (11 fail), restoring at the limit instead of 0 (3), 
 
 ## 8E. Dispatch and the doorstep OTP handoff (Phases 11 and 11.5)
 
+> **Phase 21 changed the rider's half of this section.** `GET /api/driver/orders` and
+> `POST /api/driver/orders/:id/deliver` and `DriverOrderService` no longer exist; the rider works
+> through `/api/deliveries` (§8N) and must accept and pick up before the code is checked. Dispatch,
+> the shared `DeliveryHandoff` (steps 2–4 below), the lockout and everything about the vendor's
+> SELF_DELIVERY handoff are unchanged. Dispatch of a fleet order now also inserts its `deliveries`
+> row. The paragraphs "Which orders a rider sees" and "Deliver" below describe Phase 11 and are
+> kept for the handoff's rules only.
+
 SPEC vendor flow step 8, customer journey 10, delivery partner flow step 5. Code:
 `apps/api/src/orders/vendor-order-service.ts#dispatch`, `orders/driver-order-service.ts`,
 `orders/delivery-otp-attempts.ts`, `routes/{vendor-orders,driver-orders}.ts`.
@@ -2138,6 +2372,10 @@ state change ──(same tx)──▶ outbox order.state_changed ──OutboxRel
 | Unsubscribe | `orders:unsubscribe { order_id }` leaves the room. Rooms die with the connection: clients re-subscribe after every reconnect                                                                                                                                                                                         |
 | Update      | `order:state_update` = `orderStateUpdateSchema { order_id, state, payment_status, refund_required, placed_at, delivered_at, changed_at }` (the snapshot fields a state change can alter)                                                                                                                             |
 
+- **Phase 21:** DRIVER accounts are admitted too (roles CUSTOMER, VENDOR, DRIVER; SUPER_ADMIN is
+  still `FORBIDDEN`). A rider joins no room (`orders:subscribe` → `ORDER_NOT_FOUND`,
+  `vendor:subscribe` → `FORBIDDEN`); they only emit `rider:location`, and the namespace gained the
+  server event `order:rider_location` (§8N).
 - The token is checked **only at the handshake**: a connection outlives its 15-min access token until
   it reconnects (§13).
 - Tests: `apps/api/test/orders-realtime.int.test.ts` (outbox event for every transition, handshake
@@ -2266,13 +2504,16 @@ Redis holds only short-lived coordination state; **PostgreSQL is the source of t
 durable. Flushing Redis loses no orders, money or accounts (it only cancels live checkouts and
 outstanding codes).
 
-| Key                                  | Type   | TTL                                  | Owner                  | Purpose                                                                            |
-| ------------------------------------ | ------ | ------------------------------------ | ---------------------- | ---------------------------------------------------------------------------------- |
-| `inv:{vendorId}:res:{reservationId}` | string | 600 s (`PX`)                         | `InventoryLockService` | the 10-minute cart lock (SPEC §3)                                                  |
-| `inv:{vendorId}:holds:{productId}`   | hash   | follows the reservations             | `InventoryLockService` | live holds subtracted from Postgres stock                                          |
-| `mutex:checkout:{idempotency_key}`   | string | 30 s lease                           | `RedisKeyedMutex`      | serialises same-key checkout retries                                               |
-| `otp:code:{phone}`                   | hash   | 120 s (`OTP_TTL_SECONDS`)            | `OtpStore`             | `{ digest, attempts }`; digest = HMAC-SHA256(pepper, "phone:code"), never the code |
-| `otp:cooldown:{phone}`               | string | 60 s (`OTP_RESEND_COOLDOWN_SECONDS`) | `OtpStore`             | per-phone resend throttle                                                          |
+| Key                                  | Type           | TTL                                  | Owner                  | Purpose                                                                                    |
+| ------------------------------------ | -------------- | ------------------------------------ | ---------------------- | ------------------------------------------------------------------------------------------ |
+| `inv:{vendorId}:res:{reservationId}` | string         | 600 s (`PX`)                         | `InventoryLockService` | the 10-minute cart lock (SPEC §3)                                                          |
+| `inv:{vendorId}:holds:{productId}`   | hash           | follows the reservations             | `InventoryLockService` | live holds subtracted from Postgres stock                                                  |
+| `mutex:checkout:{idempotency_key}`   | string         | 30 s lease                           | `RedisKeyedMutex`      | serialises same-key checkout retries                                                       |
+| `otp:code:{phone}`                   | hash           | 120 s (`OTP_TTL_SECONDS`)            | `OtpStore`             | `{ digest, attempts }`; digest = HMAC-SHA256(pepper, "phone:code"), never the code         |
+| `otp:cooldown:{phone}`               | string         | 60 s (`OTP_RESEND_COOLDOWN_SECONDS`) | `OtpStore`             | per-phone resend throttle                                                                  |
+| `delivery-otp:failures:{order}`      | string         | 15 min                               | `DeliveryOtpAttempts`  | wrong doorstep codes per order (Phase 11)                                                  |
+| `riders:active`                      | geo set (zset) | none (overwritten per report)        | `RiderLocationStore`   | Phase 21: `GEOADD` member = rider user id, the rider's last position                       |
+| `riders:active:seen`                 | hash           | none                                 | `RiderLocationStore`   | Phase 21: rider user id → epoch ms of that report (a position older than 120 s is ignored) |
 
 - **No session state lives in Redis.** Tokens are stateless JWTs; nothing about a signed-in user is
   stored server-side (hence no revocation yet).
@@ -2343,20 +2584,20 @@ fingerprint includes it, and the territory gate reads the shared `NEPAL_BOUNDING
 
 ### 9.0 Screen inventory (exact current UI)
 
-| Route                 | File                                | Session needed                  | Server calls                                                                                                                                   | What the user sees                                                                                                                                                                                                                                                                                                                                                  |
-| --------------------- | ----------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/` (Shops tab)       | `app/(tabs)/index.tsx`              | only for the shops and to order | `GET /api/vendors` (saved-address pin or Thamel), `GET /api/categories`, `GET /api/products` (both public, Phase 18)                           | search field + root-category pills (§9.16); with neither in use: "Delivers to you" + desaturated "Explore Further" (carts disabled); loading; "Sign in to see the shops near you." when signed out; retry on other errors. With a search or a pill: the product list (name, shop, description, price per unit, stock or "Out of Stock" badge, quantity picker, Add) |
-| `/vendor/[id]`        | `app/vendor/[id].tsx`               | yes                             | `GET /api/vendors/:id/products`                                                                                                                | products with price and stock; add to cart (single-vendor, replace prompt; never past the menu's `stock_quantity`, Phase 19); browse-only banner if not serviceable; "This shop isn't available."                                                                                                                                                                   |
-| `/cart` (Cart tab)    | `app/(tabs)/cart.tsx`               | only to check out               | `POST /api/cart/checkout`, lock-status poll, eSewa/Khalti initiate + confirm                                                                   | lines, +/-, summary (platform fee Rs. 0), MOV check, delivery address card, payment picker, **"Proceed to Checkout" or "Sign in to Checkout"**, reservation countdown, payment WebView                                                                                                                                                                              |
-| `/profile` (tab)      | `app/(tabs)/profile.tsx`            | no                              | –                                                                                                                                              | account (Sign in / Sign out), language EN/NE, `__DEV__` token paste and territory simulator                                                                                                                                                                                                                                                                         |
-| `/login`              | `app/login.tsx`                     | no                              | `POST /api/auth/otp/send`                                                                                                                      | +977 prefix, number field, validation and cooldown messages                                                                                                                                                                                                                                                                                                         |
-| `/verify-otp`         | `app/verify-otp.tsx`                | no                              | `POST /api/auth/otp/verify`, `…/otp/send` (resend)                                                                                             | 6-digit field, per-error messages, resend countdown, "Change number"; on success toast + back to the caller                                                                                                                                                                                                                                                         |
-| `/order/[id]`         | `app/order/[id]/index.tsx`          | yes                             | `GET /api/orders/:id`, Socket.io `/orders`, `POST /api/orders/:id/cancel`                                                                      | order code and total, 60 s cancel countdown + button, delivery OTP badge, discrete tracker, dispute button (48 h after delivery)                                                                                                                                                                                                                                    |
-| `/order/[id]/dispute` | `app/order/[id]/dispute.tsx`        | yes                             | `GET /api/orders/:id/chat`, Socket.io `/chat` (join + send with acks), `POST /api/uploads/dispute-evidence`                                    | earlier messages (transcript) + live chat (first names only), photo attach (≤ 5 MB), closed/unavailable notice when the server refuses the join                                                                                                                                                                                                                     |
-| `/driver/dashboard`   | `app/(driver)/driver/dashboard.tsx` | yes (DRIVER)                    | `GET /api/driver/orders`, `POST /api/driver/orders/:id/deliver`                                                                                | orders out for delivery (shop, ward/tole/palika, items, cash to collect or "paid online"), 4-digit code field + Confirm delivery per order, pull to refresh, sign out (Phase 11)                                                                                                                                                                                    |
-| `/wallet` (vendor)    | `app/(vendor)/wallet.tsx`           | yes (VENDOR)                    | `GET /api/vendors/wallet/balance`, `GET /api/vendors/wallet/ledger` (infinite)                                                                 | red "Your shop is offline" banner when suspended (dues and limit, or a support message when not about dues), balance (red when negative), money in escrow, transactions (label, order #, ± amount, commission, time, balance after), loads older pages at the end, pull to refresh (Phase 12)                                                                       |
-| `/dashboard` (vendor) | `app/(vendor)/dashboard.tsx`        | yes (VENDOR)                    | `GET /api/vendors/orders`, Socket.io `/orders` (`vendor:subscribe`), `POST /api/vendors/orders/:id/accept` / `reject` / `dispatch` / `deliver` | new orders (items, total, payment, ward/tole/palika) with Accept / Reject, Preparing list with Dispatch, Out for delivery list (own deliveries) with the 4-digit code field, red alarm banner + looping expo-audio alarm while any order waits, sign out (Phases 10, 11.5)                                                                                          |
-| (root overlays)       | `app/_layout.tsx`                   | –                               | lock-status (via `CheckoutSessionWatcher`), `POST /api/reviews`, `POST /api/notifications/device-token` (Phase 20, once signed in)             | territory gate (topmost), replace-cart modal, review prompt, toasts, session-expiry handler                                                                                                                                                                                                                                                                         |
+| Route                 | File                                | Session needed                  | Server calls                                                                                                                                              | What the user sees                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------- | ----------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/` (Shops tab)       | `app/(tabs)/index.tsx`              | only for the shops and to order | `GET /api/vendors` (saved-address pin or Thamel), `GET /api/categories`, `GET /api/products` (both public, Phase 18)                                      | search field + root-category pills (§9.16); with neither in use: "Delivers to you" + desaturated "Explore Further" (carts disabled); loading; "Sign in to see the shops near you." when signed out; retry on other errors. With a search or a pill: the product list (name, shop, description, price per unit, stock or "Out of Stock" badge, quantity picker, Add) |
+| `/vendor/[id]`        | `app/vendor/[id].tsx`               | yes                             | `GET /api/vendors/:id/products`                                                                                                                           | products with price and stock; add to cart (single-vendor, replace prompt; never past the menu's `stock_quantity`, Phase 19); browse-only banner if not serviceable; "This shop isn't available."                                                                                                                                                                   |
+| `/cart` (Cart tab)    | `app/(tabs)/cart.tsx`               | only to check out               | `POST /api/cart/checkout`, lock-status poll, eSewa/Khalti initiate + confirm                                                                              | lines, +/-, summary (platform fee Rs. 0), MOV check, delivery address card, payment picker, **"Proceed to Checkout" or "Sign in to Checkout"**, reservation countdown, payment WebView                                                                                                                                                                              |
+| `/profile` (tab)      | `app/(tabs)/profile.tsx`            | no                              | –                                                                                                                                                         | account (Sign in / Sign out), language EN/NE, `__DEV__` token paste, `__DEV__` Rider Mode entry (Phase 21) and territory simulator                                                                                                                                                                                                                                  |
+| `/login`              | `app/login.tsx`                     | no                              | `POST /api/auth/otp/send`                                                                                                                                 | +977 prefix, number field, validation and cooldown messages                                                                                                                                                                                                                                                                                                         |
+| `/verify-otp`         | `app/verify-otp.tsx`                | no                              | `POST /api/auth/otp/verify`, `…/otp/send` (resend)                                                                                                        | 6-digit field, per-error messages, resend countdown, "Change number"; on success toast + back to the caller                                                                                                                                                                                                                                                         |
+| `/order/[id]`         | `app/order/[id]/index.tsx`          | yes                             | `GET /api/orders/:id`, Socket.io `/orders`, `POST /api/orders/:id/cancel`                                                                                 | order code and total, 60 s cancel countdown + button, delivery OTP badge, discrete tracker, dispute button (48 h after delivery)                                                                                                                                                                                                                                    |
+| `/order/[id]/dispute` | `app/order/[id]/dispute.tsx`        | yes                             | `GET /api/orders/:id/chat`, Socket.io `/chat` (join + send with acks), `POST /api/uploads/dispute-evidence`                                               | earlier messages (transcript) + live chat (first names only), photo attach (≤ 5 MB), closed/unavailable notice when the server refuses the join                                                                                                                                                                                                                     |
+| `/driver/dashboard`   | `app/(driver)/driver/dashboard.tsx` | yes (DRIVER)                    | `GET /api/deliveries`, `POST /api/deliveries/:id/accept` / `pickup` / `complete`, Socket.io `/orders` (`rider:location`, only while the GPS switch is on) | "Simulate GPS" switch (testing), then open gigs and own deliveries (shop, ward/tole/palika, items, cash to collect or "paid online"): **Accept delivery** on an open gig, **Picked up from the shop** once accepted, then the 4-digit code field + Confirm delivery; pull to refresh, sign out (Phases 11, 21)                                                      |
+| `/wallet` (vendor)    | `app/(vendor)/wallet.tsx`           | yes (VENDOR)                    | `GET /api/vendors/wallet/balance`, `GET /api/vendors/wallet/ledger` (infinite)                                                                            | red "Your shop is offline" banner when suspended (dues and limit, or a support message when not about dues), balance (red when negative), money in escrow, transactions (label, order #, ± amount, commission, time, balance after), loads older pages at the end, pull to refresh (Phase 12)                                                                       |
+| `/dashboard` (vendor) | `app/(vendor)/dashboard.tsx`        | yes (VENDOR)                    | `GET /api/vendors/orders`, Socket.io `/orders` (`vendor:subscribe`), `POST /api/vendors/orders/:id/accept` / `reject` / `dispatch` / `deliver`            | new orders (items, total, payment, ward/tole/palika) with Accept / Reject, Preparing list with Dispatch, Out for delivery list (own deliveries) with the 4-digit code field, red alarm banner + looping expo-audio alarm while any order waits, sign out (Phases 10, 11.5)                                                                                          |
+| (root overlays)       | `app/_layout.tsx`                   | –                               | lock-status (via `CheckoutSessionWatcher`), `POST /api/reviews`, `POST /api/notifications/device-token` (Phase 20, once signed in)                        | territory gate (topmost), replace-cart modal, review prompt, toasts, session-expiry handler                                                                                                                                                                                                                                                                         |
 
 ### 9.1 Storage
 
@@ -2669,6 +2910,63 @@ first_name|null, role }` allowlist), so a server regression would still not rend
   timer that otherwise triggers `act()` warnings).
 
 ### 9.14 Driver dashboard and the delivery code (Phase 11)
+
+**Phase 21 rewrote the data side of this screen ("Rider Mode").** The route, role routing, the
+shared code field (`DeliveryOtpForm`) and the 401 rule below are unchanged; the bullets "Data" and
+"Not built" below describe Phase 11 and are superseded by this block.
+
+- **Data.** `src/api/deliveries.ts`: `fetchDeliveries` (`GET /api/deliveries`),
+  `advanceDelivery(id, 'accept' | 'pickup')` (no body), `completeDelivery(id, code)` (the code is
+  validated first; a malformed one is `INVALID_DELIVERY_CODE` and nothing is sent). Hooks in
+  `features/driver/useDeliveries.ts`: `useDeliveriesQuery` (`['driver','deliveries']`,
+  `staleTime: 0`, pull to refresh; still no polling and no socket for the list),
+  `useDeliveryStep` and `useCompleteDelivery` (both `retry: false`, both refetch the list after
+  every answer).
+- **Card (`DeliveryCard`).** One action per state: OFFERED → **Accept delivery**; ASSIGNED →
+  **Picked up from the shop**; PICKED_UP → the code field. The code field does not exist before
+  pickup (the server would answer 409 anyway).
+  - accept / pickup success patches the cached delivery with the server's and toasts;
+    `409 DELIVERY_ALREADY_ASSIGNED` removes the gig **at once** ("Another rider took this
+    delivery."); `DELIVERY_NOT_FOUND` / `DELIVERY_STATE_CONFLICT` remove it ("can't be delivered
+    from here any more"); a network failure keeps it with a retry toast;
+  - complete: the Phase 11 outcomes (success removes it; wrong code → tries left + field cleared;
+    lockout → minutes; stale → removed). `isStaleDeliveryError` now also covers the two
+    `DELIVERY_*` codes.
+- **GPS simulation (testing only).** `features/driver/rider-gps-simulator.ts`:
+  - `mockRiderPosition(step)`: a straight line Thamel (27.7154, 85.3123) → Patan Durbar Square
+    (27.6727, 85.3249) in 20 steps and back, forever; every point passes the server's contract;
+  - `useRiderGpsSimulator(enabled)`: while on, opens `createOrdersSocket()` (the shared token
+    lifecycle, §9.3), emits `rider:location` **at once on every connect** and then every 5 s
+    (`RIDER_GPS_SIMULATION_INTERVAL_MS` = the server's push period), with a 10 s ack. Status
+    `connecting` → `streaming` on the first `{ ok: true }`, `refused` on an error ack; a lost ack
+    is ignored; a disconnect stops the timer and the reconnect restarts it (one timer, tested);
+    switching off or leaving the screen closes the socket;
+  - `RiderGpsSimulator` (top of the dashboard): the switch, the status line and "Last sent: lat,
+    lng (reports: N)". **Off by default; no socket is opened until it is switched on.**
+  - **It never reads the device's GPS.** A real rider build would feed `expo-location`'s watcher
+    into the same event.
+- **Rider Mode entry.** `RiderModeEntry` on the Profile tab, `__DEV__` only: "Switch to Rider
+  Mode" signs the current account out and opens `/login`; signing in with a rider's number (seed
+  **9800000021**, code from the API log with `SMS_PROVIDER=MOCK`) lands on `/driver/dashboard`
+  through the existing role redirect, and Sign out there leaves Rider Mode. It is not a role
+  switch: a rider is a real account role and the API authorises every call by it.
+- **Socket types.** `OrdersServerToClientEvents` gained `order:rider_location` and
+  `OrdersClientToServerEvents` `rider:location` (`src/services/socket.ts`). **The customer's
+  tracking screen does not listen for `order:rider_location`** (not requested; SPEC customer
+  journey 9 asks for discrete state nodes, not a live map).
+- Strings: `driverDashboard.*` (rewritten) and `riderMode.*`, EN and NE.
+- **Tests** (+28, 839 in total): `DriverDashboard.test.tsx` (27, msw + FakeSocket: the one action
+  per state, accept in flight / taken by another rider with the refetch still pending / network
+  failure / pickup / stale, the code field and every completion outcome on the new route, the GPS
+  switch off by default and streaming the first mock point over `/orders`),
+  `rider-gps-simulator.test.tsx` (10, fake timers: the route, disabled, handshake token and first
+  point, one point per interval, refusal, lost ack, disconnect / reconnect, switch off, the Rider
+  Mode entry), `api/deliveries.int.test.ts` (16: wire format of the four calls, strict contract,
+  no refresh or replay on `401 INVALID_OTP`).
+- **Mutation-checked:** the code field shown before pickup (1), the timer kept across a
+  disconnect (1), no position at connect (7), the socket left open when switched off (2), a taken
+  gig kept in the list (1), an error ack counted as streaming (1).
+- **Not run on a device.**
 
 - **Route.** `app/(driver)/_layout.tsx` (DRIVER only, else `/`) + `app/(driver)/driver/dashboard.tsx`
   = **`/driver/dashboard`**. The prompt's `app/(driver)/dashboard.tsx` would resolve to `/dashboard`,
@@ -3067,6 +3365,18 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
     vendor notification when an admin hides a product; rate limiting of the public reads and of
     uploads; component tests for the React screens.
 
+15. **Rider follow-ups (Phase 21 built deliveries with accept / pickup / complete, GEOADD
+    telemetry and the periodic customer push, §8N, §9.14):** real GPS on the rider's device
+    (`expo-location` watcher, background location permission) instead of the mock switch;
+    **showing the rider's position to the customer** (the tracking screen ignores
+    `order:rider_location`; SPEC asks for discrete nodes, so decide what to show); gig broadcast by
+    distance (`GEOSEARCH riders:active` from the shop, a push to nearby riders) instead of every
+    rider seeing every open gig; "Reached Location", the 8 min ghost-customer timer and
+    `FAILED`; un-accepting / reassigning a delivery (no route; a rider who accepts and disappears
+    blocks the order); a live update of the rider's list (it is pull to refresh); sweeping riders
+    that stopped reporting out of `riders:active`; a per-rider (not per-connection) rate limit;
+    moving pickup before OUT_FOR_DELIVERY if "Out for Delivery" should mean "the rider has it".
+
 ## 12. Decisions made (with the user's approval where one was asked)
 
 - Express 5 (not NestJS); BullMQ **and** Kafka; conditional wallet CHECK + trigger with limit in
@@ -3211,6 +3521,32 @@ menu endpoint). The Phase 5 "mock ids → 422 VENDOR_UNAVAILABLE" blocker is gon
     checkout (hiding a category removes navigation to it, it does not delist products).
   - The admin `dev` script became `vite --force` (stale pre-bundled `shared-types`, §3).
 
+- **Phase 21:**
+  - **The doorstep code stays on the order** (asked; user chose): `deliveries` has no
+    `handoff_otp`. SPEC's `OrderSnapshot.delivery_otp` (bcrypt) is the single code; a second,
+    plain-text code per delivery would have contradicted it.
+  - **No new Socket.io namespace** (asked; user chose): riders and the rider-location push live on
+    `/orders`, SPEC's namespace for order tracking. Customers need no new subscription.
+  - **The Phase 11 rider routes are removed** (asked; user chose), not kept beside the new ones:
+    otherwise a rider could deliver without accepting and the delivery row would mean nothing.
+  - **`POST …/pickup` was added** (asked; user chose) so PICKED_UP is reachable, and complete
+    requires it.
+  - Added without asking because the flow needs them: the **OFFERED** state and
+    **`GET /api/deliveries`**.
+  - The delivery is created by the vendor's **dispatch**, in its transaction. The order is
+    therefore OUT_FOR_DELIVERY before a rider accepts or picks up (the Phase 11 model, where
+    dispatch is the vendor's handoff); the order state machine itself did not change.
+  - `orders.driver_user_id` is set at accept (the fleet-delivered CHECK and settlement read it at
+    delivery, as before).
+  - Another rider's accept is `409 DELIVERY_ALREADY_ASSIGNED` (the gig was visible to them); every
+    later step on someone else's delivery is `404`.
+  - Positions go to Redis only (`GEOADD`), with the report time in a companion hash because zset
+    members cannot expire; 120 s staleness, 1 s per-connection rate limit, 5 s push period.
+  - The push is a **server timer over local rooms**, not an event relayed per report: the prompt
+    asked for a periodic push, and it bounds the cost per customer whatever the rider's report rate.
+  - Rider coordinates must be inside `NEPAL_BOUNDING_BOX` (SPEC §1), like every other coordinate.
+  - "Rider Mode" is a `__DEV__` entry that signs out and opens sign-in, plus a mock-GPS switch on
+    the rider dashboard; it does not let a customer account act as a rider.
 - **Phase 20:**
   - **A `device_tokens` table**, not a column on users / vendors (the prompt allowed either): an
     account has several devices, and a vendor is reached through its user.
@@ -3414,6 +3750,32 @@ CANCELLATION_WINDOW_OPEN` with the seconds left.
 
 ## 13. Known gaps and risks
 
+- **Phase 21:**
+  - **Never run on a device, and no real GPS anywhere.** The only position source is the mock
+    switch; the API and the app were tested separately (real Redis / PostgreSQL / Socket.io on the
+    API side, msw + a fake socket on the app side).
+  - **The customer app does not display the rider's position.** The server pushes
+    `order:rider_location`; nothing on the tracking screen listens.
+  - **A rider who accepts and never delivers blocks the order.** There is no un-accept, no
+    reassignment, no timeout and no admin override; `FAILED` is never set.
+  - **Every rider sees every open gig in the country** (no distance filter; the list is capped at
+    100, oldest first, so a backlog of 100 unaccepted gigs hides newer ones).
+  - A fleet order delivered before Phase 21 has no `deliveries` row; one that was on the road at
+    migration time became an open gig.
+  - **A rider's position is visible from accept, not from pickup,** and to the customer of every
+    order that rider currently carries. Any DRIVER account can write a position (inside Nepal) at
+    1 report per second per connection; several connections multiply that. Positions are not
+    checked for plausibility (speed, jumps).
+  - `riders:active` is never pruned; `riders:active:seen` and the geo set can disagree only
+    between two MULTIs of the same rider racing (last write wins on each key).
+  - The push timer runs in every API instance and queries PostgreSQL every 5 s while any order
+    room has a socket in it; `lastPushed` is per instance, so a customer who reconnects to another
+    instance may receive the same position once more.
+  - Accept and pickup produce no event: the vendor and the customer are not told a rider is
+    coming, and no push notification is sent to riders about new gigs.
+  - A socket's role and identity are fixed at the handshake (as for `/orders` in general): a rider
+    demoted or signed out keeps reporting until the connection drops.
+  - The Nepali rider strings have not been reviewed by a native speaker.
 - **Phase 20:**
   - **Never delivered to a device.** The Expo push API is mocked at `fetch` in every test and the
     app side runs against a stand-in for `expo-notifications`. FCM V1 / APNs credentials and
@@ -3507,8 +3869,8 @@ CANCELLATION_WINDOW_OPEN` with the seconds left.
   history up to each page (fine now, a stored running balance later); an entry committed late with
   an earlier `created_at` can land behind a cursor the client already passed.
 
-- **Phases 11/11.5:** no gig assignment (any fleet rider may deliver an unclaimed order and becomes
-  its driver); riders get no live updates (pull to refresh). A locked order can be unlocked only by
+- **Phases 11/11.5:** ~~no gig assignment (any fleet rider may deliver an unclaimed order and becomes
+  its driver)~~ (Phase 21: a rider must accept first, §8N); riders get no live updates (pull to refresh). A locked order can be unlocked only by
   waiting 15 min (no admin override). Dispatch has no confirmation step. The Nepali driver and
   dispatch/handoff strings have not been reviewed by a native speaker.
 

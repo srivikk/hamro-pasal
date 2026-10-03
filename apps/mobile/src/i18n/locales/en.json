@@ -353,10 +353,34 @@
   "driverDashboard": {
     "title": "Deliveries",
     "loadError": "Couldn't load your deliveries. Check your connection.",
-    "empty": "No orders out for delivery right now. Pull down to refresh.",
-    "mine": "Your delivery",
-    "unclaimed": "Open gig",
-    "pickup": "Pick up from {{shop}}"
+    "empty": "No deliveries right now. Pull down to refresh.",
+    "pickup": "Pick up from {{shop}}",
+    "state": {
+      "OFFERED": "Open gig",
+      "ASSIGNED": "Accepted",
+      "PICKED_UP": "Picked up"
+    },
+    "accept": "Accept delivery",
+    "markPickedUp": "Picked up from the shop",
+    "sending": "Sending…",
+    "accepted": "Delivery accepted. Head to the shop.",
+    "pickedUp": "Picked up. At the door, enter the customer's code.",
+    "takenByAnother": "Another rider took this delivery.",
+    "stepFailed": "Couldn't update the delivery. Check your connection and try again."
+  },
+  "riderMode": {
+    "title": "Rider Mode (testing)",
+    "hint": "Signs you out and opens sign-in. Use a rider's number (seed: 9800000021) to see deliveries, send mock GPS and enter the doorstep code. Sign out there to leave Rider Mode.",
+    "switch": "Switch to Rider Mode",
+    "gpsTitle": "Simulate GPS",
+    "gpsHint": "Testing only: streams mock positions between Thamel and Patan every 5 s.",
+    "gpsStatus": {
+      "off": "Not sending a position.",
+      "connecting": "Connecting…",
+      "streaming": "Sending your position.",
+      "refused": "The server refused the position. Only riders can send one."
+    },
+    "gpsLast": "Last sent: {{latitude}}, {{longitude}} (reports: {{count, localizedNumber}})"
   },
   "delivery": {
     "confirm": "Confirm delivery",

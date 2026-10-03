@@ -17,6 +17,7 @@ import {
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 
 import { OrderNotFoundError } from '../checkout/checkout-service';
+import { offerDelivery } from '../deliveries/delivery-service';
 import type { InventoryLockService } from '../inventory/inventory-lock-service';
 import type { DeliveryHandoff, DeliveryResult } from './delivery-handoff';
 import { enqueueOrderStateChanged } from './order-events';
@@ -239,6 +240,8 @@ export class VendorOrderService {
         .where(eq(orders.id, orderId))
         .returning();
       if (dispatched === undefined) throw new Error(`Order ${orderId} disappeared during dispatch`);
+      // A fleet order becomes an open gig for the platform riders in the same commit.
+      await offerDelivery(tx, dispatched);
       await enqueueOrderStateChanged(tx, order.state, dispatched);
       return { order: dispatched, replayed: false };
     });

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { orderStateSchema, paymentStatusSchema } from '../domain/enums';
 import type { OrderStateChangedEvent } from '../events/domain-events';
+import { isWithinNepalBoundingBox } from '../nepal/geo';
 
 /*
  * Socket.io `/orders` namespace (SPEC implicit requirement 4, infrastructure §1): real-time
@@ -20,6 +21,10 @@ export const ORDER_SOCKET_EVENTS = {
   vendorSubscribe: 'vendor:subscribe',
   /** Server → client: the order's state changed (SPEC: `order:state_update`). */
   stateUpdate: 'order:state_update',
+  /** Rider client → server, optional ack: the rider's current GPS position (Phase 21). */
+  riderLocation: 'rider:location',
+  /** Server → client: where the rider carrying the subscribed order was last seen (Phase 21). */
+  orderRiderLocation: 'order:rider_location',
 } as const;
 
 /** SPEC infrastructure §1: 25 s heartbeats. The server advertises it; clients follow. */
@@ -119,3 +124,49 @@ export function orderStateUpdateRooms(event: OrderStateChangedEvent): string[] {
     ? [orderRoom(payload.order_id)]
     : [orderRoom(payload.order_id), vendorRoom(payload.vendor_id)];
 }
+
+/*
+ * Rider telemetry (Phase 21). Riders stream their position on this namespace; customers
+ * subscribed to an order receive the position of the rider who accepted its delivery.
+ */
+
+/** How often the server pushes `order:rider_location` to an order's subscribers. */
+export const RIDER_LOCATION_PUSH_INTERVAL_MS = 5_000;
+/** A rider connection may report at most one position per this interval. */
+export const RIDER_LOCATION_MIN_INTERVAL_MS = 1_000;
+/** A position older than this is not shown to customers (the rider went offline). */
+export const RIDER_LOCATION_MAX_AGE_SECONDS = 120;
+
+/** Payload of `rider:location`: WGS 84 degrees, inside Nepal's bounding box. */
+export const riderLocationRequestSchema = z
+  .strictObject({ latitude: z.number(), longitude: z.number() })
+  .refine((point) => isWithinNepalBoundingBox({ lat: point.latitude, lng: point.longitude }), {
+    message: 'Coordinates must be inside Nepal',
+  });
+export type RiderLocationRequest = z.infer<typeof riderLocationRequestSchema>;
+
+/**
+ * Ack of `rider:location`. FORBIDDEN for a non-rider, RATE_LIMITED when sent sooner than
+ * RIDER_LOCATION_MIN_INTERVAL_MS after the connection's previous position.
+ */
+export const riderLocationAckSchema = z.discriminatedUnion('ok', [
+  z.strictObject({ ok: z.literal(true), recorded_at: z.iso.datetime() }),
+  z.strictObject({
+    ok: z.literal(false),
+    error: z.strictObject({
+      code: z.enum(['VALIDATION_FAILED', 'FORBIDDEN', 'RATE_LIMITED', 'INTERNAL_SERVER_ERROR']),
+      message: z.string(),
+    }),
+  }),
+]);
+export type RiderLocationAck = z.infer<typeof riderLocationAckSchema>;
+
+/** Payload of `order:rider_location`. Carries no rider identity: only where the parcel is. */
+export const orderRiderLocationSchema = z.strictObject({
+  order_id: z.uuid(),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  /** When the server received this position from the rider's device. */
+  recorded_at: z.iso.datetime(),
+});
+export type OrderRiderLocation = z.infer<typeof orderRiderLocationSchema>;

@@ -1,6 +1,6 @@
 import type {
   DeliveryConfirmedResponseBody,
-  DriverOrderView,
+  DeliveryView,
   FeedEntry,
   FeedResponse,
   FeedVendor,
@@ -21,7 +21,7 @@ import type {
   VendorMenu as CatalogMenu,
 } from '../catalog/catalog-service';
 import type { LockStatusView } from '../checkout/checkout-service';
-import type { DriverOrder } from '../orders/driver-order-service';
+import type { RiderDelivery } from '../deliveries/delivery-service';
 import type { OrderDetail } from '../orders/order-service';
 import type { VendorOrder } from '../orders/vendor-order-service';
 import type { ConfirmedPayment } from '../payments/payment-confirmation';
@@ -150,21 +150,33 @@ export function deliveryConfirmedBody(order: Order): DeliveryConfirmedResponseBo
   };
 }
 
-/** The rider's order: pickup shop, drop-off address and contents, never the customer's identity. */
-export function driverOrderView(
-  { order, vendorBusinessName, items, address }: DriverOrder,
-  driverUserId: string,
-): DriverOrderView {
+/**
+ * The rider's delivery: its step, the pickup shop, drop-off address and contents; never the
+ * customer's identity, another rider's id or the code's hash.
+ */
+export function deliveryView(
+  { delivery, order, vendorBusinessName, items, address }: RiderDelivery,
+  riderId: string,
+): DeliveryView {
   if (order.state !== 'OUT_FOR_DELIVERY') {
     throw new Error(`Order ${order.id} is ${order.state}, not out for delivery`);
   }
+  if (delivery.state === 'DELIVERED' || delivery.state === 'FAILED') {
+    throw new Error(`Delivery ${delivery.id} is ${delivery.state}, not on the road`);
+  }
   return {
-    ...orderView(order),
-    state: order.state,
-    vendor_business_name: vendorBusinessName,
-    delivery_address: orderAddressView(address),
-    items: items.map(orderItemView),
-    assigned_to_me: order.driver_user_id === driverUserId,
+    id: delivery.id,
+    state: delivery.state,
+    assigned_to_me: delivery.rider_id === riderId,
+    accepted_at: delivery.accepted_at?.toISOString() ?? null,
+    picked_up_at: delivery.picked_up_at?.toISOString() ?? null,
+    order: {
+      ...orderView(order),
+      state: order.state,
+      vendor_business_name: vendorBusinessName,
+      delivery_address: orderAddressView(address),
+      items: items.map(orderItemView),
+    },
   };
 }
 

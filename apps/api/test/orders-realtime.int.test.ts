@@ -437,15 +437,27 @@ describe('real-time order tracking', () => {
       });
     });
 
-    it.each<UserRole>(['DRIVER', 'SUPER_ADMIN'])(
-      'refuses roles other than CUSTOMER and VENDOR (%s)',
-      async (role) => {
-        await expect(refusal({ token: token(randomUUID(), role) })).resolves.toEqual({
-          message: 'FORBIDDEN',
-          code: 'FORBIDDEN',
-        });
-      },
-    );
+    it('refuses roles other than CUSTOMER, VENDOR and DRIVER (SUPER_ADMIN)', async () => {
+      await expect(refusal({ token: token(randomUUID(), 'SUPER_ADMIN') })).resolves.toEqual({
+        message: 'FORBIDDEN',
+        code: 'FORBIDDEN',
+      });
+    });
+
+    it('admits a rider (Phase 21 telemetry) but gives them no order or vendor room', async () => {
+      const { customerId, vendorId, productId } = await setup();
+      const order = await checkout(customerId, vendorId, productId, 'COD');
+      const rider = await connected({ token: token(await createUser(db(), 'DRIVER'), 'DRIVER') });
+
+      await expect(subscribe(rider.socket, { order_id: order.id })).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'ORDER_NOT_FOUND' },
+      });
+      await expect(vendorSubscribe(rider.socket)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'FORBIDDEN' },
+      });
+    });
 
     it('joins the owner to order:{id}, where worker broadcasts reach them', async () => {
       const { customerId, vendorId, productId } = await setup();

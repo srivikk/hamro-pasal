@@ -65,6 +65,8 @@ export function buildTestApp(
     sms?: SmsGateway & { readonly sent: readonly OutboundSms[] };
     otpOptions?: OtpStoreOptions;
     deliveryOtpLockoutMs?: number;
+    /** A shorter staleness bound for rider positions. */
+    riderLocationMaxAgeMs?: number;
     uploadsDir?: string;
     /** Defaults to MOCK so wallet tests can top up. */
     walletTopUpMode?: WalletTopUpMode;
@@ -99,6 +101,9 @@ export function buildTestApp(
       ...(options.deliveryOtpLockoutMs === undefined
         ? {}
         : { deliveryOtpOptions: { lockoutMs: options.deliveryOtpLockoutMs } }),
+      ...(options.riderLocationMaxAgeMs === undefined
+        ? {}
+        : { riderLocationOptions: { maxAgeMs: options.riderLocationMaxAgeMs } }),
       sms,
       evidence: new LocalEvidenceStorage(
         options.uploadsDir ?? TEST_UPLOADS_DIR,

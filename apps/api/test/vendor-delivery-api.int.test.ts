@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import { ledgerTransactions, orders, vendors } from '@hamro-pasal/db';
+import { deliveries, ledgerTransactions, orders, vendors } from '@hamro-pasal/db';
 import {
   checkoutResponseSchema,
   deliveryConfirmedResponseSchema,
+  deliveryListResponseSchema,
   DELIVERY_OTP_LOCKOUT_SECONDS,
   esewaInitiateResponseSchema,
   orderDetailResponseSchema,
@@ -288,11 +289,17 @@ describe('vendor self-delivery handoff API', () => {
 
       expect(await failureCount(orderId)).toBeNull();
       const rider = await createUser(db(), 'DRIVER');
-      const riderRes = await request(t.app)
-        .post(`/api/driver/orders/${orderId}/deliver`)
-        .set('authorization', bearer(rider, 'DRIVER'))
-        .send({ delivery_otp: otp });
-      expect(riderRes.status).toBe(200);
+      const [delivery] = await db()
+        .select()
+        .from(deliveries)
+        .where(eq(deliveries.order_id, orderId));
+      const riderPost = (action: string) =>
+        request(t.app)
+          .post(`/api/deliveries/${delivery?.id ?? ''}/${action}`)
+          .set('authorization', bearer(rider, 'DRIVER'));
+      expect((await riderPost('accept')).status).toBe(200);
+      expect((await riderPost('pickup')).status).toBe(200);
+      expect((await riderPost('complete').send({ delivery_otp: otp })).status).toBe(200);
     });
 
     it('refuses an EMERGENCY_FLEET order too (the platform rider delivers it)', async () => {
@@ -309,17 +316,20 @@ describe('vendor self-delivery handoff API', () => {
       expect(errorOf(res).details).toEqual({ fulfillment: 'EMERGENCY_FLEET' });
     });
 
-    it('keeps the rider endpoint closed to SELF_DELIVERY orders (404)', async () => {
+    it('keeps SELF_DELIVERY orders away from the platform riders (no delivery, not listed)', async () => {
       const s = await setup();
-      const { orderId, otp } = await outForDelivery(s);
+      const { orderId } = await outForDelivery(s);
       const rider = await createUser(db(), 'DRIVER');
 
       const res = await request(t.app)
-        .post(`/api/driver/orders/${orderId}/deliver`)
-        .set('authorization', bearer(rider, 'DRIVER'))
-        .send({ delivery_otp: otp });
+        .get('/api/deliveries')
+        .set('authorization', bearer(rider, 'DRIVER'));
 
-      expect(res.status).toBe(404);
+      expect(await db().select().from(deliveries).where(eq(deliveries.order_id, orderId))).toEqual(
+        [],
+      );
+      const listed = bodyOf(deliveryListResponseSchema, res).deliveries;
+      expect(listed.map((delivery) => delivery.order.id)).not.toContain(orderId);
       expect((await rowOf(orderId)).state).toBe('OUT_FOR_DELIVERY');
     });
   });

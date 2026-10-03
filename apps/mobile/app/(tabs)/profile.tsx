@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useSignOut } from '../../src/api/auth';
 import { Button } from '../../src/components/Button';
 import { DevSignIn } from '../../src/features/auth/DevSignIn';
+import { RiderModeEntry } from '../../src/features/driver/RiderModeEntry';
 import { TerritorySimulatorControls } from '../../src/features/territory/TerritoryGate';
 import { selectHasSession, useAuthStore } from '../../src/store/useAuthStore';
 
@@ -33,6 +34,7 @@ export default function ProfileScreen() {
         )}
       </View>
       {__DEV__ ? <DevSignIn /> : null}
+      {__DEV__ ? <RiderModeEntry /> : null}
       {__DEV__ ? <TerritorySimulatorControls /> : null}
       <View>
         <Text className="mb-3 text-lg font-bold text-neutral-900">{t('settings.language')}</Text>

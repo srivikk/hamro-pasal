@@ -36,6 +36,11 @@ import {
 } from '../catalog/product-service';
 import { OrderNotFoundError, OrderNotPlaceableError } from '../checkout/checkout-service';
 import { CheckoutRejectedError } from '../checkout/pricing';
+import {
+  DeliveryAlreadyAssignedError,
+  DeliveryNotFoundError,
+  DeliveryStateConflictError,
+} from '../deliveries/delivery-service';
 import { DisputeWindowClosedError } from '../disputes/dispute-service';
 import {
   InsufficientStockError,
@@ -169,6 +174,15 @@ export function toHttpError(error: unknown): HttpError {
     return new HttpError(429, 'DELIVERY_OTP_LOCKED', error.message, {
       retry_after_seconds: error.retryAfterSeconds,
     });
+  }
+  if (error instanceof DeliveryNotFoundError) {
+    return new HttpError(404, 'DELIVERY_NOT_FOUND', 'Delivery not found');
+  }
+  if (error instanceof DeliveryAlreadyAssignedError) {
+    return new HttpError(409, 'DELIVERY_ALREADY_ASSIGNED', error.message);
+  }
+  if (error instanceof DeliveryStateConflictError) {
+    return new HttpError(409, 'DELIVERY_STATE_CONFLICT', error.message, { state: error.state });
   }
   if (error instanceof OrderNotReviewableError) {
     return new HttpError(409, 'ORDER_STATE_CONFLICT', error.message, { state: error.state });

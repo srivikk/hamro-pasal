@@ -149,7 +149,7 @@ export const vendorReviewSubmitRequestSchema = reviewSubmitRequestSchema.omit({ 
 export type VendorReviewSubmitRequest = z.input<typeof vendorReviewSubmitRequestSchema>;
 
 /**
- * POST /api/driver/orders/:id/deliver (driver flow step 5) and /api/vendors/orders/:id/deliver
+ * POST /api/deliveries/:id/complete (driver flow step 5) and /api/vendors/orders/:id/deliver
  * (vendor flow step 9, SELF_DELIVERY orders): the 4-digit code the customer shows
  * at the door, as ASCII digits (leading zeros kept, hence a string).
  */

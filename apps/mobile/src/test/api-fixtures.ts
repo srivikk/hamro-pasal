@@ -9,7 +9,7 @@ import {
   chatMessageSchema,
   disputeEvidenceUploadResponseSchema,
   deliveryConfirmedResponseSchema,
-  driverOrderListResponseSchema,
+  deliveryListResponseSchema,
   reviewSubmitResponseSchema,
   cancelOrderResponseSchema,
   checkoutResponseSchema,
@@ -28,7 +28,7 @@ import {
   type ChatMessage,
   type DisputeEvidenceUploadResponseBody,
   type DeliveryConfirmedResponseBody,
-  type DriverOrderView,
+  type DeliveryView,
   type ReviewView,
   type CancelOrderResponseBody,
   type CheckoutResponseBody,
@@ -373,49 +373,91 @@ export function vendorDecision(
   });
 }
 
-/* ---------- Driver orders (GET /api/driver/orders, POST …/:id/deliver) ---------- */
+/* ---------- Deliveries (GET /api/deliveries, POST …/:id/accept | pickup | complete) ---------- */
 
-/** A COD fleet order out for delivery, as the rider's dashboard receives it. */
-export function driverOrder(overrides: Partial<DriverOrderView> = {}): DriverOrderView {
-  const [order] = driverOrderListResponseSchema.parse({
-    orders: [
+export const DELIVERY_ID = '5d0f6c1e-2b7a-4c39-9e54-0a1b2c3d4e5f';
+export const SECOND_DELIVERY_ID = '6e1a7d2f-3c8b-4d4a-8f65-1b2c3d4e5f6a';
+
+/** An open gig for a COD fleet order out for delivery, as the rider's dashboard receives it. */
+export function delivery(
+  overrides: Partial<Omit<DeliveryView, 'order'>> & { order?: Partial<DeliveryView['order']> } = {},
+): DeliveryView {
+  const { order, ...rest } = overrides;
+  const [parsed] = deliveryListResponseSchema.parse({
+    deliveries: [
       {
-        ...orderView({
-          id: NEW_ORDER_ID,
-          state: 'OUT_FOR_DELIVERY',
-          payment_method: 'COD',
-          fulfillment: 'PLATFORM_FLEET',
-        }),
-        vendor_business_name: 'Patan Organic Store',
-        delivery_address: {
-          province_id: THAMEL_ADDRESS.province_id,
-          district_string: THAMEL_ADDRESS.district_string,
-          municipality_palika_string: THAMEL_ADDRESS.municipality_palika_string,
-          ward_number: THAMEL_ADDRESS.ward_number,
-          tole_locality: THAMEL_ADDRESS.tole_locality,
-          landmark: THAMEL_ADDRESS.landmark,
-          exact_lat: THAMEL_ADDRESS.exact_lat,
-          exact_lng: THAMEL_ADDRESS.exact_lng,
-        },
-        items: [
-          { product_id: NOODLES.id, product_name: NOODLES.name, unit_price_npr: 600, quantity: 2 },
-        ],
+        id: DELIVERY_ID,
+        state: 'OFFERED',
         assigned_to_me: false,
-        ...overrides,
+        accepted_at: null,
+        picked_up_at: null,
+        ...rest,
+        order: {
+          ...orderView({
+            id: NEW_ORDER_ID,
+            state: 'OUT_FOR_DELIVERY',
+            payment_method: 'COD',
+            fulfillment: 'PLATFORM_FLEET',
+          }),
+          vendor_business_name: 'Patan Organic Store',
+          delivery_address: {
+            province_id: THAMEL_ADDRESS.province_id,
+            district_string: THAMEL_ADDRESS.district_string,
+            municipality_palika_string: THAMEL_ADDRESS.municipality_palika_string,
+            ward_number: THAMEL_ADDRESS.ward_number,
+            tole_locality: THAMEL_ADDRESS.tole_locality,
+            landmark: THAMEL_ADDRESS.landmark,
+            exact_lat: THAMEL_ADDRESS.exact_lat,
+            exact_lng: THAMEL_ADDRESS.exact_lng,
+          },
+          items: [
+            {
+              product_id: NOODLES.id,
+              product_name: NOODLES.name,
+              unit_price_npr: 600,
+              quantity: 2,
+            },
+          ],
+          ...order,
+        },
       },
     ],
-  }).orders;
-  if (order === undefined) throw new Error('unreachable');
-  return order;
+  }).deliveries;
+  if (parsed === undefined) throw new Error('unreachable');
+  return parsed;
 }
 
-/** GET /api/driver/orders 200 body. */
-export function driverOrderList(orders: DriverOrderView[]) {
-  return driverOrderListResponseSchema.parse({ orders });
+/** The same delivery after this rider accepted it. */
+export function acceptedDelivery(overrides: Parameters<typeof delivery>[0] = {}): DeliveryView {
+  return delivery({
+    state: 'ASSIGNED',
+    assigned_to_me: true,
+    accepted_at: '2026-10-03T10:30:00.000Z',
+    ...overrides,
+  });
 }
 
-/** POST /api/driver/orders/:id/deliver 200 body. */
-export function driverDelivered(orderId: string): DeliveryConfirmedResponseBody {
+/** The same delivery once the rider has the parcel: the code field shows. */
+export function pickedUpDelivery(overrides: Parameters<typeof delivery>[0] = {}): DeliveryView {
+  return acceptedDelivery({
+    state: 'PICKED_UP',
+    picked_up_at: '2026-10-03T10:40:00.000Z',
+    ...overrides,
+  });
+}
+
+/** GET /api/deliveries 200 body. */
+export function deliveryList(deliveries: DeliveryView[]) {
+  return deliveryListResponseSchema.parse({ deliveries });
+}
+
+/** POST /api/deliveries/:id/accept | pickup 200 body. */
+export function deliveryBody(view: DeliveryView) {
+  return { delivery: view };
+}
+
+/** POST /api/deliveries/:id/complete 200 body. */
+export function deliveryCompleted(orderId: string): DeliveryConfirmedResponseBody {
   return deliveryConfirmedResponseSchema.parse({
     order_id: orderId,
     state: 'DELIVERED',

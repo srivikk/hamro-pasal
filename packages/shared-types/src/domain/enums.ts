@@ -107,3 +107,12 @@ export type ReviewDirection = z.infer<typeof reviewDirectionSchema>;
 export const deadLetterStatuses = ['PENDING', 'RETRY_REQUESTED', 'REPLAYED'] as const;
 export const deadLetterStatusSchema = z.enum(deadLetterStatuses);
 export type DeadLetterStatus = z.infer<typeof deadLetterStatusSchema>;
+
+/**
+ * A platform-fleet delivery (delivery partner flow). OFFERED: dispatched by the shop, no rider yet.
+ * ASSIGNED: a rider accepted it. PICKED_UP: the rider has the parcel. DELIVERED: handed over with
+ * the customer's code. FAILED: the ghost-customer timer ran out (nothing sets it yet).
+ */
+export const deliveryStates = ['OFFERED', 'ASSIGNED', 'PICKED_UP', 'DELIVERED', 'FAILED'] as const;
+export const deliveryStateSchema = z.enum(deliveryStates);
+export type DeliveryState = z.infer<typeof deliveryStateSchema>;

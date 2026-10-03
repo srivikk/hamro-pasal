@@ -6,6 +6,7 @@ import {
   SOCKET_UNAUTHENTICATED,
   type ChatJoinRequest,
   type OrderSubscribeRequest,
+  type RiderLocationRequest,
 } from '@hamro-pasal/shared-types';
 import { io, type ManagerOptions, type Socket, type SocketOptions } from 'socket.io-client';
 
@@ -219,6 +220,8 @@ export function createChatSocket(factory: SocketFactory = io): ChatConnection {
 /** Events the server emits. Payloads are `unknown` until validated (orderStateUpdateSchema). */
 export interface OrdersServerToClientEvents {
   'order:state_update': (payload: unknown) => void;
+  /** Phase 21: the position of the rider carrying a subscribed order (orderRiderLocationSchema). */
+  'order:rider_location': (payload: unknown) => void;
 }
 
 export interface OrdersClientToServerEvents {
@@ -226,6 +229,8 @@ export interface OrdersClientToServerEvents {
   'orders:unsubscribe': (payload: OrderSubscribeRequest) => void;
   /** Vendors only: join the shop's room (the ack is `vendorSubscribeAckSchema`). */
   'vendor:subscribe': (payload: Record<string, never>, ack: (response: unknown) => void) => void;
+  /** Riders only: report a GPS position (the ack is `riderLocationAckSchema`). */
+  'rider:location': (payload: RiderLocationRequest, ack: (response: unknown) => void) => void;
 }
 
 export type OrdersSocket = Socket<OrdersServerToClientEvents, OrdersClientToServerEvents>;

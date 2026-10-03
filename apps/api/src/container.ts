@@ -34,7 +34,11 @@ import {
   type DeliveryOtpAttemptOptions,
 } from './orders/delivery-otp-attempts';
 import { DeliveryHandoff } from './orders/delivery-handoff';
-import { DriverOrderService } from './orders/driver-order-service';
+import { DeliveryService } from './deliveries/delivery-service';
+import {
+  RiderLocationStore,
+  type RiderLocationStoreOptions,
+} from './deliveries/rider-location-store';
 import { OrderService } from './orders/order-service';
 import { VendorOrderService } from './orders/vendor-order-service';
 import { EsewaService, type EsewaConfig } from './payments/esewa/esewa-service';
@@ -70,6 +74,8 @@ export interface Infrastructure {
   readonly otpOptions?: OtpStoreOptions;
   /** Tests only: a shorter delivery-code lockout. Production uses the shared-types constant. */
   readonly deliveryOtpOptions?: DeliveryOtpAttemptOptions;
+  /** Tests only: a shorter staleness bound for rider positions. */
+  readonly riderLocationOptions?: RiderLocationStoreOptions;
   /** Where dispute evidence images are stored (local disk until Cloudflare R2 is wired). */
   readonly evidence: EvidenceStorage;
   /** Where product photos are stored (the same local directory until R2 is wired). */
@@ -80,6 +86,8 @@ export interface ApiContainer extends ApiServices {
   readonly db: Database;
   readonly redisPool: RedisConnectionPool;
   readonly settlement: SettlementService;
+  /** Phase 21: riders' last GPS positions (Redis geo set), fed and read by the /orders namespace. */
+  readonly riderLocations: RiderLocationStore;
   close(): Promise<void>;
 }
 
@@ -140,7 +148,8 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     vendorOrders: new VendorOrderService(infra.db, locks, handoff),
     vendorWallet: new VendorWalletService(infra.db),
     vendorTopUps: new VendorTopUpService(infra.db, ledger, config.walletTopUpMode),
-    driverOrders: new DriverOrderService(infra.db, handoff),
+    deliveries: new DeliveryService(infra.db, handoff),
+    riderLocations: new RiderLocationStore(infra.redisPool, infra.riderLocationOptions),
     esewa: new EsewaService(infra.db, checkout, confirmation, config.esewa),
     khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),
     reviews: new ReviewService(infra.db),

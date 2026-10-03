@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { DOMAIN_EVENT_TOPICS, domainEventSchema } from '../events/domain-events';
 import {
   ORDER_SOCKET_EVENTS,
+  orderRiderLocationSchema,
   orderRoom,
   orderStateUpdateFromEvent,
   orderStateUpdateRooms,
@@ -10,6 +11,11 @@ import {
   orderSubscribeAckSchema,
   orderSubscribeRequestSchema,
   ORDERS_NAMESPACE,
+  RIDER_LOCATION_MAX_AGE_SECONDS,
+  RIDER_LOCATION_MIN_INTERVAL_MS,
+  RIDER_LOCATION_PUSH_INTERVAL_MS,
+  riderLocationAckSchema,
+  riderLocationRequestSchema,
   SOCKET_PING_INTERVAL_MS,
   vendorRoom,
   vendorSubscribeAckSchema,
@@ -145,5 +151,81 @@ describe('vendor room (Phase 10)', () => {
       }).success,
     ).toBe(false);
     expect(vendorSubscribeAckSchema.safeParse({ ok: true, vendor_id: 'nope' }).success).toBe(false);
+  });
+});
+
+describe('rider telemetry contracts (Phase 21)', () => {
+  it('names the two events', () => {
+    expect(ORDER_SOCKET_EVENTS.riderLocation).toBe('rider:location');
+    expect(ORDER_SOCKET_EVENTS.orderRiderLocation).toBe('order:rider_location');
+  });
+
+  it('accepts a position inside Nepal and nothing else', () => {
+    const ok = { latitude: 27.7154, longitude: 85.3123 };
+
+    expect(riderLocationRequestSchema.parse(ok)).toEqual(ok);
+    // Swapped axes, outside the box, non-numbers and extra keys (a rider id cannot be claimed).
+    expect(
+      riderLocationRequestSchema.safeParse({ latitude: 85.3123, longitude: 27.7154 }).success,
+    ).toBe(false);
+    expect(
+      riderLocationRequestSchema.safeParse({ latitude: 28.6139, longitude: 77.209 }).success,
+    ).toBe(false);
+    expect(
+      riderLocationRequestSchema.safeParse({ latitude: '27.7', longitude: 85.3 }).success,
+    ).toBe(false);
+    expect(
+      riderLocationRequestSchema.safeParse({ latitude: Number.NaN, longitude: 85.3 }).success,
+    ).toBe(false);
+    expect(riderLocationRequestSchema.safeParse({ ...ok, rider_id: randomUUID() }).success).toBe(
+      false,
+    );
+    expect(riderLocationRequestSchema.safeParse({ latitude: 27.7154 }).success).toBe(false);
+  });
+
+  it('acks with the recording time or one of four codes', () => {
+    expect(
+      riderLocationAckSchema.safeParse({ ok: true, recorded_at: '2026-10-03T10:00:00.000Z' })
+        .success,
+    ).toBe(true);
+    for (const code of [
+      'VALIDATION_FAILED',
+      'FORBIDDEN',
+      'RATE_LIMITED',
+      'INTERNAL_SERVER_ERROR',
+    ]) {
+      expect(
+        riderLocationAckSchema.safeParse({ ok: false, error: { code, message: 'x' } }).success,
+      ).toBe(true);
+    }
+    expect(
+      riderLocationAckSchema.safeParse({
+        ok: false,
+        error: { code: 'ORDER_NOT_FOUND', message: 'x' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('pushes a position to customers without any rider identity', () => {
+    const push = {
+      order_id: orderId,
+      latitude: 27.7154,
+      longitude: 85.3123,
+      recorded_at: '2026-10-03T10:00:00.000Z',
+    };
+
+    expect(orderRiderLocationSchema.parse(push)).toEqual(push);
+    expect(orderRiderLocationSchema.safeParse({ ...push, rider_id: randomUUID() }).success).toBe(
+      false,
+    );
+    expect(orderRiderLocationSchema.safeParse({ ...push, phone: '+9779800000021' }).success).toBe(
+      false,
+    );
+    expect(orderRiderLocationSchema.safeParse({ ...push, latitude: 91 }).success).toBe(false);
+  });
+
+  it('keeps the push period above the rider rate limit and below the staleness bound', () => {
+    expect(RIDER_LOCATION_MIN_INTERVAL_MS).toBeLessThan(RIDER_LOCATION_PUSH_INTERVAL_MS);
+    expect(RIDER_LOCATION_PUSH_INTERVAL_MS).toBeLessThan(RIDER_LOCATION_MAX_AGE_SECONDS * 1000);
   });
 });

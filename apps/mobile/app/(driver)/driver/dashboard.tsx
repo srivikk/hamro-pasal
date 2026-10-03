@@ -4,22 +4,26 @@ import { useTranslation } from 'react-i18next';
 
 import { useSignOut } from '../../../src/api/auth';
 import { Button } from '../../../src/components/Button';
-import { DriverOrderCard } from '../../../src/features/driver/DriverOrderCard';
+import { DeliveryCard } from '../../../src/features/driver/DeliveryCard';
+import { RiderGpsSimulator } from '../../../src/features/driver/RiderGpsSimulator';
 import {
-  useDeliverOrder,
-  useDriverOrdersQuery,
-} from '../../../src/features/driver/useDriverOrders';
+  useCompleteDelivery,
+  useDeliveriesQuery,
+  useDeliveryStep,
+} from '../../../src/features/driver/useDeliveries';
 
 /**
- * Delivery partner flow steps 3–5: the rider's orders out for delivery. At the door the rider types
- * the customer's 4-digit code; a match delivers the order (it leaves the list), a wrong code says
- * how many tries are left, and five wrong codes lock the order for a while.
+ * Delivery partner flow ("Rider Mode"): open gigs and the rider's own deliveries. The rider
+ * accepts a gig, marks it picked up, and at the door types the customer's 4-digit code; a match
+ * delivers the order (it leaves the list), a wrong code says how many tries are left, and five
+ * wrong codes lock the order for a while. The GPS switch streams mock positions for testing.
  */
 export default function DriverDashboardScreen() {
   const { t } = useTranslation();
   const signOut = useSignOut();
-  const query = useDriverOrdersQuery();
-  const { deliver, pendingOrderId } = useDeliverOrder();
+  const query = useDeliveriesQuery();
+  const { advance, pendingDeliveryId: advancingId } = useDeliveryStep();
+  const { complete, pendingDeliveryId: completingId } = useCompleteDelivery();
   const header = (
     <Stack.Screen options={{ headerShown: true, title: t('driverDashboard.title') }} />
   );
@@ -42,7 +46,7 @@ export default function DriverDashboardScreen() {
     );
   }
 
-  const orders = query.data;
+  const deliveries = query.data;
 
   return (
     <ScrollView
@@ -54,18 +58,23 @@ export default function DriverDashboardScreen() {
       }
     >
       {header}
-      {orders.length === 0 ? (
+      <RiderGpsSimulator />
+      {deliveries.length === 0 ? (
         <Text className="text-center text-base text-neutral-600" testID="driver-orders-empty">
           {t('driverDashboard.empty')}
         </Text>
       ) : (
-        orders.map((order) => (
-          <DriverOrderCard
-            key={order.id}
-            order={order}
-            submitting={pendingOrderId === order.id}
-            onDeliver={(otp, onRejected) => {
-              deliver({ orderId: order.id, otp }, { onError: onRejected });
+        deliveries.map((delivery) => (
+          <DeliveryCard
+            key={delivery.id}
+            delivery={delivery}
+            advancing={advancingId === delivery.id}
+            submitting={completingId === delivery.id}
+            onAdvance={(step) => {
+              advance({ deliveryId: delivery.id, step });
+            }}
+            onComplete={(otp, onRejected) => {
+              complete({ deliveryId: delivery.id, otp }, { onError: onRejected });
             }}
           />
         ))

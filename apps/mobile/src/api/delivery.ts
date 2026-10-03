@@ -3,7 +3,7 @@ import { deliveryOtpRequestSchema, type DeliveryOtpRequest } from '@hamro-pasal/
 import { ApiError } from './http';
 
 /**
- * Error codes of the doorstep handoff (POST /api/driver/orders/:id/deliver and
+ * Error codes of the doorstep handoff (POST /api/deliveries/:id/complete and
  * /api/vendors/orders/:id/deliver) that the screens branch on.
  */
 export const DELIVERY_ERROR_CODES = {

@@ -7,7 +7,7 @@ import VendorDashboardScreen from '../../../app/(vendor)/dashboard';
 import { VENDOR_ORDERS_PATH, vendorOrderDecisionPath } from '../../api/vendor-orders';
 import { useToastStore } from '../../store/useToastStore';
 import {
-  driverDelivered,
+  deliveryCompleted,
   errorBody,
   NEW_ORDER_ID,
   SECOND_ORDER_ID,
@@ -242,7 +242,7 @@ describe('vendor dashboard: self-delivery handoff', () => {
     servePost(NEW_ORDER_ID, 'deliver', async () => {
       await delay(100);
       serverOrders = [];
-      return HttpResponse.json(driverDelivered(NEW_ORDER_ID));
+      return HttpResponse.json(deliveryCompleted(NEW_ORDER_ID));
     });
     await renderDashboard();
 

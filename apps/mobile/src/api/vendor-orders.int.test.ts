@@ -1,7 +1,7 @@
 import { http, HttpResponse } from 'msw';
 
 import {
-  driverDelivered,
+  deliveryCompleted,
   errorBody,
   NEW_ORDER_ID,
   vendorDecision,
@@ -141,7 +141,7 @@ describe('POST /api/vendors/orders/:id/deliver', () => {
     server.use(
       http.post(apiUrl(vendorOrderDecisionPath(NEW_ORDER_ID, 'deliver')), async ({ request }) => {
         received.push(await capture(request));
-        return HttpResponse.json(driverDelivered(NEW_ORDER_ID));
+        return HttpResponse.json(deliveryCompleted(NEW_ORDER_ID));
       }),
     );
 
@@ -149,7 +149,7 @@ describe('POST /api/vendors/orders/:id/deliver', () => {
 
     expect(received[0]?.url.pathname).toBe(`/api/vendors/orders/${NEW_ORDER_ID}/deliver`);
     expect(received[0]?.body).toEqual({ delivery_otp: '0421' });
-    expect(result).toEqual(driverDelivered(NEW_ORDER_ID));
+    expect(result).toEqual(deliveryCompleted(NEW_ORDER_ID));
   });
 
   it.each(['123', '12345', '१२३४'])('refuses %p on the device without sending it', async (code) => {
@@ -157,7 +157,7 @@ describe('POST /api/vendors/orders/:id/deliver', () => {
     server.use(
       http.post(apiUrl(vendorOrderDecisionPath(NEW_ORDER_ID, 'deliver')), () => {
         requests += 1;
-        return HttpResponse.json(driverDelivered(NEW_ORDER_ID));
+        return HttpResponse.json(deliveryCompleted(NEW_ORDER_ID));
       }),
     );
 

@@ -17,6 +17,8 @@ export function isStaleDeliveryError(error: unknown): boolean {
     error instanceof ApiError &&
     (error.code === 'ORDER_STATE_CONFLICT' ||
       error.code === 'ORDER_NOT_FOUND' ||
+      error.code === 'DELIVERY_NOT_FOUND' ||
+      error.code === 'DELIVERY_STATE_CONFLICT' ||
       error.code === DELIVERY_ERROR_CODES.wrongFulfillment)
   );
 }

@@ -11,7 +11,7 @@ import type { DisputeService } from './disputes/dispute-service';
 import { requireAuth } from './http/auth';
 import { errorHandler, HttpError } from './http/errors';
 import type { DeviceTokenService } from './notifications/device-token-service';
-import type { DriverOrderService } from './orders/driver-order-service';
+import type { DeliveryService } from './deliveries/delivery-service';
 import type { OrderService } from './orders/order-service';
 import type { VendorOrderService } from './orders/vendor-order-service';
 import type { EsewaService } from './payments/esewa/esewa-service';
@@ -23,7 +23,7 @@ import { adminRouter } from './routes/admin';
 import { authRouter } from './routes/auth';
 import { cartRouter } from './routes/cart';
 import { categoriesRouter, productsRouter, vendorProductsRouter } from './routes/catalog';
-import { driverOrdersRouter } from './routes/driver-orders';
+import { deliveriesRouter } from './routes/deliveries';
 import { orderChatRouter } from './routes/order-chat';
 import { notificationsRouter } from './routes/notifications';
 import { ordersRouter } from './routes/orders';
@@ -48,7 +48,8 @@ export interface ApiServices {
   readonly vendorOrders: VendorOrderService;
   readonly vendorWallet: VendorWalletService;
   readonly vendorTopUps: VendorTopUpService;
-  readonly driverOrders: DriverOrderService;
+  /** Phase 21: the platform rider's deliveries (accept, pickup, complete with the code). */
+  readonly deliveries: DeliveryService;
   readonly esewa: EsewaService;
   readonly khalti: KhaltiService;
   readonly reviews: ReviewService;
@@ -111,9 +112,9 @@ export function createApp(services?: ApiServices): Express {
     );
     app.use('/api/vendors', customerAuth, vendorsRouter(services.catalog));
     app.use(
-      '/api/driver/orders',
+      '/api/deliveries',
       requireAuth(services.accessTokenSecret, ['DRIVER']),
-      driverOrdersRouter(services.driverOrders),
+      deliveriesRouter(services.deliveries),
     );
     app.use('/api/cart', customerAuth, cartRouter(services.checkout));
     // Before the customer-only orders router: vendors and admins read dispute transcripts too.

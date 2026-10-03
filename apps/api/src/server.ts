@@ -11,7 +11,7 @@ const env = loadEnv();
 const container = buildContainerFromEnv(env);
 const httpServer = createServer(createApp(container));
 
-// Socket.io /orders (real-time order state) and /chat (dispute chat). The adapter needs its own
+// Socket.io /orders (real-time order state, rider telemetry) and /chat (dispute chat). The adapter needs its own
 // pub and sub connections.
 const redisPub = new Redis(env.REDIS_URL);
 const redisSub = redisPub.duplicate();
@@ -21,6 +21,7 @@ const realtime = attachRealtime(httpServer, {
   vendors: container.vendorOrders,
   redis: { pub: redisPub, sub: redisSub },
   chat: { disputes: container.disputes, evidence: container.evidence },
+  riders: { locations: container.riderLocations, deliveries: container.deliveries },
 });
 
 httpServer.listen(env.API_PORT, () => {

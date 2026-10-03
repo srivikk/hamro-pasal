@@ -14,12 +14,18 @@ import { z } from 'zod';
 
 import type { AdminVendorRow, AdminVendorService } from '../admin/admin-vendor-service';
 import type { DeadLetterRow, DeadLetterService } from '../admin/dead-letter-service';
+import type { CategoryService } from '../catalog/category-service';
+import type { ProductService } from '../catalog/product-service';
 import { authOf } from '../http/auth';
 import { parseInput } from '../http/validate';
+import { mountAdminCatalog } from './catalog';
 
 export interface AdminRouterServices {
   readonly deadLetters: DeadLetterService;
   readonly vendors: AdminVendorService;
+  /** Phase 17: the Master Category Taxonomy and the products overview. */
+  readonly categories: CategoryService;
+  readonly products: ProductService;
 }
 
 const jsonValueSchema = z.json();
@@ -93,7 +99,12 @@ export function adminVendorView(vendor: AdminVendorRow): AdminVendorView {
  * Mounted at /api/admin behind requireAuth(SUPER_ADMIN) (Phase 15): the DLQ monitor and the vendor
  * standing overrides used by apps/admin. Every response is `no-store`.
  */
-export function adminRouter({ deadLetters, vendors }: AdminRouterServices): Router {
+export function adminRouter({
+  deadLetters,
+  vendors,
+  categories,
+  products,
+}: AdminRouterServices): Router {
   const router = Router();
   router.use((_req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -146,6 +157,8 @@ export function adminRouter({ deadLetters, vendors }: AdminRouterServices): Rout
     };
     res.json(body);
   });
+
+  mountAdminCatalog(router, categories, products);
 
   return router;
 }

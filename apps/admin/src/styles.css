@@ -409,12 +409,128 @@ h2 {
 
 .confirm {
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 
 .note {
   margin-top: 4px;
   max-width: 32ch;
+}
+
+select.search {
+  cursor: pointer;
+}
+
+/* Category tree */
+.tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.tree-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tree-row:last-child {
+  border-bottom: none;
+}
+
+.tree-row.depth-2 {
+  padding-left: 36px;
+}
+
+.tree-row.depth-3 {
+  padding-left: 60px;
+}
+
+.tree-main {
+  min-width: 0;
+}
+
+.tree-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.tree-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Modal (native dialog) */
+.modal {
+  width: min(460px, calc(100vw - 32px));
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+.modal::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.modal form {
+  display: grid;
+  gap: 6px;
+}
+
+.modal h2 {
+  margin-bottom: 8px;
+  overflow-wrap: anywhere;
+}
+
+.modal label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.modal input:not([type='checkbox']),
+.modal select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.modal input.mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.modal label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: inherit;
+  margin-top: 10px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
 }
 
 /* Login */

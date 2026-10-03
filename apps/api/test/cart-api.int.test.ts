@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { orderAddresses, orderItems, orders, reviews } from '@hamro-pasal/db';
+import { orderAddresses, orderItems, orders, products, reviews } from '@hamro-pasal/db';
 import { compare } from 'bcryptjs';
 import { checkoutResponseSchema, lockStatusResponseSchema } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
@@ -263,6 +263,116 @@ describe('cart API', () => {
       expect(tooMany.status).toBe(409);
       expect(errorOf(tooMany).details).toEqual({
         shortfalls: [{ productId, requested: 2, available: 1 }],
+      });
+    });
+
+    describe('stock guard (Phase 17)', () => {
+      const ordersOf = (customerId: string) =>
+        db().select().from(orders).where(eq(orders.customer_id, customerId));
+
+      it('refuses an out-of-stock product: no order, no lock, no event, stock untouched', async () => {
+        const { customerId, vendorId, productId } = await setup({ stock: 0 });
+
+        for (const method of ['COD', 'ESEWA', 'KHALTI']) {
+          const res = await checkout(customerId, cart(vendorId, productId, method));
+
+          expect(res.status).toBe(409);
+          expect(errorOf(res)).toMatchObject({
+            code: 'INSUFFICIENT_STOCK',
+            details: { shortfalls: [{ productId, requested: 1, available: 0 }] },
+          });
+        }
+        expect(await ordersOf(customerId)).toHaveLength(0);
+        expect(await stockOf(db(), productId)).toBe(0);
+        // Nothing was held: once restocked, the full quantity can be bought.
+        await db().update(products).set({ stock_quantity: 2 }).where(eq(products.id, productId));
+        const restocked = await checkout(customerId, cart(vendorId, productId, 'COD', 2));
+        expect(restocked.status).toBe(201);
+      });
+
+      it('allows exactly the on-hand quantity and refuses one more', async () => {
+        const { customerId, vendorId, productId } = await setup({ stock: 3 });
+
+        const oneTooMany = await checkout(customerId, cart(vendorId, productId, 'COD', 4));
+        const exact = await checkout(customerId, cart(vendorId, productId, 'COD', 3));
+        const afterwards = await checkout(customerId, cart(vendorId, productId, 'COD', 1));
+
+        expect(oneTooMany.status).toBe(409);
+        expect(errorOf(oneTooMany).details).toEqual({
+          shortfalls: [{ productId, requested: 4, available: 3 }],
+        });
+        expect(exact.status).toBe(201);
+        expect(await stockOf(db(), productId)).toBe(0);
+        expect(afterwards.status).toBe(409);
+        expect(await ordersOf(customerId)).toHaveLength(1);
+      });
+
+      it('reports every short line of the cart, and adds up split lines of one product', async () => {
+        const { customerId, vendorId, productId } = await setup({ stock: 5 });
+        const soldOut = await createProduct(db(), vendorId, 0, 100);
+        const plenty = await createProduct(db(), vendorId, 50, 100);
+
+        const res = await checkout(customerId, {
+          ...cart(vendorId, productId, 'COD'),
+          items: [
+            { product_id: productId, quantity: 3 },
+            { product_id: soldOut, quantity: 2 },
+            { product_id: plenty, quantity: 10 },
+            { product_id: productId, quantity: 3 },
+          ],
+        });
+
+        expect(res.status).toBe(409);
+        expect(errorOf(res).details).toEqual({
+          shortfalls: [
+            { productId, requested: 6, available: 5 },
+            { productId: soldOut, requested: 2, available: 0 },
+          ],
+        });
+        // The line that was in stock is not held either: the cart is all or nothing.
+        expect(await stockOf(db(), plenty)).toBe(50);
+        expect(await ordersOf(customerId)).toHaveLength(0);
+      });
+
+      it('is checked before the minimum order value and the COD eligibility', async () => {
+        const { customerId, vendorId, productId } = await setup({ stock: 0, minOrderValue: 5000 });
+
+        const res = await checkout(customerId, cart(vendorId, productId, 'COD'));
+
+        expect(res.status).toBe(409);
+        expect(errorOf(res).code).toBe('INSUFFICIENT_STOCK');
+      });
+
+      it('counts stock another customer is holding in checkout as unavailable', async () => {
+        const { customerId, vendorId, productId } = await setup({ stock: 5 });
+        const other = await createUser(db());
+        const held = await checkout(other, cart(vendorId, productId, 'ESEWA', 4));
+        expect(held.status).toBe(201);
+
+        const res = await checkout(customerId, cart(vendorId, productId, 'COD', 2));
+
+        // PostgreSQL still says 5; the other customer's 600 s lock leaves 1.
+        expect(await stockOf(db(), productId)).toBe(5);
+        expect(res.status).toBe(409);
+        expect(errorOf(res).details).toEqual({
+          shortfalls: [{ productId, requested: 2, available: 1 }],
+        });
+      });
+
+      it('sells the last unit once when ten customers check out at the same time', async () => {
+        const { vendorId, productId } = await setup({ stock: 1 });
+        const customers = await Promise.all(Array.from({ length: 10 }, () => createUser(db())));
+
+        const responses = await Promise.all(
+          customers.map((customerId) => checkout(customerId, cart(vendorId, productId, 'COD'))),
+        );
+
+        expect(responses.filter((r) => r.status === 201)).toHaveLength(1);
+        for (const res of responses.filter((r) => r.status !== 201)) {
+          // 503 CHECKOUT_BUSY: the Redis optimistic lock gave up under contention (retryable).
+          expect([409, 503]).toContain(res.status);
+        }
+        expect(await stockOf(db(), productId)).toBe(0);
       });
     });
 

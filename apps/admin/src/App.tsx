@@ -3,13 +3,23 @@ import { useEffect, useState } from 'react';
 
 import { useAdminApi, useSession, useSessionStore } from './app-context';
 import { LoginScreen } from './features/auth/LoginScreen';
+import { CategoryScreen } from './features/categories/CategoryScreen';
 import { DeadLetterScreen } from './features/dlq/DeadLetterScreen';
+import { ProductScreen } from './features/products/ProductScreen';
 import { VendorScreen } from './features/vendors/VendorScreen';
+import { TABS, tabFromHash, type Tab } from './tabs';
 
-type Tab = 'dlq' | 'vendors';
-
-function tabFromHash(hash: string): Tab {
-  return hash === '#/vendors' ? 'vendors' : 'dlq';
+function Screen({ tab }: { readonly tab: Tab }) {
+  switch (tab) {
+    case 'dlq':
+      return <DeadLetterScreen />;
+    case 'vendors':
+      return <VendorScreen />;
+    case 'categories':
+      return <CategoryScreen />;
+    case 'products':
+      return <ProductScreen />;
+  }
 }
 
 /** The current tab, kept in the URL hash so a tab can be bookmarked and Back works. */
@@ -27,7 +37,7 @@ function useHashTab(): [Tab, (tab: Tab) => void] {
   return [
     tab,
     (next) => {
-      window.location.hash = next === 'vendors' ? '#/vendors' : '#/dlq';
+      window.location.hash = `#/${next}`;
     },
   ];
 }
@@ -89,26 +99,19 @@ export function App() {
           Hamro Pasal <span className="brand-sub">Super Admin</span>
         </div>
         <nav className="tabs" aria-label="Sections">
-          <button
-            type="button"
-            className="tab"
-            aria-current={tab === 'dlq' ? 'page' : undefined}
-            onClick={() => {
-              setTab('dlq');
-            }}
-          >
-            Dead letters
-          </button>
-          <button
-            type="button"
-            className="tab"
-            aria-current={tab === 'vendors' ? 'page' : undefined}
-            onClick={() => {
-              setTab('vendors');
-            }}
-          >
-            Vendors
-          </button>
+          {TABS.map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              className="tab"
+              aria-current={tab === id ? 'page' : undefined}
+              onClick={() => {
+                setTab(id);
+              }}
+            >
+              {label}
+            </button>
+          ))}
         </nav>
         <div className="account">
           {signOut.isError && (
@@ -129,7 +132,9 @@ export function App() {
           </button>
         </div>
       </header>
-      <main className="content">{tab === 'dlq' ? <DeadLetterScreen /> : <VendorScreen />}</main>
+      <main className="content">
+        <Screen tab={tab} />
+      </main>
     </div>
   );
 }

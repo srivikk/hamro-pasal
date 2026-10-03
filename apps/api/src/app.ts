@@ -4,6 +4,8 @@ import type { AdminVendorService } from './admin/admin-vendor-service';
 import type { DeadLetterService } from './admin/dead-letter-service';
 import type { OtpAuthService } from './auth/otp-auth-service';
 import type { CatalogService } from './catalog/catalog-service';
+import type { CategoryService } from './catalog/category-service';
+import type { ProductService } from './catalog/product-service';
 import type { CheckoutService } from './checkout/checkout-service';
 import type { DisputeService } from './disputes/dispute-service';
 import { requireAuth } from './http/auth';
@@ -19,6 +21,7 @@ import type { VendorWalletService } from './wallet/vendor-wallet-service';
 import { adminRouter } from './routes/admin';
 import { authRouter } from './routes/auth';
 import { cartRouter } from './routes/cart';
+import { categoriesRouter, productsRouter, vendorProductsRouter } from './routes/catalog';
 import { driverOrdersRouter } from './routes/driver-orders';
 import { orderChatRouter } from './routes/order-chat';
 import { ordersRouter } from './routes/orders';
@@ -48,6 +51,9 @@ export interface ApiServices {
   /** Phase 15: the Super Admin dashboard (apps/admin). */
   readonly adminDeadLetters: DeadLetterService;
   readonly adminVendors: AdminVendorService;
+  /** Phase 17: the admin taxonomy, and products with their stock. */
+  readonly categories: CategoryService;
+  readonly products: ProductService;
 }
 
 /** Builds the HTTP app. Without services only /health is served (used by liveness checks/tests). */
@@ -67,7 +73,20 @@ export function createApp(services?: ApiServices): Express {
     app.use(
       '/api/admin',
       requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
-      adminRouter({ deadLetters: services.adminDeadLetters, vendors: services.adminVendors }),
+      adminRouter({
+        deadLetters: services.adminDeadLetters,
+        vendors: services.adminVendors,
+        categories: services.categories,
+        products: services.products,
+      }),
+    );
+    // Phase 17. Public reads: the active taxonomy and the active products of LIVE vendors.
+    app.use('/api/categories', categoriesRouter(services.categories));
+    app.use('/api/products', productsRouter(services.products));
+    app.use(
+      '/api/vendor/products',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorProductsRouter(services.products),
     );
     // Before the customer catalogue under /api/vendors, which would otherwise claim these paths.
     app.use(

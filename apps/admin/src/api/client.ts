@@ -27,7 +27,7 @@ export const CLIENT_ERROR_CODES = {
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
 export interface ApiRequest<TSchema extends z.ZodType> {
-  readonly method: 'GET' | 'POST';
+  readonly method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   readonly path: string;
   readonly schema: TSchema;
   readonly query?: Readonly<Record<string, string | undefined>>;

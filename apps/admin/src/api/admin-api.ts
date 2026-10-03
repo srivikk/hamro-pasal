@@ -1,12 +1,21 @@
 import {
+  adminCategoryListResponseSchema,
+  adminCategoryResponseSchema,
   adminDeadLetterListResponseSchema,
   adminDeadLetterRetryResponseSchema,
+  adminProductListResponseSchema,
+  adminProductResponseSchema,
   adminVendorListResponseSchema,
   adminVendorOverrideResponseSchema,
   otpSendResponseSchema,
   otpVerifyResponseSchema,
+  type AdminCategoryListResponseBody,
+  type AdminCategoryResponseBody,
+  type AdminCategoryWriteRequest,
   type AdminDeadLetterListResponseBody,
   type AdminDeadLetterRetryResponseBody,
+  type AdminProductListResponseBody,
+  type AdminProductResponseBody,
   type AdminVendorListResponseBody,
   type AdminVendorOverrideResponseBody,
   type DeadLetterStatus,
@@ -36,6 +45,17 @@ export interface AdminApi {
     id: string,
     action: 'SUSPEND' | 'RESTORE',
   ): Promise<AdminVendorOverrideResponseBody>;
+  /** Phase 17: the whole taxonomy in tree order, inactive categories included. */
+  listCategories(): Promise<AdminCategoryListResponseBody>;
+  createCategory(input: AdminCategoryWriteRequest): Promise<AdminCategoryResponseBody>;
+  /** PUT: replaces every editable field of the category. */
+  updateCategory(id: string, input: AdminCategoryWriteRequest): Promise<AdminCategoryResponseBody>;
+  deleteCategory(id: string): Promise<void>;
+  listProducts(query: {
+    vendorId?: string | undefined;
+    cursor?: string | undefined;
+  }): Promise<AdminProductListResponseBody>;
+  setProductActive(id: string, isActive: boolean): Promise<AdminProductResponseBody>;
 }
 
 export function createAdminApi(client: ApiClient): AdminApi {
@@ -83,6 +103,48 @@ export function createAdminApi(client: ApiClient): AdminApi {
         method: 'POST',
         path: `/api/admin/vendors/${encodeURIComponent(id)}/${action === 'SUSPEND' ? 'suspend' : 'restore'}`,
         schema: adminVendorOverrideResponseSchema,
+      }),
+    listCategories: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/categories',
+        schema: adminCategoryListResponseSchema,
+      }),
+    createCategory: (input) =>
+      client.request({
+        method: 'POST',
+        path: '/api/admin/categories',
+        schema: adminCategoryResponseSchema,
+        body: input,
+      }),
+    updateCategory: (id, input) =>
+      client.request({
+        method: 'PUT',
+        path: `/api/admin/categories/${encodeURIComponent(id)}`,
+        schema: adminCategoryResponseSchema,
+        body: input,
+      }),
+    deleteCategory: async (id) => {
+      // 204 No Content: the client reads an empty body as null.
+      await client.request({
+        method: 'DELETE',
+        path: `/api/admin/categories/${encodeURIComponent(id)}`,
+        schema: z.null(),
+      });
+    },
+    listProducts: ({ vendorId, cursor }) =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/products',
+        schema: adminProductListResponseSchema,
+        query: { vendor_id: vendorId, cursor },
+      }),
+    setProductActive: (id, isActive) =>
+      client.request({
+        method: 'PATCH',
+        path: `/api/admin/products/${encodeURIComponent(id)}/active`,
+        schema: adminProductResponseSchema,
+        body: { is_active: isActive },
       }),
   };
 }

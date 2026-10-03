@@ -15,6 +15,20 @@ import {
 } from '../auth/otp-auth-service';
 import { InvalidRefreshTokenError } from '../auth/refresh-token';
 import { VendorNotFoundError } from '../catalog/catalog-service';
+import {
+  CategoryCycleError,
+  CategoryInUseError,
+  CategoryNotFoundError,
+  CategoryParentNotFoundError,
+  CategorySlugTakenError,
+  CategoryTooDeepError,
+} from '../catalog/category-service';
+import {
+  CategoryUnavailableError,
+  InvalidProductCursorError,
+  ProductNameTakenError,
+  ProductNotFoundError,
+} from '../catalog/product-service';
 import { OrderNotFoundError, OrderNotPlaceableError } from '../checkout/checkout-service';
 import { CheckoutRejectedError } from '../checkout/pricing';
 import { DisputeWindowClosedError } from '../disputes/dispute-service';
@@ -189,6 +203,41 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof RestoreStatusUnknownError) {
     return new HttpError(409, 'RESTORE_STATUS_UNKNOWN', error.message);
+  }
+  if (error instanceof CategoryNotFoundError) {
+    return new HttpError(404, 'CATEGORY_NOT_FOUND', 'Category not found');
+  }
+  if (error instanceof CategorySlugTakenError) {
+    return new HttpError(409, 'CATEGORY_SLUG_TAKEN', error.message, { slug: error.slug });
+  }
+  if (error instanceof CategoryParentNotFoundError) {
+    return new HttpError(422, 'CATEGORY_PARENT_NOT_FOUND', error.message);
+  }
+  if (error instanceof CategoryCycleError) {
+    return new HttpError(409, 'CATEGORY_CYCLE', error.message);
+  }
+  if (error instanceof CategoryTooDeepError) {
+    return new HttpError(422, 'CATEGORY_TOO_DEEP', error.message, { max_depth: error.maxDepth });
+  }
+  if (error instanceof CategoryInUseError) {
+    return new HttpError(409, 'CATEGORY_IN_USE', error.message, {
+      child_count: error.childCount,
+      product_count: error.productCount,
+    });
+  }
+  if (error instanceof CategoryUnavailableError) {
+    return new HttpError(422, 'CATEGORY_UNAVAILABLE', 'This category is not available', {
+      category_id: error.categoryId,
+    });
+  }
+  if (error instanceof ProductNotFoundError) {
+    return new HttpError(404, 'PRODUCT_NOT_FOUND', 'Product not found');
+  }
+  if (error instanceof ProductNameTakenError) {
+    return new HttpError(409, 'PRODUCT_NAME_TAKEN', error.message);
+  }
+  if (error instanceof InvalidProductCursorError) {
+    return new HttpError(400, 'INVALID_CURSOR', error.message);
   }
   if (error instanceof DisputeWindowClosedError) {
     return new HttpError(422, 'DISPUTE_WINDOW_CLOSED', error.message);

@@ -13,6 +13,8 @@ import type { ApiServices } from './app';
 import { OtpAuthService } from './auth/otp-auth-service';
 import { OtpStore, type OtpStoreOptions } from './auth/otp-store';
 import { CatalogService } from './catalog/catalog-service';
+import { CategoryService } from './catalog/category-service';
+import { ProductService } from './catalog/product-service';
 import { CheckoutService } from './checkout/checkout-service';
 import { DisputeService } from './disputes/dispute-service';
 import { RedisKeyedMutex } from './infra/redis-mutex';
@@ -140,6 +142,8 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     evidence: infra.evidence,
     adminDeadLetters: new DeadLetterService(infra.db),
     adminVendors: new AdminVendorService(infra.db, wallet),
+    categories: new CategoryService(infra.db),
+    products: new ProductService(infra.db),
     async close() {
       await infra.redisPool.close();
       await infra.db.$client.end();

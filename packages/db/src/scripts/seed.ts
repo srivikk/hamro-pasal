@@ -1,16 +1,59 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 
-import { createDatabase } from '../client';
-import { customerAddresses, products, users, vendors } from '../schema';
+import { createDatabase, type Database } from '../client';
+import { categories, customerAddresses, products, users, vendors } from '../schema';
 import { describeDatabaseUrl, requireDatabaseUrl } from './database-url';
 
 /*
- * Development fixtures for the Kathmandu valley. Re-runnable: skips entirely if the marker
- * user already exists. Never runs when NODE_ENV=production.
+ * Development fixtures for the Kathmandu valley. Re-runnable: the users, vendors and products are
+ * skipped if the marker user already exists; the category taxonomy (Phase 17) is added to any
+ * database that lacks it. Never runs when NODE_ENV=production.
  */
 
 const MARKER_PHONE = '+9779800000001';
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Phase 17: a small Master Category Taxonomy, and which seeded product belongs where. */
+const SEED_ROOT = { name: 'Groceries', slug: 'groceries' };
+const SEED_SUBCATEGORIES = [
+  { name: 'Rice, Flour & Pulses', slug: 'rice-flour-pulses', product: 'Basmati Rice 5kg' },
+  { name: 'Noodles & Snacks', slug: 'noodles-snacks', product: 'Wai Wai Noodles (pack of 30)' },
+  { name: 'Tea & Coffee', slug: 'tea-coffee', product: 'Ilam Tea 500g' },
+  { name: 'Dairy', slug: 'dairy', product: 'Juju Dhau (clay pot)' },
+  { name: 'Fresh Vegetables', slug: 'fresh-vegetables', product: 'Organic Rayo ko Saag (bunch)' },
+  { name: 'Honey & Spreads', slug: 'honey-spreads', product: 'Local Honey 500g' },
+] as const;
+
+/**
+ * Idempotent: categories are matched by slug, and only seeded products that have no category yet
+ * are mapped (an admin's later changes are never overwritten).
+ */
+async function seedTaxonomy(db: Database): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.insert(categories).values(SEED_ROOT).onConflictDoNothing({ target: categories.slug });
+    const [root] = await tx
+      .select({ id: categories.id })
+      .from(categories)
+      .where(eq(categories.slug, SEED_ROOT.slug));
+    if (root === undefined) throw new Error('Seed root category was not created');
+
+    for (const [index, sub] of SEED_SUBCATEGORIES.entries()) {
+      await tx
+        .insert(categories)
+        .values({ name: sub.name, slug: sub.slug, parent_id: root.id, display_order: index + 1 })
+        .onConflictDoNothing({ target: categories.slug });
+      const [category] = await tx
+        .select({ id: categories.id })
+        .from(categories)
+        .where(eq(categories.slug, sub.slug));
+      if (category === undefined) throw new Error(`Seed category ${sub.slug} was not created`);
+      await tx
+        .update(products)
+        .set({ category_id: category.id })
+        .where(and(eq(products.name, sub.product), isNull(products.category_id)));
+    }
+  });
+}
 
 async function main(): Promise<void> {
   if (process.env.NODE_ENV === 'production') {
@@ -26,7 +69,10 @@ async function main(): Promise<void> {
       .from(users)
       .where(eq(users.phone, MARKER_PHONE));
     if (existing.length > 0) {
-      console.info(`[db] ${describeDatabaseUrl(url)} already seeded; nothing to do`);
+      await seedTaxonomy(db);
+      console.info(
+        `[db] ${describeDatabaseUrl(url)} already seeded; category taxonomy ensured, nothing else to do`,
+      );
       return;
     }
 
@@ -152,6 +198,7 @@ async function main(): Promise<void> {
       ]);
     });
 
+    await seedTaxonomy(db);
     console.info(`[db] seeded development fixtures into ${describeDatabaseUrl(url)}`);
   } finally {
     await db.$client.end();

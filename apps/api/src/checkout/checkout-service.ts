@@ -133,7 +133,12 @@ export class CheckoutService {
 
     const items = mergeLines(request.items);
     const catalogue = await this.db
-      .select({ id: products.id, name: products.name, price_npr: products.price_npr })
+      .select({
+        id: products.id,
+        name: products.name,
+        price_npr: products.price_npr,
+        stock_quantity: products.stock_quantity,
+      })
       .from(products)
       .where(
         and(
@@ -150,6 +155,7 @@ export class CheckoutService {
     if (missing.length > 0) {
       throw new ProductUnavailableError(missing);
     }
+    assertInStock(byId, items);
     const priced = priceCart(vendor, byId, items);
 
     if (request.payment_method === 'COD') {
@@ -447,6 +453,27 @@ export class CheckoutService {
     // If this fails the holds only expire later (conservative: under-, never over-allocation).
     await this.locks.release(input.vendorId, input.reservationId);
     return placed;
+  }
+}
+
+/**
+ * The checkout stock guard (Phase 17): no order for more than `products.stock_quantity`. It runs
+ * before pricing, the COD check and the lock, and reports every short line with what is on hand.
+ * The Redis lock then re-checks against other customers' live holds, and the claim's guarded
+ * decrement is the final word in PostgreSQL.
+ */
+export function assertInStock(
+  onHand: ReadonlyMap<string, { readonly stock_quantity: number }>,
+  items: readonly { readonly productId: string; readonly quantity: number }[],
+): void {
+  const shortfalls = items.flatMap((line) => {
+    const available = onHand.get(line.productId)?.stock_quantity ?? 0;
+    return available < line.quantity
+      ? [{ productId: line.productId, requested: line.quantity, available }]
+      : [];
+  });
+  if (shortfalls.length > 0) {
+    throw new InsufficientStockError(shortfalls);
   }
 }
 

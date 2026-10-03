@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 import {
+  CATEGORY_SLUG_REGEX,
+  MAX_PRODUCT_IMAGES,
   NEPAL_PHONE_REGEX,
   NEPAL_PROVINCE_ID_MAX,
   NEPAL_PROVINCE_ID_MIN,
@@ -34,6 +36,10 @@ export const nepalPhoneSchema = z.string().regex(NEPAL_PHONE_REGEX, 'Must be a +
 export const nprAmountSchema = z.number();
 const nonNegativeNprSchema = nprAmountSchema.nonnegative();
 const nonEmptyTextSchema = z.string().trim().min(1);
+
+/** Any JSON value (a jsonb column's content). */
+export const jsonValueSchema = z.json();
+export type JsonValue = z.infer<typeof jsonValueSchema>;
 
 /** PostGIS Point(SRID 4326). `x` is longitude, `y` is latitude. */
 export const geoPointSchema = z.object({
@@ -114,13 +120,41 @@ export const vendorSchema = z.strictObject({
 });
 export type Vendor = z.infer<typeof vendorSchema>;
 
+/**
+ * Phase 17: one node of the Super Admin's Master Category Taxonomy (SPEC Super Admin flow 2).
+ * Vendors map products to it and can never change it.
+ */
+export const categorySchema = z.strictObject({
+  id: z.uuid(),
+  name: nonEmptyTextSchema,
+  /** Unique, URL-safe handle. */
+  slug: z.string().regex(CATEGORY_SLUG_REGEX),
+  /** Null for a root category. */
+  parent_id: z.uuid().nullable(),
+  icon_url: nonEmptyTextSchema.nullable(),
+  /** Position among its siblings, ascending. */
+  display_order: z.number().int().nonnegative(),
+  is_active: z.boolean(),
+  created_at: z.date(),
+  updated_at: z.date(),
+});
+export type Category = z.infer<typeof categorySchema>;
+
 export const productSchema = z.strictObject({
   id: z.uuid(),
   vendor_id: z.uuid(),
+  /** The taxonomy node the vendor mapped the SKU to. Null only for products older than Phase 17. */
+  category_id: z.uuid().nullable(),
   name: nonEmptyTextSchema,
+  description: nonEmptyTextSchema.nullable(),
   price_npr: nprAmountSchema.positive(),
+  /** What one quantity is, e.g. `kg`, `piece`, `pack`. */
+  unit: nonEmptyTextSchema,
   stock_quantity: z.number().int().nonnegative(),
+  image_urls: z.array(z.string().min(1)).max(MAX_PRODUCT_IMAGES),
   is_active: z.boolean(),
+  /** Vendor-defined attributes (brand, weight, ...), a JSON object. */
+  metadata: z.record(z.string(), jsonValueSchema),
   created_at: z.date(),
   updated_at: z.date(),
 });

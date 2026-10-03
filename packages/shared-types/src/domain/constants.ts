@@ -76,3 +76,25 @@ export const MAX_DISPUTE_EVIDENCE_BYTES = 5 * 1024 * 1024;
 /** Image types accepted as dispute evidence (checked against the file's own bytes). */
 export const DISPUTE_EVIDENCE_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 export type DisputeEvidenceContentType = (typeof DISPUTE_EVIDENCE_CONTENT_TYPES)[number];
+
+/*
+ * Phase 17: catalog and taxonomy limits. The same numbers back the database CHECK constraints
+ * (packages/db) and the request schemas (api/catalog.ts).
+ */
+
+/** A category slug: lower-case ASCII words joined by single hyphens, e.g. `dairy-and-eggs`. */
+export const CATEGORY_SLUG_PATTERN = '^[a-z0-9]+(-[a-z0-9]+)*$';
+export const CATEGORY_SLUG_REGEX = new RegExp(CATEGORY_SLUG_PATTERN);
+export const MAX_CATEGORY_NAME_LENGTH = 80;
+export const MAX_CATEGORY_SLUG_LENGTH = 80;
+/** Root = level 1. A category may sit at most this deep (root > child > grandchild). */
+export const MAX_CATEGORY_DEPTH = 3;
+
+export const MAX_PRODUCT_NAME_LENGTH = 120;
+export const MAX_PRODUCT_DESCRIPTION_LENGTH = 2000;
+export const MAX_PRODUCT_UNIT_LENGTH = 20;
+export const MAX_PRODUCT_IMAGES = 8;
+export const MAX_PRODUCT_PRICE_NPR = 1_000_000;
+export const MAX_PRODUCT_STOCK_QUANTITY = 1_000_000;
+/** The unit of a product whose vendor named none (and of every product created before Phase 17). */
+export const DEFAULT_PRODUCT_UNIT = 'piece';

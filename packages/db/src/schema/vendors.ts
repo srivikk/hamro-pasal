@@ -1,6 +1,9 @@
 import {
+  DEFAULT_PRODUCT_UNIT,
+  MAX_PRODUCT_IMAGES,
   NEPAL_PHONE_PATTERN,
   VENDOR_WALLET_HARD_FLOOR_NPR,
+  type JsonValue,
   type VendorFulfillmentMode,
   type VendorStatus,
 } from '@hamro-pasal/shared-types';
@@ -10,6 +13,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   text,
@@ -18,6 +22,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
+import { categories } from './categories';
 import { createdAt, geoPoint, npr, primaryId, updatedAt } from './columns';
 import {
   deliveryScopeEnum,
@@ -116,18 +121,53 @@ export const products = pgTable(
     vendor_id: uuid()
       .notNull()
       .references(() => vendors.id, { onDelete: 'restrict' }),
+    // Phase 17: the admin taxonomy node this SKU is mapped to. Null only for older products.
+    category_id: uuid().references(() => categories.id, { onDelete: 'restrict' }),
     name: text().notNull(),
+    description: text(),
     price_npr: npr().notNull(),
+    unit: text().notNull().default(DEFAULT_PRODUCT_UNIT),
     stock_quantity: integer().notNull().default(0),
+    image_urls: text()
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     is_active: boolean().notNull().default(true),
+    metadata: jsonb()
+      .$type<Record<string, JsonValue>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     created_at: createdAt(),
     updated_at: updatedAt(),
   },
   (t) => [
-    index('products_vendor_id_idx').on(t.vendor_id),
+    index('products_vendor_id_is_active_idx').on(t.vendor_id, t.is_active),
+    index('products_category_id_is_active_idx').on(t.category_id, t.is_active),
+    // Full-text search on name + description. 'simple': no stemming, so Nepali and English
+    // product names are indexed as written.
+    index('products_search_idx').using(
+      'gin',
+      sql`to_tsvector('simple', ${t.name} || ' ' || coalesce(${t.description}, ''))`,
+    ),
     unique('products_vendor_id_name_key').on(t.vendor_id, t.name),
     check('products_name_check', sql`btrim(${t.name}) <> ''`),
+    check(
+      'products_description_check',
+      sql`${t.description} IS NULL OR btrim(${t.description}) <> ''`,
+    ),
+    check('products_unit_check', sql`btrim(${t.unit}) <> ''`),
     check('products_price_check', sql`${t.price_npr} > 0`),
     check('products_stock_quantity_check', sql`${t.stock_quantity} >= 0`),
+    check(
+      'products_image_urls_check',
+      sql`cardinality(${t.image_urls}) <= ${sql.raw(String(MAX_PRODUCT_IMAGES))}`,
+    ),
+    check('products_metadata_check', sql`jsonb_typeof(${t.metadata}) = 'object'`),
   ],
 );
+
+/**
+ * The text `products_search_idx` covers. A search must filter on exactly this expression for the
+ * GIN index to serve it.
+ */
+export const productSearchDocument = sql`to_tsvector('simple', ${products.name} || ' ' || coalesce(${products.description}, ''))`;

@@ -1,3 +1,4 @@
+export * from './categories';
 export * from './dead-letters';
 export * from './disputes';
 export * from './enums';

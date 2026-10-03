@@ -5,7 +5,7 @@
   "description": "Hamro Pasal Super Admin web dashboard (Vite + React): DLQ monitor and vendor overrides.",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --force",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

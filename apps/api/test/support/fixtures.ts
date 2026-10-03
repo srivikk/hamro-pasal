@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto';
 
 import {
+  categories,
   createDatabase,
   ledgerAccounts,
   orders,
@@ -145,6 +146,7 @@ export async function createProduct(
   vendorId: string,
   stock: number,
   priceNpr = 100,
+  extra: Partial<Omit<typeof products.$inferInsert, 'vendor_id'>> = {},
 ): Promise<string> {
   return one(
     await db
@@ -154,8 +156,32 @@ export async function createProduct(
         name: `Product ${randomUUID()}`,
         price_npr: priceNpr,
         stock_quantity: stock,
+        ...extra,
       })
       .returning({ id: products.id }),
+  ).id;
+}
+
+export interface CategoryFixture {
+  name?: string;
+  parentId?: string | null;
+  isActive?: boolean;
+  displayOrder?: number;
+}
+
+/** A taxonomy category with a slug no other test uses. */
+export async function createCategory(db: Database, options: CategoryFixture = {}): Promise<string> {
+  return one(
+    await db
+      .insert(categories)
+      .values({
+        name: options.name ?? 'Test Category',
+        slug: `test-${randomUUID()}`,
+        parent_id: options.parentId ?? null,
+        is_active: options.isActive ?? true,
+        display_order: options.displayOrder ?? 0,
+      })
+      .returning({ id: categories.id }),
   ).id;
 }
 

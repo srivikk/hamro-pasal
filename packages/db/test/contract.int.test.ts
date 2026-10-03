@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  categorySchema,
   customerAddressSchema,
   chatMessageRowSchema,
   disputeSchema,
@@ -20,6 +21,7 @@ import { eq } from 'drizzle-orm';
 
 import { createDatabase, type Database } from '../src/client';
 import {
+  categories,
   customerAddresses,
   chatMessages,
   disputes,
@@ -113,15 +115,45 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
         })
         .returning(),
     );
+    const category = one(
+      await db
+        .insert(categories)
+        .values({ name: 'Tea & Coffee', slug: `tea-coffee-${randomUUID()}` })
+        .returning(),
+    );
+    const subcategory = one(
+      await db
+        .insert(categories)
+        .values({
+          name: 'Black Tea',
+          slug: `black-tea-${randomUUID()}`,
+          parent_id: category.id,
+          icon_url: 'https://cdn.hamropasal.test/icons/tea.webp',
+          display_order: 2,
+        })
+        .returning(),
+    );
     const product = one(
       await db
         .insert(products)
         .values({
           vendor_id: vendor.id,
+          category_id: subcategory.id,
           name: 'Ilam Tea 500g',
+          description: 'Orthodox black tea from Ilam.',
           price_npr: 450.5,
+          unit: 'pack',
           stock_quantity: 10,
+          image_urls: ['https://cdn.hamropasal.test/p/ilam-tea.webp'],
+          metadata: { brand: 'Ilam', weight_g: 500, tags: ['tea'] },
         })
+        .returning(),
+    );
+    // A product from before Phase 17: no category, and every new column at its default.
+    const legacyProduct = one(
+      await db
+        .insert(products)
+        .values({ vendor_id: vendor.id, name: 'Wai Wai Noodles', price_npr: 20 })
         .returning(),
     );
     const order = one(
@@ -220,9 +252,39 @@ describe('Drizzle rows satisfy the shared-types Zod schemas', () => {
     expect(reloadedVendor.wallet_balance_npr).toBe(-90.1);
     expect(reloadedVendor.commission_rate).toBe(0.1);
     expect(
-      productSchema.parse(await read(db.select().from(products).where(eq(products.id, product.id))))
-        .price_npr,
-    ).toBe(450.5);
+      categorySchema.parse(
+        await read(db.select().from(categories).where(eq(categories.id, category.id))),
+      ),
+    ).toMatchObject({ parent_id: null, icon_url: null, display_order: 0, is_active: true });
+    expect(
+      categorySchema.parse(
+        await read(db.select().from(categories).where(eq(categories.id, subcategory.id))),
+      ),
+    ).toMatchObject({ parent_id: category.id, display_order: 2 });
+    expect(
+      productSchema.parse(
+        await read(db.select().from(products).where(eq(products.id, product.id))),
+      ),
+    ).toMatchObject({
+      price_npr: 450.5,
+      category_id: subcategory.id,
+      unit: 'pack',
+      image_urls: ['https://cdn.hamropasal.test/p/ilam-tea.webp'],
+      metadata: { brand: 'Ilam', weight_g: 500, tags: ['tea'] },
+    });
+    expect(
+      productSchema.parse(
+        await read(db.select().from(products).where(eq(products.id, legacyProduct.id))),
+      ),
+    ).toMatchObject({
+      category_id: null,
+      description: null,
+      unit: 'piece',
+      stock_quantity: 0,
+      image_urls: [],
+      is_active: true,
+      metadata: {},
+    });
     expect(
       orderSchema.parse(await read(db.select().from(orders).where(eq(orders.id, order.id))))
         .refund_required,

@@ -26,6 +26,11 @@ const realtime = attachRealtime(httpServer, {
 
 httpServer.listen(env.API_PORT, () => {
   console.info(`[api] listening on :${String(env.API_PORT)} (${env.NODE_ENV})`);
+  if (container.mockPayments !== undefined) {
+    console.warn(
+      '[api] MOCK_SERVICES is on: SMS and IVR are logged, and POST /api/test/mock-payment is served',
+    );
+  }
 });
 
 let shuttingDown = false;

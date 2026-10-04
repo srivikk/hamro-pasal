@@ -117,26 +117,32 @@ export function orderPushData(event: OrderStateChangedEvent, push: OrderPush): O
   };
 }
 
-/** One Expo message per device. A critical push has no title or body of its own (data-only). */
+/** What every device of the recipient is sent. A critical push has no title or body (data-only). */
+export function expoMessagePayload(
+  event: OrderStateChangedEvent,
+  push: OrderPush,
+): Omit<ExpoPushMessage, 'to'> {
+  const data = orderPushData(event, push);
+  return push.critical
+    ? { priority: 'high', _contentAvailable: true, data }
+    : {
+        title: push.title,
+        body: push.body,
+        sound: 'default',
+        priority: 'high',
+        channelId: ORDER_PUSH_CHANNEL_ID,
+        data,
+      };
+}
+
+/** One Expo message per device. */
 export function expoMessages(
   event: OrderStateChangedEvent,
   push: OrderPush,
   tokens: readonly string[],
 ): ExpoPushMessage[] {
-  const data = orderPushData(event, push);
-  return tokens.map((to): ExpoPushMessage =>
-    push.critical
-      ? { to, priority: 'high', _contentAvailable: true, data }
-      : {
-          to,
-          title: push.title,
-          body: push.body,
-          sound: 'default',
-          priority: 'high',
-          channelId: ORDER_PUSH_CHANNEL_ID,
-          data,
-        },
-  );
+  const payload = expoMessagePayload(event, push);
+  return tokens.map((to): ExpoPushMessage => ({ to, ...payload }));
 }
 
 /** The SMS a push stands in for, logged when SMS_PROVIDER=MOCK (no SMS is sent for order pushes). */

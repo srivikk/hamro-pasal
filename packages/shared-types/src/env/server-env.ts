@@ -127,6 +127,11 @@ export const serverEnvSchema = z
 
     // Vendor wallet top-ups (Phase 12.5).
     WALLET_TOP_UP_MODE: z.enum(walletTopUpModes).default('DISABLED'),
+
+    // Local end-to-end runs: one switch that keeps every third-party call on this machine. SMS and
+    // IVR become their MOCK adapters, the worker logs "[MOCK PUSH] …" instead of calling Expo, and
+    // the API serves POST /api/test/mock-payment. Refused in production.
+    MOCK_SERVICES: z.stringbool().default(false),
   })
   .superRefine((env, ctx) => {
     const requireKeys = (keys: readonly (keyof typeof env)[], reason: string): void => {
@@ -160,6 +165,14 @@ export const serverEnvSchema = z
 
     if (env.KAFKA_SASL_MECHANISM !== undefined) {
       requireKeys(['KAFKA_SASL_USERNAME', 'KAFKA_SASL_PASSWORD'], 'KAFKA_SASL_MECHANISM is set');
+    }
+
+    if (env.MOCK_SERVICES && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['MOCK_SERVICES'],
+        message: 'Mock adapters and the test routes are not allowed in production',
+      });
     }
 
     if (env.WALLET_TOP_UP_MODE === 'MOCK' && env.NODE_ENV === 'production') {
@@ -218,13 +231,22 @@ export class InvalidEnvError extends Error {
 /**
  * Validates a raw environment map (typically `process.env`).
  * Empty strings are treated as unset so `.env.example` placeholders fail loudly.
+ * With MOCK_SERVICES on, SMS_PROVIDER and IVR_PROVIDER are answered as MOCK whatever they are set
+ * to, so a local run can never send a billed SMS or place a call.
  */
 export function parseServerEnv(source: Readonly<Record<string, string | undefined>>): ServerEnv {
   const result = serverEnvSchema.safeParse(withoutEmpty(source));
   if (!result.success) {
     throw new InvalidEnvError(z.prettifyError(result.error));
   }
-  return result.data;
+  return mockServicesEnabled(result.data)
+    ? { ...result.data, SMS_PROVIDER: 'MOCK', IVR_PROVIDER: 'MOCK' }
+    : result.data;
+}
+
+/** MOCK_SERVICES, and never in production (the schema refuses that combination as well). */
+export function mockServicesEnabled(env: Pick<ServerEnv, 'MOCK_SERVICES' | 'NODE_ENV'>): boolean {
+  return env.MOCK_SERVICES && env.NODE_ENV !== 'production';
 }
 
 function withoutEmpty(

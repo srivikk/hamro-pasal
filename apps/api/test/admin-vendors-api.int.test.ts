@@ -71,7 +71,8 @@ describe('Admin vendor management API', () => {
           eq(outboxEvents.aggregate_id, vendorId),
           eq(outboxEvents.event_type, 'vendor.status_overridden'),
         ),
-      );
+      )
+      .orderBy(outboxEvents.occurred_at);
     for (const row of rows) expect(row.topic).toBe('notifications.broadcast');
     return rows.map((row) => vendorStatusOverriddenPayloadSchema.parse(row.payload));
   }

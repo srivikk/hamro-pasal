@@ -49,6 +49,8 @@ export interface ConsumerDeps {
   readonly pushRecipients: PushRecipientReader & DeviceTokenRemover;
   /** Set when SMS_PROVIDER=MOCK: logs the SMS each order push stands in for. null otherwise. */
   readonly pushSmsFallbackLog: ((line: string) => void) | null;
+  /** Set when MOCK_SERVICES is on: logs "[MOCK PUSH] -> …" for each order push. */
+  readonly pushMockLog?: ((line: string) => void) | null;
 }
 
 /** Register Kafka topic handlers here. Several may share a topic (see routeByTopic). */
@@ -66,6 +68,7 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
       push: deps.push,
       deduplicator: new RedisEventDeduplicator(deps.redis, ORDER_PUSH_DEDUPE_PREFIX),
       smsFallbackLog: deps.pushSmsFallbackLog,
+      mockPushLog: deps.pushMockLog ?? null,
     }),
     // 1 attempt + 3 retries, then a dead_letter_events row + notifications.dlq, and the partition
     // moves on (Phases 14 and 15).

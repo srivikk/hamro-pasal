@@ -6,6 +6,7 @@ import {
 import { mockSmsLogLine } from '@hamro-pasal/sms';
 
 import {
+  expoMessagePayload,
   expoMessages,
   orderPushes,
   orderPushFallbackSms,
@@ -21,6 +22,7 @@ import {
   type ExpoPushMessage,
   type PushGateway,
 } from '../push/expo-push';
+import { mockPushLogLine } from '../push/mock-push';
 import { parseDomainEventMessage, type EventDeduplicator } from './order-state-fanout';
 import type { KafkaConsumerDefinition } from './types';
 
@@ -63,6 +65,11 @@ export interface OrderPushNotificationDeps {
    * next to the push attempt. null for a real provider: order pushes never send a billed SMS.
    */
   readonly smsFallbackLog: ((line: string) => void) | null;
+  /**
+   * MOCK_SERVICES: prints `[MOCK PUSH] -> Vendor/User <id>: <payload>` for every push, whether or
+   * not the recipient has a device registered. Absent or null otherwise.
+   */
+  readonly mockPushLog?: ((line: string) => void) | null;
   readonly onOutcome?: (event: OrderStateChangedEvent, outcome: OrderPushOutcome) => void;
 }
 
@@ -110,6 +117,13 @@ export function orderPushNotificationConsumer(
       if (recipient === null) continue;
       deps.smsFallbackLog?.(
         mockSmsLogLine({ to: recipient.phone, text: orderPushFallbackSms(push) }),
+      );
+      deps.mockPushLog?.(
+        mockPushLogLine(
+          push.audience,
+          push.audience === 'VENDOR' ? event.payload.vendor_id : event.payload.customer_id,
+          expoMessagePayload(event, push),
+        ),
       );
       messages.push(...expoMessages(event, push, recipient.tokens));
     }

@@ -1,4 +1,4 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 
 import { createDatabase, type Database } from '../client';
 import { categories, customerAddresses, products, users, vendors } from '../schema';
@@ -6,8 +6,12 @@ import { describeDatabaseUrl, requireDatabaseUrl } from './database-url';
 
 /*
  * Development fixtures for the Kathmandu valley. Re-runnable: the users, vendors and products are
- * skipped if the marker user already exists; the category taxonomy (Phase 17) is added to any
- * database that lacks it. Never runs when NODE_ENV=production.
+ * skipped if the marker user already exists; the category taxonomy (Phase 17) and the Thamel
+ * shop's five-product catalogue are added to any database that lacks them. Never runs when
+ * NODE_ENV=production.
+ *
+ * There are no passwords: every account signs in with a +977 OTP (SPEC), which SMS_PROVIDER=MOCK
+ * prints to the API log.
  */
 
 const MARKER_PHONE = '+9779800000001';
@@ -16,13 +20,41 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Phase 17: a small Master Category Taxonomy, and which seeded product belongs where. */
 const SEED_ROOT = { name: 'Groceries', slug: 'groceries' };
 const SEED_SUBCATEGORIES = [
-  { name: 'Rice, Flour & Pulses', slug: 'rice-flour-pulses', product: 'Basmati Rice 5kg' },
-  { name: 'Noodles & Snacks', slug: 'noodles-snacks', product: 'Wai Wai Noodles (pack of 30)' },
-  { name: 'Tea & Coffee', slug: 'tea-coffee', product: 'Ilam Tea 500g' },
-  { name: 'Dairy', slug: 'dairy', product: 'Juju Dhau (clay pot)' },
-  { name: 'Fresh Vegetables', slug: 'fresh-vegetables', product: 'Organic Rayo ko Saag (bunch)' },
-  { name: 'Honey & Spreads', slug: 'honey-spreads', product: 'Local Honey 500g' },
+  {
+    name: 'Rice, Flour & Pulses',
+    slug: 'rice-flour-pulses',
+    products: ['Basmati Rice 5kg', 'Masoor Dal 1kg'],
+  },
+  { name: 'Noodles & Snacks', slug: 'noodles-snacks', products: ['Wai Wai Noodles (pack of 30)'] },
+  { name: 'Tea & Coffee', slug: 'tea-coffee', products: ['Ilam Tea 500g'] },
+  { name: 'Dairy', slug: 'dairy', products: ['Juju Dhau (clay pot)', 'DDC Ghee 500ml'] },
+  {
+    name: 'Fresh Vegetables',
+    slug: 'fresh-vegetables',
+    products: ['Organic Rayo ko Saag (bunch)'],
+  },
+  { name: 'Honey & Spreads', slug: 'honey-spreads', products: ['Local Honey 500g'] },
 ] as const;
+
+/** The shop a full local run orders from: it ends up with five products in stock. */
+const THAMEL_VENDOR_PHONE = '+9779800000011';
+const THAMEL_EXTRA_PRODUCTS = [
+  { name: 'Masoor Dal 1kg', price_npr: 220, stock_quantity: 50 },
+  { name: 'DDC Ghee 500ml', price_npr: 750, stock_quantity: 20 },
+] as const;
+
+/** Idempotent: a product the shop already has (by name) is left as it is. */
+async function seedThamelCatalogue(db: Database): Promise<void> {
+  const [thamel] = await db
+    .select({ id: vendors.id })
+    .from(vendors)
+    .where(eq(vendors.phone, THAMEL_VENDOR_PHONE));
+  if (thamel === undefined) return;
+  await db
+    .insert(products)
+    .values(THAMEL_EXTRA_PRODUCTS.map((product) => ({ ...product, vendor_id: thamel.id })))
+    .onConflictDoNothing({ target: [products.vendor_id, products.name] });
+}
 
 /**
  * Idempotent: categories are matched by slug, and only seeded products that have no category yet
@@ -50,7 +82,7 @@ async function seedTaxonomy(db: Database): Promise<void> {
       await tx
         .update(products)
         .set({ category_id: category.id })
-        .where(and(eq(products.name, sub.product), isNull(products.category_id)));
+        .where(and(inArray(products.name, [...sub.products]), isNull(products.category_id)));
     }
   });
 }
@@ -69,9 +101,10 @@ async function main(): Promise<void> {
       .from(users)
       .where(eq(users.phone, MARKER_PHONE));
     if (existing.length > 0) {
+      await seedThamelCatalogue(db);
       await seedTaxonomy(db);
       console.info(
-        `[db] ${describeDatabaseUrl(url)} already seeded; category taxonomy ensured, nothing else to do`,
+        `[db] ${describeDatabaseUrl(url)} already seeded; taxonomy and the Thamel catalogue ensured, nothing else to do`,
       );
       return;
     }
@@ -198,6 +231,7 @@ async function main(): Promise<void> {
       ]);
     });
 
+    await seedThamelCatalogue(db);
     await seedTaxonomy(db);
     console.info(`[db] seeded development fixtures into ${describeDatabaseUrl(url)}`);
   } finally {

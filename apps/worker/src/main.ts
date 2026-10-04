@@ -18,7 +18,7 @@ import { buildBullConnection } from './infra/redis';
 import { Lifecycle } from './lifecycle';
 import { DatabaseOrderStateReader } from './notifications/order-state-reader';
 import { DatabasePushRecipients } from './notifications/push-recipients';
-import { ExpoPushGateway } from './push/expo-push';
+import { mockPushLogFromEnv, pushGatewayFromEnv } from './push/mock-push';
 import { OutboxRelay } from './outbox/outbox-relay';
 import { allTimerQueues, createTimerQueues, registerMidnightJobs } from './queues/definitions';
 import { createProcessors, createTimerHandlers } from './queues/processors';
@@ -96,9 +96,9 @@ async function main(): Promise<void> {
     deadLetters: deadLetterPublisher,
     deadLetterStore: new DatabaseDeadLetterStore(db),
     // Order pushes go to https://exp.host/--/api/v2/push/send for every registered device.
-    push: new ExpoPushGateway(
-      env.EXPO_ACCESS_TOKEN === undefined ? {} : { accessToken: env.EXPO_ACCESS_TOKEN },
-    ),
+    // MOCK_SERVICES=true: no request is made and each push is logged as "[MOCK PUSH] -> …".
+    push: pushGatewayFromEnv(env),
+    pushMockLog: mockPushLogFromEnv(env),
     pushRecipients: new DatabasePushRecipients(db),
     // SMS_PROVIDER=MOCK also logs "[sms:mock] to +977…: <text>" beside each push attempt.
     pushSmsFallbackLog: smsFallbackLogFromEnv(env),

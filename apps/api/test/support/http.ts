@@ -70,6 +70,8 @@ export function buildTestApp(
     uploadsDir?: string;
     /** Defaults to MOCK so wallet tests can top up. */
     walletTopUpMode?: WalletTopUpMode;
+    /** MOCK_SERVICES: serves POST /api/test/mock-payment. */
+    mockServices?: boolean;
   } = {},
 ): TestApp {
   const sms = options.sms ?? new MockSmsGateway();
@@ -91,6 +93,7 @@ export function buildTestApp(
         websiteUrl: 'https://hamropasal.test',
       },
       walletTopUpMode: options.walletTopUpMode ?? 'MOCK',
+      ...(options.mockServices === undefined ? {} : { mockServices: options.mockServices }),
     },
     {
       db: testDatabase(),

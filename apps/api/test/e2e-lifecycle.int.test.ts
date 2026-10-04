@@ -123,6 +123,9 @@ describe('end-to-end order lifecycle', () => {
       commissionRate: 0.1,
       baseDeliveryFee: 50,
       minOrderValue: 500,
+      // At the customer's own pin: the feed lists the 100 nearest shops, and the shared test
+      // database holds more than that at the fixtures' default location.
+      location: { x: DELIVERY_ADDRESS.exact_lng, y: DELIVERY_ADDRESS.exact_lat },
     });
     vendorUserId = await vendorUserIdOf(db, vendorId);
     categoryId = await createCategory(db, { name: 'Lifecycle Groceries' });

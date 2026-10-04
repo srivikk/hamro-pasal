@@ -2,7 +2,11 @@ import { createHmac } from 'node:crypto';
 import { resolve } from 'node:path';
 
 import { createDatabase, type Database } from '@hamro-pasal/db';
-import type { ServerEnv, WalletTopUpMode } from '@hamro-pasal/shared-types';
+import {
+  mockServicesEnabled,
+  type ServerEnv,
+  type WalletTopUpMode,
+} from '@hamro-pasal/shared-types';
 import { smsGatewayFromEnv, type SmsGateway } from '@hamro-pasal/sms';
 import { Redis } from 'ioredis';
 
@@ -47,6 +51,7 @@ import { EsewaService, type EsewaConfig } from './payments/esewa/esewa-service';
 import type { FetchLike } from './payments/gateway-http';
 import { KhaltiClient, type KhaltiConfig } from './payments/khalti/khalti-client';
 import { KhaltiService } from './payments/khalti/khalti-service';
+import { MockPaymentService } from './payments/mock-payment-service';
 import { PaymentConfirmationService } from './payments/payment-confirmation';
 import { ReviewService } from './reviews/review-service';
 import { LocalEvidenceStorage, type EvidenceStorage } from './uploads/evidence-storage';
@@ -62,6 +67,8 @@ export interface ApiConfig {
   readonly khalti: KhaltiConfig;
   /** WALLET_TOP_UP_MODE: MOCK credits vendor top-ups without a payment (never in production). */
   readonly walletTopUpMode: WalletTopUpMode;
+  /** MOCK_SERVICES: builds the mock payment service behind POST /api/test/mock-payment. */
+  readonly mockServices?: boolean;
 }
 
 export interface Infrastructure {
@@ -111,6 +118,7 @@ export function apiConfigFromEnv(env: ServerEnv): ApiConfig {
       websiteUrl: env.KHALTI_WEBSITE_URL,
     },
     walletTopUpMode: env.WALLET_TOP_UP_MODE,
+    mockServices: mockServicesEnabled(env),
   };
 }
 
@@ -134,6 +142,12 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     new DeliveryOtpAttempts(infra.redisPool, infra.deliveryOtpOptions),
   );
   const otps = new OtpStore(infra.redisPool, otpPepper(config.accessTokenSecret), infra.otpOptions);
+  const esewa = new EsewaService(infra.db, checkout, confirmation, config.esewa);
+  // Mock branches never exist in a production process, even if the config asks for them.
+  const mockPayments =
+    config.mockServices === true && process.env.NODE_ENV !== 'production'
+      ? new MockPaymentService(infra.db, esewa, confirmation, config.esewa)
+      : undefined;
 
   return {
     accessTokenSecret: config.accessTokenSecret,
@@ -152,7 +166,8 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     vendorTopUps: new VendorTopUpService(infra.db, ledger, config.walletTopUpMode),
     deliveries: new DeliveryService(infra.db, handoff),
     riderLocations: new RiderLocationStore(infra.redisPool, infra.riderLocationOptions),
-    esewa: new EsewaService(infra.db, checkout, confirmation, config.esewa),
+    esewa,
+    ...(mockPayments === undefined ? {} : { mockPayments }),
     khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),
     reviews: new ReviewService(infra.db),
     disputes: new DisputeService(infra.db),

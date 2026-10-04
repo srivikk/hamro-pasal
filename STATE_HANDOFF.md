@@ -1,4 +1,4 @@
-# Hamro Pasal: State Handoff (Phases 0–23 complete, feature development closed)
+# Hamro Pasal: State Handoff (Phases 0–23 complete, feature development closed; Phase 24 local test harness)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
 work without re-deriving it. It describes the tree at the end of **Phase 23 (End-to-End System Audit & Failure Mode Hardening)**, the last planned development phase, on top of Phase 22 (Financial Reconciliation & Payouts), 21 (Rider Dispatch &
@@ -207,6 +207,17 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 > the access and refresh keys correctly separated and added one startup check (a JWT secret may not
 > equal a payment gateway key). **"Closed" means the planned phases 0–23 are done, not that every
 > line of SPEC.md is built**: the list at the end of this paragraph still stands (§8P, §13).
+> **Phase 24 (local end-to-end harness; not a product feature):** one switch, **`MOCK_SERVICES=true`**
+> (refused at boot with `NODE_ENV=production`), keeps every third-party call on the machine: SMS and
+> IVR are answered as their MOCK adapters whatever `SMS_PROVIDER` / `IVR_PROVIDER` say, the worker
+> logs **`[MOCK PUSH] -> Vendor <vendor id>: <payload>`** / **`-> User <customer id>: …`** instead of
+> calling Expo, and the API serves **`POST /api/test/mock-payment { order_id }`**, which pays a prepaid
+> order through the real confirmation code (PAID, escrow credited, PLACED). The route is registered
+> only when `process.env.NODE_ENV !== 'production'` **and** the switch is on; otherwise the path is
+> the ordinary `404 NOT_FOUND`. The seed gives the Thamel shop **five** products, and
+> `pnpm dev:all` boots API, worker, admin and Expo together. The Docker setup, `db:seed` and the
+> mock SMS already existed and were kept; **no password was added** (SPEC: sign-in is +977 OTP only)
+> (§8Q).
 > **No live device run has happened yet** (§13); the admin app and the DLQ retry loop were run live
 > against local infrastructure (§8I), as were the cookie session (§8J), the catalog screens (§8K) and the Vendor Portal with a real upload (§8L) in headless Edge. **No push has been delivered to a real device** (the Expo API is mocked in every test; FCM / APNs credentials are not set up). Still not built: a real IVR provider (Twilio Voice
 > or a Nepal SIP trunk; only the mock exists), gig broadcast by distance / "Reached Location" / "Delivery Failed", the ghost-customer timer,
@@ -253,8 +264,8 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 | Monorepo        | pnpm workspaces + Turborepo 2.11, `nodeLinker: hoisted` (required by Metro)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | TypeScript      | **6.0.3** (pinned `~6.0`: typescript-eslint supports `<6.1`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Tests           | Jest **29** everywhere (Expo SDK 57 requires it); backend uses ts-jest + supertest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Unit tests      | **1436 passing** (`pnpm test`): shared-types 212, api 92, worker 134, sms 21, ivr 7, kafka 7, db 7, ledger 11, admin 106, mobile 839 (end of Phase 23; every suite rerun)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Integ. tests    | **644 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 64, api 513, worker 66, kafka 1 (end of Phase 23; every suite rerun, no failure). Earlier flakes, none reproduced since: one unexplained `driver-orders-api` failure in the first full Phase 12.5 run (that suite was replaced in Phase 21); once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**                                                                                                                                                                                                                               |
+| Unit tests      | **1446 passing** (`pnpm test`): shared-types 214, api 92, worker 142, sms 21, ivr 7, kafka 7, db 7, ledger 11, admin 106, mobile 839 (end of Phase 24; every suite rerun)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Integ. tests    | **655 passing** (`pnpm test:integration`, needs `pnpm infra:up`): db 64, api 524, worker 66, kafka 1 (end of Phase 24; every suite rerun). Phase 24 fixed two order-dependent tests (§8Q). **Stop any running worker first**: a dev worker on the same Kafka broker makes `vendor-notifications.int` fail. Earlier flakes, none reproduced since: one unexplained `driver-orders-api` failure in the first full Phase 12.5 run (that suite was replaced in Phase 21); once in Phase 9 the kafka publisher test timed out beside the worker suite. The `vendors-api` CITY_WIDE flake (Phases 9.6–11.5) is **fixed**                                                                           |
 | Lint/format     | ESLint 10 flat config (`strictTypeChecked` + react-hooks 7 for mobile), Prettier; Husky pre-commit runs lint-staged. All clean at the end of Phase 23                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Dev database    | Migrations 0000–0020 applied (`pnpm db:migrate`); `drizzle-kit generate` reports "No schema changes"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
@@ -262,6 +273,7 @@ Authentication), 6.5 (Mobile Live-Link) and 6 (Backend Gap-Closing). When this f
 
 ```
 pnpm build | dev | lint | lint:fix | typecheck | test | test:integration | format | format:check | clean
+pnpm dev:all       # Phase 24: turbo run dev --concurrency=20 (API, worker, admin, Expo + the package watchers)
 pnpm infra:up      # docker compose up --wait, then provisions Kafka topics (kafka-init)
 pnpm infra:down    # stop containers, keep volumes
 pnpm infra:reset   # drop all volumes and start fresh
@@ -543,6 +555,8 @@ kafka-init`) once, or dead-lettering fails and the message is redelivered instea
   been started live against a device. **The dev `.env` has `SMS_PROVIDER=SPARROW`**: signing in sends
   a real, billed SMS. For local work set `SMS_PROVIDER=MOCK`; the API then prints
   `[sms:mock] to +977…: Hamro Pasal: your login code is 123456…` to its console.
+- **Full local run without any third party (Phase 24):** set `MOCK_SERVICES=true` in the root `.env`
+  (it overrides `SMS_PROVIDER=SPARROW`, so no SMS is billed), then follow the run order in §8Q.
 - **Running the app against the API:** `pnpm infra:up`, `pnpm db:migrate`, `pnpm db:seed`,
   `pnpm --filter @hamro-pasal/api dev`, then sign in from the Profile tab (or the Feed/Cart prompts)
   with a seeded number, e.g. 9800000001 (Aarav), and the code from the API log. An unknown number
@@ -599,15 +613,15 @@ kafka-init`) once, or dead-lettering fails and the message is redelivered instea
   vendors).
 - Dev seed (`pnpm db:seed`, idempotent, creates no orders). **All ids are random database UUIDs**:
 
-  | Phone          | Role        | Notes                                                                                                                                                                              |
-  | -------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | +9779800000001 | CUSTOMER    | Aarav, address Thamel (Kathmandu MC, ward 26)                                                                                                                                      |
-  | +9779800000002 | CUSTOMER    | Sita, address Pulchowk (Lalitpur MC, ward 16)                                                                                                                                      |
-  | +9779800000011 | VENDOR      | Thamel Kirana Pasal: LIVE, COMMISSION 10%, RADIUS_BOUND 5 km, SELF_DELIVERY, MOV 500, fee 50. Products: Wai Wai Noodles (pack of 30) 600, Basmati Rice 5kg 1150, Ilam Tea 500g 450 |
-  | +9779800000012 | VENDOR      | Patan Organic Store: LIVE, SUBSCRIPTION 0%, CITY_WIDE (Lalitpur MC), PLATFORM_FLEET. Products: Organic Rayo ko Saag (bunch) 60, Local Honey 500g 900                               |
-  | +9779800000013 | VENDOR      | Bhaktapur Juju Dhau Bhandar: APPROVED (not LIVE), NATION_WIDE. Product: Juju Dhau (clay pot) 250                                                                                   |
-  | +9779800000021 | DRIVER      | Bikash                                                                                                                                                                             |
-  | +9779800000099 | SUPER_ADMIN |                                                                                                                                                                                    |
+  | Phone          | Role        | Notes                                                                                                                                                                                                                                 |
+  | -------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | +9779800000001 | CUSTOMER    | Aarav, address Thamel (Kathmandu MC, ward 26)                                                                                                                                                                                         |
+  | +9779800000002 | CUSTOMER    | Sita, address Pulchowk (Lalitpur MC, ward 16)                                                                                                                                                                                         |
+  | +9779800000011 | VENDOR      | Thamel Kirana Pasal: LIVE, COMMISSION 10%, RADIUS_BOUND 5 km, SELF_DELIVERY, MOV 500, fee 50. Products: Wai Wai Noodles (pack of 30) 600, Basmati Rice 5kg 1150, Ilam Tea 500g 450, Masoor Dal 1kg 220, DDC Ghee 500ml 750 (Phase 24) |
+  | +9779800000012 | VENDOR      | Patan Organic Store: LIVE, SUBSCRIPTION 0%, CITY_WIDE (Lalitpur MC), PLATFORM_FLEET. Products: Organic Rayo ko Saag (bunch) 60, Local Honey 500g 900                                                                                  |
+  | +9779800000013 | VENDOR      | Bhaktapur Juju Dhau Bhandar: APPROVED (not LIVE), NATION_WIDE. Product: Juju Dhau (clay pot) 250                                                                                                                                      |
+  | +9779800000021 | DRIVER      | Bikash                                                                                                                                                                                                                                |
+  | +9779800000099 | SUPER_ADMIN |                                                                                                                                                                                                                                       |
 
 - **Seeded taxonomy (Phase 17):** `pnpm db:seed` also ensures (idempotently, by slug, on an already
   seeded database too) the root **Groceries** with six subcategories (`rice-flour-pulses`,
@@ -1074,6 +1088,141 @@ for order state changes only (Phase 20, §8M; no chat, wallet or rider pushes, n
 escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8Q. Local end-to-end harness (Phase 24)
+
+Tooling for a full manual run on one machine. No table, migration, event, screen or production
+behaviour changed. Code: `packages/shared-types/src/env/server-env.ts`,
+`apps/worker/src/push/mock-push.ts`, `apps/worker/src/consumers/order-push-notifications.ts`,
+`apps/api/src/payments/mock-payment-service.ts`, `apps/api/src/routes/mock-services.ts`,
+`apps/api/src/{app,container,server}.ts`, `packages/db/src/scripts/seed.ts`, root `package.json`.
+
+**What the prompt asked vs what was built.**
+
+| Prompt said                                                   | Built                                                                                                                                                                         |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| create `docker-compose.yml` (e.g. `postgis/postgis:15-3.3`)   | **Kept the existing file** (Phase 1): `postgis/postgis:16-3.5-alpine` (SPEC: PostgreSQL 16+), `redis:7.4-alpine`, `apache/kafka:4.3.1` in KRaft mode, plus topic provisioning |
+| `infra:up` = `docker-compose up -d`                           | **Kept** `docker compose up --detach --wait && docker compose run --rm kafka-init`: it also waits for health and creates the topics (auto-create is off)                      |
+| seed with "a predictable password (e.g. password123)"         | **No passwords.** SPEC allows only +977 OTP sign-in and `users` has no password column. The predictable part is the phone number; the code is printed by the mock SMS         |
+| "1 Customer (with a funded mock wallet if applicable)"        | Not applicable: SPEC has no customer wallet (customers pay by COD, eSewa or Khalti)                                                                                           |
+| 1 vendor with 5 products                                      | The seeded Thamel shop went from 3 to **5** products; the other seeded accounts were kept                                                                                     |
+| `"dev:all": "turbo run dev"`                                  | `turbo run dev --concurrency=20`: there are 10 persistent `dev` tasks and Turbo refuses to start them at its default concurrency of 10 (the plain `pnpm dev` fails this way)  |
+| `if (process.env.NODE_ENV !== 'production')` on mock branches | Done, in three layers (below)                                                                                                                                                 |
+
+**The switch.** `MOCK_SERVICES` (`z.stringbool()`, default `false`) in `serverEnvSchema`.
+`mockServicesEnabled(env)` = `MOCK_SERVICES && NODE_ENV !== 'production'` is the one predicate.
+
+| With `MOCK_SERVICES=true` | Effect                                                                                                                                                                             |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SMS (API and worker)      | `parseServerEnv` returns `SMS_PROVIDER: 'MOCK'` whatever `.env` says (the dev `.env` has SPARROW): `[sms:mock] to +977…: Hamro Pasal: your login code is 123456. …` in the API log |
+| IVR (worker)              | `IVR_PROVIDER: 'MOCK'`: `[ivr:mock] Calling +977…` for a 90 s escalation                                                                                                           |
+| Push (worker)             | `pushGatewayFromEnv` → `MockPushGateway` (ok tickets, **no request to exp.host**) and one log line per push                                                                        |
+| Payments (API)            | `POST /api/test/mock-payment` is mounted; the API logs a warning at boot and `[MOCK PAYMENT] <gateway> order <id>: PAID, PLACED` per call                                          |
+
+- Not covered by the switch: `WALLET_TOP_UP_MODE` (set it to `MOCK` separately to try "Pay
+  outstanding balance") and Khalti's `initiate` (a real HTTP call to Khalti; see below).
+- The provider credentials in `.env` are still validated for the provider named there.
+
+**Production guard (three layers).**
+
+1. `parseServerEnv` refuses `MOCK_SERVICES=true` with `NODE_ENV=production`: API and worker do not boot.
+2. `buildContainer` creates `MockPaymentService` only when `config.mockServices === true &&
+process.env.NODE_ENV !== 'production'`; the worker picks the mock gateway and log through
+   `mockServicesEnabled`.
+3. `createApp` mounts `/api/test` only when `process.env.NODE_ENV !== 'production' &&
+services.mockPayments !== undefined`. Unmounted, the path reaches the catch-all: `404 NOT_FOUND`.
+
+**Mock push.** The line is written by the consumer, per recipient, so it appears **whether or not a
+device is registered** (a phone without FCM / APNs credentials registers no token):
+
+```
+[MOCK PUSH] -> Vendor 71ee8ed6-…: {"priority":"high","_contentAvailable":true,"data":{"type":"order.state_changed","order_id":"a8d536c3-…","state":"PLACED","audience":"VENDOR","data_only":true,"title":"New order","body":"Order #2B3719 is waiting. Open the app to accept or reject it."}}
+[MOCK PUSH] -> User 0c1d…: {"title":"Order accepted","body":"The shop is preparing order #2B3719.","sound":"default","priority":"high","channelId":"orders","data":{…}}
+```
+
+`Vendor <id>` is `vendors.id`, `User <id>` the customer's `users.id`; the payload is the Expo
+message without its `to`. The `[sms:mock]` fallback line of Phase 20 is still logged beside it.
+
+**Mock payment.** `POST /api/test/mock-payment`, no token, body `{ "order_id": "<uuid>" }`.
+
+```
+curl -X POST http://localhost:4000/api/test/mock-payment -H "Content-Type: application/json" -d "{\"order_id\":\"<ORDER_ID>\"}"
+PowerShell: Invoke-RestMethod -Method Post -Uri http://localhost:4000/api/test/mock-payment -ContentType application/json -Body '{"order_id":"<ORDER_ID>"}'
+```
+
+- **eSewa order:** builds the success callback eSewa would send (`status: COMPLETE`, the order's
+  total, its `transaction_uuid`), signs it with `ESEWA_SECRET_KEY` and passes it to the real
+  `EsewaService.handleCallback`: HMAC check, amount check under the row lock, escrow capture, lock
+  claim, PLACED, the outbox events. **Khalti order:** skips only Khalti's server-side lookup and calls
+  the same `PaymentConfirmationService.confirm`.
+- An order whose payment was never started in the app has no gateway reference; one is assigned
+  (a uuid, or `mock-pidx-<uuid>`). A reference stored by the app's `initiate` is reused.
+- 200 `paymentStatusResponseSchema` (`status` COMPLETE / Completed, `payment.duplicate` true on a
+  repeat: one escrow credit however often it is called). `409 WRONG_PAYMENT_METHOD` for a COD order,
+  `404 ORDER_NOT_FOUND`, `400 VALIDATION_FAILED`, and `409 PAID_AFTER_SESSION_EXPIRED` (order FAILED +
+  PAID) once the 600 s lock is gone, exactly like a late real callback.
+- **Where the order id comes from:** the checkout response; on a device, the newest row of
+  `select id, state, payment_method from orders order by created_at desc limit 1`
+  (`docker compose exec postgres psql -U hamro_pasal -d hamro_pasal -c "…"`).
+- **On the device:** check out with **eSewa** (its `initiate` makes no server-side network call; the
+  WebView opens eSewa's UAT page), run the command, and within 5 s the app's lock-status poll sees
+  PLACED and opens the tracking screen. With Khalti the app's `initiate` calls Khalti and fails
+  without sandbox keys; the order stays payable and the command still works.
+
+**Seed accounts** (`pnpm db:seed`; sign in with the number, the code is in the API log):
+
+| Role        | Phone      | Notes                                                                                                                                                                 |
+| ----------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Super Admin | 9800000099 | web dashboard, http://localhost:5173                                                                                                                                  |
+| Vendor      | 9800000011 | Thamel Kirana Pasal: LIVE, 10 % commission, SELF_DELIVERY, MOV 500, fee 50. **Five products**: Wai Wai 600, Basmati Rice 1150, Ilam Tea 450, Masoor Dal 220, Ghee 750 |
+| Vendor      | 9800000012 | Patan Organic Store: PLATFORM_FLEET (use this shop to exercise the rider), CITY_WIDE Lalitpur, MOV 800                                                                |
+| Customer    | 9800000001 | Aarav (Thamel). 9800000002 is Sita (Pulchowk, Lalitpur)                                                                                                               |
+| Rider       | 9800000021 | Bikash                                                                                                                                                                |
+
+`seedThamelCatalogue` adds the two new products idempotently (`ON CONFLICT (vendor_id, name) DO
+NOTHING`) on an already seeded database too; `seedTaxonomy` maps them to their categories.
+
+**Run order.** `.env`: `MOCK_SERVICES=true`; `apps/mobile/.env`: `EXPO_PUBLIC_API_URL=http://<LAN IP>:4000`.
+
+```
+corepack enable pnpm
+pnpm install
+pnpm infra:up        # Postgres + PostGIS, Redis, Kafka (+ topics), Prometheus
+pnpm db:migrate
+pnpm db:seed
+pnpm dev:all         # API :4000, worker, admin :5173, Expo
+```
+
+Under Turbo the Expo terminal is not interactive (no `a` / `r` keys); run
+`pnpm --filter @hamro-pasal/mobile dev` in its own terminal for those, and the development build
+is still required (§3).
+
+**Tests.**
+
+- shared-types `server-env.test.ts` (+2): off by default, refused in production, SMS / IVR answered
+  as MOCK only while on.
+- Worker `push/mock-push.test.ts` (8): ok tickets and no `fetch`; the line for vendor and customer;
+  the gateway and the log chosen only with the switch outside production; through the real
+  consumer: vendor line with the data-only payload, customer line, both sides of a cancellation,
+  logged without a registered device.
+- API integration `mock-payment-api.int.test.ts` (11, real Express + PostgreSQL + Redis): eSewa
+  never initiated / already initiated, Khalti without a lookup, repeat and 5 simultaneous calls →
+  one escrow credit, expired lock, COD refused and untouched, 404 / 400, **and the guard: 404
+  without the switch, 404 with `NODE_ENV=production` although the switch is asked for, 404 from a
+  production process handed a container that still carries the service**. Mutation-checked:
+  dropping the `process.env.NODE_ENV` check in `createApp` fails the last one.
+- **Two order-dependent tests fixed** (both exposed by the new suite's extra fixtures and run
+  order, neither a product defect): `e2e-lifecycle` placed its shop at the fixtures' default
+  location, where the shared test database now holds more than the feed's 100-per-section cap
+  (it is now at the customer's pin); `admin-vendors-api` read two outbox rows without an
+  `ORDER BY` (now by `occurred_at`).
+- **Live run (local Docker, API + worker started with `MOCK_SERVICES=true`, driven by a script over
+  HTTP; not a device):** OTP for 9800000001 read from the API log, the menu showed five products,
+  eSewa checkout → `PENDING_PAYMENT`, mock payment → `PLACED` + `PAID`, the worker printed the
+  `[MOCK PUSH] -> Vendor …` line for that order; the order was then cancelled inside the 60 s
+  window. That cancelled, refund-flagged order (3 × Masoor Dal) is left in the dev database.
+- `pnpm dev:all` itself was not started (it needs an interactive terminal for Expo); Turbo's
+  persistent-task limit behind the `--concurrency` flag was reproduced.
 
 ## 8P. End-to-end audit and failure-mode hardening (Phase 23)
 

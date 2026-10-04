@@ -1,4 +1,4 @@
-import { InvalidEnvError, parseServerEnv } from './server-env';
+import { InvalidEnvError, mockServicesEnabled, parseServerEnv } from './server-env';
 
 const validEnv: Record<string, string> = {
   COUNTRY_CODE: 'NP',
@@ -134,5 +134,28 @@ describe('parseServerEnv', () => {
     expect(parseServerEnv({ ...validEnv, IVR_PROVIDER: 'MOCK' }).IVR_PROVIDER).toBe('MOCK');
     expectInvalid({ ...validEnv, IVR_PROVIDER: 'MOCK', NODE_ENV: 'production' }, 'IVR_PROVIDER');
     expectInvalid({ ...validEnv, IVR_PROVIDER: 'TWILIO' }, 'IVR_PROVIDER');
+  });
+
+  it('keeps MOCK_SERVICES off by default and refuses it in production', () => {
+    const off = parseServerEnv(validEnv);
+    expect(off.MOCK_SERVICES).toBe(false);
+    expect(mockServicesEnabled(off)).toBe(false);
+
+    const on = parseServerEnv({ ...validEnv, MOCK_SERVICES: 'true' });
+    expect(on.MOCK_SERVICES).toBe(true);
+    expect(mockServicesEnabled(on)).toBe(true);
+
+    expectInvalid({ ...validEnv, MOCK_SERVICES: 'true', NODE_ENV: 'production' }, 'MOCK_SERVICES');
+    expect(mockServicesEnabled({ MOCK_SERVICES: true, NODE_ENV: 'production' })).toBe(false);
+  });
+
+  it('answers SMS and IVR as MOCK while MOCK_SERVICES is on, and leaves them alone otherwise', () => {
+    const on = parseServerEnv({ ...validEnv, MOCK_SERVICES: 'true' });
+    expect(on.SMS_PROVIDER).toBe('MOCK');
+    expect(on.IVR_PROVIDER).toBe('MOCK');
+
+    const off = parseServerEnv({ ...validEnv, MOCK_SERVICES: 'false' });
+    expect(off.SMS_PROVIDER).toBe(validEnv.SMS_PROVIDER);
+    expect(off.IVR_PROVIDER).toBe('DISABLED');
   });
 });

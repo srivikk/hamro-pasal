@@ -18,6 +18,7 @@ import type { OrderService } from './orders/order-service';
 import type { VendorOrderService } from './orders/vendor-order-service';
 import type { EsewaService } from './payments/esewa/esewa-service';
 import type { KhaltiService } from './payments/khalti/khalti-service';
+import type { MockPaymentService } from './payments/mock-payment-service';
 import type { ReviewService } from './reviews/review-service';
 import type { VendorTopUpService } from './wallet/vendor-top-up-service';
 import type { VendorWalletService } from './wallet/vendor-wallet-service';
@@ -28,6 +29,7 @@ import { categoriesRouter, productsRouter, vendorProductsRouter } from './routes
 import { deliveriesRouter } from './routes/deliveries';
 import { orderChatRouter } from './routes/order-chat';
 import { notificationsRouter } from './routes/notifications';
+import { testRouter } from './routes/mock-services';
 import { ordersRouter } from './routes/orders';
 import { paymentsRouter } from './routes/payments';
 import { reviewsRouter } from './routes/reviews';
@@ -71,6 +73,8 @@ export interface ApiServices {
   /** Phase 22: vendor earnings and payout requests, and the Super Admin's decisions on them. */
   readonly vendorFinance: VendorFinanceService;
   readonly adminPayouts: AdminPayoutService;
+  /** Local end-to-end runs: present only with MOCK_SERVICES outside production. */
+  readonly mockPayments?: MockPaymentService;
 }
 
 /** Builds the HTTP app. Without services only /health is served (used by liveness checks/tests). */
@@ -140,6 +144,11 @@ export function createApp(services?: ApiServices): Express {
       '/api/payments',
       paymentsRouter({ esewa: services.esewa, khalti: services.khalti, customerAuth }),
     );
+    // Test-only routes. Never registered in production, whatever the container holds: there the
+    // path falls through to the 404 below.
+    if (process.env.NODE_ENV !== 'production' && services.mockPayments !== undefined) {
+      app.use('/api/test', testRouter(services.mockPayments));
+    }
     app.use('/api/reviews', customerAuth, reviewsRouter(services.reviews));
     // Phase 20. Every role registers its device: customers, vendors and riders all get pushes.
     app.use(

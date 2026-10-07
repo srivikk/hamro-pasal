@@ -1,5 +1,6 @@
 import * as Location from 'expo-location';
 
+import { describePlace } from '../location/describe-place';
 import type { Coordinates, TerritoryDeps } from './territory';
 import { SIMULATED_POSITIONS, useTerritorySimulator } from './territory-simulator';
 
@@ -45,6 +46,7 @@ export function deviceTerritoryDeps(): TerritoryDeps {
       requestPermission: () => Promise.resolve({ granted: true, canAskAgain: true }),
       getPosition: () => Promise.resolve(simulated.coordinates),
       reverseGeocodeCountry: () => Promise.resolve(simulated.countryCode),
+      describePlace,
     };
   }
   return {
@@ -52,11 +54,17 @@ export function deviceTerritoryDeps(): TerritoryDeps {
       const { granted, canAskAgain } = await Location.requestForegroundPermissionsAsync();
       return { granted, canAskAgain };
     },
+    currentPermission: async () => {
+      const { granted, canAskAgain } = await Location.getForegroundPermissionsAsync();
+      return { granted, canAskAgain };
+    },
     getPosition: devicePosition,
     reverseGeocodeCountry: async (coordinates) => {
       const [place] = await Location.reverseGeocodeAsync(coordinates);
       return place?.isoCountryCode ?? null;
     },
+    // The name shown on Home (device geocoder, then OpenStreetMap).
+    describePlace,
   };
 }
 

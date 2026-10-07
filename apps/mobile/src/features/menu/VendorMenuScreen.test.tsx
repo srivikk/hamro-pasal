@@ -1,10 +1,12 @@
 import { act, fireEvent, screen, within } from '@testing-library/react-native';
 import { http, HttpResponse } from 'msw';
 
-import VendorMenuScreen from '../../../app/vendor/[id]';
+import VendorMenuScreen from '../../../app/(tabs)/(home)/vendor/[id]';
 import { VENDOR_NOT_FOUND, vendorProductsPath } from '../../api/catalog';
 import { ReplaceCartModal } from '../../components/ReplaceCartModal';
 import { useAddressStore } from '../../store/useAddressStore';
+import { useAuthStore } from '../../store/useAuthStore';
+import { useToastStore } from '../../store/useToastStore';
 import { useCartStore } from '../../store/useCartStore';
 import { useCheckoutStore } from '../../store/useCheckoutStore';
 import {
@@ -57,6 +59,7 @@ function renderMenu(vendorId: string) {
 }
 
 beforeEach(() => {
+  useToastStore.setState({ toast: null });
   serveMenu(THAMEL, () => HttpResponse.json(vendorMenu()));
 });
 
@@ -67,8 +70,9 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
     expect(await screen.findByText('Basmati Rice 5kg')).toBeOnTheScreen();
     expect(screen.getByText('Rs. 1150')).toBeOnTheScreen();
     const oil = screen.getByTestId(`menu-product-${MUSTARD_OIL_ID}`);
-    expect(within(oil).getByText('Out of stock')).toBeOnTheScreen();
-    expect(within(oil).queryByRole('button')).toBeNull();
+    expect(within(oil).getByText('OUT OF STOCK')).toBeOnTheScreen();
+    // No Add button at all; the row can still be opened for its details.
+    expect(within(oil).queryByRole('button', { name: 'Add Mustard Oil 1L' })).toBeNull();
   });
 
   it("asks for the menu from the saved address's pin", async () => {
@@ -93,16 +97,15 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
       ),
     );
     renderMenu(THAMEL);
-    const add = await screen.findByRole('button', { name: 'Add Basmati Rice 5kg' });
+    fireEvent.press(await screen.findByRole('button', { name: 'Add Basmati Rice 5kg' }));
+    // "Add" is now the - 1 + control: more are added with its plus.
+    const more = screen.getByRole('button', { name: 'Add one Basmati Rice 5kg' });
 
-    fireEvent.press(add);
-    fireEvent.press(add);
-    expect(screen.queryByTestId('menu-banner')).toBeNull();
-    fireEvent.press(add);
+    fireEvent.press(more);
+    expect(useToastStore.getState().toast).toBeNull();
+    fireEvent.press(more);
 
-    expect(screen.getByTestId('menu-banner')).toHaveTextContent(
-      'No more of this item is in stock.',
-    );
+    expect(useToastStore.getState().toast).toMatchObject({ message: 'Maximum stock reached' });
     expect(useCartStore.getState().lines).toEqual([
       {
         productId: RICE.id,
@@ -134,7 +137,8 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
     useCartStore.getState().addItem(THAMEL_VENDOR, { ...RICE, availableStock: 1 }, 1);
     renderMenu(THAMEL);
 
-    fireEvent.press(await screen.findByRole('button', { name: 'Add Basmati Rice 5kg' }));
+    // The cart already holds one, so the row shows the stepper, not "Add".
+    fireEvent.press(await screen.findByRole('button', { name: 'Add one Basmati Rice 5kg' }));
 
     expect(screen.queryByTestId('menu-banner')).toBeNull();
     expect(useCartStore.getState().lines[0]).toMatchObject({ quantity: 2, availableStock: 12 });
@@ -153,15 +157,15 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
     renderMenu(THAMEL);
 
     const rice = await screen.findByTestId(`menu-product-${RICE.id}`);
-    expect(within(rice).getByText('Out of stock')).toBeOnTheScreen();
-    expect(within(rice).queryByRole('button')).toBeNull();
+    expect(within(rice).getByText('OUT OF STOCK')).toBeOnTheScreen();
+    expect(within(rice).queryByRole('button', { name: 'Add Basmati Rice 5kg' })).toBeNull();
   });
 
   it('adds a product with the vendor snapshot the cart summary needs', async () => {
     renderMenu(THAMEL);
 
     fireEvent.press(await screen.findByRole('button', { name: 'Add Basmati Rice 5kg' }));
-    fireEvent.press(screen.getByRole('button', { name: 'Add Basmati Rice 5kg' }));
+    fireEvent.press(screen.getByRole('button', { name: 'Add one Basmati Rice 5kg' }));
 
     expect(useCartStore.getState().vendor).toEqual({
       id: THAMEL,
@@ -178,7 +182,7 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
         availableStock: 12,
       },
     ]);
-    expect(screen.getByText('2 in cart')).toBeOnTheScreen();
+    expect(screen.getByTestId(`menu-quantity-${RICE.id}`)).toHaveTextContent('2');
   });
 
   it('opens the replace-cart modal when the cart holds another vendor', async () => {
@@ -196,12 +200,14 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
 
     expect(
       screen.getByText(
-        'Your cart has items from Boudha Fresh Mart. Adding items from Thamel Kirana Pasal will clear it.',
+        'Your cart contains items from Boudha Fresh Mart. Do you want to discard them to start a new order with Thamel Kirana Pasal?',
       ),
     ).toBeOnTheScreen();
+    // Blocked: nothing was added, the first shop's cart is intact.
     expect(useCartStore.getState().vendor?.id).toBe(BOUDHA);
+    expect(useCartStore.getState().lines.map((line) => line.name)).toEqual(['Fresh Tomatoes 1kg']);
 
-    fireEvent.press(screen.getByRole('button', { name: 'Clear and add' }));
+    fireEvent.press(screen.getByRole('button', { name: 'Clear Cart' }));
 
     expect(useCartStore.getState().vendor?.id).toBe(THAMEL);
     expect(useCartStore.getState().lines.map((line) => line.name)).toEqual([NOODLES.name]);
@@ -256,6 +262,16 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
 
     expect(await screen.findByText("This shop isn't available.")).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+
+  it('lets a guest open a menu and add to the cart without signing in', async () => {
+    useAuthStore.getState().clearSession();
+    renderMenu(THAMEL);
+
+    fireEvent.press(await screen.findByRole('button', { name: 'Add Basmati Rice 5kg' }));
+
+    expect(useCartStore.getState().vendor?.id).toBe(THAMEL);
+    expect(useCartStore.getState().lines).toMatchObject([{ quantity: 1 }]);
   });
 
   it('offers a retry for other failures', async () => {

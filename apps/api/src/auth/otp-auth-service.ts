@@ -74,9 +74,10 @@ export interface AuthSecrets {
  * Unicode encoding); well under the 335-character limit.
  */
 export function otpSmsText(code: string, ttlSeconds: number): string {
-  const minutes = String(Math.round(ttlSeconds / 60));
+  const minutes = Math.max(1, Math.round(ttlSeconds / 60));
+  const lifetime = minutes === 1 ? '1 minute' : `${String(minutes)} minutes`;
   return (
-    `Hamro Pasal: your login code is ${code}. It expires in ${minutes} minutes. ` +
+    `Hamro Pasal: your login code is ${code}. It expires in ${lifetime}. ` +
     `Do not share it with anyone.`
   );
 }

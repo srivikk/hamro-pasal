@@ -2,7 +2,7 @@ import type { PaymentStatusResponseBody } from '@hamro-pasal/shared-types';
 import { fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { http, HttpResponse } from 'msw';
 
-import CartScreen from '../../../app/(tabs)/cart';
+import CartScreen from '../../../app/cart';
 import { CHECKOUT_PATH } from '../../api/mutations';
 import {
   ESEWA_INITIATE_PATH,
@@ -30,7 +30,14 @@ import {
   TEST_ACCESS_TOKEN,
   type CapturedRequest,
 } from '../../test/msw';
+import { payWith } from '../../test/pay-with';
 import { renderWithProviders } from '../../test/render';
+
+// The cart draws its own stack header and navigates; neither exists outside a navigator.
+jest.mock('expo-router', () => ({
+  router: { push: jest.fn(), replace: jest.fn(), dismissTo: jest.fn() },
+  Stack: { Screen: () => null },
+}));
 
 setupApiTestEnvironment();
 
@@ -116,8 +123,7 @@ async function checkoutWith(method: 'ESEWA' | 'KHALTI') {
       <ToastHost />
     </>,
   );
-  fireEvent.press(screen.getByTestId(`payment-method-${method}`));
-  fireEvent.press(screen.getByRole('button', { name: 'Proceed to Checkout' }));
+  payWith(method);
   return screen.findByTestId('payment-webview');
 }
 
@@ -207,7 +213,7 @@ describe('eSewa payment', () => {
       </>,
     );
 
-    fireEvent.press(screen.getByRole('button', { name: 'Proceed to Checkout' }));
+    payWith('ESEWA');
 
     expect(
       await screen.findByText("Couldn't open the payment page. Please try again."),
@@ -292,8 +298,7 @@ describe('cash on delivery', () => {
     useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 1);
     renderWithProviders(<CartScreen />);
 
-    fireEvent.press(screen.getByTestId('payment-method-COD'));
-    fireEvent.press(screen.getByRole('button', { name: 'Proceed to Checkout' }));
+    payWith('COD');
 
     expect(await screen.findByText('Order placed!')).toBeOnTheScreen();
     expect(calls.initiate).toHaveLength(0);

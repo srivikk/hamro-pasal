@@ -24,9 +24,9 @@ export interface Coordinates {
 export type TerritoryVerdict =
   | { status: 'allowed'; coordinates: Coordinates }
   | { status: 'blocked'; coordinates: Coordinates }
-  /** Location permission refused: nationality cannot be checked, so the app stays locked. */
+  /** Location permission refused: no position, so the app opens and the customer picks a place. */
   | { status: 'permission_denied'; canAskAgain: boolean }
-  /** No position fix (GPS off, timeout). Retryable; the app stays locked meanwhile. */
+  /** No position fix (GPS off, timeout): the app opens without one; the next check may find it. */
   | { status: 'unavailable' };
 
 export function isWithinNepalBox({ latitude, longitude }: Coordinates): boolean {
@@ -62,15 +62,29 @@ export function decideTerritory(
 
 /** The device services the check needs; injected so tests and the __DEV__ simulator can replace them. */
 export interface TerritoryDeps {
+  /** Shows the OS prompt when the app may still ask. */
   requestPermission: () => Promise<{ granted: boolean; canAskAgain: boolean }>;
+  /** Reads the permission without prompting; when absent, `requestPermission` is used. */
+  currentPermission?: () => Promise<{ granted: boolean; canAskAgain: boolean }>;
+  /** A short name for a position (neighbourhood or town), or null. Best effort, display only. */
+  describePlace?: (coordinates: Coordinates) => Promise<string | null>;
   /** Best available position, or null when none could be obtained in time. */
   getPosition: () => Promise<Coordinates | null>;
   /** ISO 3166-1 alpha-2 country of a position, or null when it cannot be resolved. */
   reverseGeocodeCountry: (coordinates: Coordinates) => Promise<string | null>;
 }
 
-export async function checkTerritory(deps: TerritoryDeps): Promise<TerritoryVerdict> {
-  const permission = await deps.requestPermission();
+/**
+ * `prompt: false` (the re-check when the app returns to the foreground) never shows the OS
+ * dialog: a customer who refused at boot is not asked again every time they come back.
+ */
+export async function checkTerritory(
+  deps: TerritoryDeps,
+  { prompt = true }: { prompt?: boolean } = {},
+): Promise<TerritoryVerdict> {
+  const permission = await (
+    prompt ? deps.requestPermission : (deps.currentPermission ?? deps.requestPermission)
+  )();
   if (!permission.granted) {
     return { status: 'permission_denied', canAskAgain: permission.canAskAgain };
   }

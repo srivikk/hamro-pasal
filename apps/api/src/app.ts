@@ -126,7 +126,8 @@ export function createApp(services?: ApiServices): Express {
       requireAuth(services.accessTokenSecret, ['VENDOR']),
       vendorWalletRouter(services.vendorWallet, services.vendorTopUps),
     );
-    app.use('/api/vendors', customerAuth, vendorsRouter(services.catalog));
+    // Public reads (guest browsing): the feed and a LIVE shop's menu need no token.
+    app.use('/api/vendors', vendorsRouter(services.catalog));
     app.use(
       '/api/deliveries',
       requireAuth(services.accessTokenSecret, ['DRIVER']),

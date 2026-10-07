@@ -2,12 +2,13 @@ import { fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import { http, HttpResponse } from 'msw';
 
-import FeedScreen from '../../../app/(tabs)/index';
+import FeedScreen from '../../../app/(tabs)/(home)/index';
 import LoginScreen from '../../../app/login';
 import VerifyOtpScreen from '../../../app/verify-otp';
 import { OTP_SEND_PATH, OTP_VERIFY_PATH } from '../../api/auth';
 import { VENDORS_PATH } from '../../api/catalog';
 import { useAuthStore } from '../../store/useAuthStore';
+import { useCartStore } from '../../store/useCartStore';
 import { useToastStore } from '../../store/useToastStore';
 import {
   authTokensResponse,
@@ -15,6 +16,7 @@ import {
   feedResponse,
   ISSUED_ACCESS_TOKEN,
   ISSUED_REFRESH_TOKEN,
+  NOODLES,
   otpSendResponse,
   TEST_PHONE,
   THAMEL_VENDOR,
@@ -215,10 +217,15 @@ describe('Code screen (POST /api/auth/otp/verify)', () => {
   });
 });
 
-describe('signing in from the Feed', () => {
-  it('offers sign-in when signed out, and the Feed loads once the code is verified', async () => {
+describe('a guest signing in', () => {
+  it('shows the Feed before sign-in, and keeps the guest cart once the code is verified', async () => {
     server.use(http.get(apiUrl(VENDORS_PATH), () => HttpResponse.json(feedResponse())));
     servePost(OTP_VERIFY_PATH, () => HttpResponse.json(authTokensResponse()));
+    useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 2);
+    const guestCart = {
+      vendor: useCartStore.getState().vendor,
+      lines: useCartStore.getState().lines,
+    };
     // The Feed and the code screen share one QueryClient, as they do inside the app.
     renderWithProviders(
       <>
@@ -227,15 +234,84 @@ describe('signing in from the Feed', () => {
       </>,
     );
 
-    expect(await screen.findByText('Sign in to see the shops near you.')).toBeOnTheScreen();
-    fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
-    expect(mockRouter.push).toHaveBeenCalledWith('/login');
+    // Signed out, and the shops are already there.
+    expect(await screen.findByTestId(`vendor-card-${THAMEL_VENDOR.id}`)).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
 
     typeCode('042187');
     fireEvent.press(screen.getByRole('button', { name: 'Verify' }));
 
-    expect(await screen.findByTestId(`vendor-card-${THAMEL_VENDOR.id}`)).toBeOnTheScreen();
+    await waitFor(() => {
+      expect(useAuthStore.getState().accessToken).toBe(ISSUED_ACCESS_TOKEN);
+    });
     expect(mockRouter.back).toHaveBeenCalledTimes(1);
-    expect(useAuthStore.getState().accessToken).toBe(ISSUED_ACCESS_TOKEN);
+    expect(guestCart.lines).toHaveLength(1);
+    expect(useCartStore.getState().vendor).toEqual(guestCart.vendor);
+    expect(useCartStore.getState().lines).toEqual(guestCart.lines);
+  });
+});
+
+describe('Login screen as registration (mode=signup)', () => {
+  it('words the screen for a new customer and sends the same OTP request', async () => {
+    mockParams = { mode: 'signup' };
+    const sent = servePost(OTP_SEND_PATH, () => HttpResponse.json(otpSendResponse()));
+    renderWithProviders(<LoginScreen />);
+
+    expect(screen.getByText('Create your account')).toBeOnTheScreen();
+    expect(screen.queryByTestId('login-new-here')).toBeNull();
+    typePhone('9800000001');
+    fireEvent.press(screen.getByRole('button', { name: 'Send code' }));
+
+    await waitFor(() => {
+      expect(sent).toEqual([{ phone: TEST_PHONE }]);
+    });
+  });
+
+  it('tells a new customer on the plain sign-in screen that the code creates the account', () => {
+    mockParams = {};
+    renderWithProviders(<LoginScreen />);
+
+    expect(screen.getByText('Sign in')).toBeOnTheScreen();
+    expect(screen.getByTestId('login-new-here')).toBeOnTheScreen();
+  });
+});
+
+describe('Login screen: the ten-digit number field', () => {
+  it('accepts a pasted or auto-filled +977 number by taking the prefix off', async () => {
+    const sent = servePost(OTP_SEND_PATH, () => HttpResponse.json(otpSendResponse()));
+    renderWithProviders(<LoginScreen />);
+    // A field that is not full leaves room for the prefix: the OS must not cut a paste short.
+    expect(screen.getByTestId('phone-input').props.maxLength).toBeGreaterThanOrEqual(15);
+
+    typePhone('+977 9800000001');
+
+    expect(screen.getByTestId('phone-input').props.value).toBe('9800000001');
+    fireEvent.press(screen.getByRole('button', { name: 'Send code' }));
+    await waitFor(() => {
+      expect(sent).toEqual([{ phone: '+9779800000001' }]);
+    });
+  });
+
+  it('never shows an eleventh digit, and drops anything that is not a digit', () => {
+    renderWithProviders(<LoginScreen />);
+
+    typePhone('98000000019999');
+    expect(screen.getByTestId('phone-input').props.value).toBe('9800000001');
+
+    typePhone('98-00 ab');
+    expect(screen.getByTestId('phone-input').props.value).toBe('9800');
+  });
+
+  it('sends nothing for fewer than ten digits', () => {
+    const sent = servePost(OTP_SEND_PATH, () => HttpResponse.json(otpSendResponse()));
+    renderWithProviders(<LoginScreen />);
+
+    typePhone('980000000');
+    fireEvent.press(screen.getByRole('button', { name: 'Send code' }));
+
+    expect(screen.getByTestId('login-error')).toHaveTextContent(
+      'Enter a 10-digit Nepal mobile number starting with 9.',
+    );
+    expect(sent).toEqual([]);
   });
 });

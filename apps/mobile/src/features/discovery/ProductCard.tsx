@@ -76,29 +76,24 @@ export function ProductCard({ product, cartVendor, blockedReason, frozen }: Prod
   return (
     <View
       testID={`product-card-${product.id}`}
-      className={`mx-4 mb-3 rounded-2xl border border-neutral-200 bg-white p-4 ${
-        soldOut ? 'opacity-70' : ''
-      }`}
+      className={`mx-4 mb-3 rounded-2xl bg-white shadow-sm p-4 ${soldOut ? 'opacity-70' : ''}`}
     >
-      <Text className="text-base font-semibold text-neutral-900">{product.name}</Text>
-      <Text className="mt-0.5 text-xs text-neutral-500">{product.vendor.business_name}</Text>
+      <Text className="text-base font-semibold text-gray-900">{product.name}</Text>
+      <Text className="mt-0.5 text-xs text-gray-500">{product.vendor.business_name}</Text>
       {product.description === null ? null : (
-        <Text className="mt-1 text-sm text-neutral-600">{product.description}</Text>
+        <Text className="mt-1 text-sm text-gray-500">{product.description}</Text>
       )}
-      <Text className="mt-2 text-sm font-semibold text-neutral-900">
+      <Text className="mt-2 text-sm font-semibold text-gray-900">
         {t('discovery.priceUnit', { amount: product.price_npr, unit: product.unit })}
       </Text>
 
       <View className="mt-1 flex-row items-center gap-3">
         {soldOut ? (
-          <View
-            className="rounded-md bg-neutral-200 px-2 py-1"
-            testID={`out-of-stock-${product.id}`}
-          >
-            <Text className="text-xs font-bold text-neutral-700">{t('discovery.outOfStock')}</Text>
+          <View className="rounded-md bg-gray-200 px-2 py-1" testID={`out-of-stock-${product.id}`}>
+            <Text className="text-xs font-bold text-gray-700">{t('discovery.outOfStock')}</Text>
           </View>
         ) : (
-          <Text className="text-xs text-neutral-600" testID={`stock-${product.id}`}>
+          <Text className="text-xs text-gray-500" testID={`stock-${product.id}`}>
             {t('discovery.inStock', { count: product.stock_quantity })}
           </Text>
         )}
@@ -122,7 +117,7 @@ export function ProductCard({ product, cartVendor, blockedReason, frozen }: Prod
             }}
           />
           <Text
-            className="min-w-6 text-center text-base font-semibold text-neutral-900"
+            className="min-w-6 text-center text-base font-semibold text-gray-900"
             testID={`quantity-${product.id}`}
           >
             {formatLocalizedNumber(quantity, locale)}

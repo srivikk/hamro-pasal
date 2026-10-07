@@ -45,3 +45,22 @@ export function accessTokenRole(token: string): UserRole | null {
     return null;
   }
 }
+
+/**
+ * The `sub` claim (the account's id) of an access or refresh token, or null if it cannot be read.
+ * Not verified either: the app uses it only to tell which account local profile details belong to.
+ */
+export function tokenSubject(token: string): string | null {
+  const payload = token.split('.')[1];
+  if (payload === undefined) return null;
+  const json = decodeBase64Url(payload);
+  if (json === null) return null;
+  try {
+    const claims: unknown = JSON.parse(json);
+    if (typeof claims !== 'object' || claims === null) return null;
+    const subject: unknown = Reflect.get(claims, 'sub');
+    return typeof subject === 'string' && subject !== '' ? subject : null;
+  } catch {
+    return null;
+  }
+}

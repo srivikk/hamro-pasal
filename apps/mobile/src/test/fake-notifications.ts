@@ -25,6 +25,10 @@ export const mockNotifications: {
   channels: { id: string; input: unknown }[];
   scheduled: unknown[];
   registeredTasks: string[];
+  /** Listeners added with addNotificationResponseReceivedListener (a tap on a notification). */
+  responseListeners: ((response: unknown) => void)[];
+  /** What getLastNotificationResponseAsync answers (the tap that started the app), or null. */
+  lastResponse: unknown;
 } = {
   permission: { granted: false, canAskAgain: true },
   requested: { granted: true, canAskAgain: true },
@@ -33,6 +37,8 @@ export const mockNotifications: {
   channels: [],
   scheduled: [],
   registeredTasks: [],
+  responseListeners: [],
+  lastResponse: null,
 };
 
 export function resetMockNotifications(): void {
@@ -43,6 +49,8 @@ export function resetMockNotifications(): void {
   mockNotifications.channels = [];
   mockNotifications.scheduled = [];
   mockNotifications.registeredTasks = [];
+  mockNotifications.responseListeners = [];
+  mockNotifications.lastResponse = null;
   for (const mock of [
     getPermissionsAsync,
     requestPermissionsAsync,
@@ -51,6 +59,23 @@ export function resetMockNotifications(): void {
   ]) {
     mock.mockClear();
   }
+}
+
+export function addNotificationResponseReceivedListener(listener: (response: unknown) => void): {
+  remove: () => void;
+} {
+  mockNotifications.responseListeners.push(listener);
+  return {
+    remove: () => {
+      mockNotifications.responseListeners = mockNotifications.responseListeners.filter(
+        (registered) => registered !== listener,
+      );
+    },
+  };
+}
+
+export function getLastNotificationResponse(): unknown {
+  return mockNotifications.lastResponse;
 }
 
 export const AndroidImportance = { DEFAULT: 5, HIGH: 6, MAX: 7 } as const;

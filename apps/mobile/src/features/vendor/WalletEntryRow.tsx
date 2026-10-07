@@ -16,11 +16,11 @@ export function WalletEntryRow({ entry }: { entry: VendorWalletLedgerEntry }) {
     <View className="gap-1 rounded-2xl bg-white p-4" testID={`wallet-entry-${entry.id}`}>
       <View className="flex-row items-start justify-between gap-3">
         <View className="flex-1 gap-0.5">
-          <Text className="text-base font-semibold text-neutral-900">
+          <Text className="text-base font-semibold text-gray-900">
             {t(`vendorWallet.entry.${entry.entry_type}`)}
           </Text>
           {entry.order === null ? null : (
-            <Text className="text-sm text-neutral-600">
+            <Text className="text-sm text-gray-500">
               {t('vendorWallet.orderRef', { code: vendorOrderCode(entry.order.id) })}
             </Text>
           )}
@@ -33,7 +33,7 @@ export function WalletEntryRow({ entry }: { entry: VendorWalletLedgerEntry }) {
         </Text>
       </View>
       {entry.order !== null && entry.order.commission_npr > 0 ? (
-        <Text className="text-sm text-neutral-600">
+        <Text className="text-sm text-gray-500">
           {t('vendorWallet.commission', {
             amount: entry.order.commission_npr,
             subtotal: entry.order.subtotal_npr,
@@ -41,8 +41,8 @@ export function WalletEntryRow({ entry }: { entry: VendorWalletLedgerEntry }) {
         </Text>
       ) : null}
       <View className="flex-row justify-between">
-        <Text className="text-xs text-neutral-500">{formatPostedAt(entry.created_at, locale)}</Text>
-        <Text className="text-xs text-neutral-500">
+        <Text className="text-xs text-gray-500">{formatPostedAt(entry.created_at, locale)}</Text>
+        <Text className="text-xs text-gray-500">
           {t('vendorWallet.balanceAfter', { balance: formatBalance(t, entry.balance_after_npr) })}
         </Text>
       </View>

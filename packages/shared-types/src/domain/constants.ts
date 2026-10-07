@@ -40,6 +40,10 @@ export const ORDER_CANCELLATION_WINDOW_SECONDS = 60;
  * OTP login (SPEC customer/vendor journey step 1: "Auth via OTP (+977 only)").
  * The code lives in Redis for OTP_TTL_SECONDS; a new code can be requested after
  * OTP_RESEND_COOLDOWN_SECONDS; OTP_MAX_VERIFY_ATTEMPTS wrong guesses burn the code.
+ *
+ * The two differ on purpose (decided 2026-10-07): a new code may be requested after 60 s, while
+ * a code that was only delayed in delivery still works for its full 2 minutes. Requesting a new
+ * code replaces the earlier one at once.
  */
 export const OTP_CODE_LENGTH = 6;
 export const OTP_TTL_SECONDS = 120;

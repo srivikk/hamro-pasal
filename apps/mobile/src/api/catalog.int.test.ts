@@ -22,7 +22,6 @@ import {
   capture,
   server,
   setupApiTestEnvironment,
-  TEST_ACCESS_TOKEN,
   type CapturedRequest,
 } from '../test/msw';
 import { renderHookWithProviders } from '../test/render';
@@ -82,13 +81,13 @@ describe('customer location', () => {
 });
 
 describe('GET /api/vendors', () => {
-  it('sends the Bearer token and the location, and parses feedResponseSchema', async () => {
+  it('is public (no Bearer token), sends the location, and parses feedResponseSchema', async () => {
     const received = endpoint(VENDORS_PATH, () => HttpResponse.json(feedResponse()));
 
     const feed = await fetchFeed(customerLocationFrom(THAMEL_ADDRESS));
 
     expect(received).toHaveLength(1);
-    expect(received[0]?.headers.get('authorization')).toBe(`Bearer ${TEST_ACCESS_TOKEN}`);
+    expect(received[0]?.headers.get('authorization')).toBeNull();
     expect(received[0]?.url.pathname).toBe('/api/vendors');
     expect(queryOf(received[0])).toEqual({
       lat: '27.7154',
@@ -168,7 +167,7 @@ describe('GET /api/vendors/:id/products', () => {
     const menu = await fetchVendorMenu(THAMEL_VENDOR.id, THAMEL_FALLBACK_LOCATION);
 
     expect(received[0]?.url.pathname).toBe(`/api/vendors/${THAMEL_VENDOR.id}/products`);
-    expect(received[0]?.headers.get('authorization')).toBe(`Bearer ${TEST_ACCESS_TOKEN}`);
+    expect(received[0]?.headers.get('authorization')).toBeNull();
     expect(queryOf(received[0])).toMatchObject({ lat: '27.7154', lng: '85.3123' });
     expect(menu.products.map((p) => p.in_stock)).toEqual([true, true, false]);
     expect(menu.products.map((p) => p.stock_quantity)).toEqual([20, 12, 0]);

@@ -9,6 +9,9 @@ import {
 } from './address-form';
 
 const VALID: AddressFormValues = {
+  label: 'HOME',
+  recipientName: '',
+  recipientPhone: '',
   provinceId: 3,
   district: 'Kathmandu',
   palika: 'Kathmandu Metropolitan City',
@@ -27,6 +30,8 @@ describe('validateAddressForm (shared-types nepalAddressInputSchema)', () => {
   it('accepts a complete Nepal address and returns the schema output', () => {
     expect(validateAddressForm(VALID)).toEqual({
       ok: true,
+      label: 'HOME',
+      recipient: null,
       address: {
         province_id: 3,
         district_string: 'Kathmandu',
@@ -143,5 +148,58 @@ describe('districtsForProvince (cascade)', () => {
 
   it('offers nothing for an unknown province id', () => {
     expect(districtsForProvince(9)).toEqual([]);
+  });
+});
+
+describe('validateAddressForm: the address label and the OTHER recipient', () => {
+  it('keeps the label, and never a recipient, for HOME and WORK', () => {
+    const work = validateAddressForm({
+      ...VALID,
+      label: 'WORK',
+      recipientName: 'Ignored',
+      recipientPhone: '9800000002',
+    });
+
+    expect(work).toMatchObject({ ok: true, label: 'WORK', recipient: null });
+  });
+
+  it('requires a name and a Nepal mobile number for OTHER', () => {
+    expect(Object.keys(errorsOf({ ...VALID, label: 'OTHER' })).sort()).toEqual([
+      'recipient_name',
+      'recipient_phone',
+    ]);
+    expect(
+      Object.keys(
+        errorsOf({ ...VALID, label: 'OTHER', recipientName: 'Sita', recipientPhone: '12345' }),
+      ),
+    ).toEqual(['recipient_phone']);
+    expect(
+      Object.keys(
+        errorsOf({ ...VALID, label: 'OTHER', recipientName: '   ', recipientPhone: '9800000002' }),
+      ),
+    ).toEqual(['recipient_name']);
+  });
+
+  it('returns the recipient with a trimmed name and a strict +977 number (Nepali digits too)', () => {
+    const result = validateAddressForm({
+      ...VALID,
+      label: 'OTHER',
+      recipientName: '  Sita Gurung ',
+      recipientPhone: '९८०००००००२',
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      label: 'OTHER',
+      recipient: { name: 'Sita Gurung', phone: '+9779800000002' },
+    });
+  });
+
+  it('reports recipient and address problems together', () => {
+    expect(Object.keys(errorsOf({ ...VALID, label: 'OTHER', ward: '99' })).sort()).toEqual([
+      'recipient_name',
+      'recipient_phone',
+      'ward_number',
+    ]);
   });
 });

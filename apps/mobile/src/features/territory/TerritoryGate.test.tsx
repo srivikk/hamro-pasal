@@ -10,9 +10,11 @@ import { getAppStorage } from '../../storage/app-mmkv';
 import { ENCRYPTION_KEY_VAULT_ENTRY, getSecureStorage } from '../../storage/secure-mmkv';
 import { useAddressStore } from '../../store/useAddressStore';
 import { useAuthStore } from '../../store/useAuthStore';
+import { useBrowseLocationStore } from '../../store/useBrowseLocationStore';
 import { useCartStore } from '../../store/useCartStore';
 import { useCheckoutStore } from '../../store/useCheckoutStore';
 import { useDeliveryOtpStore } from '../../store/useDeliveryOtpStore';
+import { useOnboardingStore } from '../../store/useOnboardingStore';
 import { useOrderStore } from '../../store/useOrderStore';
 import {
   checkoutResponse,
@@ -62,7 +64,7 @@ async function renderApp(deps?: TerritoryDeps) {
       <QueryClientProvider client={queryClient}>
         <I18nextProvider i18n={createI18n('en')}>
           <Text>App content</Text>
-          <TerritoryGate {...(deps === undefined ? {} : { deps })} />
+          <TerritoryGate splashMinMs={0} {...(deps === undefined ? {} : { deps })} />
         </I18nextProvider>
       </QueryClientProvider>
     </SafeAreaProvider>,
@@ -83,6 +85,15 @@ function seedLocalData(): void {
 
 beforeEach(() => {
   useTerritorySimulator.setState({ simulation: 'off' });
+  useBrowseLocationStore.setState({ device: null, deviceChecked: false, locationPrompt: 'idle' });
+  // Past the welcome screen (a guest who skipped the login): the permission is asked at boot.
+  useAuthStore.getState().clearSession();
+  useOnboardingStore.getState().skipAuthWall();
+});
+
+afterAll(() => {
+  useOnboardingStore.getState().resetOnboarding();
+  useBrowseLocationStore.setState({ device: null, deviceChecked: false, locationPrompt: 'idle' });
 });
 
 describe('TerritoryGate (SPEC §1 tenant isolation)', () => {
@@ -126,12 +137,12 @@ describe('TerritoryGate (SPEC §1 tenant isolation)', () => {
     await renderApp(device(KATHMANDU, 'NP'));
 
     expect(screen.queryByText(BLOCKED_TEXT)).toBeNull();
-    expect(screen.queryByTestId('territory-checking')).toBeNull();
+    expect(screen.queryByTestId('boot-splash')).toBeNull();
     expect(screen.getByText('App content')).toBeOnTheScreen();
     expect(useCartStore.getState().lines).toHaveLength(1);
   });
 
-  it('holds the app behind a checking screen until the position is known', async () => {
+  it('keeps the splash up until the position is known', async () => {
     let resolvePosition: (position: Coordinates) => void = () => undefined;
     const deps = device(null);
     deps.getPosition = () =>
@@ -140,7 +151,8 @@ describe('TerritoryGate (SPEC §1 tenant isolation)', () => {
       });
 
     await renderApp(deps);
-    expect(screen.getByTestId('territory-checking')).toBeOnTheScreen();
+    expect(screen.getByTestId('boot-splash')).toBeOnTheScreen();
+    expect(screen.getByTestId('boot-tagline')).toHaveTextContent('Hamro pasal sajilo cha hai');
 
     act(() => {
       resolvePosition(NEW_DELHI);
@@ -185,27 +197,185 @@ describe('TerritoryGate (SPEC §1 tenant isolation)', () => {
     spy.mockImplementation(() => ({ remove: jest.fn() }));
   });
 
-  it('asks for location permission when it was refused, and retries', async () => {
+  it('opens the app without a position when the permission is refused', async () => {
     const deps = device(KATHMANDU);
-    deps.requestPermission = jest
-      .fn()
-      .mockResolvedValueOnce({ granted: false, canAskAgain: true })
-      .mockResolvedValue({ granted: true, canAskAgain: true });
+    deps.requestPermission = jest.fn(() => Promise.resolve({ granted: false, canAskAgain: true }));
     await renderApp(deps);
 
-    expect(screen.getByText('Location access needed')).toBeOnTheScreen();
+    expect(deps.requestPermission).toHaveBeenCalledTimes(1);
+    expect(deps.getPosition).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('boot-splash')).toBeNull();
+    expect(screen.queryByTestId('territory-blocked')).toBeNull();
+    expect(screen.getByText('App content')).toBeOnTheScreen();
+    expect(useBrowseLocationStore.getState().device).toBeNull();
+  });
+
+  it('opens the app without a position when no fix could be obtained', async () => {
+    await renderApp(device(null));
+
+    expect(screen.queryByTestId('boot-splash')).toBeNull();
+    expect(screen.getByText('App content')).toBeOnTheScreen();
+    expect(useBrowseLocationStore.getState().device).toBeNull();
+  });
+
+  it('keeps the allowed position, and then its name, for the Home screen', async () => {
+    const deps = device(KATHMANDU, 'NP');
+    deps.describePlace = jest.fn(() => Promise.resolve('Thamel, Kathmandu'));
+    await renderApp(deps);
+    await flush();
+
+    expect(useBrowseLocationStore.getState().device).toEqual({
+      lat: KATHMANDU.latitude,
+      lng: KATHMANDU.longitude,
+      label: 'Thamel, Kathmandu',
+    });
+  });
+
+  it('keeps the position when the place cannot be named', async () => {
+    const deps = device(KATHMANDU, 'NP');
+    deps.describePlace = jest.fn(() => Promise.reject(new Error('offline')));
+    await renderApp(deps);
+    await flush();
+
+    expect(useBrowseLocationStore.getState().device).toEqual({
+      lat: KATHMANDU.latitude,
+      lng: KATHMANDU.longitude,
+      label: null,
+    });
+  });
+
+  it('forgets the position when a later check blocks', async () => {
+    useBrowseLocationStore.getState().setDevice({ lat: 27.7, lng: 85.3, label: 'Kathmandu' });
+
+    await renderApp(device(NEW_DELHI, 'IN'));
+
+    expect(useBrowseLocationStore.getState().device).toBeNull();
+  });
+
+  it('asks for the permission at boot only: the foreground re-check never prompts', async () => {
+    const listeners: ((state: AppStateStatus) => void)[] = [];
+    const spy = jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, listener) => {
+      listeners.push(listener);
+      return { remove: jest.fn() };
+    });
+    const deps = device(KATHMANDU);
+    deps.requestPermission = jest.fn(() => Promise.resolve({ granted: false, canAskAgain: true }));
+    deps.currentPermission = jest.fn(() => Promise.resolve({ granted: false, canAskAgain: true }));
+    await renderApp(deps);
+
     act(() => {
-      fireEvent.press(screen.getByRole('button', { name: 'Allow location' }));
+      for (const listener of listeners) listener('active');
     });
     await flush();
 
-    expect(screen.queryByTestId('territory-permission')).toBeNull();
+    expect(deps.requestPermission).toHaveBeenCalledTimes(1);
+    expect(deps.currentPermission).toHaveBeenCalledTimes(1);
+    spy.mockImplementation(() => ({ remove: jest.fn() }));
   });
 
-  it('offers a retry when no position could be obtained', async () => {
-    await renderApp(device(null));
+  it('shows the splash for its minimum time before asking for the location', async () => {
+    jest.useFakeTimers();
+    try {
+      const deps = device(KATHMANDU);
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <I18nextProvider i18n={createI18n('en')}>
+            <TerritoryGate deps={deps} splashMinMs={1500} />
+          </I18nextProvider>
+        </QueryClientProvider>,
+      );
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1499);
+      });
+      expect(screen.getByTestId('boot-splash')).toBeOnTheScreen();
+      expect(screen.getByTestId('logo-placeholder')).toBeOnTheScreen();
+      expect(deps.requestPermission).not.toHaveBeenCalled();
 
-    expect(screen.getByText("We couldn't find your location")).toBeOnTheScreen();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1);
+      });
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(0);
+      });
+
+      expect(deps.requestPermission).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId('boot-splash')).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  describe('permission sequence for a first-time visitor (welcome screen)', () => {
+    beforeEach(() => {
+      useOnboardingStore.getState().resetOnboarding();
+    });
+
+    it('does not show the OS prompt at boot; the splash still ends', async () => {
+      const deps = device(KATHMANDU);
+      deps.requestPermission = jest.fn(() => Promise.resolve({ granted: true, canAskAgain: true }));
+      deps.currentPermission = jest.fn(() =>
+        Promise.resolve({ granted: false, canAskAgain: true }),
+      );
+      await renderApp(deps);
+
+      expect(deps.requestPermission).not.toHaveBeenCalled();
+      expect(deps.currentPermission).toHaveBeenCalledTimes(1);
+      expect(screen.queryByTestId('boot-splash')).toBeNull();
+      expect(useBrowseLocationStore.getState()).toMatchObject({
+        device: null,
+        deviceChecked: true,
+        locationPrompt: 'idle',
+      });
+    });
+
+    it('shows it when the welcome screen asks, and keeps the allowed position', async () => {
+      const deps = device(KATHMANDU);
+      deps.currentPermission = jest.fn(() =>
+        Promise.resolve({ granted: false, canAskAgain: true }),
+      );
+      await renderApp(deps);
+
+      act(() => {
+        useBrowseLocationStore.getState().requestLocationPrompt();
+      });
+      await flush();
+
+      expect(deps.requestPermission).toHaveBeenCalledTimes(1);
+      expect(useBrowseLocationStore.getState()).toMatchObject({
+        device: { lat: KATHMANDU.latitude, lng: KATHMANDU.longitude },
+        locationPrompt: 'answered',
+      });
+    });
+
+    it('reports "Don\'t allow" as answered with no position', async () => {
+      const deps = device(KATHMANDU);
+      deps.requestPermission = jest.fn(() =>
+        Promise.resolve({ granted: false, canAskAgain: false }),
+      );
+      deps.currentPermission = jest.fn(() =>
+        Promise.resolve({ granted: false, canAskAgain: true }),
+      );
+      await renderApp(deps);
+
+      act(() => {
+        useBrowseLocationStore.getState().requestLocationPrompt();
+      });
+      await flush();
+
+      expect(useBrowseLocationStore.getState()).toMatchObject({
+        device: null,
+        locationPrompt: 'answered',
+      });
+    });
+
+    it('needs no prompt when the permission was already granted', async () => {
+      const deps = device(KATHMANDU);
+      deps.currentPermission = jest.fn(() => Promise.resolve({ granted: true, canAskAgain: true }));
+      await renderApp(deps);
+
+      expect(deps.requestPermission).not.toHaveBeenCalled();
+      expect(useBrowseLocationStore.getState().device).not.toBeNull();
+    });
   });
 
   describe('__DEV__ simulator', () => {

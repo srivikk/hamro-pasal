@@ -5,8 +5,21 @@ import {
   type NepalProvinceId,
 } from '@hamro-pasal/shared-types';
 
+import {
+  MAX_RECIPIENT_NAME_LENGTH,
+  type AddressDraft,
+  type AddressLabel,
+  type AddressRecipient,
+} from '../../store/useAddressStore';
+import { toNepalPhone } from '../auth/login-form';
+
 /** What the form edits: free text as typed, choices as picked. Converted only on submit. */
 export interface AddressFormValues {
+  label: AddressLabel;
+  /** Asked only for an OTHER address (ordering for someone else). */
+  recipientName: string;
+  /** As typed: the 10-digit national number, ASCII or Devanagari digits. */
+  recipientPhone: string;
   provinceId: number | null;
   district: string | null;
   palika: string;
@@ -24,13 +37,17 @@ export type AddressField =
   | 'ward_number'
   | 'tole_locality'
   | 'landmark'
-  | 'pin';
+  | 'pin'
+  | 'recipient_name'
+  | 'recipient_phone';
 
 export type AddressValidation =
-  | { ok: true; address: NepalAddress }
-  | { ok: false; errors: Partial<Record<AddressField, string>> };
+  ({ ok: true } & AddressDraft) | { ok: false; errors: Partial<Record<AddressField, string>> };
 
 export const EMPTY_ADDRESS_FORM: AddressFormValues = {
+  label: 'HOME',
+  recipientName: '',
+  recipientPhone: '',
   provinceId: null,
   district: null,
   palika: '',
@@ -40,8 +57,16 @@ export const EMPTY_ADDRESS_FORM: AddressFormValues = {
   pin: null,
 };
 
-export function addressToFormValues(address: NepalAddress): AddressFormValues {
+export function addressToFormValues(
+  address: NepalAddress,
+  label: AddressLabel = 'HOME',
+  recipient: AddressRecipient | null = null,
+): AddressFormValues {
   return {
+    label,
+    recipientName: recipient?.name ?? '',
+    // Shown without the +977 prefix, which the field displays itself.
+    recipientPhone: recipient?.phone.slice('+977'.length) ?? '',
     provinceId: address.province_id,
     district: address.district_string,
     palika: address.municipality_palika_string,
@@ -95,7 +120,8 @@ function fieldOf(path: readonly PropertyKey[]): AddressField | null {
 /**
  * Validates with the shared-types schema itself (the same rules the API applies): province 1-7,
  * a district that exists and belongs to that province, ward 1-33, non-blank text, and a pin
- * inside Nepal. Returns the canonical address, or the schema's message for each failing field.
+ * inside Nepal. An OTHER address also needs who receives the order: a name and a +977 mobile
+ * number. Returns the canonical draft, or a message for each failing field.
  */
 export function validateAddressForm(values: AddressFormValues): AddressValidation {
   const result = nepalAddressInputSchema.safeParse({
@@ -108,14 +134,25 @@ export function validateAddressForm(values: AddressFormValues): AddressValidatio
     exact_lat: values.pin?.latitude,
     exact_lng: values.pin?.longitude,
   });
-  if (result.success) return { ok: true, address: result.data };
-
   const errors: Partial<Record<AddressField, string>> = {};
-  for (const issue of result.error.issues) {
-    const field = fieldOf(issue.path);
-    if (field !== null) errors[field] ??= issue.message;
+  let recipient: AddressRecipient | null = null;
+  if (values.label === 'OTHER') {
+    const name = values.recipientName.trim();
+    const phone = toNepalPhone(values.recipientPhone);
+    if (name === '' || name.length > MAX_RECIPIENT_NAME_LENGTH) {
+      errors.recipient_name = 'Recipient name is required';
+    }
+    if (phone === null) errors.recipient_phone = 'Recipient phone must be a Nepal mobile number';
+    else recipient = { name, phone };
   }
-  return { ok: false, errors };
+  if (!result.success) {
+    for (const issue of result.error.issues) {
+      const field = fieldOf(issue.path);
+      if (field !== null) errors[field] ??= issue.message;
+    }
+  }
+  if (!result.success || Object.keys(errors).length > 0) return { ok: false, errors };
+  return { ok: true, label: values.label, recipient, address: result.data };
 }
 
 /** One-line summary, e.g. "Thamel, Kathmandu Metropolitan City-26, Kathmandu". */

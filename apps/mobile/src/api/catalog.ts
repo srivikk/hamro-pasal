@@ -31,12 +31,16 @@ function locationQuery(location: CustomerLocation): Record<string, string> {
   };
 }
 
-/** GET /api/vendors: LIVE vendors split by SPEC §2 serviceability (PostGIS), nearest first. */
+/**
+ * GET /api/vendors: LIVE vendors split by SPEC §2 serviceability (PostGIS), nearest first.
+ * Public, like the menu below: a guest browses shops and fills a cart; checkout asks for sign-in.
+ */
 export function fetchFeed(location: CustomerLocation): Promise<FeedResponse> {
   return apiRequest({
     method: 'GET',
     path: VENDORS_PATH,
     query: locationQuery(location),
+    authenticated: false,
     schema: feedResponseSchema,
   });
 }
@@ -47,6 +51,7 @@ export function fetchVendorMenu(vendorId: string, location: CustomerLocation): P
     method: 'GET',
     path: vendorProductsPath(vendorId),
     query: locationQuery(location),
+    authenticated: false,
     schema: vendorMenuSchema,
   });
 }
@@ -95,4 +100,41 @@ export function fetchProducts(
     authenticated: false,
     schema: productListResponseSchema,
   });
+}
+
+/** The server's largest page (PRODUCT_LIST_MAX_LIMIT). */
+const PRODUCT_SCAN_PAGE_SIZE = 50;
+/** A scan stops after this many pages (250 products), so it can never run away. */
+export const PRODUCT_SCAN_MAX_PAGES = 5;
+
+/**
+ * Every active product of a shop, or of a category and its subcategories, read page by page from
+ * the public product list. Used to learn which categories a shop carries and which subcategory
+ * each of its products belongs to: the feed and the vendor menu do not carry categories yet
+ * (STATE_HANDOFF §8Z), so the app derives them from this list. Capped at PRODUCT_SCAN_MAX_PAGES.
+ */
+export async function scanProducts(filter: {
+  vendorId?: string;
+  categoryId?: string;
+}): Promise<ProductListResponseBody['products']> {
+  const products: ProductListResponseBody['products'] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < PRODUCT_SCAN_MAX_PAGES; page += 1) {
+    const body: ProductListResponseBody = await apiRequest({
+      method: 'GET',
+      path: PRODUCTS_PATH,
+      query: {
+        ...(filter.vendorId === undefined ? {} : { vendor_id: filter.vendorId }),
+        ...(filter.categoryId === undefined ? {} : { category_id: filter.categoryId }),
+        limit: String(PRODUCT_SCAN_PAGE_SIZE),
+        ...(cursor === null ? {} : { cursor }),
+      },
+      authenticated: false,
+      schema: productListResponseSchema,
+    });
+    products.push(...body.products);
+    cursor = body.next_cursor;
+    if (cursor === null) break;
+  }
+  return products;
 }

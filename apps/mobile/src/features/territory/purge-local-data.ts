@@ -4,15 +4,20 @@ import { getAppStorage } from '../../storage/app-mmkv';
 import { getSecureStorage } from '../../storage/secure-mmkv';
 import { useAddressStore } from '../../store/useAddressStore';
 import { useAuthStore } from '../../store/useAuthStore';
+import { useBrowseLocationStore } from '../../store/useBrowseLocationStore';
 import { useCartStore } from '../../store/useCartStore';
 import { useCheckoutStore } from '../../store/useCheckoutStore';
 import { useDeliveryOtpStore } from '../../store/useDeliveryOtpStore';
+import { useFavouritesStore } from '../../store/useFavouritesStore';
+import { useOnboardingStore } from '../../store/useOnboardingStore';
+import { useOrderReceiptStore } from '../../store/useOrderReceiptStore';
 import { useOrderStore } from '../../store/useOrderStore';
+import { useProfileStore } from '../../store/useProfileStore';
 
 /**
  * SPEC §1: outside the service territory the app clears its local cache. Everything goes: server
  * data cached by TanStack Query, every store (in memory and on disk: cart, checkout, orders,
- * delivery codes, address, session tokens and preferences).
+ * delivery codes, address book, profile, session tokens and preferences).
  *
  * Kept: the MMKV encryption key in the OS keychain (expo-secure-store). It holds no user data and
  * keeping it lets the encrypted instance be reused if the customer returns to Nepal.
@@ -27,7 +32,12 @@ export function purgeLocalData(queryClient: QueryClient): void {
   useOrderStore.setState(useOrderStore.getInitialState(), true);
   useDeliveryOtpStore.setState(useDeliveryOtpStore.getInitialState(), true);
   useAddressStore.setState(useAddressStore.getInitialState(), true);
+  useProfileStore.setState(useProfileStore.getInitialState(), true);
+  useBrowseLocationStore.setState(useBrowseLocationStore.getInitialState(), true);
+  useOnboardingStore.setState(useOnboardingStore.getInitialState(), true);
   useAuthStore.setState(useAuthStore.getInitialState(), true);
+  useOrderReceiptStore.setState(useOrderReceiptStore.getInitialState(), true);
+  useFavouritesStore.setState(useFavouritesStore.getInitialState(), true);
 
   getAppStorage().clearAll();
   getSecureStorage().clearAll();

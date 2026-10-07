@@ -3,12 +3,13 @@ import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { createDatabase, type Database } from '../client';
 import { categories, customerAddresses, products, users, vendors } from '../schema';
 import { describeDatabaseUrl, requireDatabaseUrl } from './database-url';
+import { seedShowcase } from './seed-showcase';
 
 /*
  * Development fixtures for the Kathmandu valley. Re-runnable: the users, vendors and products are
- * skipped if the marker user already exists; the category taxonomy (Phase 17) and the Thamel
- * shop's five-product catalogue are added to any database that lacks them. Never runs when
- * NODE_ENV=production.
+ * skipped if the marker user already exists; the category taxonomy (Phase 17), the Thamel
+ * shop's five-product catalogue and the showcase shops (seed-showcase.ts) are added to any
+ * database that lacks them. Never runs when NODE_ENV=production.
  *
  * There are no passwords: every account signs in with a +977 OTP (SPEC), which SMS_PROVIDER=MOCK
  * prints to the API log.
@@ -103,8 +104,9 @@ async function main(): Promise<void> {
     if (existing.length > 0) {
       await seedThamelCatalogue(db);
       await seedTaxonomy(db);
+      await seedShowcase(db);
       console.info(
-        `[db] ${describeDatabaseUrl(url)} already seeded; taxonomy and the Thamel catalogue ensured, nothing else to do`,
+        `[db] ${describeDatabaseUrl(url)} already seeded; taxonomy, the Thamel catalogue and the showcase shops ensured, nothing else to do`,
       );
       return;
     }
@@ -233,6 +235,7 @@ async function main(): Promise<void> {
 
     await seedThamelCatalogue(db);
     await seedTaxonomy(db);
+    await seedShowcase(db);
     console.info(`[db] seeded development fixtures into ${describeDatabaseUrl(url)}`);
   } finally {
     await db.$client.end();

@@ -3,7 +3,9 @@ import {
   isCompleteOtp,
   leaveSignIn,
   sanitizeOtpInput,
+  sanitizePhoneInput,
   toNepalPhone,
+  toTenDigitNepalPhone,
 } from './login-form';
 
 describe('toNepalPhone', () => {
@@ -17,6 +19,30 @@ describe('toNepalPhone', () => {
   it('rejects anything the shared +977 regex rejects', () => {
     for (const input of ['', '12345', '8800000001', '98000000012', '+91 9800000001', 'abc']) {
       expect(toNepalPhone(input)).toBeNull();
+    }
+  });
+});
+
+describe('sign-in number field', () => {
+  it('keeps at most ten ASCII digits, whatever is typed or pasted', () => {
+    expect(sanitizePhoneInput('98000000012345')).toBe('9800000001');
+    expect(sanitizePhoneInput('980-000 0001')).toBe('9800000001');
+    expect(sanitizePhoneInput('९८०००००००१')).toBe('9800000001');
+    expect(sanitizePhoneInput('98a0')).toBe('980');
+    expect(sanitizePhoneInput('')).toBe('');
+  });
+
+  it('takes a pasted +977 or 977 prefix off before counting', () => {
+    expect(sanitizePhoneInput('+977 9800000001')).toBe('9800000001');
+    expect(sanitizePhoneInput('9779800000001')).toBe('9800000001');
+    // A number that merely starts with 977 is not a prefix until there are more than ten digits.
+    expect(sanitizePhoneInput('9771234567')).toBe('9771234567');
+  });
+
+  it('is a phone number only at exactly ten digits starting with 9', () => {
+    expect(toTenDigitNepalPhone('9800000001')).toBe('+9779800000001');
+    for (const digits of ['', '980000000', '98000000012', '8800000001', '+9779800000001']) {
+      expect(toTenDigitNepalPhone(digits)).toBeNull();
     }
   });
 });

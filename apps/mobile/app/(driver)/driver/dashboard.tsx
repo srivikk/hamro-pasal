@@ -30,11 +30,11 @@ export default function DriverDashboardScreen() {
 
   if (query.data === undefined) {
     return (
-      <View className="flex-1 items-center justify-center gap-4 bg-neutral-50 px-6">
+      <View className="flex-1 items-center justify-center gap-4 bg-gray-50 px-6">
         {header}
         {query.isError ? (
           <>
-            <Text className="text-center text-base text-neutral-700">
+            <Text className="text-center text-base text-gray-700">
               {t('driverDashboard.loadError')}
             </Text>
             <Button label={t('common.retry')} onPress={() => void query.refetch()} />
@@ -50,7 +50,7 @@ export default function DriverDashboardScreen() {
 
   return (
     <ScrollView
-      className="flex-1 bg-neutral-50"
+      className="flex-1 bg-gray-50"
       contentContainerStyle={{ padding: 16, gap: 16 }}
       keyboardShouldPersistTaps="handled"
       refreshControl={
@@ -60,7 +60,7 @@ export default function DriverDashboardScreen() {
       {header}
       <RiderGpsSimulator />
       {deliveries.length === 0 ? (
-        <Text className="text-center text-base text-neutral-600" testID="driver-orders-empty">
+        <Text className="text-center text-base text-gray-500" testID="driver-orders-empty">
           {t('driverDashboard.empty')}
         </Text>
       ) : (

@@ -3,8 +3,9 @@ import '../src/config/api';
 import '../global.css';
 
 import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
-import { Stack } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useColorScheme } from 'nativewind';
 import { useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
 
@@ -18,11 +19,21 @@ import { PushNotifications } from '../src/features/notifications/PushNotificatio
 import { ReviewPrompt } from '../src/features/review/ReviewPrompt';
 import { TerritoryGate } from '../src/features/territory/TerritoryGate';
 import { bindLocale, createI18n } from '../src/i18n/i18n';
+import { startDevMocks } from '../src/mocks/dev-mocks';
 import { useAuthStore } from '../src/store/useAuthStore';
+import { useThemeStore } from '../src/store/useThemeStore';
+import { bindTheme } from '../src/theme/apply-theme';
 
 // The auth store hydrates synchronously from MMKV, so the persisted locale is known here.
 const i18n = createI18n(useAuthStore.getState().locale);
 bindLocale(i18n, useAuthStore);
+
+// The theme store hydrates synchronously too: Light / Dark / System is applied before the first
+// frame and again whenever Profile → Appearance changes it.
+bindTheme(useThemeStore);
+
+// Development builds only, and only when asked for: answers the not-yet-built account endpoints.
+startDevMocks();
 
 // Phase 20: without a handler, a push that arrives while the app is open shows nothing.
 configureForegroundNotifications();
@@ -35,6 +46,8 @@ function SessionExpiryHandler({ queryClient }: { queryClient: QueryClient }) {
 
 export default function RootLayout() {
   const [queryClient] = useState(createQueryClient);
+  // Headers, the tab bar and screen backgrounds follow the app theme with the dark: classes.
+  const { colorScheme } = useColorScheme();
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -42,7 +55,9 @@ export default function RootLayout() {
         <SessionExpiryHandler queryClient={queryClient} />
         {/* Asks for the notification permission and registers the push token once signed in. */}
         <PushNotifications />
-        <Stack screenOptions={{ headerShown: false }} />
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <Stack screenOptions={{ headerShown: false }} />
+        </ThemeProvider>
         {/* Mounted above every route: tabs and the vendor menu both add to the cart. */}
         <ReplaceCartModal />
         <CheckoutSessionWatcher />

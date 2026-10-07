@@ -41,7 +41,8 @@ describe('otpSmsText', () => {
     const text = otpSmsText('042187', 120);
 
     expect(text).toContain('042187');
-    expect(text).toContain('2 minutes');
+    expect(text).toContain('It expires in 2 minutes.');
+    expect(otpSmsText('042187', 60)).toContain('It expires in 1 minute.');
     expect(text.length).toBeLessThanOrEqual(160);
     expect(/^[\x20-\x7e]+$/.test(text)).toBe(true);
   });

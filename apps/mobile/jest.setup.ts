@@ -75,6 +75,13 @@ jest.mock('expo-crypto', () => {
   };
 });
 
+// Naming a position asks the device geocoder and then OpenStreetMap: neither exists under Jest.
+// Unnamed by default; a test that needs a name sets one with jest.mocked(describePlace).
+jest.mock('./src/features/location/describe-place', () => ({
+  ...jest.requireActual<Record<string, unknown>>('./src/features/location/describe-place'),
+  describePlace: jest.fn(() => Promise.resolve(null)),
+}));
+
 // API base URL for modules that import src/config/api. Tests that exercise the missing-variable
 // startup error delete it explicitly.
 process.env.EXPO_PUBLIC_API_URL ??= 'http://api.hamropasal.test';

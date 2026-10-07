@@ -1,6 +1,6 @@
 import type { OrderState } from '@hamro-pasal/shared-types';
 import { act, fireEvent, screen } from '@testing-library/react-native';
-import { router } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { delay, http, HttpResponse } from 'msw';
 
 import OrderTrackingScreen from '../../../app/order/[id]';
@@ -22,8 +22,13 @@ jest.mock('socket.io-client', () => ({
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: '0b7e9c1a-2f4d-4c8e-9a6b-1d2e3f4a5b6c' }),
-  Stack: { Screen: () => null },
-  router: { push: jest.fn() },
+  Stack: { Screen: jest.fn(() => null) },
+  router: {
+    push: jest.fn(),
+    replace: jest.fn(),
+    dismissAll: jest.fn(),
+    canDismiss: jest.fn(() => true),
+  },
 }));
 
 const mockRouterPush = jest.mocked(router.push);
@@ -106,6 +111,62 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.useRealTimers();
+});
+
+describe('leaving the order', () => {
+  beforeEach(() => {
+    jest.mocked(router.replace).mockClear();
+    jest.mocked(router.dismissAll).mockClear();
+    jest.mocked(router.canDismiss).mockReturnValue(true);
+  });
+
+  it('has no back button and no back swipe in its header', async () => {
+    placeOrder(NOW);
+    await renderScreen();
+
+    const options = jest.mocked(Stack.Screen).mock.calls.at(-1)?.[0].options as {
+      headerBackVisible: boolean;
+      gestureEnabled: boolean;
+      headerLeft: () => unknown;
+    };
+    expect(options).toMatchObject({ headerBackVisible: false, gestureEnabled: false });
+    expect(options.headerLeft()).toBeNull();
+  });
+
+  it('"Back to Home" drops the cart and payment screens under it and opens Home', async () => {
+    placeOrder(NOW);
+    await renderScreen();
+
+    fireEvent.press(screen.getByRole('button', { name: 'Back to Home' }));
+
+    expect(jest.mocked(router.dismissAll)).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(router.replace)).toHaveBeenCalledWith('/');
+    expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
+  it('only replaces when the order is the one screen there is (opened from a notification)', async () => {
+    jest.mocked(router.canDismiss).mockReturnValue(false);
+    placeOrder(NOW);
+    await renderScreen();
+
+    fireEvent.press(screen.getByRole('button', { name: 'Back to Home' }));
+
+    expect(jest.mocked(router.dismissAll)).not.toHaveBeenCalled();
+    expect(jest.mocked(router.replace)).toHaveBeenCalledWith('/');
+  });
+
+  it('offers it when the order cannot be loaded, too', async () => {
+    server.use(
+      http.get(apiUrl(orderPath(ORDER_ID)), () =>
+        HttpResponse.json(errorBody('ORDER_NOT_FOUND'), { status: 404 }),
+      ),
+    );
+    await renderScreen();
+
+    fireEvent.press(await screen.findByRole('button', { name: 'Back to Home' }));
+
+    expect(jest.mocked(router.replace)).toHaveBeenCalledWith('/');
+  });
 });
 
 describe('60-second cancellation window', () => {

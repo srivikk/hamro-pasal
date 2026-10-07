@@ -15,11 +15,11 @@ export function RiderGpsSimulator() {
 
   return (
     <View
-      className="gap-2 rounded-2xl border border-dashed border-neutral-300 p-4"
+      className="gap-2 rounded-2xl border border-dashed border-gray-300 p-4"
       testID="rider-gps-simulator"
     >
       <View className="flex-row items-center justify-between">
-        <Text className="text-base font-bold text-neutral-900">{t('riderMode.gpsTitle')}</Text>
+        <Text className="text-base font-bold text-gray-900">{t('riderMode.gpsTitle')}</Text>
         <Switch
           testID="rider-gps-switch"
           accessibilityLabel={t('riderMode.gpsTitle')}
@@ -27,12 +27,12 @@ export function RiderGpsSimulator() {
           onValueChange={setEnabled}
         />
       </View>
-      <Text className="text-xs text-neutral-600">{t('riderMode.gpsHint')}</Text>
-      <Text className="text-sm text-neutral-800" testID="rider-gps-status">
+      <Text className="text-xs text-gray-500">{t('riderMode.gpsHint')}</Text>
+      <Text className="text-sm text-gray-800" testID="rider-gps-status">
         {t(`riderMode.gpsStatus.${status}`)}
       </Text>
       {lastSent === null ? null : (
-        <Text className="text-sm text-neutral-700" testID="rider-gps-last">
+        <Text className="text-sm text-gray-700" testID="rider-gps-last">
           {t('riderMode.gpsLast', {
             latitude: lastSent.latitude.toFixed(5),
             longitude: lastSent.longitude.toFixed(5),

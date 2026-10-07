@@ -17,11 +17,11 @@ export function RiderModeEntry() {
 
   return (
     <View
-      className="gap-3 rounded-2xl border border-dashed border-neutral-300 p-4"
+      className="gap-3 rounded-2xl border border-dashed border-gray-300 p-4"
       testID="rider-mode-entry"
     >
-      <Text className="text-base font-bold text-neutral-900">{t('riderMode.title')}</Text>
-      <Text className="text-xs text-neutral-600">{t('riderMode.hint')}</Text>
+      <Text className="text-base font-bold text-gray-900">{t('riderMode.title')}</Text>
+      <Text className="text-xs text-gray-500">{t('riderMode.hint')}</Text>
       <Button
         testID="rider-mode-toggle"
         label={t('riderMode.switch')}

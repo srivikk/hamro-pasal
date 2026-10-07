@@ -59,15 +59,15 @@ export function WalletSummary({ balance, onPayDues, paying }: WalletSummaryProps
       )}
 
       <View className="gap-1 rounded-2xl bg-white p-4" testID="wallet-balance-card">
-        <Text className="text-sm text-neutral-600">{t('vendorWallet.balance')}</Text>
+        <Text className="text-sm text-gray-500">{t('vendorWallet.balance')}</Text>
         <Text
-          className={`text-3xl font-bold ${negative ? 'text-red-700' : 'text-neutral-900'}`}
+          className={`text-3xl font-bold ${negative ? 'text-red-700' : 'text-gray-900'}`}
           testID="wallet-balance"
         >
           {formatBalance(t, balance.wallet_balance_npr)}
         </Text>
         {balance.pending_escrow_order_count > 0 ? (
-          <Text className="text-sm text-neutral-600" testID="wallet-pending-escrow">
+          <Text className="text-sm text-gray-500" testID="wallet-pending-escrow">
             {t('vendorWallet.pendingEscrow', {
               amount: balance.pending_escrow_npr,
               count: balance.pending_escrow_order_count,

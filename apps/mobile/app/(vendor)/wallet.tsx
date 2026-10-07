@@ -28,11 +28,11 @@ export default function VendorWalletScreen() {
 
   if (balance.data === undefined) {
     return (
-      <View className="flex-1 items-center justify-center gap-4 bg-neutral-50 px-6">
+      <View className="flex-1 items-center justify-center gap-4 bg-gray-50 px-6">
         {header}
         {balance.isError ? (
           <>
-            <Text className="text-center text-base text-neutral-700">
+            <Text className="text-center text-base text-gray-700">
               {t('vendorWallet.loadError')}
             </Text>
             <Button label={t('common.retry')} onPress={() => void balance.refetch()} />
@@ -48,24 +48,22 @@ export default function VendorWalletScreen() {
     <ActivityIndicator testID="wallet-ledger-loading" />
   ) : ledger.isError ? (
     <View className="items-center gap-3">
-      <Text className="text-center text-base text-neutral-700">{t('vendorWallet.loadError')}</Text>
+      <Text className="text-center text-base text-gray-700">{t('vendorWallet.loadError')}</Text>
       <Button label={t('common.retry')} onPress={() => void ledger.refetch()} />
     </View>
   ) : (
-    <Text className="text-center text-base text-neutral-600" testID="wallet-ledger-empty">
+    <Text className="text-center text-base text-gray-500" testID="wallet-ledger-empty">
       {t('vendorWallet.empty')}
     </Text>
   );
 
   const footer = ledger.isFetchingNextPage ? (
-    <Text className="text-center text-sm text-neutral-600" testID="wallet-ledger-loading-more">
+    <Text className="text-center text-sm text-gray-500" testID="wallet-ledger-loading-more">
       {t('vendorWallet.loadingMore')}
     </Text>
   ) : ledger.isFetchNextPageError ? (
     <View className="items-center gap-2">
-      <Text className="text-center text-sm text-neutral-700">
-        {t('vendorWallet.loadMoreError')}
-      </Text>
+      <Text className="text-center text-sm text-gray-700">{t('vendorWallet.loadMoreError')}</Text>
       <Button label={t('common.retry')} onPress={() => void ledger.fetchNextPage()} />
     </View>
   ) : null;
@@ -73,7 +71,7 @@ export default function VendorWalletScreen() {
   return (
     <FlatList
       testID="wallet-ledger"
-      className="flex-1 bg-neutral-50"
+      className="flex-1 bg-gray-50"
       contentContainerStyle={{ padding: 16, gap: 12 }}
       data={entries}
       keyExtractor={(entry) => entry.id}
@@ -82,7 +80,7 @@ export default function VendorWalletScreen() {
         <View className="gap-4">
           {header}
           <WalletSummary balance={balance.data} onPayDues={payOutstanding} paying={paying} />
-          <Text className="text-lg font-bold text-neutral-900">{t('vendorWallet.history')}</Text>
+          <Text className="text-lg font-bold text-gray-900">{t('vendorWallet.history')}</Text>
         </View>
       }
       ListEmptyComponent={ledgerPlaceholder}

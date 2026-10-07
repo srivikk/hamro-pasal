@@ -11,7 +11,7 @@ import type { CatalogService } from '../catalog/catalog-service';
 import { parseInput } from '../http/validate';
 import { feedView, menuView } from './views';
 
-/** Mounted at /api/vendors behind requireAuth(CUSTOMER). */
+/** Mounted at /api/vendors. Public: guests browse shops and menus; ordering needs a session. */
 export function vendorsRouter(catalog: CatalogService): Router {
   const router = Router();
 

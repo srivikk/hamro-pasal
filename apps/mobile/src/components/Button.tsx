@@ -1,6 +1,6 @@
 import { Pressable, Text } from 'react-native';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'danger';
+export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'destructive';
 export type ButtonSize = 'md' | 'sm';
 
 export interface ButtonProps {
@@ -17,14 +17,17 @@ export interface ButtonProps {
 
 const containerByVariant: Record<ButtonVariant, string> = {
   primary: 'bg-brand active:bg-brand-dark',
-  secondary: 'border border-neutral-300 bg-white active:bg-neutral-100',
+  secondary: 'border border-gray-300 bg-white active:bg-gray-100',
   danger: 'bg-red-50 active:bg-red-100',
+  // Solid red: an action that cannot be undone (delete account).
+  destructive: 'bg-red-600 active:bg-red-700',
 };
 
 const labelByVariant: Record<ButtonVariant, string> = {
   primary: 'text-white',
-  secondary: 'text-neutral-900',
+  secondary: 'text-gray-900',
   danger: 'text-red-700',
+  destructive: 'text-white',
 };
 
 const containerBySize: Record<ButtonSize, string> = {

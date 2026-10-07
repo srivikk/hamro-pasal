@@ -80,7 +80,9 @@ describe('ensureOrderNotificationChannel', () => {
 
     expect(mockNotifications.channels).toEqual([
       // The literal id: it must equal the channelId the worker sends.
-      { id: 'orders', input: { name: 'अर्डर अपडेट', importance: 6, sound: 'default' } },
+      // No `sound` key: Android then uses the system default. A 'default' string is looked up
+      // as a bundled file and logged as "Custom sound 'default' not found in native app".
+      { id: 'orders', input: { name: 'अर्डर अपडेट', importance: 6 } },
     ]);
   });
 

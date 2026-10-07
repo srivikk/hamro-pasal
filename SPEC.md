@@ -71,6 +71,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 
 * **Mechanic:** The entire platform operates in a strict multi-tenant architecture partitioned by `country_code`. Initial rollout is strictly `'NP'` (Nepal).
 * **Enforcement:** Mobile numbers must pass a regex for `+977`. When fetching GPS, a reverse-geocoding API (or PostGIS polygon lookup) is called. If the `country_code` is not `'NP'`, the frontend completely arrests the app compilation, clearing the local cache, and rendering a blocking modal: "Service Unvailable in your territory."
+* **Amendment (2026-10-06):** the block applies when a GPS position is obtained and is outside `'NP'`. If the user denies the location permission (or no position can be obtained), the app does not lock: it proceeds without coordinates and the user selects a location manually (Customer Flow step 0). Manually selected coordinates must still be inside Nepal.
 
 **2. Dual-Fulfillment & Scopes**
 
@@ -94,6 +95,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 * **Platform Fee Model:** Flat % commission per transaction automatically deducted at settlement.
 * **Subscription Model:** 0% commission. Vendor pays flat monthly fee upfront.
 * **Lock-in Logic:** Upon subscription payment, backend stamps `lock_in_expiry = NOW() + 90 days`. If a downgrade to Platform Fee is requested, the backend validates `NOW() > lock_in_expiry`. If valid, it defers execution by setting `scheduled_downgrade = true` and only changes the model at the end of the current paid billing cycle via a midnight cron job.
+* **Dual-Layer Billing (amended 2026-10-07; specified, not yet implemented):** a vendor's charges have two layers that are never merged. **Layer 1, base enrollment:** the commission per order or the monthly subscription above. **Layer 2, premium add-ons:** sponsored placements the vendor bought itself in the Ad Marketplace (Ad Monetization, section 8). Every statement, ledger line and settlement shows the two layers as separate items.
 
 **5. Financial Governance & Negative Wallets**
 
@@ -101,23 +103,64 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 * **The COD Problem:** On a COD Self-Delivery order, the vendor collects 100% cash, including the platform's commission.
 * **Enforcement:** The backend automatically debits the `vendor_wallet` for the commission amount, pushing it into the negative. If `vendor_wallet < -2000 NPR` (Superadmin configurable limit), a database trigger automatically mutates the vendor's status to `SUSPENDED`. The vendor's app locks until they clear the negative balance via an upfront eSewa payment.
 * **Ledger Model:** True double-entry accounting with balanced postings. Single-entry wallet tables are prohibited; `vendor.wallet_balance_npr` is a materialized projection.
+* **Vendor Ledger and Settlement Models (amended 2026-10-07; specified, not yet implemented):** every vendor has one `vendor_ledgers` row: its `settlement_model`, its limits, and the vendor's balances as **projections of the double-entry journal** (balance, commission owed, ad fees owed, ad budget held). Nothing writes those balances directly; only postings move them. A vendor operates under exactly one model at a time. **Decided 2026-10-07: Models A and B are the Phase 1 / Phase 2 targets. Model C is deferred to Phase 3 and cannot be selected until then.**
+  * **Model A, `COD_CREDIT` (credit limit):** the shop takes cash only. The customer pays the vendor or the rider; each order debits the ledger for the platform commission and any per-order fee, so the balance runs negative. Strictly below the limit (-2000 NPR, Superadmin configurable) the shop is suspended automatically and stays so until the vendor recharges the ledger through eSewa or Khalti.
+  * **Model B, `PLATFORM_ESCROW` (default):** the customer pays the platform digitally. The platform holds the money, deducts commission, subscription fees and ad costs at settlement, and credits the remainder to the ledger for periodic payout. Refunds are paid out of the escrowed funds. Cash orders of a Model B shop follow the credit rule of Model A.
+  * **Model C, `DIRECT_PREPAID` (prepaid) — Phase 3, deferred:** the customer's digital payment goes straight to the vendor's own eSewa / Khalti merchant account. The platform holds none of it, so the vendor must keep a **prepaid** ledger balance with a strict **Fixed Reserve** (minimum 5000 NPR, Superadmin configurable). Every platform fee is debited the moment the order is placed. The balance may never be drawn below the reserve by trading: a shop whose balance falls below it is suspended until it recharges back to the reserve or more. A refund is paid to the customer by the platform and debited from the prepaid balance, which is what the reserve exists to cover. It is deferred because it depends on eSewa's and Khalti's merchant terms allowing the platform to operate a vendor's credentials, and on that refund exposure; it is not to be built or offered before both are settled.
+  * "Suspended" is the existing `status = 'SUSPENDED'` in every model (the shop is not active: hidden from the feed, not orderable); no separate `is_active` flag exists on vendors.
+  * A change of settlement model is requested by the vendor, approved by a Super Admin, audited, and takes effect only when the shop has no open order and its ledger is at 0 or above.
 
 **6. Double-Blind Review System & Disputes**
 
 * **Review Logic:** Customer and Vendor ratings are quarantined in the DB (`is_published = false`). They are published only when both exist OR 48 hours elapse.
 * **Penalties:** If Customer average rating $< 3.0$, their COD capability is disabled globally. If Vendor Acceptance Rate $< 85\%$, their sorting weight in the geospatial feed algorithm is penalized.
+
+**7. Discounts: Vendor Offers and Platform Campaigns (added 2026-10-07; specified, not yet implemented)**
+
+* **Principle:** a vendor can never be charged for a discount it did not switch on itself. Every discount deducted from a vendor's payout traces to a record that vendor's own account created, with the time and the user.
+* **Vendor Offers (`vendor_offers`):** created by the vendor for its own shop. A rule is `FLAT` (an amount off) or `PERCENTAGE` (a share off, with an optional cap), with a minimum cart subtotal and a validity period. The vendor funds it entirely. A rule is never edited: changing it ends the old row and creates a new one, so an order always points at the exact rule it was priced with.
+* **Platform Campaigns (`platform_campaigns`):** created by a Super Admin, with the discount rule and the share of each discount the vendor bears (`vendor_share_percent`, 0 to 100; the platform funds the rest). **An admin cannot enrol a shop.** A campaign applies to a shop only through a `campaign_opt_ins` row created by that vendor's own account from the Vendor App, which stores the terms exactly as they were shown. Opting out stops future orders only.
+* **Stacking:** at most one vendor offer and one platform campaign per order; when several qualify, the one giving the customer the larger discount is taken in each layer. The campaign discount is calculated on the subtotal after the vendor offer. Discounts never reduce the delivery fee and never make the goods cost less than 0.
+* **Audit (`audit_logs`):** an append-only table. Creating, enabling or ending an offer, opting into or out of a campaign, buying or cancelling an ad, and requesting or approving a settlement model change each write one row in the same database transaction as the change: the exact timestamp, the acting `user_id` and role, the vendor, and the state before and after. Rows are never updated or deleted.
+
+**8. Ad Monetization (added 2026-10-07; specified, not yet implemented)**
+
+* **Sponsored placements** are slides of the Home carousel, tiles of Featured Offers, and sponsored listings in the vendor feed. They are premium add-ons on top of base enrollment (Vendor Pricing, Dual-Layer Billing). Every sponsored placement is labelled "Ad" to the customer.
+* **No unilateral billing:** an admin cannot charge a vendor for an ad. A promotion may carry `is_sponsored = true` only when it is linked to an `ad_purchases` row, and that row exists only because the vendor chose a product in the **Ad Marketplace** of the Vendor App and agreed to its price and `billing_model`. The database refuses a sponsored promotion without a purchase.
+* **Billing models:** `FLAT_RATE` (a fixed price for the booked period, charged once) or `PER_ORDER_PREMIUM` (a fixed fee for each delivered order placed while the ad runs, up to the budget the vendor set).
+* **Collection by settlement model:**
+  * **Models A and C:** the vendor must first recharge its ledger. A `FLAT_RATE` price, or the whole budget of a `PER_ORDER_PREMIUM` ad, is taken from the ledger balance at purchase and refused if the balance does not cover it (and, in Model A, never on credit). Per-order fees are drawn from the held budget; the ad pauses when the budget is used up, and what is left when the ad ends is returned.
+  * **Model B:** no recharge is needed. The charge is taken from the vendor's available balance, and whatever that does not cover is deducted from the vendor's pending payouts as orders settle. Per-order fees are deducted in each order's settlement. **Guard rail (decided 2026-10-07):** a `FLAT_RATE` ad is refused when `balance + pending_escrow < ad_price`; the platform never sells an ad for more than it already holds for that vendor.
+* **Itemisation:** ad charges are their own ledger line types (`AD_FLAT_FEE`, `AD_ORDER_PREMIUM`) posted to their own revenue account, never added into the commission.
+* **Sponsored feed listings (decided 2026-10-07):** up to **two** sponsored shops are placed at the top of the main vendor feed, above the distance order, each marked with the "Ad" badge. Only shops that deliver to the customer are eligible, so a sponsored listing never overrides delivery rules and never appears in "Explore Further". Among more than two eligible sponsored shops, the nearest two are shown; the rest keep their normal place.
+
+**9. Checkout and Cart Math Protocol (added 2026-10-07; specified, not yet implemented)**
+
+* **The server prices the order.** `POST /api/cart/checkout` computes, from database prices and the rules above:
+  $\text{total} = \text{subtotal} - \text{vendor\_offer\_discount} - \text{platform\_promo\_discount} + \text{delivery\_fee}$.
+  The client sends product ids and quantities only; any amount it sends is ignored.
+* **Minimum order value** is checked against the subtotal before discounts.
+* **Commission base:** the commission is charged on what the vendor actually sells for: $\text{subtotal} - \text{vendor\_offer\_discount} - \text{vendor share of the campaign discount}$. The platform's share of a campaign discount is the platform's marketing cost and is not taken from the vendor.
+* **Snapshot:** the order stores each discount amount, the vendor's and the platform's share, the ids of the offer, the campaign and the opt-in, and a copy of each rule as applied. Settlement reads only the snapshot.
+* **Payment token:** for eSewa and Khalti the backend creates the payment request (the eSewa signed form, the Khalti `pidx`) **for the final discounted total, inside the checkout request, before it answers**. The amount the gateway later confirms must equal that total ($\pm 0.01$ NPR).
+* **Payment routing:** the payment methods a customer may use are decided by the server from the vendor's settlement model and ledger, and from the customer's COD eligibility. Model A: cash only. Model B: eSewa, Khalti and cash. Model C (Phase 3): cash and eSewa / Khalti, each only while the prepaid balance after this order's platform fees stays at or above the Fixed Reserve. The cart shows only the methods the server returned, and checkout refuses any other.
+* **Model C credentials (Phase 3):** the payment request is created and verified with the vendor's own merchant credentials, which the platform stores encrypted.
 </core_business_logic>
 
 <user_journeys>
 **Customer Flow**
 
-1. Auth via OTP (+977 only).
-2. App requests GPS. PostGIS validates 'NP' polygon.
-3. Feed compiles using geospatial radius + 10% buffer. Unserviceable vendors render in a desaturated "Explore Further" section with carts disabled.
+0. **App boot sequence (amended 2026-10-06):** Splash screen (logo placeholder, tagline "Hamro pasal sajilo cha hai") -> full-screen Login/Signup page with a "Skip login" button, over which the native location permission prompt appears (only if the app may still ask; a visitor who is already signed in or already skipped the login is prompted right after the splash instead) -> Home.
+   * **Location allowed:** the coordinates are stored in the global client store; the 'NP' check of Tenant Isolation runs on them, and Home lists shops around them.
+   * **Location denied or unavailable:** the app proceeds without coordinates. The "Select delivery location" selector opens at once ("Device location not enabled" banner with an Enable action, live place search, map pin, saved addresses); a location chosen there takes the visitor to Home as a Guest. Home shows "Select Location" while none is chosen.
+   * **Skip login:** the visitor enters Home as a Guest and may browse shops and fill a local cart. Sign-in is required only at checkout.
+1. Auth via OTP (+977 only). Required to check out, not to browse. After the first sign-in the customer completes a profile: `full_name` is required before an order can be placed, `email` is optional.
+2. App requests GPS (step 0). PostGIS validates 'NP' polygon.
+3. Feed compiles using geospatial radius + 10% buffer. Unserviceable vendors render in a desaturated "Explore Further" section with carts disabled. **(Amended 2026-10-07, not yet implemented):** up to two sponsored shops that deliver to the customer are listed first, each with an "Ad" badge (Ad Monetization). The feed is evaluated from, in order: a location the customer selected manually in the Home header, the device GPS position, the selected delivery address.
 4. User adds to cart. System enforces single-vendor cart restriction.
 5. Cart validates `total >= vendor.MOV` (Minimum Order Value). Applies Cart validates total >= vendor.MOV. Rejects with HTTP 422 if below.
-6. Checkout triggers Redis 10-min inventory lock.
-7. Payment selection evaluates COD eligibility based on customer rating.
+6. Before checkout, the delivery address must be inside the vendor's delivery scope (Dual-Fulfillment & Scopes: radius with the 10% buffer, city-wide Palika match, or nation-wide). If it is not, checkout is blocked with "This shop does not deliver to your selected address" and a "Change Address" action. Checkout then triggers Redis 10-min inventory lock.
+7. Payment selection evaluates COD eligibility based on customer rating. **(Amended 2026-10-07, not yet implemented):** the methods offered also depend on the vendor's settlement model and ledger; the cart shows the discounts the server calculated (vendor offer, platform promotion) as separate lines, and the customer pays the discounted total (Checkout and Cart Math Protocol).
 8. Unskippable 60-second cancellation window starts post-order.
 9. Order tracking utilizes a **Discrete State Node** UI (Order Placed -> Preparing -> Out for Delivery -> Arrived) rather than live map polling to save API costs.
 10. Customer displays 4-digit cryptographic OTP to driver upon handoff.
@@ -134,6 +177,11 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 7. Vendor inspects order. Can select "Accept with Modifications" (Partial Fulfillment) to remove out-of-stock items, adjusting the snapshot and triggering an automated partial refund via gateway API.
 8. Vendor packs order. If Platform Fleet, waits for driver. If Self-Delivery, dispatches own staff.
 9. Collects COD cash (driving platform wallet negative) or verifies OTP.
+10. **Marketing tab (added 2026-10-07, not yet implemented).** The Vendor App has a "Marketing" tab with two clearly separated sections:
+    * **My Offers:** the vendor's own offers. Create (flat or percentage, minimum cart, validity), switch off, and see past ones. The screen states that the vendor funds these discounts.
+    * **Campaign Invites:** the platform campaigns open to the shop, each with its discount, dates and the share the vendor would bear, and an explicit **Opt in** action with a confirmation that restates those terms. Nothing here is on by default. Joined campaigns show the date and the account that joined, with **Opt out**.
+11. **Ad Marketplace (added 2026-10-07, not yet implemented).** Reached from Marketing: the sponsored placements on sale, with price and billing model. Buying one shows the full cost, how it will be collected under the shop's settlement model (recharge first, or deducted from payouts), and requires an explicit agreement.
+12. **Ledger (amended 2026-10-07, not yet implemented).** The wallet screen shows the settlement model, the balance, and separate lines for commission, subscription, ad fees, discounts and refunds; Models A and C have a **Recharge** action (eSewa / Khalti).
 
 **Delivery Partner (Platform Fleet) Flow**
 
@@ -149,6 +197,8 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 2. Manages immutable Master Category Taxonomy.
 3. Arbitrates Disputes: Reviews in-app text/photo chat transcript. Clicks "Refund Customer" (API call to eSewa/Khalti) or "Release to Vendor" (Unfreezes Escrow).
 4. Toggles platform logistics (Enable/Disable Self-Delivery or 3rd Party Fleet).
+5. **(Added 2026-10-07, not yet implemented.)** Creates platform campaigns and invites shops; cannot enrol a shop. Publishes the Ad Marketplace products and their prices; cannot create a sponsored promotion or an ad charge without the vendor's purchase.
+6. **(Added 2026-10-07, not yet implemented.)** Approves settlement model changes and reads the audit log.
 </user_journeys>
 
 <nepal_localizations_and_integrations>
@@ -162,6 +212,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 
 
 * **Validation:** Upon redirect, backend must verify the signature, verify `status === 'COMPLETE'`, and check that `total_amount` matches the DB snapshot ($\pm 0.01$ NPR tolerance).
+* **Amount (amended 2026-10-07, not yet implemented):** `total_amount` is the order's final discounted total (Checkout and Cart Math Protocol), and the signed form is produced inside the checkout request. For a Model C vendor the `product_code` and `Secret_Key` are that vendor's own. The same applies to the Khalti `amount` and key.
 
 **2. Khalti Payment Integration (ePay v2 Web Checkout)**
 
@@ -178,6 +229,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 **4. SMS/OTP**
 
 * Integrate Sparrow SMS, Aakash SMS, or Firebase Auth. All payloads must prepend `+977`.
+* **WhatsApp fallback (amended 2026-10-06):** the OTP entry screen offers "Get OTP via WhatsApp". The client then calls `POST /api/auth/otp/send` with `{ "phone": "+977…", "channel": "WHATSAPP" }` (`channel` is optional and defaults to `"SMS"`), and the backend delivers the same 6-digit code through a WhatsApp Business provider instead of SMS. The code rules are unchanged (single use, 2-minute expiry, 60-second resend cooldown per number, shared by both channels).
 </nepal_localizations_and_integrations>
 
 <data_models_and_schemas>
@@ -187,6 +239,10 @@ Implement using strict TypeScript interfaces mapping to PostgreSQL schemas.
 enum DeliveryScope { RADIUS_BOUND, CITY_WIDE, NATION_WIDE }
 enum FulfillmentMode { SELF_DELIVERY, PLATFORM_FLEET, EMERGENCY_FLEET }
 enum OrderState { PENDING_PAYMENT, PLACED, PREPARING, OUT_FOR_DELIVERY, DELIVERED, CANCELED, FAILED, DISPUTED }
+// Added 2026-10-07 (specified, not yet implemented):
+enum SettlementModel { COD_CREDIT, PLATFORM_ESCROW, DIRECT_PREPAID } // Models A, B, C (C: Phase 3, not selectable yet)
+enum DiscountKind { FLAT, PERCENTAGE }
+enum AdBillingModel { FLAT_RATE, PER_ORDER_PREMIUM }
 
 interface Vendor {
   id: string;
@@ -202,6 +258,7 @@ interface Vendor {
   location: any; // PostGIS Point (Lat/Lng)
   wallet_balance_npr: number;
   fulfillment_mode: FulfillmentMode;
+  settlement_model: SettlementModel; // added 2026-10-07; existing vendors are PLATFORM_ESCROW
 }
 
 interface OrderSnapshot {
@@ -217,6 +274,26 @@ interface OrderSnapshot {
   payment_status: 'PENDING' | 'PAID' | 'FAILED';
   delivery_otp: string; // 4-digit bcrypt hash in DB, raw on Customer UI
   created_at: Date;
+  // Added 2026-10-07 (specified, not yet implemented). total = subtotal
+  //   - vendor_offer_discount - platform_promo_discount + delivery_fee
+  vendor_offer_id: string | null;
+  vendor_offer_discount: number;
+  campaign_opt_in_id: string | null;
+  platform_promo_discount: number;       // what the customer sees
+  platform_promo_vendor_share: number;   // the part the vendor bears (per its opt-in)
+  ad_order_premium: number;              // per-order ad fee, itemised apart from commission
+  settlement_model_locked: SettlementModel;
+}
+
+// Added 2026-10-07 (specified, not yet implemented). Balances are projections of the journal.
+interface VendorLedger {
+  vendor_id: string;
+  settlement_model: SettlementModel;
+  balance_npr: number;            // negative = owed to the platform (Model A); prepaid funds (Model C)
+  commission_owed_npr: number;
+  ad_fees_owed_npr: number;
+  ad_budget_held_npr: number;
+  credit_limit_npr: number;       // Model A floor, default -2000
 }
 
 ```
@@ -229,6 +306,10 @@ interface OrderSnapshot {
 2. **Wallet Limit Hard Stop:** The database must have a `CHECK (wallet_balance_npr >= -2000)` constraint (or handled safely in a transaction). If a COD delivery attempts to push the wallet below this, the backend trigger fires `UPDATE vendor SET status = 'SUSPENDED'`.
 3. **Idempotency on Webhooks:** Payment gateways send duplicate webhooks. The orders table MUST process updates within a database transaction utilizing `SELECT ... FOR UPDATE` to prevent double-crediting the escrow ledger.
 4. **Concurrent Carts:** A customer cannot have items from `Vendor A` and `Vendor B`. The local Zustand store must clear previous vendor items upon accepting a prompt when adding an item from a new vendor.
+5. **Discount ended during checkout (added 2026-10-07, not yet implemented):** an offer or opt-in that ends after an order was priced still applies to that order (the order holds its own snapshot). One that ended before checkout is not applied, even if the app still showed it.
+6. **Sponsored without a purchase:** the database must refuse `is_sponsored = true` on a promotion that has no `ad_purchases` row, and an ad charge without one.
+7. **Prepaid reserve (Model C, Phase 3):** fees are debited under the vendor row lock. If an order's fees would take the balance below the Fixed Reserve, that order is not offered; a debit (a refund, for example) that leaves the balance below the reserve suspends the shop in the same transaction.
+8. **Ad budget exhausted:** a `PER_ORDER_PREMIUM` ad whose held budget cannot cover the next fee is paused before that order is charged; an order is never charged a premium the budget did not hold.
 </edge_cases_and_constraints>
 
 <verification_and_testing>
@@ -238,6 +319,11 @@ The coding agent must write unit and integration tests (Jest/Supertest) assertin
 2. **HMAC Validation:** Pass mock variables into the HMAC-SHA256 function and assert the resulting Base64 string exactly matches a known valid eSewa signature.
 3. **Negative Wallet Math:** Assert that processing a COD order of 1000 NPR with a 10% commission correctly debits the vendor's wallet by 100 NPR, and triggers suspension if the boundary is crossed.
 4. **Double-Blind Unlocking:** Assert that fetching a review returns `null/hidden` if only one party has submitted and `time < 48h`, but returns data if both submitted or `time > 48h`.
+5. **Cart Math (added 2026-10-07):** subtotal 1000 NPR, a vendor offer of FLAT 100, a campaign of 10% with a 50% vendor share, delivery fee 50, commission 10%. Assert: vendor offer 100, campaign discount 90 (vendor 45, platform 45), **total 860**, commission 85.50 on a base of 855, and that the eSewa form returned by checkout is signed for `860`.
+6. **Opt-in Required:** assert a campaign discounts nothing for a shop without its own opt-in row, that no admin route can create that row, and that opting in writes an audit row with the vendor user's id and the timestamp in the same transaction.
+7. **Sponsored Needs a Purchase:** assert the database rejects a sponsored promotion and an ad charge that have no `ad_purchases` row, and that an ad charge is posted as its own line type, not as commission.
+8. **Settlement Models:** assert that a Model A shop is offered cash only and is suspended strictly below its credit limit; that buying an ad is refused without sufficient balance in Model A; that in Model B a flat-rate ad is accepted against pending payouts and **refused when `balance + pending_escrow < ad_price`**; and that `DIRECT_PREPAID` cannot be selected while Model C is deferred. (Phase 3, with Model C: a shop below its Fixed Reserve is offered no order and is suspended.)
+9. **Sponsored Feed:** assert that at most two sponsored shops lead the feed, that each is flagged for the "Ad" badge, and that a sponsored shop which does not deliver to the customer is neither moved up nor flagged in the serviceable section.
 </verification_and_testing>
 
 <implicit_requirements_and_audit>

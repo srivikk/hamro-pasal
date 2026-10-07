@@ -1,7 +1,8 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
+import { act, fireEvent, screen, within } from '@testing-library/react-native';
+import { router } from 'expo-router';
 import { http, HttpResponse } from 'msw';
 
-import FeedScreen from '../../../app/(tabs)/index';
+import FeedScreen from '../../../app/(tabs)/(home)/index';
 import { CATEGORIES_PATH, PRODUCTS_PATH, VENDORS_PATH } from '../../api/catalog';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useCartStore } from '../../store/useCartStore';
@@ -9,10 +10,8 @@ import { useCheckoutStore } from '../../store/useCheckoutStore';
 import {
   categoryList,
   checkoutResponse,
-  ELECTRONICS_ID,
   errorBody,
   feedResponse,
-  GROCERIES_ID,
   HONEY_ID,
   PATAN_VENDOR,
   productList,
@@ -29,6 +28,7 @@ import {
   type CapturedRequest,
 } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
+import { matchingVendors } from './ProductResults';
 
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
 
@@ -67,129 +67,14 @@ const HONEY = publicProduct({
   stock_quantity: 0,
 });
 
-async function openGroceries() {
-  fireEvent.press(await screen.findByRole('button', { name: 'Groceries' }));
+/** Products are reached by searching (the category toggle is gone); 'tea' matches no shop name. */
+async function searchTea() {
+  fireEvent.changeText(await screen.findByTestId('product-search'), 'tea');
 }
 
 const card = (productId: string) => screen.getByTestId(`product-card-${productId}`);
 const button = (productId: string, name: string) =>
   within(card(productId)).getByRole('button', { name });
-
-describe('Home: category pills (GET /api/categories)', () => {
-  it('shows the shops first, with one pill per root category', async () => {
-    const { productRequests } = serveCatalog();
-    renderWithProviders(<FeedScreen />);
-
-    expect(await screen.findByRole('button', { name: 'Groceries' })).toBeOnTheScreen();
-    expect(screen.getByRole('button', { name: 'Electronics' })).toBeOnTheScreen();
-    // A subcategory is not a pill; its products are listed under its root.
-    expect(screen.queryByRole('button', { name: 'Tea & Coffee' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Shops' })).toBeSelected();
-
-    expect(await screen.findByText('Delivers to you')).toBeOnTheScreen();
-    expect(productRequests).toHaveLength(0);
-  });
-
-  it('filters the products by the chosen category and shows their real data', async () => {
-    const { productRequests } = serveCatalog(() =>
-      HttpResponse.json(productList([publicProduct(), HONEY])),
-    );
-    renderWithProviders(<FeedScreen />);
-
-    await openGroceries();
-
-    const tea = await screen.findByTestId(`product-card-${TEA_ID}`);
-    expect(productRequests.map(queryOf)).toEqual([{ category_id: GROCERIES_ID }]);
-    expect(screen.getByRole('button', { name: 'Groceries' })).toBeSelected();
-    expect(screen.queryByText('Delivers to you')).toBeNull();
-
-    expect(within(tea).getByText('Ilam Tea 500g')).toBeOnTheScreen();
-    expect(within(tea).getByText('Orthodox black tea from Ilam.')).toBeOnTheScreen();
-    expect(within(tea).getByText('Rs. 450 / pack')).toBeOnTheScreen();
-    expect(within(tea).getByText('12 in stock')).toBeOnTheScreen();
-    expect(within(tea).getByText(THAMEL_VENDOR.name)).toBeOnTheScreen();
-    expect(within(card(HONEY_ID)).getByText('Rs. 900 / jar')).toBeOnTheScreen();
-  });
-
-  it('asks again when another category is chosen, and returns to the shops', async () => {
-    const { productRequests } = serveCatalog((query) =>
-      HttpResponse.json(productList(query.category_id === ELECTRONICS_ID ? [] : [publicProduct()])),
-    );
-    renderWithProviders(<FeedScreen />);
-
-    await openGroceries();
-    await screen.findByTestId(`product-card-${TEA_ID}`);
-    fireEvent.press(screen.getByRole('button', { name: 'Electronics' }));
-
-    expect(await screen.findByText('No products found.')).toBeOnTheScreen();
-    expect(productRequests.map(queryOf)).toEqual([
-      { category_id: GROCERIES_ID },
-      { category_id: ELECTRONICS_ID },
-    ]);
-
-    fireEvent.press(screen.getByRole('button', { name: 'Shops' }));
-    expect(await screen.findByText('Delivers to you')).toBeOnTheScreen();
-    expect(screen.queryByTestId('product-list')).toBeNull();
-  });
-
-  it('serves a category chosen again from the cache while it refetches', async () => {
-    const { productRequests, categoryCalls } = serveCatalog();
-    renderWithProviders(<FeedScreen />);
-
-    await openGroceries();
-    await screen.findByTestId(`product-card-${TEA_ID}`);
-    fireEvent.press(screen.getByRole('button', { name: 'Shops' }));
-    fireEvent.press(screen.getByRole('button', { name: 'Groceries' }));
-
-    // No spinner the second time: the cached page is shown at once and refreshed behind it.
-    expect(screen.getByTestId(`product-card-${TEA_ID}`)).toBeOnTheScreen();
-    await waitFor(() => {
-      expect(productRequests).toHaveLength(2);
-    });
-    expect(categoryCalls()).toBe(1);
-  });
-
-  it('drops a category that left the taxonomy and goes back to the shops', async () => {
-    let hidden = false;
-    let categoryCalls = 0;
-    server.use(
-      http.get(apiUrl(VENDORS_PATH), () => HttpResponse.json(feedResponse())),
-      http.get(apiUrl(CATEGORIES_PATH), () => {
-        categoryCalls += 1;
-        return HttpResponse.json(
-          hidden ? categoryList(categoryList().categories.slice(2)) : categoryList(),
-        );
-      }),
-      http.get(apiUrl(PRODUCTS_PATH), () =>
-        HttpResponse.json(errorBody('CATEGORY_NOT_FOUND'), { status: 404 }),
-      ),
-    );
-    renderWithProviders(<FeedScreen />);
-    await screen.findByRole('button', { name: 'Groceries' });
-
-    hidden = true;
-    fireEvent.press(screen.getByRole('button', { name: 'Groceries' }));
-
-    expect(await screen.findByText('Delivers to you')).toBeOnTheScreen();
-    expect(screen.queryByRole('button', { name: 'Groceries' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Electronics' })).toBeOnTheScreen();
-    expect(categoryCalls).toBe(2);
-  });
-
-  it('still shows the shops and the search field when the taxonomy cannot be loaded', async () => {
-    server.use(
-      http.get(apiUrl(VENDORS_PATH), () => HttpResponse.json(feedResponse())),
-      http.get(apiUrl(CATEGORIES_PATH), () =>
-        HttpResponse.json(errorBody('FORBIDDEN'), { status: 403 }),
-      ),
-    );
-    renderWithProviders(<FeedScreen />);
-
-    expect(await screen.findByText('Delivers to you')).toBeOnTheScreen();
-    expect(screen.queryByTestId('category-pills')).toBeNull();
-    expect(screen.getByTestId('product-search')).toBeOnTheScreen();
-  });
-});
 
 describe('Home: product search (GET /api/products?search=)', () => {
   it('searches once typing rests, with the last text typed', async () => {
@@ -206,23 +91,6 @@ describe('Home: product search (GET /api/products?search=)', () => {
 
     expect(await screen.findByTestId(`product-card-${TEA_ID}`)).toBeOnTheScreen();
     expect(productRequests.map(queryOf)).toEqual([{ search: 'ilam' }]);
-  });
-
-  it('combines the search with the chosen category', async () => {
-    const { productRequests } = serveCatalog();
-    renderWithProviders(<FeedScreen />);
-
-    await openGroceries();
-    await screen.findByTestId(`product-card-${TEA_ID}`);
-    fireEvent.changeText(screen.getByTestId('product-search'), 'tea');
-
-    await waitFor(() => {
-      expect(productRequests).toHaveLength(2);
-    });
-    expect(productRequests.map(queryOf)[1]).toEqual({
-      category_id: GROCERIES_ID,
-      search: 'tea',
-    });
   });
 
   it('returns to the shops when the field is cleared', async () => {
@@ -246,7 +114,7 @@ describe('Home: product search (GET /api/products?search=)', () => {
     );
     renderWithProviders(<FeedScreen />);
 
-    await openGroceries();
+    await searchTea();
     expect(
       await screen.findByText("Couldn't load products. Check your connection."),
     ).toBeOnTheScreen();
@@ -264,15 +132,12 @@ describe('Home: product search (GET /api/products?search=)', () => {
     );
     renderWithProviders(<FeedScreen />);
 
-    await openGroceries();
+    await searchTea();
     await screen.findByTestId(`product-card-${TEA_ID}`);
     fireEvent(screen.getByTestId('product-list'), 'onEndReached');
 
     expect(await screen.findByTestId(`product-card-${HONEY_ID}`)).toBeOnTheScreen();
-    expect(productRequests.map(queryOf)[1]).toEqual({
-      category_id: GROCERIES_ID,
-      cursor: TEA_ID,
-    });
+    expect(productRequests.map(queryOf)[1]).toEqual({ search: 'tea', cursor: TEA_ID });
 
     // The last page had no cursor: reaching the end again asks nothing.
     fireEvent(screen.getByTestId('product-list'), 'onEndReached');
@@ -284,7 +149,7 @@ describe('Home: product search (GET /api/products?search=)', () => {
     serveCatalog(() => HttpResponse.json(productList([publicProduct(), HONEY])));
     renderWithProviders(<FeedScreen />, { locale: 'ne' });
 
-    fireEvent.press(await screen.findByRole('button', { name: 'Groceries' }));
+    await searchTea();
 
     expect(await screen.findByText('रु. ४५० / pack')).toBeOnTheScreen();
     expect(screen.getByText('स्टकमा १२ वटा')).toBeOnTheScreen();
@@ -296,7 +161,7 @@ describe('Home: stock safeguards on the quantity picker', () => {
   async function showProducts(...products: Parameters<typeof productList>[0] & object) {
     serveCatalog(() => HttpResponse.json(productList(products)));
     renderWithProviders(<FeedScreen />);
-    await openGroceries();
+    await searchTea();
     await screen.findByTestId('product-list');
   }
 
@@ -389,7 +254,7 @@ describe('Home: stock safeguards on the quantity picker', () => {
     let stock = 5;
     serveCatalog(() => HttpResponse.json(productList([publicProduct({ stock_quantity: stock })])));
     renderWithProviders(<FeedScreen />);
-    await openGroceries();
+    await searchTea();
     await screen.findByText('5 in stock');
     for (let press = 0; press < 4; press += 1) {
       fireEvent.press(button(TEA_ID, 'Increase quantity of Ilam Tea 500g'));
@@ -424,16 +289,19 @@ describe('Home: stock safeguards on the quantity picker', () => {
     expect(within(card(HONEY_ID)).getByText("Doesn't deliver to you")).toBeOnTheScreen();
   });
 
-  it('lets a signed-out visitor browse, and asks them to sign in to order', async () => {
+  it('lets a guest browse and add to the cart without signing in', async () => {
     useAuthStore.getState().clearSession();
     serveCatalog();
     renderWithProviders(<FeedScreen />);
 
-    await openGroceries();
+    await searchTea();
 
     expect(await screen.findByText('12 in stock')).toBeOnTheScreen();
-    expect(button(TEA_ID, 'Add Ilam Tea 500g')).toBeDisabled();
-    expect(within(card(TEA_ID)).getByText('Sign in to order.')).toBeOnTheScreen();
+    expect(within(card(TEA_ID)).queryByTestId(`product-hint-${TEA_ID}`)).toBeNull();
+    fireEvent.press(button(TEA_ID, 'Add Ilam Tea 500g'));
+
+    expect(useCartStore.getState().lines).toMatchObject([{ productId: TEA_ID, quantity: 1 }]);
+    expect(useAuthStore.getState().accessToken).toBeNull();
   });
 
   it('freezes adding while a checkout is waiting for payment', async () => {
@@ -443,5 +311,67 @@ describe('Home: stock safeguards on the quantity picker', () => {
     await showProducts(publicProduct());
 
     expect(button(TEA_ID, 'Add Ilam Tea 500g')).toBeDisabled();
+  });
+});
+
+describe('Home: one search for shops and products', () => {
+  it('lists the shops whose name matches, even when no product does', async () => {
+    serveCatalog(() => HttpResponse.json(productList([])));
+    renderWithProviders(<FeedScreen />);
+    await screen.findByText('Delivers to you');
+
+    fireEvent.changeText(screen.getByTestId('product-search'), 'thamel');
+
+    const shops = await screen.findByTestId('shop-results');
+    expect(within(shops).getByTestId(`vendor-card-${THAMEL_VENDOR.id}`)).toBeOnTheScreen();
+    expect(within(shops).queryByTestId(`vendor-card-${PATAN_VENDOR.id}`)).toBeNull();
+    // A shop matched: the "no products" message would be wrong.
+    expect(screen.queryByTestId('products-empty')).toBeNull();
+
+    fireEvent.press(within(shops).getByTestId(`vendor-card-${THAMEL_VENDOR.id}`));
+    expect(jest.mocked(router.push)).toHaveBeenCalledWith({
+      pathname: '/vendor/[id]',
+      params: { id: THAMEL_VENDOR.id },
+    });
+  });
+
+  it('shows matching shops above matching products', async () => {
+    serveCatalog(() =>
+      HttpResponse.json(productList([publicProduct({ name: 'Organic Honey 500g' })])),
+    );
+    renderWithProviders(<FeedScreen />);
+    await screen.findByText('Delivers to you');
+
+    fireEvent.changeText(screen.getByTestId('product-search'), 'ORGANIC');
+
+    const shops = await screen.findByTestId('shop-results');
+    expect(within(shops).getByTestId(`vendor-card-${PATAN_VENDOR.id}`)).toBeOnTheScreen();
+    expect(within(shops).getByText('Products')).toBeOnTheScreen();
+    expect(screen.getByText('Organic Honey 500g')).toBeOnTheScreen();
+  });
+
+  it('shows only products when no shop name matches', async () => {
+    serveCatalog();
+    renderWithProviders(<FeedScreen />);
+    await screen.findByText('Delivers to you');
+
+    fireEvent.changeText(screen.getByTestId('product-search'), 'ilam');
+
+    expect(await screen.findByTestId(`product-card-${TEA_ID}`)).toBeOnTheScreen();
+    expect(screen.queryByTestId('shop-results')).toBeNull();
+  });
+});
+
+describe('matchingVendors', () => {
+  it('matches every word typed, in any case, across both feed sections', () => {
+    const feed = feedResponse();
+    const names = (text: string) =>
+      matchingVendors(feed, text).map((entry) => entry.vendor.business_name);
+
+    expect(names('kirana')).toEqual(['Thamel Kirana Pasal']);
+    expect(names('PATAN store')).toEqual(['Patan Organic Store']);
+    expect(names('patan kirana')).toEqual([]);
+    expect(names('   ')).toEqual([]);
+    expect(matchingVendors(undefined, 'thamel')).toEqual([]);
   });
 });

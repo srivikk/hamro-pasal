@@ -44,22 +44,22 @@ function MessageBubble({ entry, onRetry }: { entry: ThreadMessage; onRetry: () =
       className={`mx-4 mb-3 max-w-[80%] ${mine ? 'self-end items-end' : 'self-start items-start'}`}
       testID={`chat-message-${message.id}`}
     >
-      <Text className="mb-1 text-xs font-semibold text-neutral-500">{name}</Text>
+      <Text className="mb-1 text-xs font-semibold text-gray-500">{name}</Text>
       <View className={`gap-2 rounded-2xl px-4 py-3 ${mine ? 'bg-brand' : 'bg-white'}`}>
         {message.body === '' ? null : (
-          <Text className={mine ? 'text-white' : 'text-neutral-900'}>{message.body}</Text>
+          <Text className={mine ? 'text-white' : 'text-gray-900'}>{message.body}</Text>
         )}
         {message.attachments.map((attachment) => (
           <Image
             key={attachment.url}
             source={{ uri: attachment.url }}
             accessibilityIgnoresInvertColors
-            className="h-40 w-56 rounded-xl bg-neutral-200"
+            className="h-40 w-56 rounded-xl bg-gray-200"
           />
         ))}
       </View>
       {status === 'sending' ? (
-        <Text className="mt-1 text-xs text-neutral-500">{t('dispute.status.sending')}</Text>
+        <Text className="mt-1 text-xs text-gray-500">{t('dispute.status.sending')}</Text>
       ) : null}
       {status === 'failed' ? (
         <Pressable accessibilityRole="button" onPress={onRetry}>
@@ -81,8 +81,8 @@ const ATTACH_ERRORS = {
 
 function ClosedNotice({ message }: { message: string }) {
   return (
-    <View className="flex-1 items-center justify-center bg-neutral-50 px-8">
-      <Text className="text-center text-base text-neutral-700" testID="dispute-closed">
+    <View className="flex-1 items-center justify-center bg-gray-50 px-8">
+      <Text className="text-center text-base text-gray-700" testID="dispute-closed">
         {message}
       </Text>
     </View>
@@ -136,7 +136,7 @@ function DisputeChat({ orderId }: { orderId: string }) {
 
   return (
     <KeyboardAvoidingView
-      className="flex-1 bg-neutral-50"
+      className="flex-1 bg-gray-50"
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       {connection === 'connected' ? null : (
@@ -144,7 +144,7 @@ function DisputeChat({ orderId }: { orderId: string }) {
           {t(`dispute.connection.${connection}`)}
         </Text>
       )}
-      <Text className="px-4 pt-3 text-xs text-neutral-500">{t('dispute.privacy')}</Text>
+      <Text className="px-4 pt-3 text-xs text-gray-500">{t('dispute.privacy')}</Text>
       {historyStatus === 'failed' ? (
         <View
           className="mx-4 mt-2 flex-row items-center justify-between gap-2 rounded-xl bg-red-50 px-3 py-2"
@@ -164,7 +164,7 @@ function DisputeChat({ orderId }: { orderId: string }) {
         }
         contentContainerStyle={{ paddingVertical: 12, flexGrow: 1 }}
         ListEmptyComponent={
-          <Text className="px-6 py-8 text-center text-sm text-neutral-600" testID="chat-empty">
+          <Text className="px-6 py-8 text-center text-sm text-gray-500" testID="chat-empty">
             {t(historyStatus === 'loading' ? 'dispute.historyLoading' : 'dispute.empty')}
           </Text>
         }
@@ -190,7 +190,7 @@ function DisputeChat({ orderId }: { orderId: string }) {
             >
               <Image
                 source={{ uri: attachment.url }}
-                className="h-14 w-14 rounded-lg bg-neutral-200"
+                className="h-14 w-14 rounded-lg bg-gray-200"
               />
             </Pressable>
           ))}
@@ -201,14 +201,14 @@ function DisputeChat({ orderId }: { orderId: string }) {
           {t(ATTACH_ERRORS[attachError])}
         </Text>
       )}
-      <View className="flex-row items-end gap-2 border-t border-neutral-200 bg-white p-3">
+      <View className="flex-row items-end gap-2 border-t border-gray-200 bg-white p-3">
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t('dispute.attach')}
           testID="chat-attach"
           disabled={attaching || attachments.length >= MAX_CHAT_ATTACHMENTS}
           onPress={() => void attach()}
-          className="h-11 w-11 items-center justify-center rounded-full bg-neutral-100"
+          className="h-11 w-11 items-center justify-center rounded-full bg-gray-100"
         >
           <Ionicons
             name={attaching ? 'hourglass-outline' : 'image-outline'}
@@ -224,7 +224,7 @@ function DisputeChat({ orderId }: { orderId: string }) {
           onChangeText={setDraft}
           maxLength={MAX_CHAT_MESSAGE_LENGTH}
           multiline
-          className="max-h-28 flex-1 rounded-2xl border border-neutral-300 px-3 py-2 text-neutral-900"
+          className="max-h-28 flex-1 rounded-2xl border border-gray-300 px-3 py-2 text-gray-900"
         />
         <Button
           label={t('dispute.send')}

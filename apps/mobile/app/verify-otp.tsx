@@ -1,21 +1,31 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { NEPAL_PHONE_REGEX, OTP_RESEND_COOLDOWN_SECONDS } from '@hamro-pasal/shared-types';
 import { Redirect, router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { AUTH_ERROR_CODES, useSendOtp, useVerifyOtp } from '../src/api/auth';
+import {
+  AUTH_ERROR_CODES,
+  isWhatsAppUnavailable,
+  useSendOtp,
+  useSendOtpViaWhatsApp,
+  useVerifyOtp,
+} from '../src/api/auth';
 import type { ApiError } from '../src/api/http';
 import { Button } from '../src/components/Button';
+import { KeyboardScreen } from '../src/components/KeyboardScreen';
 import {
   formatNepalPhone,
   isCompleteOtp,
   leaveSignIn,
   sanitizeOtpInput,
 } from '../src/features/auth/login-form';
+import { LanguageToggle } from '../src/features/settings/LanguageToggle';
 import { formatCountdown, useNow } from '../src/lib/countdown';
 import { useAuthStore } from '../src/store/useAuthStore';
 import { useToastStore } from '../src/store/useToastStore';
+import { colors } from '../src/theme/colors';
 
 function secondsParam(value: string | undefined): number {
   const seconds = Number(value);
@@ -30,6 +40,7 @@ export default function VerifyOtpScreen() {
   const toast = useToastStore((state) => state.show);
   const verifyOtp = useVerifyOtp();
   const sendOtp = useSendOtp();
+  const sendWhatsApp = useSendOtpViaWhatsApp();
   const [code, setCode] = useState('');
   const [resendAt, setResendAt] = useState(() => Date.now() + secondsParam(resendAfter) * 1000);
   const now = useNow();
@@ -59,9 +70,11 @@ export default function VerifyOtpScreen() {
     verifyOtp.mutate(
       { phone, code },
       {
-        onSuccess: () => {
+        onSuccess: ({ is_new_user: isNewUser }) => {
           toast(t('auth.signedIn'), 'info');
-          leaveSignIn(router);
+          // A brand-new account completes its profile (name, consents) before anything else.
+          if (isNewUser) router.replace('/complete-profile');
+          else leaveSignIn(router);
         },
         onError: () => {
           setCode('');
@@ -89,29 +102,50 @@ export default function VerifyOtpScreen() {
     });
   };
 
+  const resendViaWhatsApp = (): void => {
+    verifyOtp.reset();
+    sendWhatsApp.mutate(phone, {
+      onSuccess: ({ resend_after_seconds: seconds }) => {
+        setResendAt(Date.now() + seconds * 1000);
+        toast(t('auth.whatsappSent'), 'info');
+      },
+      onError: (error) => {
+        const retry = (error.details as { retry_after_seconds?: unknown } | undefined)
+          ?.retry_after_seconds;
+        if (typeof retry === 'number') setResendAt(Date.now() + retry * 1000);
+        toast(
+          isWhatsAppUnavailable(error) ? t('auth.whatsappUnavailable') : t('auth.failed'),
+          'error',
+        );
+      },
+    });
+  };
+
   const resendInMs = Math.max(0, resendAt - now);
+  const whatsAppDisabled = resendInMs > 0 || sendWhatsApp.isPending || sendOtp.isPending;
   const message = verifyOtp.error === null ? null : verificationError(verifyOtp.error);
 
   return (
-    <ScrollView
-      className="flex-1 bg-neutral-50"
-      contentContainerStyle={{ padding: 24, gap: 16 }}
-      keyboardShouldPersistTaps="handled"
-    >
+    <KeyboardScreen testID="verify-otp-screen">
       <Stack.Screen
         options={{
           headerShown: true,
           title: t('auth.verifyTitle'),
           headerBackTitle: t('common.back'),
+          headerRight: () => <LanguageToggle />,
         }}
       />
-      <Text className="text-2xl font-bold text-neutral-900">{t('auth.verifyTitle')}</Text>
-      <Text className="text-base text-neutral-700">
+      <Text className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+        {t('auth.verifyTitle')}
+      </Text>
+      <Text className="text-base text-gray-700 dark:text-gray-300">
         {t('auth.sentTo', { phone: formatNepalPhone(phone) })}
       </Text>
 
       <View className="gap-2">
-        <Text className="text-sm font-semibold text-neutral-800">{t('auth.codeLabel')}</Text>
+        <Text className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+          {t('auth.codeLabel')}
+        </Text>
         <TextInput
           testID="otp-input"
           accessibilityLabel={t('auth.codeLabel')}
@@ -126,7 +160,7 @@ export default function VerifyOtpScreen() {
           autoComplete="sms-otp"
           autoFocus
           maxLength={6}
-          className="rounded-xl border border-neutral-300 bg-white px-3 py-3 text-center text-2xl tracking-[8px] text-neutral-900"
+          className="rounded-xl border border-gray-300 bg-white px-3 py-3 text-center text-2xl tracking-[8px] text-gray-900"
         />
         {message === null ? null : (
           <Text testID="otp-error" className="text-sm text-red-700">
@@ -142,7 +176,7 @@ export default function VerifyOtpScreen() {
       />
 
       {resendInMs > 0 ? (
-        <Text testID="resend-countdown" className="text-center text-sm text-neutral-600">
+        <Text testID="resend-countdown" className="text-center text-sm text-gray-500">
           {t('auth.resendIn', { time: formatCountdown(resendInMs, locale) })}
         </Text>
       ) : (
@@ -153,6 +187,20 @@ export default function VerifyOtpScreen() {
           onPress={resend}
         />
       )}
+      {/* SMS not arriving: the same code request through the server's WhatsApp provider. The
+          per-number resend cooldown applies to it too. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={t('auth.whatsapp')}
+        accessibilityState={{ disabled: whatsAppDisabled }}
+        disabled={whatsAppDisabled}
+        testID="otp-whatsapp"
+        className={`flex-row items-center justify-center gap-2 py-2 ${whatsAppDisabled ? 'opacity-40' : ''}`}
+        onPress={resendViaWhatsApp}
+      >
+        <Ionicons name="logo-whatsapp" size={20} color={colors.success} />
+        <Text className="text-base font-semibold text-emerald-700">{t('auth.whatsapp')}</Text>
+      </Pressable>
       <Button
         label={t('auth.changeNumber')}
         variant="secondary"
@@ -160,6 +208,6 @@ export default function VerifyOtpScreen() {
           router.replace('/login');
         }}
       />
-    </ScrollView>
+    </KeyboardScreen>
   );
 }

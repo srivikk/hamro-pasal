@@ -2,8 +2,9 @@ import { fireEvent, screen, within } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import { http, HttpResponse } from 'msw';
 
-import FeedScreen from '../../../app/(tabs)/index';
+import FeedScreen from '../../../app/(tabs)/(home)/index';
 import { VENDORS_PATH } from '../../api/catalog';
+import { useAuthStore } from '../../store/useAuthStore';
 import {
   errorBody,
   feedResponse,
@@ -82,14 +83,25 @@ describe('Feed screen (GET /api/vendors)', () => {
     expect(calls()).toBe(2);
   });
 
-  it('offers sign-in when the session has lapsed (401)', async () => {
-    serveFeed(() => HttpResponse.json(errorBody('UNAUTHENTICATED'), { status: 401 }));
+  it('shows the shops to a guest: no session, no token sent, no sign-in prompt', async () => {
+    useAuthStore.getState().clearSession();
+    const authorization: (string | null)[] = [];
+    server.use(
+      http.get(apiUrl(VENDORS_PATH), ({ request }) => {
+        authorization.push(request.headers.get('authorization'));
+        return HttpResponse.json(feedResponse());
+      }),
+    );
     renderWithProviders(<FeedScreen />);
 
-    expect(await screen.findByText('Sign in to see the shops near you.')).toBeOnTheScreen();
-    fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
+    fireEvent.press(await screen.findByTestId(`vendor-card-${THAMEL_VENDOR.id}`));
 
-    expect(jest.mocked(router.push)).toHaveBeenCalledWith('/login');
+    expect(authorization).toEqual([null]);
+    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
+    expect(jest.mocked(router.push)).toHaveBeenCalledWith({
+      pathname: '/vendor/[id]',
+      params: { id: THAMEL_VENDOR.id },
+    });
   });
 
   it('renders the feed in Nepali with Devanagari numerals', async () => {

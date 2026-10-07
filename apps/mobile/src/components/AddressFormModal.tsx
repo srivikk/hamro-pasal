@@ -1,10 +1,15 @@
+import { NEPAL_PROVINCES, type NepalProvinceId } from '@hamro-pasal/shared-types';
+import { useRef, useState } from 'react';
 import {
-  NEPAL_PROVINCES,
-  type NepalAddress,
-  type NepalProvinceId,
-} from '@hamro-pasal/shared-types';
-import { useState } from 'react';
-import { Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -16,21 +21,35 @@ import {
   type AddressField,
   type AddressFormValues,
 } from '../features/address/address-form';
+import { geocodeArea } from '../features/location/place-search';
+import { usePlaceName } from '../features/location/usePlaceName';
 import { currentPinPosition } from '../features/territory/device-territory';
 import type { Coordinates } from '../features/territory/territory';
 import { formatLocalizedNumber } from '../i18n/format-number';
+import { useKeyboardHeight } from '../lib/useKeyboardHeight';
+import {
+  ADDRESS_LABELS,
+  MAX_RECIPIENT_NAME_LENGTH,
+  type AddressDraft,
+} from '../store/useAddressStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { Button } from './Button';
+import { MapPinPicker } from './MapPinPicker';
+
+/** How long after a field takes focus it is scrolled into sight (the keyboard is up by then). */
+const FOCUS_SCROLL_DELAY_MS = 300;
 
 export interface AddressFormModalProps {
   visible: boolean;
-  /** Pre-fills the form (editing the saved address). */
-  initial: NepalAddress | null;
-  /** Receives only schema-valid, canonical addresses. */
-  onSave: (address: NepalAddress) => void;
+  /** Pre-fills the form (editing a saved address). */
+  initial: AddressDraft | null;
+  /** Receives only schema-valid, canonical addresses, with their label and recipient. */
+  onSave: (draft: AddressDraft) => void;
   onClose: () => void;
   /** Source for the pin; defaults to the device position (or the __DEV__ location simulator). */
   locatePin?: () => Promise<Coordinates | null>;
+  /** Finds where a typed area is, to open the map there; defaults to the place search. */
+  locateArea?: (query: string) => Promise<Coordinates | null>;
 }
 
 /** Literal keys, so every province name is checked against the locale files at compile time. */
@@ -61,7 +80,7 @@ function FieldError({
 }
 
 function Label({ children }: { children: string }) {
-  return <Text className="mb-1 text-sm font-semibold text-neutral-700">{children}</Text>;
+  return <Text className="mb-1 text-sm font-semibold text-gray-700">{children}</Text>;
 }
 
 /** A tap-to-expand list: the dropdown for province and the cascading district list. */
@@ -95,28 +114,25 @@ function SelectField({
         onPress={() => {
           setOpen((current) => !current);
         }}
-        className={`rounded-xl border border-neutral-300 px-3 py-3 ${disabled ? 'bg-neutral-100' : 'bg-white'}`}
+        className={`rounded-xl border border-gray-300 px-3 py-3 ${disabled ? 'bg-gray-100' : 'bg-white'}`}
       >
-        <Text className={value === null ? 'text-neutral-400' : 'text-neutral-900'}>
+        <Text className={value === null ? 'text-gray-400' : 'text-gray-900'}>
           {value ?? placeholder}
         </Text>
       </Pressable>
       {open ? (
-        <View
-          className="mt-1 rounded-xl border border-neutral-200 bg-white"
-          accessibilityRole="list"
-        >
+        <View className="mt-1 rounded-xl bg-white shadow-sm" accessibilityRole="list">
           {options.map((option) => (
             <Pressable
               key={option.value}
               accessibilityRole="button"
-              className="border-b border-neutral-100 px-3 py-3 active:bg-neutral-50"
+              className="border-b border-gray-100 px-3 py-3 active:bg-gray-50"
               onPress={() => {
                 onSelect(option.value);
                 setOpen(false);
               }}
             >
-              <Text className="text-neutral-900">{option.label}</Text>
+              <Text className="text-gray-900">{option.label}</Text>
             </Pressable>
           ))}
         </View>
@@ -130,25 +146,35 @@ function TextField({
   value,
   onChangeText,
   numeric = false,
+  maxLength,
   testID,
+  onFocused,
 }: {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
   numeric?: boolean;
+  maxLength?: number;
   testID: string;
+  /** Called with the field's own view when it takes focus, so the form can scroll it into sight. */
+  onFocused?: (field: View) => void;
 }) {
+  const field = useRef<View>(null);
   return (
-    <View>
+    <View ref={field} collapsable={false}>
       <Label>{label}</Label>
       <TextInput
         testID={testID}
+        onFocus={() => {
+          if (field.current !== null) onFocused?.(field.current);
+        }}
         accessibilityLabel={label}
         value={value}
         onChangeText={onChangeText}
         keyboardType={numeric ? 'number-pad' : 'default'}
+        maxLength={maxLength}
         autoCorrect={false}
-        className="rounded-xl border border-neutral-300 bg-white px-3 py-3 text-neutral-900"
+        className="rounded-xl border border-gray-300 bg-white px-3 py-3 text-gray-900"
       />
     </View>
   );
@@ -159,12 +185,53 @@ function AddressForm({
   onSave,
   onClose,
   locatePin,
+  locateArea,
 }: Omit<AddressFormModalProps, 'visible'>) {
   const { t } = useTranslation();
   const locale = useAuthStore((state) => state.locale);
   const [values, setValues] = useState<AddressFormValues>(
-    initial === null ? EMPTY_ADDRESS_FORM : addressToFormValues(initial),
+    initial === null
+      ? EMPTY_ADDRESS_FORM
+      : addressToFormValues(initial.address, initial.label, initial.recipient),
   );
+  const [mapOpen, setMapOpen] = useState(false);
+  const [mapCenter, setMapCenter] = useState<Coordinates | null>(null);
+  const [centering, setCentering] = useState(false);
+  const keyboardHeight = useKeyboardHeight();
+  const scroll = useRef<ScrollView>(null);
+  const content = useRef<View>(null);
+
+  // Once the keyboard is up (and, on Android, the padding below it exists), bring the focused
+  // field to the top of what is visible.
+  const revealField = (field: View): void => {
+    setTimeout(() => {
+      if (content.current === null) return;
+      field.measureLayout(
+        content.current,
+        (_x, y) => {
+          scroll.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
+        },
+        () => undefined,
+      );
+    }, FOCUS_SCROLL_DELAY_MS);
+  };
+
+  // The map opens on the pin if there is one; else on the Palika / district already typed (so a
+  // customer filling in Pokhara is not shown Kathmandu); else on its default.
+  const openMap = async (): Promise<void> => {
+    let center = values.pin;
+    if (center === null) {
+      const area = [values.palika.trim(), values.district ?? ''].filter((part) => part !== '');
+      if (area.length > 0) {
+        setCentering(true);
+        center = await (locateArea ?? geocodeArea)(area.join(', ')).catch(() => null);
+        setCentering(false);
+      }
+    }
+    setMapCenter(center);
+    setMapOpen(true);
+  };
+  const pinPlace = usePlaceName(values.pin);
   const [errors, setErrors] = useState<Partial<Record<AddressField, string>>>({});
   const [locating, setLocating] = useState(false);
   const [pinFailed, setPinFailed] = useState(false);
@@ -196,141 +263,233 @@ function AddressForm({
     const result = validateAddressForm(values);
     if (result.ok) {
       setErrors({});
-      onSave(result.address);
+      onSave({ label: result.label, recipient: result.recipient, address: result.address });
     } else {
       setErrors(result.errors);
     }
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-neutral-50">
-      <View className="flex-row items-center justify-between border-b border-neutral-200 bg-white px-4 py-3">
-        <Text className="text-lg font-bold text-neutral-900">{t('address.title')}</Text>
+    <SafeAreaView className="flex-1 bg-gray-50">
+      <View className="flex-row items-center justify-between border-b border-gray-200 bg-white px-4 py-3">
+        <Text className="text-lg font-bold text-gray-900">{t('address.title')}</Text>
         <Button label={t('address.cancel')} size="sm" variant="secondary" onPress={onClose} />
       </View>
-      <ScrollView
-        contentContainerStyle={{ padding: 16, gap: 16 }}
-        keyboardShouldPersistTaps="handled"
+      {/* The keyboard must never cover the field being typed in. iOS: the form is padded above
+          it. Android: a Modal is not resized for the keyboard and KeyboardAvoidingView does not
+          help, so the scroll content gets the keyboard's height as bottom padding. On both, the
+          focused field is then scrolled into sight. */}
+      <KeyboardAvoidingView
+        className="flex-1"
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        testID="address-form-keyboard"
       >
-        <View>
-          <SelectField
-            testID="address-province"
-            label={t('address.province')}
-            placeholder={t('address.select')}
-            value={
-              selectedProvince === undefined
-                ? null
-                : `${formatLocalizedNumber(selectedProvince.id, locale)}. ${t(PROVINCE_NAME_KEY[selectedProvince.id])}`
-            }
-            options={provinceOptions}
-            onSelect={(value) => {
-              const provinceId = Number(value);
-              // Changing province invalidates the district: the cascade starts over.
-              update({
-                provinceId,
-                district: provinceId === values.provinceId ? values.district : null,
-              });
-            }}
-          />
-          <FieldError field="province_id" errors={errors} />
-        </View>
-
-        <View>
-          <SelectField
-            testID="address-district"
-            label={t('address.district')}
-            placeholder={
-              values.provinceId === null ? t('address.selectProvinceFirst') : t('address.select')
-            }
-            value={values.district}
-            options={districtOptions}
-            disabled={values.provinceId === null}
-            onSelect={(district) => {
-              update({ district });
-            }}
-          />
-          <FieldError field="district_string" errors={errors} />
-        </View>
-
-        <View>
-          <TextField
-            testID="address-palika"
-            label={t('address.palika')}
-            value={values.palika}
-            onChangeText={(palika) => {
-              update({ palika });
-            }}
-          />
-          <FieldError field="municipality_palika_string" errors={errors} />
-        </View>
-
-        <View>
-          <TextField
-            testID="address-ward"
-            label={t('address.ward')}
-            value={values.ward}
-            numeric
-            onChangeText={(ward) => {
-              update({ ward });
-            }}
-          />
-          <FieldError field="ward_number" errors={errors} />
-        </View>
-
-        <View>
-          <TextField
-            testID="address-tole"
-            label={t('address.tole')}
-            value={values.tole}
-            onChangeText={(tole) => {
-              update({ tole });
-            }}
-          />
-          <FieldError field="tole_locality" errors={errors} />
-        </View>
-
-        <View>
-          <TextField
-            testID="address-landmark"
-            label={t('address.landmark')}
-            value={values.landmark}
-            onChangeText={(landmark) => {
-              update({ landmark });
-            }}
-          />
-          <FieldError field="landmark" errors={errors} />
-        </View>
-
-        {/* STUB: a map "Drop a Pin" (Mapbox / Google Maps, SPEC §3) replaces this in a later phase. */}
-        <View
-          className="gap-2 rounded-2xl border border-neutral-200 bg-white p-4"
-          testID="address-pin"
+        <ScrollView
+          className="flex-1"
+          ref={scroll}
+          testID="address-form-scroll"
+          contentContainerStyle={{
+            padding: 16,
+            paddingBottom: 48 + (Platform.OS === 'android' ? keyboardHeight : 0),
+          }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
         >
-          <Label>{t('address.pin.title')}</Label>
-          <Text className="text-sm text-neutral-900" testID="address-pin-value">
-            {values.pin === null
-              ? t('address.pin.none')
-              : t('address.pin.coords', {
-                  lat: formatLocalizedNumber(Number(values.pin.latitude.toFixed(5)), locale),
-                  lng: formatLocalizedNumber(Number(values.pin.longitude.toFixed(5)), locale),
-                })}
-          </Text>
-          <Text className="text-xs text-neutral-500">{t('address.pin.stub')}</Text>
-          <Button
-            label={locating ? t('address.pin.locating') : t('address.pin.use')}
-            size="sm"
-            variant="secondary"
-            disabled={locating}
-            onPress={() => void dropPin()}
-          />
-          {pinFailed ? (
-            <Text className="text-sm text-red-700">{t('address.pin.failed')}</Text>
-          ) : null}
-          <FieldError field="pin" errors={errors} />
-        </View>
+          <View ref={content} collapsable={false} style={{ gap: 16 }}>
+            <View>
+              <Label>{t('address.label.title')}</Label>
+              <View className="flex-row gap-2" accessibilityRole="radiogroup">
+                {ADDRESS_LABELS.map((label) => (
+                  <View key={label} className="flex-1">
+                    <Button
+                      label={t(`address.label.${label}`)}
+                      size="sm"
+                      variant={values.label === label ? 'primary' : 'secondary'}
+                      testID={`address-label-${label}`}
+                      onPress={() => {
+                        update({ label });
+                      }}
+                    />
+                  </View>
+                ))}
+              </View>
+            </View>
 
-        <Button label={t('address.save')} onPress={save} />
-      </ScrollView>
+            {/* Ordering for someone else: the rider needs to know who to hand the order to. */}
+            {values.label === 'OTHER' ? (
+              <View className="gap-4 rounded-2xl bg-white shadow-sm p-4">
+                <Text className="text-xs text-gray-500">{t('address.recipient.hint')}</Text>
+                <View>
+                  <TextField
+                    onFocused={revealField}
+                    testID="address-recipient-name"
+                    label={t('address.recipient.name')}
+                    value={values.recipientName}
+                    maxLength={MAX_RECIPIENT_NAME_LENGTH}
+                    onChangeText={(recipientName) => {
+                      update({ recipientName });
+                    }}
+                  />
+                  <FieldError field="recipient_name" errors={errors} />
+                </View>
+                <View>
+                  <TextField
+                    onFocused={revealField}
+                    testID="address-recipient-phone"
+                    label={t('address.recipient.phone')}
+                    value={values.recipientPhone}
+                    numeric
+                    maxLength={16}
+                    onChangeText={(recipientPhone) => {
+                      update({ recipientPhone });
+                    }}
+                  />
+                  <FieldError field="recipient_phone" errors={errors} />
+                </View>
+              </View>
+            ) : null}
+
+            <View>
+              <SelectField
+                testID="address-province"
+                label={t('address.province')}
+                placeholder={t('address.select')}
+                value={
+                  selectedProvince === undefined
+                    ? null
+                    : `${formatLocalizedNumber(selectedProvince.id, locale)}. ${t(PROVINCE_NAME_KEY[selectedProvince.id])}`
+                }
+                options={provinceOptions}
+                onSelect={(value) => {
+                  const provinceId = Number(value);
+                  // Changing province invalidates the district: the cascade starts over.
+                  update({
+                    provinceId,
+                    district: provinceId === values.provinceId ? values.district : null,
+                  });
+                }}
+              />
+              <FieldError field="province_id" errors={errors} />
+            </View>
+
+            <View>
+              <SelectField
+                testID="address-district"
+                label={t('address.district')}
+                placeholder={
+                  values.provinceId === null
+                    ? t('address.selectProvinceFirst')
+                    : t('address.select')
+                }
+                value={values.district}
+                options={districtOptions}
+                disabled={values.provinceId === null}
+                onSelect={(district) => {
+                  update({ district });
+                }}
+              />
+              <FieldError field="district_string" errors={errors} />
+            </View>
+
+            <View>
+              <TextField
+                onFocused={revealField}
+                testID="address-palika"
+                label={t('address.palika')}
+                value={values.palika}
+                onChangeText={(palika) => {
+                  update({ palika });
+                }}
+              />
+              <FieldError field="municipality_palika_string" errors={errors} />
+            </View>
+
+            <View>
+              <TextField
+                onFocused={revealField}
+                testID="address-ward"
+                label={t('address.ward')}
+                value={values.ward}
+                numeric
+                onChangeText={(ward) => {
+                  update({ ward });
+                }}
+              />
+              <FieldError field="ward_number" errors={errors} />
+            </View>
+
+            <View>
+              <TextField
+                onFocused={revealField}
+                testID="address-tole"
+                label={t('address.tole')}
+                value={values.tole}
+                onChangeText={(tole) => {
+                  update({ tole });
+                }}
+              />
+              <FieldError field="tole_locality" errors={errors} />
+            </View>
+
+            <View>
+              <TextField
+                onFocused={revealField}
+                testID="address-landmark"
+                label={t('address.landmark')}
+                value={values.landmark}
+                onChangeText={(landmark) => {
+                  update({ landmark });
+                }}
+              />
+              <FieldError field="landmark" errors={errors} />
+            </View>
+
+            {/* SPEC §3 "Drop a Pin": on the map, or from the device's current position. */}
+            <View className="gap-2 rounded-2xl bg-white shadow-sm p-4" testID="address-pin">
+              <Label>{t('address.pin.title')}</Label>
+              {/* The pinned place by name; latitude and longitude are never shown. */}
+              <Text className="text-sm text-gray-900" numberOfLines={2} testID="address-pin-value">
+                {values.pin === null
+                  ? t('address.pin.none')
+                  : (pinPlace.name ?? t('address.pin.set'))}
+              </Text>
+              <Button
+                label={centering ? t('address.pin.locating') : t('address.pin.map')}
+                size="sm"
+                testID="address-pin-map"
+                disabled={centering}
+                onPress={() => void openMap()}
+              />
+              <Button
+                label={locating ? t('address.pin.locating') : t('address.pin.use')}
+                size="sm"
+                variant="secondary"
+                disabled={locating}
+                onPress={() => void dropPin()}
+              />
+              {pinFailed ? (
+                <Text className="text-sm text-red-700">{t('address.pin.failed')}</Text>
+              ) : null}
+              <FieldError field="pin" errors={errors} />
+            </View>
+
+            <Button label={t('address.save')} onPress={save} />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+      <MapPinPicker
+        visible={mapOpen}
+        initial={mapCenter}
+        onConfirm={(pin) => {
+          update({ pin });
+          setPinFailed(false);
+          setMapOpen(false);
+        }}
+        onClose={() => {
+          setMapOpen(false);
+        }}
+      />
     </SafeAreaView>
   );
 }

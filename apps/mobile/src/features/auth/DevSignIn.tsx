@@ -18,8 +18,8 @@ export function DevSignIn() {
   const [draft, setDraft] = useState('');
 
   return (
-    <View className="gap-3 rounded-2xl border border-dashed border-neutral-300 p-4">
-      <Text className="text-base font-bold text-neutral-900">{t('devAuth.title')}</Text>
+    <View className="gap-3 rounded-2xl border border-dashed border-gray-300 p-4">
+      <Text className="text-base font-bold text-gray-900">{t('devAuth.title')}</Text>
       {signedIn ? (
         <>
           <Text className="text-sm text-emerald-800">{t('devAuth.signedIn')}</Text>
@@ -27,7 +27,7 @@ export function DevSignIn() {
         </>
       ) : (
         <>
-          <Text className="text-xs text-neutral-600">{t('devAuth.hint')}</Text>
+          <Text className="text-xs text-gray-500">{t('devAuth.hint')}</Text>
           <TextInput
             value={draft}
             onChangeText={setDraft}
@@ -35,7 +35,7 @@ export function DevSignIn() {
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry
-            className="rounded-xl border border-neutral-300 bg-white px-3 py-2 text-sm"
+            className="rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm"
           />
           <Button
             label={t('devAuth.use')}

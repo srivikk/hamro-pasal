@@ -34,7 +34,7 @@ export const CLIENT_ERROR_CODES = {
 } as const;
 
 interface ApiRequest<T> {
-  method: 'GET' | 'POST';
+  method: 'GET' | 'POST' | 'PATCH';
   /** Path under the API base URL, starting with `/`. */
   path: string;
   query?: Record<string, string>;

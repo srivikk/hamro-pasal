@@ -1,10 +1,12 @@
-import type { FeedResponse } from '@hamro-pasal/shared-types';
+import type { FeedEntry, FeedResponse } from '@hamro-pasal/shared-types';
 import { useQueryClient } from '@tanstack/react-query';
+import { router } from 'expo-router';
 import { ActivityIndicator, FlatList, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '../../components/Button';
-import { selectHasSession, useAuthStore } from '../../store/useAuthStore';
+import { RowsSkeleton } from '../../components/Skeleton';
+import { VendorCard } from '../../components/VendorCard';
 import type { CartVendor } from '../../store/useCartStore';
 import { selectIsCheckoutPending, useCheckoutStore } from '../../store/useCheckoutStore';
 import { ProductCard } from './ProductCard';
@@ -29,48 +31,102 @@ export function serviceableVendors(feed: FeedResponse): Map<string, CartVendor> 
   );
 }
 
-/** The product list for the current search and category, with paging and the add-to-cart picker. */
+/**
+ * The shops of the feed whose name contains every word typed (case-insensitive), serviceable
+ * ones first, as the feed orders them. The feed is already on the device, so this is local.
+ */
+export function matchingVendors(feed: FeedResponse | undefined, text: string): FeedEntry[] {
+  const words = text
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word !== '');
+  if (feed === undefined || words.length === 0) return [];
+  return [...feed.serviceable, ...feed.explore_further].filter(({ vendor }) => {
+    const name = vendor.business_name.toLowerCase();
+    return words.every((word) => name.includes(word));
+  });
+}
+
+/**
+ * Search results: the shops whose name matches, then the products whose name matches (paged,
+ * with the add-to-cart picker).
+ */
 export function ProductResults({
   search,
+  searchText = '',
   feed,
+  needsLocation = false,
 }: {
   search: ProductSearch;
+  /** What is typed in the search field: matched against shop names on the device. */
+  searchText?: string;
   /** The vendor feed, once loaded. Until then nothing can be added (delivery is unknown). */
   feed: FeedResponse | undefined;
+  /** No browsing location is known: products are browse-only until one is selected. */
+  needsLocation?: boolean;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const signedIn = useAuthStore(selectHasSession);
   const frozen = useCheckoutStore(selectIsCheckoutPending);
   const { query } = search;
 
   if (search.isDebouncing || query.isPending) {
     return (
-      <View className="flex-1 items-center justify-center bg-neutral-50">
-        <ActivityIndicator testID="products-loading" />
+      <View className="flex-1 bg-gray-50">
+        <RowsSkeleton testID="products-loading" />
       </View>
     );
   }
 
   if (query.isError && !query.isFetchNextPageError) {
     return (
-      <View className="flex-1 items-center justify-center gap-4 bg-neutral-50 px-6">
-        <Text className="text-center text-base text-neutral-700">{t('discovery.loadError')}</Text>
+      <View className="flex-1 items-center justify-center gap-4 bg-gray-50 px-6">
+        <Text className="text-center text-base text-gray-700">{t('discovery.loadError')}</Text>
         <Button label={t('common.retry')} onPress={() => void query.refetch()} />
       </View>
     );
   }
 
   const vendors = feed === undefined ? null : serviceableVendors(feed);
-  // SPEC customer flow step 3: a shop that does not deliver here is browse-only.
+  const shops = matchingVendors(feed, searchText);
+  const products = query.data.pages.flatMap((page) => page.products);
+  // SPEC customer flow step 3: a shop that does not deliver here is browse-only. Guests order
+  // like anyone else (the feed is public); until the feed has loaded there is no reason to give.
   const blockedReason =
-    vendors !== null ? t('vendor.unavailable') : signedIn ? null : t('discovery.signInToOrder');
+    vendors !== null
+      ? t('vendor.unavailable')
+      : needsLocation
+        ? t('browseLocation.selectToOrder')
+        : null;
 
   return (
     <FlatList
       testID="product-list"
-      className="flex-1 bg-neutral-50"
-      data={query.data.pages.flatMap((page) => page.products)}
+      className="flex-1 bg-gray-50"
+      data={products}
+      ListHeaderComponent={
+        shops.length === 0 ? null : (
+          <View testID="shop-results">
+            <Text className="px-4 pb-2 pt-2 text-xs font-bold uppercase tracking-wide text-gray-500">
+              {t('discovery.shopsHeading')}
+            </Text>
+            {shops.map((entry) => (
+              <VendorCard
+                key={entry.vendor.id}
+                entry={entry}
+                onPress={(vendorId) => {
+                  router.push({ pathname: '/vendor/[id]', params: { id: vendorId } });
+                }}
+              />
+            ))}
+            {products.length === 0 ? null : (
+              <Text className="px-4 pb-2 pt-4 text-xs font-bold uppercase tracking-wide text-gray-500">
+                {t('discovery.productsHeading')}
+              </Text>
+            )}
+          </View>
+        )
+      }
       keyExtractor={(product) => product.id}
       contentContainerStyle={{ paddingTop: 4, paddingBottom: 24 }}
       refreshing={query.isRefetching}
@@ -86,16 +142,19 @@ export function ProductResults({
         }
       }}
       ListEmptyComponent={
-        <Text className="px-4 pt-8 text-center text-base text-neutral-600" testID="products-empty">
-          {t('discovery.empty')}
-        </Text>
+        // A shop matched: "no products" would be wrong.
+        shops.length > 0 ? null : (
+          <Text className="px-4 pt-8 text-center text-base text-gray-500" testID="products-empty">
+            {t('discovery.empty')}
+          </Text>
+        )
       }
       ListFooterComponent={
         query.isFetchingNextPage ? (
           <ActivityIndicator testID="products-loading-more" />
         ) : query.isFetchNextPageError ? (
           <View className="items-center gap-2 px-4">
-            <Text className="text-sm text-neutral-700">{t('discovery.loadMoreError')}</Text>
+            <Text className="text-sm text-gray-700">{t('discovery.loadMoreError')}</Text>
             <Button
               label={t('common.retry')}
               size="sm"

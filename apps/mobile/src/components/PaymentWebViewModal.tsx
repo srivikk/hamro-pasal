@@ -47,8 +47,8 @@ function PaymentSession({
 
   return (
     <SafeAreaView className="flex-1 bg-white">
-      <View className="flex-row items-center justify-between border-b border-neutral-200 px-4 py-3">
-        <Text className="text-base font-bold text-neutral-900">
+      <View className="flex-row items-center justify-between border-b border-gray-200 px-4 py-3">
+        <Text className="text-base font-bold text-gray-900">
           {t('paymentFlow.title', { method: t(`payment.${target.method}`) })}
         </Text>
         <Button

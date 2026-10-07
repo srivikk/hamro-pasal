@@ -33,3 +33,18 @@ export function maxAddable(stockQuantity: number, quantityInCart: number): numbe
 export function clampQuantity(selected: number, max: number): number {
   return Math.max(1, Math.min(selected, max));
 }
+
+/**
+ * The category a promotion points at. Its `target_value` is the category's slug ("festive");
+ * a name typed as shown ("Festive & Dashain") is accepted too. Case does not matter.
+ */
+export function findCategoryByTarget(
+  categories: readonly CategoryView[],
+  target: string,
+): CategoryView | undefined {
+  const wanted = target.trim().toLowerCase();
+  return (
+    categories.find((category) => category.slug === wanted) ??
+    categories.find((category) => category.name.toLowerCase() === wanted)
+  );
+}

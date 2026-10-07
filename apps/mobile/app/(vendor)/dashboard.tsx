@@ -44,11 +44,11 @@ export default function VendorDashboardScreen() {
 
   if (query.data === undefined) {
     return (
-      <View className="flex-1 items-center justify-center gap-4 bg-neutral-50 px-6">
+      <View className="flex-1 items-center justify-center gap-4 bg-gray-50 px-6">
         {header}
         {query.isError ? (
           <>
-            <Text className="text-center text-base text-neutral-700">
+            <Text className="text-center text-base text-gray-700">
               {t('vendorDashboard.loadError')}
             </Text>
             <Button label={t('common.retry')} onPress={() => void query.refetch()} />
@@ -84,7 +84,7 @@ export default function VendorDashboardScreen() {
 
   return (
     <ScrollView
-      className="flex-1 bg-neutral-50"
+      className="flex-1 bg-gray-50"
       contentContainerStyle={{ padding: 16, gap: 16 }}
       keyboardShouldPersistTaps="handled"
       refreshControl={
@@ -99,32 +99,28 @@ export default function VendorDashboardScreen() {
       ) : null}
 
       {orders.length === 0 ? (
-        <Text className="text-center text-base text-neutral-600" testID="vendor-orders-empty">
+        <Text className="text-center text-base text-gray-500" testID="vendor-orders-empty">
           {t('vendorDashboard.empty')}
         </Text>
       ) : null}
 
       {waiting.length > 0 ? (
         <View className="gap-3">
-          <Text className="text-lg font-bold text-neutral-900">
-            {t('vendorDashboard.newOrders')}
-          </Text>
+          <Text className="text-lg font-bold text-gray-900">{t('vendorDashboard.newOrders')}</Text>
           {waiting.map(card)}
         </View>
       ) : null}
 
       {preparing.length > 0 ? (
         <View className="gap-3">
-          <Text className="text-lg font-bold text-neutral-900">
-            {t('vendorDashboard.preparing')}
-          </Text>
+          <Text className="text-lg font-bold text-gray-900">{t('vendorDashboard.preparing')}</Text>
           {preparing.map(card)}
         </View>
       ) : null}
 
       {onTheRoad.length > 0 ? (
         <View className="gap-3">
-          <Text className="text-lg font-bold text-neutral-900">
+          <Text className="text-lg font-bold text-gray-900">
             {t('vendorDashboard.outForDelivery')}
           </Text>
           {onTheRoad.map(card)}

@@ -2,6 +2,7 @@ import type { NepalAddress } from '@hamro-pasal/shared-types';
 import { useMemo } from 'react';
 
 import { useAddressStore } from '../../store/useAddressStore';
+import { useBrowseLocationStore } from '../../store/useBrowseLocationStore';
 
 /** Where the feed and menus are evaluated from (SPEC §2 serviceability runs on the server). */
 export interface CustomerLocation {
@@ -12,8 +13,9 @@ export interface CustomerLocation {
 }
 
 /**
- * Thamel, Kathmandu Metropolitan City (the seeded customer's neighbourhood). Used until the
- * customer saves a delivery address; live GPS for the feed is a later phase.
+ * Thamel, Kathmandu Metropolitan City (the seeded customer's neighbourhood). Only what a query is
+ * asked with while no location is known at all; the Home screen then asks the customer to select
+ * one instead of listing shops (`useHasBrowseLocation`).
  */
 export const THAMEL_FALLBACK_LOCATION: CustomerLocation = {
   lat: 27.7154,
@@ -31,8 +33,33 @@ export function customerLocationFrom(address: NepalAddress | null): CustomerLoca
   };
 }
 
-/** The customer location, following the saved address in encrypted MMKV. */
+/**
+ * Where the customer is browsing from, in this order: the place chosen in the Home header, the
+ * device position captured at boot, the selected delivery address, else Thamel. The feed and
+ * every menu follow it.
+ */
 export function useCustomerLocation(): CustomerLocation {
   const address = useAddressStore((state) => state.address);
-  return useMemo(() => customerLocationFrom(address), [address]);
+  const override = useBrowseLocationStore((state) => state.override);
+  const device = useBrowseLocationStore((state) => state.device);
+  return useMemo(() => {
+    if (override !== null) {
+      return {
+        lat: override.lat,
+        lng: override.lng,
+        municipalityPalika: override.municipalityPalika,
+      };
+    }
+    // A GPS fix names no Palika, so CITY_WIDE shops match only through an address.
+    if (device !== null) return { lat: device.lat, lng: device.lng, municipalityPalika: null };
+    return customerLocationFrom(address);
+  }, [address, override, device]);
+}
+
+/** False when location was refused or skipped and nothing was selected: Home asks for one. */
+export function useHasBrowseLocation(): boolean {
+  const hasAddress = useAddressStore((state) => state.address !== null);
+  const hasOverride = useBrowseLocationStore((state) => state.override !== null);
+  const hasDevice = useBrowseLocationStore((state) => state.device !== null);
+  return hasOverride || hasDevice || hasAddress;
 }

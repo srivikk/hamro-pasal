@@ -78,7 +78,7 @@ export function CheckoutOutcome() {
           label={t('order.track')}
           size="sm"
           onPress={() => {
-            router.push({ pathname: '/order/[id]', params: { id: session.orderId } });
+            router.push({ pathname: '/track-order', params: { id: session.orderId } });
           }}
         />
       ) : null}

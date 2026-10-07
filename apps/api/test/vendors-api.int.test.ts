@@ -194,11 +194,17 @@ describe('vendors API', () => {
       }
     });
 
-    it('requires a customer token', async () => {
+    it('is public: a guest and any role get the feed without a customer token', async () => {
       const anonymous = await request(t.app).get('/api/vendors').query(at());
       const vendor = await feed(at(), bearer(randomUUID(), 'VENDOR'));
 
-      expect([anonymous.status, vendor.status]).toEqual([401, 403]);
+      expect([anonymous.status, vendor.status]).toEqual([200, 200]);
+      feedResponseSchema.parse(anonymous.body);
+
+      const vendorId = await radiusVendorAt(2_000);
+      const guestMenu = await request(t.app).get(`/api/vendors/${vendorId}/products`).query(at());
+      expect(guestMenu.status).toBe(200);
+      vendorMenuSchema.parse(guestMenu.body);
     });
   });
 

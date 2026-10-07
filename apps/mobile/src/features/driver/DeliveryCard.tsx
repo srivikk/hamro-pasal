@@ -38,38 +38,38 @@ export function DeliveryCard({
   return (
     <View className="gap-3 rounded-2xl bg-white p-4" testID={`delivery-${delivery.id}`}>
       <View className="flex-row items-center justify-between">
-        <Text className="text-lg font-bold text-neutral-900">
+        <Text className="text-lg font-bold text-gray-900">
           {t('order.code', { code: vendorOrderCode(order.id) })}
         </Text>
-        <Text className="text-sm text-neutral-600" testID={`delivery-state-${delivery.id}`}>
+        <Text className="text-sm text-gray-500" testID={`delivery-state-${delivery.id}`}>
           {t(`driverDashboard.state.${delivery.state}`)}
         </Text>
       </View>
 
-      <Text className="text-base text-neutral-800">
+      <Text className="text-base text-gray-800">
         {t('driverDashboard.pickup', { shop: order.vendor_business_name })}
       </Text>
 
       <View className="gap-0.5">
         {address === null ? (
-          <Text className="text-sm text-neutral-500">{t('vendorDashboard.noAddress')}</Text>
+          <Text className="text-sm text-gray-500">{t('vendorDashboard.noAddress')}</Text>
         ) : (
           <>
-            <Text className="text-sm text-neutral-700">
+            <Text className="text-sm text-gray-700">
               {t('vendorDashboard.address', {
                 ward: address.ward_number,
                 tole: address.tole_locality,
                 palika: address.municipality_palika_string,
               })}
             </Text>
-            <Text className="text-sm text-neutral-500">{address.landmark}</Text>
+            <Text className="text-sm text-gray-500">{address.landmark}</Text>
           </>
         )}
       </View>
 
       <View className="gap-1">
         {order.items.map((item) => (
-          <Text key={item.product_id} className="text-sm text-neutral-700">
+          <Text key={item.product_id} className="text-sm text-gray-700">
             {t('vendorDashboard.item', { quantity: item.quantity, name: item.product_name })}
           </Text>
         ))}

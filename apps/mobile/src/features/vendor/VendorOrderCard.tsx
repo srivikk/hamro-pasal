@@ -52,18 +52,18 @@ export function VendorOrderCard({
       testID={`vendor-order-${order.id}`}
     >
       <View className="flex-row items-center justify-between">
-        <Text className="text-lg font-bold text-neutral-900">
+        <Text className="text-lg font-bold text-gray-900">
           {t('order.code', { code: vendorOrderCode(order.id) })}
         </Text>
-        <Text className="text-base font-semibold text-neutral-900">
+        <Text className="text-base font-semibold text-gray-900">
           {t('order.total', { amount: order.total_npr })}
         </Text>
       </View>
-      <Text className="text-sm text-neutral-600">{t(`payment.${order.payment_method}`)}</Text>
+      <Text className="text-sm text-gray-500">{t(`payment.${order.payment_method}`)}</Text>
 
       <View className="gap-1">
         {order.items.map((item) => (
-          <Text key={item.product_id} className="text-base text-neutral-800">
+          <Text key={item.product_id} className="text-base text-gray-800">
             {t('vendorDashboard.item', { quantity: item.quantity, name: item.product_name })}
           </Text>
         ))}
@@ -71,17 +71,17 @@ export function VendorOrderCard({
 
       <View className="gap-0.5">
         {address === null ? (
-          <Text className="text-sm text-neutral-500">{t('vendorDashboard.noAddress')}</Text>
+          <Text className="text-sm text-gray-500">{t('vendorDashboard.noAddress')}</Text>
         ) : (
           <>
-            <Text className="text-sm text-neutral-700">
+            <Text className="text-sm text-gray-700">
               {t('vendorDashboard.address', {
                 ward: address.ward_number,
                 tole: address.tole_locality,
                 palika: address.municipality_palika_string,
               })}
             </Text>
-            <Text className="text-sm text-neutral-500">{address.landmark}</Text>
+            <Text className="text-sm text-gray-500">{address.landmark}</Text>
           </>
         )}
       </View>
@@ -119,7 +119,7 @@ export function VendorOrderCard({
 
       {handOver ? (
         <>
-          <Text className="text-sm text-neutral-600">{t('vendorDashboard.handoffHint')}</Text>
+          <Text className="text-sm text-gray-500">{t('vendorDashboard.handoffHint')}</Text>
           <CashToCollect order={order} />
           <DeliveryOtpForm orderId={order.id} submitting={delivering} onSubmit={onDeliver} />
         </>

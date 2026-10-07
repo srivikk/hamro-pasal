@@ -127,7 +127,7 @@ describe('ReplaceCartModal', () => {
     useCartStore.getState().addItem(thamel, rice);
     renderWithProviders(<ReplaceCartModal />);
 
-    expect(screen.queryByText('Start a new cart?')).toBeNull();
+    expect(screen.queryByText('Replace cart items?')).toBeNull();
   });
 
   it('names both vendors and replaces the cart on confirm', () => {
@@ -137,15 +137,15 @@ describe('ReplaceCartModal', () => {
 
     expect(
       screen.getByText(
-        'Your cart has items from Thamel Kirana Pasal. Adding items from Patan Organic Store will clear it.',
+        'Your cart contains items from Thamel Kirana Pasal. Do you want to discard them to start a new order with Patan Organic Store?',
       ),
     ).toBeOnTheScreen();
 
-    fireEvent.press(screen.getByRole('button', { name: 'Clear and add' }));
+    fireEvent.press(screen.getByRole('button', { name: 'Clear Cart' }));
 
     expect(useCartStore.getState().vendor).toEqual(patan);
     expect(useCartStore.getState().lines.map((line) => line.productId)).toEqual([honey.id]);
-    expect(screen.queryByText('Start a new cart?')).toBeNull();
+    expect(screen.queryByText('Replace cart items?')).toBeNull();
   });
 
   it('keeps the current cart on cancel', () => {
@@ -153,10 +153,10 @@ describe('ReplaceCartModal', () => {
     useCartStore.getState().addItem(patan, honey);
     renderWithProviders(<ReplaceCartModal />);
 
-    fireEvent.press(screen.getByRole('button', { name: 'Keep current cart' }));
+    fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(useCartStore.getState().vendor).toEqual(thamel);
     expect(useCartStore.getState().pendingAddition).toBeNull();
-    expect(screen.queryByText('Start a new cart?')).toBeNull();
+    expect(screen.queryByText('Replace cart items?')).toBeNull();
   });
 });

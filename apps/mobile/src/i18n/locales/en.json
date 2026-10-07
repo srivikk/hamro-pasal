@@ -20,8 +20,7 @@
     "exploreFurtherHeading": "Explore Further",
     "exploreFurtherHint": "These shops don't deliver to your location yet.",
     "empty": "No shops deliver to your location yet.",
-    "loadError": "Couldn't load shops. Check your connection.",
-    "signInPrompt": "Sign in to see the shops near you."
+    "loadError": "Couldn't load shops. Check your connection."
   },
   "vendor": {
     "scope": {
@@ -32,7 +31,13 @@
     "distance": "{{distance, localizedNumber}} km away",
     "deliveryFee": "Delivery Rs. {{amount, localizedNumber}}",
     "minOrder": "Min. order Rs. {{amount, localizedNumber}}",
-    "unavailable": "Doesn't deliver to you"
+    "unavailable": "Doesn't deliver to you",
+    "deliveryTime": "{{min, localizedNumber}}–{{max, localizedNumber}} mins",
+    "ratingLabel": "Rated {{rating}} out of 5",
+    "sponsored": "Ad",
+    "sponsoredLabel": "Sponsored",
+    "ratingCountShort": "({{count, localizedNumber}})",
+    "ratingCountShortPlus": "({{count, localizedNumber}}+)"
   },
   "cart": {
     "itemCount_one": "{{count, localizedNumber}} item",
@@ -44,6 +49,7 @@
     "increase": "Add one {{name}}",
     "decrease": "Remove one {{name}}",
     "deliveryFee": "Delivery fee",
+    "free": "FREE",
     "platformFee": "Platform fee",
     "total": "Total",
     "belowMinimum": "Add Rs. {{amount, localizedNumber}} more to reach this shop's minimum order.",
@@ -62,11 +68,34 @@
     "setToNamed": "Set {{name}} to {{count, localizedNumber}}",
     "removeItem": "Remove",
     "removeItemNamed": "Remove {{name}}",
-    "fixStock": "Lower the highlighted items to continue."
+    "fixStock": "Lower the highlighted items to continue.",
+    "profileRequired": "Add your name before placing an order.",
+    "completeProfile": "Complete your profile",
+    "cancelPayment": "Cancel Payment",
+    "cancellingPayment": "Cancelling…",
+    "paymentCancelled": "Payment cancelled. You can change your cart again.",
+    "paymentAlreadyDone": "Your payment already went through. Opening your order…",
+    "shopDiscount": "Shop Discount",
+    "discountAmount": "- Rs. {{amount, localizedNumber}}",
+    "clearTitle": "Clear Cart?",
+    "clearMessage": "Are you sure you want to remove all items?",
+    "clearCancel": "Cancel",
+    "clearConfirm": "Yes, Clear",
+    "proceedToPay": "Proceed to Pay • Rs. {{amount, localizedNumber}}",
+    "placingOrder": "Placing your order…",
+    "addMore": "Add more items"
+  },
+  "cartBanner": {
+    "view": "View Cart",
+    "label": "View cart: {{items, localizedNumber}} in it, Rs. {{amount, localizedNumber}}"
   },
   "discovery": {
-    "searchPlaceholder": "Search products",
-    "shops": "Shops",
+    "searchPlaceholder": "Search for groceries, snacks or shops",
+    "searchHints": {
+      "groceries": "Search for groceries...",
+      "snacks": "Search for snacks...",
+      "shop": "Search your favorite shop..."
+    },
     "loadError": "Couldn't load products. Check your connection.",
     "loadMoreError": "Couldn't load more products.",
     "empty": "No products found.",
@@ -79,13 +108,16 @@
     "stockLimit_one": "Only {{count, localizedNumber}} is in stock.",
     "stockLimit_other": "Only {{count, localizedNumber}} are in stock.",
     "maxInCart": "All the available stock is already in your cart.",
-    "signInToOrder": "Sign in to order."
+    "voiceSearch": "Voice search",
+    "voiceSearchSoon": "Voice search is coming soon.",
+    "shopsHeading": "Shops",
+    "productsHeading": "Products"
   },
   "cartConflict": {
-    "title": "Start a new cart?",
-    "message": "Your cart has items from {{current}}. Adding items from {{next}} will clear it.",
-    "cancel": "Keep current cart",
-    "confirm": "Clear and add"
+    "title": "Replace cart items?",
+    "message": "Your cart contains items from {{current}}. Do you want to discard them to start a new order with {{next}}?",
+    "cancel": "Cancel",
+    "confirm": "Clear Cart"
   },
   "payment": {
     "ESEWA": "eSewa",
@@ -95,15 +127,31 @@
   "menu": {
     "add": "Add",
     "inCart": "{{count, localizedNumber}} in cart",
-    "outOfStock": "Out of stock",
+    "outOfStockOverlay": "OUT OF STOCK",
     "notServiceable": "This shop doesn't deliver to your location. You can browse, but not order.",
     "notFound": "This shop isn't available.",
     "loadError": "Couldn't load this shop's products. Check your connection.",
     "empty": "This shop has no products yet.",
     "quantityLimit": "You can add at most {{max, localizedNumber}} of one item.",
     "cartFull": "Your cart can hold at most {{max, localizedNumber}} different items.",
-    "stockLimit": "No more of this item is in stock.",
-    "checkoutPending": "Finish your current checkout before adding more items."
+    "maxStock": "Maximum stock reached",
+    "checkoutPending": "Finish your current checkout before adding more items.",
+    "items": "ITEMS",
+    "sheetTitle": "Browse this shop",
+    "allItems": "All items",
+    "otherItems": "Other",
+    "searchPlaceholder": "Search in this shop",
+    "searchFor": "Search for {{name}}...",
+    "searchEmpty": "No items match \"{{search}}\".",
+    "viewDetails": "View {{name}}",
+    "addWithTotal": "ADD · Rs. {{amount, localizedNumber}}",
+    "doneWithTotal": "DONE · Rs. {{amount, localizedNumber}}",
+    "addToCart": "Add {{name}} to cart",
+    "closeDetail": "Close",
+    "offerLabel": "Offer: {{offer}}",
+    "viewPhoto": "View photo of {{name}}",
+    "photoOf": "Photo of {{name}}",
+    "closePhoto": "Close photo"
   },
   "checkout": {
     "reservedTitle": "Items reserved",
@@ -157,6 +205,7 @@
     "total": "Rs. {{amount, localizedNumber}}",
     "loadError": "Couldn't load this order. Check your connection.",
     "track": "Track order",
+    "backHome": "Back to Home",
     "steps": {
       "PLACED": "Order Placed",
       "PREPARING": "Preparing",
@@ -188,14 +237,7 @@
     "failedTitle": "This order could not be completed."
   },
   "territory": {
-    "checking": "Checking your location…",
     "blockedDetail": "Hamro Pasal currently serves customers in Nepal only.",
-    "permissionTitle": "Location access needed",
-    "permissionBody": "Hamro Pasal serves Nepal only. Allow location access so we can confirm you're in Nepal.",
-    "allow": "Allow location",
-    "openSettings": "Open settings",
-    "unavailableTitle": "We couldn't find your location",
-    "unavailableBody": "Turn on location services (GPS) and try again.",
     "simulator": {
       "title": "Dev: location simulator",
       "off": "Real GPS",
@@ -227,11 +269,11 @@
     "pin": {
       "title": "Pin location",
       "none": "No pin yet",
-      "coords": "{{lat}}, {{lng}}",
       "use": "Use my current location",
       "locating": "Locating…",
-      "stub": "Map pin-drop is coming soon. For now, your current location is used.",
-      "failed": "Couldn't get your location. Check that GPS is on and try again."
+      "failed": "Couldn't get your location. Check that GPS is on and try again.",
+      "map": "Set on map",
+      "set": "Pin set"
     },
     "errors": {
       "province_id": "Select a province.",
@@ -240,7 +282,21 @@
       "ward_number": "Enter a ward number from 1 to 33.",
       "tole_locality": "Enter your tole or locality.",
       "landmark": "Enter a nearby landmark.",
-      "pin": "Drop a pin inside Nepal."
+      "pin": "Drop a pin inside Nepal.",
+      "recipient_name": "Enter the recipient's name.",
+      "recipient_phone": "Enter a 10-digit Nepal mobile number starting with 9."
+    },
+    "label": {
+      "title": "Save as",
+      "HOME": "Home",
+      "WORK": "Work",
+      "OTHER": "Other"
+    },
+    "recipient": {
+      "hint": "Ordering for someone else? Tell us who will receive it.",
+      "name": "Recipient name",
+      "phone": "Recipient mobile number",
+      "summary": "For {{name}} · {{phone}}"
     }
   },
   "review": {
@@ -295,6 +351,10 @@
   "auth": {
     "title": "Sign in",
     "subtitle": "We'll text a 6-digit code to your Nepal mobile number.",
+    "createAccount": "Create an account",
+    "signUpTitle": "Create your account",
+    "signUpSubtitle": "Enter your Nepal mobile number. We'll text a 6-digit code and set up your account. No password needed.",
+    "newHere": "New to Hamro Pasal? The same code creates your account.",
     "phoneLabel": "Mobile number",
     "phonePlaceholder": "98XXXXXXXX",
     "invalidPhone": "Enter a 10-digit Nepal mobile number starting with 9.",
@@ -319,7 +379,10 @@
     "signOut": "Sign out",
     "signedInStatus": "You're signed in.",
     "signedOutStatus": "Sign in to order from shops near you.",
-    "sessionExpired": "Your session has ended. Please sign in again."
+    "sessionExpired": "Your session has ended. Please sign in again.",
+    "whatsapp": "Get OTP via WhatsApp",
+    "whatsappSent": "A new code is on its way on WhatsApp.",
+    "whatsappUnavailable": "WhatsApp codes aren't available yet. Use the SMS code."
   },
   "vendorDashboard": {
     "title": "Incoming orders",
@@ -433,5 +496,233 @@
   },
   "notifications": {
     "orderChannel": "Order updates"
+  },
+  "addressBook": {
+    "title": "Your addresses",
+    "empty": "No saved addresses yet.",
+    "add": "Add a new address",
+    "edit": "Edit",
+    "remove": "Remove",
+    "deliverHere": "Deliver to {{label}}",
+    "full": "You can save up to {{max, localizedNumber}} addresses. Remove one to add another.",
+    "saved": "Saved addresses",
+    "replaceTitle": "Replace {{label}} address?",
+    "replaceMessage": "A {{label}} address already exists. Do you want to replace it?",
+    "replace": "Replace"
+  },
+  "mapPin": {
+    "title": "Drop a pin",
+    "hint": "Move the map so the pin sits on the exact spot.",
+    "loading": "Loading the map…",
+    "confirm": "Use this location",
+    "failed": "Couldn't load the map. Check your connection and try again.",
+    "naming": "Finding the address…",
+    "unnamed": "Pinned location"
+  },
+  "profile": {
+    "title": "Complete your profile",
+    "subtitle": "We need your name before your first order. Email is optional.",
+    "fullName": "Full name",
+    "email": "Email",
+    "save": "Save",
+    "saved": "Profile saved.",
+    "edit": "Edit profile",
+    "incomplete": "You're signed in. Add your name to place orders.",
+    "errors": {
+      "full_name": "Enter your full name.",
+      "email": "Enter a valid email address.",
+      "terms": "Please accept the Terms & Conditions and Privacy Policy to continue."
+    },
+    "emailOptional": "Email (optional)",
+    "saving": "Saving…",
+    "saveFailed": "Couldn't save your profile. Check your connection and try again.",
+    "termsLabel": "I agree to the Terms & Conditions and Privacy Policy",
+    "termsPrefix": "I agree to the ",
+    "termsJoin": " and ",
+    "termsSuffix": "",
+    "whatsappOptIn": "Get updates on WhatsApp"
+  },
+  "browseLocation": {
+    "change": "Change browsing location",
+    "title": "Select delivery location",
+    "searchPlaceholder": "Search for area, street name...",
+    "searching": "Searching…",
+    "pickOnMap": "Pick on the map",
+    "currentLocation": "Current location",
+    "savedAddresses": "Saved addresses",
+    "notFound": "No matching places in Nepal. Try another name.",
+    "searchFailed": "Search isn't available right now. Pick the place on the map instead.",
+    "gpsFailed": "Couldn't get your location. Check that GPS is on and try again.",
+    "select": "Select Location",
+    "selectToOrder": "Select a location to order.",
+    "reset": "Clear my selection",
+    "deviceOffTitle": "Device location not enabled",
+    "deviceOffBody": "Enable it for a better delivery experience.",
+    "enable": "Enable",
+    "useCurrent": "Use current location",
+    "useCurrentHint": "Using GPS",
+    "pinnedLocation": "Pinned location",
+    "selectPrompt": "Select a location to see the shops near you.",
+    "clearSearch": "Clear search",
+    "appIn": "Hamro Pasal in"
+  },
+  "boot": {
+    "appName": "Hamro Pasal",
+    "tagline": "Hamro pasal sajilo cha hai"
+  },
+  "welcome": {
+    "title": "Welcome to Hamro Pasal",
+    "subtitle": "Enter your Nepal mobile number. We'll text you a 6-digit code to sign in or sign up.",
+    "continue": "Continue",
+    "skip": "Skip login"
+  },
+  "deliveryArea": {
+    "title": "Can't deliver there",
+    "body": "This shop does not deliver to your selected address. Choose another address, or order from a shop that delivers there. ({{vendor}})",
+    "changeAddress": "Change Address",
+    "close": "Close"
+  },
+  "account": {
+    "yourAccount": "Your account",
+    "guestTitle": "Log in or sign up",
+    "section": "Your information",
+    "orders": "Your Orders",
+    "addressBook": "Address Book",
+    "logOut": "Log Out",
+    "preferences": "Preferences",
+    "more": "More",
+    "footer": "Hamro Pasal v{{version}}"
+  },
+  "orders": {
+    "empty": "No orders yet. Orders you place on this phone appear here.",
+    "states": {
+      "PENDING_PAYMENT": "Awaiting payment",
+      "PLACED": "Placed",
+      "PREPARING": "Preparing",
+      "OUT_FOR_DELIVERY": "On the way",
+      "DELIVERED": "Delivered",
+      "CANCELED": "Cancelled",
+      "FAILED": "Failed",
+      "DISPUTED": "In dispute"
+    },
+    "itemLine": "{{quantity, localizedNumber}}x {{name}}",
+    "itemLineMore": "{{line}} & {{count, localizedNumber}} more",
+    "reorder": "Reorder",
+    "reorderFrom": "Reorder from {{vendor}}"
+  },
+  "trackOrder": {
+    "emptyTitle": "No order to track",
+    "emptyBody": "Orders you place on this phone can be followed here until they are delivered.",
+    "browse": "Browse shops"
+  },
+  "categories": {
+    "title": "What's on your mind?",
+    "all": "All Shops",
+    "empty": "No shops near you sell {{category}} yet."
+  },
+  "promo": {
+    "banner": "Promotion",
+    "offersTitle": "Featured offers",
+    "unavailable": "This offer isn't available right now.",
+    "tagEmpty": "No shops near you have a \"{{tag}}\" offer right now.",
+    "removeTag": "Remove the {{tag}} filter"
+  },
+  "feedSort": {
+    "filter": "Filter",
+    "title": "Sort & filter",
+    "sortBy": "Sort by",
+    "options": {
+      "relevance": "Relevance",
+      "delivery_time": "Delivery Time",
+      "rating": "Rating",
+      "cost_low_to_high": "Cost: Low to High",
+      "cost_high_to_low": "Cost: High to Low"
+    },
+    "clear": "Clear Filters",
+    "apply": "Apply",
+    "close": "Close",
+    "remove": "Remove sorting by {{sort}}"
+  },
+  "bill": {
+    "title": "Bill Details",
+    "items": "Items",
+    "itemTotal": "Item Total",
+    "deliveryFee": "Delivery Fee",
+    "platformFee": "Platform Fee",
+    "shopDiscount": "Shop Discount",
+    "total": "Total",
+    "paymentMethod": "Payment Method",
+    "deliveredTo": "Delivery address"
+  },
+  "paymentOptions": {
+    "title": "Payment Options",
+    "toPay": "To pay for your order from {{vendor}}",
+    "saved": "You save Rs. {{amount, localizedNumber}} on this order",
+    "choose": "Choose how to pay",
+    "unavailable": "Not available for this order",
+    "pay": "Pay Rs. {{amount, localizedNumber}}",
+    "placeOrder": "Place Order • Rs. {{amount, localizedNumber}}",
+    "processing": "Processing…",
+    "hint": {
+      "ESEWA": "Pay with your eSewa wallet",
+      "KHALTI": "Pay with your Khalti wallet",
+      "COD": "Pay in cash when your order arrives"
+    }
+  },
+  "favourites": {
+    "title": "Favourites",
+    "empty": "No favourites yet. Tap the heart on a shop to save it here.",
+    "add": "Add to favourites",
+    "remove": "Remove from favourites",
+    "removeNamed": "Remove {{name}} from favourites",
+    "added": "Saved to your favourites.",
+    "removed": "Removed from your favourites."
+  },
+  "legal": {
+    "terms": "Terms & Conditions",
+    "privacy": "Privacy Policy",
+    "placeholder": "The {{document}} of Hamro Pasal will be published here before the app is released. This is placeholder text."
+  },
+  "appearance": {
+    "title": "Appearance",
+    "hint": "System Theme follows the light or dark setting of your phone.",
+    "options": {
+      "light": "Light Theme",
+      "dark": "Dark Theme",
+      "system": "System Theme"
+    },
+    "short": {
+      "light": "Light",
+      "dark": "Dark",
+      "system": "System"
+    }
+  },
+  "notificationPrefs": {
+    "title": "Notification Preferences",
+    "whatsapp": "Get updates on WhatsApp",
+    "whatsappHint": "Order updates and offers on the WhatsApp number of this account.",
+    "orderNote": "Order status notifications on this phone are managed in your phone settings.",
+    "failed": "Couldn't save your choice. Please try again."
+  },
+  "about": {
+    "title": "About Us",
+    "version": "Version {{version}}",
+    "body": "Hamro Pasal brings the shops of your neighbourhood to your phone. Order groceries and daily essentials from local shops across Nepal and pay with eSewa, Khalti or cash on delivery."
+  },
+  "accountPrivacy": {
+    "title": "Account Privacy",
+    "heading": "Delete your account",
+    "body": "Deleting your account signs you out and removes your profile, saved addresses and favourites. This cannot be undone from the app.",
+    "retained": "Records of past orders and payments may be kept for as long as the law requires.",
+    "delete": "Delete Account",
+    "working": "Please wait…",
+    "pendingTitle": "Pending orders",
+    "pendingBody": "You have pending orders. Please complete or cancel them before deleting your account.",
+    "confirmTitle": "Delete your account?",
+    "confirmBody": "Your account will be scheduled for deletion and you will be signed out.",
+    "cancel": "Cancel",
+    "confirm": "Delete Account",
+    "requested": "Your account deletion request was received.",
+    "failed": "Couldn't reach the server. Please try again."
   }
 }

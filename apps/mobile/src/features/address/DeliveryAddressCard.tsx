@@ -4,63 +4,62 @@ import { useTranslation } from 'react-i18next';
 
 import { AddressFormModal } from '../../components/AddressFormModal';
 import { Button } from '../../components/Button';
-import { formatLocalizedNumber } from '../../i18n/format-number';
-import { useAddressStore } from '../../store/useAddressStore';
-import { useAuthStore } from '../../store/useAuthStore';
-import { formatAddressLine } from './address-form';
+import { selectSelectedAddress, useAddressStore } from '../../store/useAddressStore';
+import { AddressBookModal, AddressSummary } from './AddressBookModal';
 
 /**
- * The active delivery address in the cart, with add / change. The address is kept in encrypted
- * MMKV, so it is already filled in on the next visit.
+ * The delivery address of this order in the cart. With an empty book it opens the form directly;
+ * otherwise "Change" opens the address book (choose another, add, edit, remove). The book is kept
+ * in encrypted MMKV, so it is already filled in on the next visit.
  */
 export function DeliveryAddressCard({ disabled = false }: { disabled?: boolean }) {
   const { t } = useTranslation();
-  const locale = useAuthStore((state) => state.locale);
-  const address = useAddressStore((state) => state.address);
-  const setAddress = useAddressStore((state) => state.setAddress);
-  const [editing, setEditing] = useState(false);
+  const selected = useAddressStore(selectSelectedAddress);
+  const saveAddress = useAddressStore((state) => state.saveAddress);
+  const [open, setOpen] = useState(false);
 
   return (
-    <View className="gap-2 rounded-xl border border-neutral-200 p-3" testID="delivery-address">
-      <Text className="text-sm font-semibold text-neutral-700">{t('cart.deliverTo')}</Text>
-      {address === null ? (
+    <View className="gap-3 rounded-2xl bg-gray-50 p-3" testID="delivery-address">
+      <Text className="text-sm font-semibold text-gray-700">{t('cart.deliverTo')}</Text>
+      {selected === null ? (
         <Button
           label={t('cart.addAddress')}
           variant="secondary"
           size="sm"
           disabled={disabled}
           onPress={() => {
-            setEditing(true);
+            setOpen(true);
           }}
         />
       ) : (
         <View className="flex-row items-center gap-3">
-          <View className="flex-1">
-            <Text className="text-sm text-neutral-900" testID="delivery-address-line">
-              {formatAddressLine(address, formatLocalizedNumber(address.ward_number, locale))}
-            </Text>
-            <Text className="text-xs text-neutral-500">{address.landmark}</Text>
-          </View>
+          <AddressSummary entry={selected} />
           <Button
             label={t('cart.changeAddress')}
             variant="secondary"
             size="sm"
             disabled={disabled}
             onPress={() => {
-              setEditing(true);
+              setOpen(true);
             }}
           />
         </View>
       )}
       <AddressFormModal
-        visible={editing}
-        initial={address}
-        onSave={(saved) => {
-          setAddress(saved);
-          setEditing(false);
+        visible={open && selected === null}
+        initial={null}
+        onSave={(draft) => {
+          saveAddress(draft);
+          setOpen(false);
         }}
         onClose={() => {
-          setEditing(false);
+          setOpen(false);
+        }}
+      />
+      <AddressBookModal
+        visible={open && selected !== null}
+        onClose={() => {
+          setOpen(false);
         }}
       />
     </View>

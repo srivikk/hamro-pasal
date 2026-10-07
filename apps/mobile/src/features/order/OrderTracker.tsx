@@ -19,9 +19,9 @@ const ICON_COLOR: Record<StepStatus, string> = {
 };
 
 const LABEL_CLASS: Record<StepStatus, string> = {
-  completed: 'text-neutral-900',
+  completed: 'text-gray-900',
   active: 'font-bold text-brand',
-  pending: 'text-neutral-400',
+  pending: 'text-gray-400',
 };
 
 /**
@@ -50,7 +50,7 @@ export function OrderTracker({ state }: { state: OrderState }) {
               <Ionicons name={ICON[status]} size={24} color={ICON_COLOR[status]} />
               {last ? null : (
                 <View
-                  className={`my-1 w-0.5 flex-1 ${status === 'completed' ? 'bg-emerald-600' : 'bg-neutral-200'}`}
+                  className={`my-1 w-0.5 flex-1 ${status === 'completed' ? 'bg-emerald-600' : 'bg-gray-200'}`}
                   style={{ minHeight: 20 }}
                 />
               )}

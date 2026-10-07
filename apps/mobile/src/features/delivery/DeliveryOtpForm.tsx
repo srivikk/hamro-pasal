@@ -33,7 +33,7 @@ export function DeliveryOtpForm({ orderId, submitting, onSubmit }: DeliveryOtpFo
 
   return (
     <View className="gap-2">
-      <Text className="text-sm font-medium text-neutral-700">{t('delivery.codeLabel')}</Text>
+      <Text className="text-sm font-medium text-gray-700">{t('delivery.codeLabel')}</Text>
       <TextInput
         testID={`delivery-otp-${orderId}`}
         accessibilityLabel={t('delivery.codeLabel')}
@@ -49,7 +49,7 @@ export function DeliveryOtpForm({ orderId, submitting, onSubmit }: DeliveryOtpFo
         maxLength={DELIVERY_OTP_LENGTH}
         editable={!submitting}
         placeholder={t('delivery.codePlaceholder')}
-        className="rounded-xl border border-neutral-300 bg-white px-3 py-3 text-center text-2xl tracking-[8px] text-neutral-900"
+        className="rounded-xl border border-gray-300 bg-white px-3 py-3 text-center text-2xl tracking-[8px] text-gray-900"
       />
       <Button
         label={submitting ? t('delivery.checking') : t('delivery.confirm')}

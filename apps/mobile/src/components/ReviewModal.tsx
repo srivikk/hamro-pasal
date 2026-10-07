@@ -84,7 +84,7 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
 
   return (
     <View className="gap-4 rounded-t-3xl bg-white p-6" testID="review-modal">
-      <Text className="text-xl font-bold text-neutral-900">{t('review.title')}</Text>
+      <Text className="text-xl font-bold text-gray-900">{t('review.title')}</Text>
 
       <View className="flex-row justify-center gap-2" accessibilityRole="radiogroup">
         {STARS.map((star) => {
@@ -109,7 +109,7 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
       </View>
 
       <View>
-        <Text className="mb-1 text-sm font-semibold text-neutral-700">{t('review.comment')}</Text>
+        <Text className="mb-1 text-sm font-semibold text-gray-700">{t('review.comment')}</Text>
         <TextInput
           testID="review-comment"
           accessibilityLabel={t('review.comment')}
@@ -119,9 +119,9 @@ function ReviewForm({ orderId, onDone }: { orderId: string; onDone: () => void }
           maxLength={MAX_REVIEW_FEEDBACK_LENGTH}
           multiline
           editable={!submit.isPending}
-          className="min-h-20 rounded-xl border border-neutral-300 px-3 py-2 text-neutral-900"
+          className="min-h-20 rounded-xl border border-gray-300 px-3 py-2 text-gray-900"
         />
-        <Text className="mt-1 text-right text-xs text-neutral-500">
+        <Text className="mt-1 text-right text-xs text-gray-500">
           {formatLocalizedNumber(comment.length, locale)}/
           {formatLocalizedNumber(MAX_REVIEW_FEEDBACK_LENGTH, locale)}
         </Text>

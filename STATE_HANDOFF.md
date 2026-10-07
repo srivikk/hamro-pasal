@@ -494,9 +494,10 @@ app/_layout.tsx           root: QueryClientProvider > I18nextProvider > SessionE
                           CheckoutSessionWatcher, ReviewPrompt, ToastHost, TerritoryGate (last = topmost)
 app/login.tsx             OTP step 1: +977 number → POST /api/auth/otp/send, then replaces itself with /verify-otp
 app/verify-otp.tsx        OTP step 2: 6-digit code → POST /api/auth/otp/verify, resend countdown, change number
-app/(tabs)/_layout.tsx    Tabs: Shops / Cart (badge = item count) / Profile
+app/(tabs)/_layout.tsx    Tabs: Shops / Profile (the cart left the tabs, §8Z.9)
 app/(tabs)/index.tsx      feed (GET /api/vendors); sign-in prompt when signed out
-app/(tabs)/cart.tsx       cart, address, checkout, payment; "Sign in to Checkout" when signed out
+app/cart.tsx              cart, address, checkout, payment; "Sign in to Checkout" when signed out. A root-stack
+                          screen since §8Z.9 (was app/(tabs)/cart.tsx): opening it hides the tab bar
 app/(tabs)/profile.tsx    account (sign in / sign out) + language + __DEV__ token sign-in + __DEV__ territory simulator
 app/vendor/[id].tsx       vendor menu (GET /api/vendors/:id/products)
 app/order/[id]/index.tsx  order tracking (GET /api/orders/:id once + Socket.io /orders live updates), 60 s cancel, OTP, dispute button
@@ -606,6 +607,16 @@ kafka-init`) once, or dead-lettering fails and the message is redelivered instea
   reach the host's `127.0.0.1`. Expo inlines only `EXPO_PUBLIC_*` values into the bundle.
 - The mobile app needs a **development build** (`npx expo prebuild` + `expo run:android`, or EAS),
   not Expo Go: MMKV v4 (Nitro), Reanimated 4, SecureStore, WebView, Location and Image Picker are native.
+- **Metro "Unable to resolve `react-native-web/dist/exports/Platform`" (checked 2026-10-04):** reported
+  once for `src/features/notifications/order-push-task.ts` on an Android bundle. **No source change
+  was needed:** the file imports `Platform` from `'react-native'` (as committed in `27898bf`), no
+  file in `apps/` or `packages/` imports `react-native-web` or an internal `dist/exports` path, and
+  `react-native-web` is not installed. `npx expo export --platform android` from `apps/mobile`
+  bundles cleanly (2170 modules), and `tsc --noEmit` and `eslint .` pass. The error was not
+  reproduced; a stale Metro transform cache is the likely cause (unconfirmed). If it comes back,
+  start Metro with `npx expo start --clear` from `apps/mobile`. The app must be bundled from
+  `apps/mobile`: the repository root also holds an untracked `app.json` and a staged `eas.json`,
+  which are not the app's config.
 - Integration tests use isolated resources: DBs `hamro_pasal_test` (db), `hamro_pasal_api_test`,
   `hamro_pasal_worker_test`, dropped and recreated per run; Redis logical DB 15 (api) and 14 (worker).
   Suites share one database per package, so assertions must filter by the ids they created
@@ -1088,6 +1099,2182 @@ for order state changes only (Phase 20, §8M; no chat, wallet or rider pushes, n
 escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8Z.10 User lifecycle and Profile overhaul: language, consent onboarding, appearance, account deletion (2026-10-07)
+
+Mobile only. **No API, shared-types, SPEC or database change was made.** §8Z.5 (settlement
+models, ad billing, opt-in discounts, cart math) is untouched and still unbuilt. The backend this
+section needs is specified under "Backend required" and is **not built**; until it is, the app
+keeps these values on the phone (see "Without the backend").
+
+### Backend required (not built): `users` columns
+
+Appended to the `users` table (existing columns and the §8S proposals `email`, `full_name` are
+unchanged):
+
+```sql
+CREATE TYPE language_preference AS ENUM ('en', 'ne');
+CREATE TYPE account_status      AS ENUM ('ACTIVE', 'DELETED_REQUESTED', 'SUSPENDED');
+
+ALTER TABLE users
+  ADD COLUMN language_preference   language_preference NOT NULL DEFAULT 'en',
+  ADD COLUMN terms_accepted_at     timestamptz NULL,       -- NULL: Terms & Privacy Policy not accepted yet
+  ADD COLUMN whatsapp_opt_in       boolean NOT NULL DEFAULT false,
+  ADD COLUMN account_status        account_status NOT NULL DEFAULT 'ACTIVE',
+  ADD COLUMN deletion_requested_at timestamptz NULL,
+  ADD CONSTRAINT users_deletion_requested_check
+    CHECK ((account_status = 'DELETED_REQUESTED') = (deletion_requested_at IS NOT NULL));
+CREATE INDEX users_deletion_requested_idx ON users (deletion_requested_at)
+  WHERE account_status = 'DELETED_REQUESTED';              -- the purge job's queue
+```
+
+| Column                  | Written by                                                    | Rules                                                                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `language_preference`   | `PATCH /api/me`                                               | `'en'` \| `'ne'`. The language of server-written text for this user (SMS, push; today both are English only). Existing rows: `'en'`                                                               |
+| `terms_accepted_at`     | `PATCH /api/me { accept_terms: true }`                        | Stamped with the **database clock**, once: a repeated `accept_terms` never moves it. The client never sends a timestamp. `accept_terms: false` is `400`. Consider a `terms_version` column later  |
+| `whatsapp_opt_in`       | `PATCH /api/me`                                               | Marketing / update messages on WhatsApp only. It does **not** gate the WhatsApp OTP fallback (SPEC Nepal §4), which the customer asks for explicitly each time                                    |
+| `account_status`        | `POST /api/user/deletion-request`; an admin (for `SUSPENDED`) | `ACTIVE` → `DELETED_REQUESTED` by the customer. `SUSPENDED` is an admin block of a **user** and is separate from `vendors.status = 'SUSPENDED'` (SPEC §5), which stays the vendor's debt standing |
+| `deletion_requested_at` | the same request                                              | Added beyond the three columns asked for: the purge job and any grace period need the time                                                                                                        |
+
+- Column changes go through the Drizzle schema, `userSchema` (shared-types) and
+  `packages/db/src/schema/contract.ts` together.
+- `authUserSchema` and `GET /api/me` should carry `language_preference`, `terms_accepted_at`,
+  `whatsapp_opt_in` and `account_status` (strict schemas: API first, then an app build).
+
+### Backend required (not built): endpoints
+
+```jsonc
+// GET /api/me                      any signed-in role → 200
+// PATCH /api/me                    every key optional; only the keys sent change → 200, same body
+//   request: { "full_name": "Sita Gurung", "email": "sita@example.com" | null,
+//              "language_preference": "en" | "ne", "whatsapp_opt_in": true, "accept_terms": true }
+{ "user": { "id": "uuid", "phone": "+9779800000002", "role": "CUSTOMER",
+            "full_name": "Sita Gurung" | null, "email": "sita@example.com" | null,
+            "profile_complete": true,
+            "language_preference": "ne", "terms_accepted_at": "2026-10-07T06:15:00.000Z" | null,
+            "whatsapp_opt_in": true, "account_status": "ACTIVE" } }
+// 400 VALIDATION_FAILED (also accept_terms: false) · 409 EMAIL_TAKEN (if emails are unique)
+
+// GET /api/user/deletion-eligibility      Bearer, any role → 200
+{ "eligible": false, "pending_order_count": 2 }
+//   pending = the caller's orders (as customer) in PENDING_PAYMENT, PLACED, PREPARING,
+//   OUT_FOR_DELIVERY or DISPUTED. Suggested also: an unpaid refund (refund_required) blocks.
+
+// POST /api/user/deletion-request         Bearer, no body → 200 (also on repeat)
+{ "account_status": "DELETED_REQUESTED", "deletion_requested_at": "2026-10-07T06:20:00.000Z" }
+// 409 ACCOUNT_HAS_PENDING_ORDERS   details.pending_order_count   (re-checked under the user row lock;
+//                                  the eligibility call is advice, this is the rule)
+```
+
+- **What the soft delete must do, in one transaction:** set the two columns, delete the user's
+  `device_tokens`, write an audit record. After commit: refuse `POST /api/auth/token/refresh` for
+  the account (`401 REFRESH_TOKEN_INVALID`; there is still no token denylist, so an access token
+  already issued works for up to 15 minutes), and refuse `POST /api/auth/otp/verify` for that
+  phone or, by product decision, let a sign-in inside a grace period cancel the request.
+- **Later, by a scheduled job (not specified here):** erase or anonymise the personal columns
+  (`first_name`, `last_name`, `email`, phone, `customer_addresses`, `user_favourites`). Orders,
+  ledger entries and audit rows are financial records and stay, pointing at the anonymised user.
+  The retention period is a legal decision; the app only says records "may be kept for as long
+  as the law requires".
+- **Vendors and riders:** the endpoints accept any role, but a vendor with a wallet balance, open
+  orders or ads needs its own rules. Only the customer app calls them today.
+- Path note: the profile contract of §8S is `/api/me`; the deletion paths are `/api/user/…` as
+  requested. Serving them under `/api/me/deletion-…` too would keep one prefix.
+- `checkout` should also refuse an account that is not `ACTIVE`, and (with
+  `422 PROFILE_INCOMPLETE`, §8S) one without `terms_accepted_at`.
+
+### What was built (mobile)
+
+| #   | Feature                              | How it works now                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Where                                                                                     |
+| --- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 1   | **First-launch language**            | `app/language.tsx`: English / नेपाली, each in its own script, and Continue. Shown once per installation: the customer tabs redirect to `/language` while `useOnboardingStore.languageChosen` is false (store v2, plain MMKV), before the welcome screen. The language itself is still `useAuthStore.locale`                                                                                                                                                                     | `app/language.tsx`, `app/(tabs)/_layout.tsx`, `store/useOnboardingStore.ts`               |
+| 1   | **Language toggle**                  | A small `EN \| ने` switch in the header of `/login` and `/verify-otp` and at the top left of the welcome screen. The Profile tab's language buttons use the same setter                                                                                                                                                                                                                                                                                                         | `features/settings/LanguageToggle.tsx`                                                    |
+| 1   | **Language → account**               | On every OTP sign-in, and on a change while signed in, `PATCH /api/me { language_preference }`. Best effort: silent, never blocks sign-in                                                                                                                                                                                                                                                                                                                                       | `api/account.ts#syncLanguagePreference`, `api/auth.ts`                                    |
+| 2   | **Keyboard**                         | `/login`, `/verify-otp` and `/complete-profile` are a `KeyboardScreen`: `KeyboardAvoidingView` (`padding` on iOS with the header height as offset, `height` on Android) around a `ScrollView`. The welcome screen's own `KeyboardAvoidingView` now uses `height` on Android (it was `undefined`)                                                                                                                                                                                | `components/KeyboardScreen.tsx`, `app/welcome.tsx`                                        |
+| 2   | **Eleventh digit**                   | The field's native `maxLength` is **10 once it holds ten digits**, so the keyboard refuses the next key and nothing flashes; below ten it is 20, so a pasted or auto-filled "+977 98…" still arrives whole. A refused keystroke sets no React state (`nextPhoneDraft` returns null). This supersedes the "no `maxLength`" note of §8Z.7                                                                                                                                         | `features/auth/login-form.ts`, `PhoneSignInForm.tsx`                                      |
+| 2   | **Guest gating**                     | Signed out (`selectHasSession` false): no heart on vendor cards, none on the shop header, and no Favourites row on the Profile tab. "Skip login" is unchanged                                                                                                                                                                                                                                                                                                                   | `VendorCard.tsx`, `ShopHeader.tsx`, `app/(tabs)/profile.tsx`                              |
+| 3   | **New-account onboarding**           | `is_new_user: true` from OTP verify sets `useProfileStore.onboarding` and the code screen replaces itself with `/complete-profile`. While that flag is set for the signed-in account, the customer tabs redirect there (also after a relaunch), and the screen has no back arrow or back swipe. Saving the profile clears it                                                                                                                                                    | `api/auth.ts`, `app/verify-otp.tsx`, `app/(tabs)/_layout.tsx`, `app/complete-profile.tsx` |
+| 3   | **Consents**                         | Name (required), email (optional), **"I agree to the Terms & Conditions and Privacy Policy"** (required; both names open the document) and **"Get updates on WhatsApp"** (optional, off). The two boxes are shown until the account has accepted the terms; afterwards the screen is the plain edit form. Save sends `PATCH /api/me` with `accept_terms: true`; the terms time stored on the phone is the server's                                                              | `app/complete-profile.tsx`, `components/Checkbox.tsx`, `store/useProfileStore.ts` (v2)    |
+| 4   | **Profile tab**                      | Header card, then: **Your information** (Orders, Favourites, Address Book, Edit profile), **Preferences** (Appearance, Notification Preferences), Language, **More** (About Us, Account Privacy, Log Out), the `__DEV__` tools, and the footer **"Hamro Pasal v1.0.0"**. A guest sees the sign-in buttons, Appearance, Language and About Us                                                                                                                                    | `app/(tabs)/profile.tsx`, `components/MenuRow.tsx`                                        |
+| 4   | **Appearance**                       | `/settings/appearance`: Light / Dark / System. Saved in `useThemeStore` (plain MMKV `hamro-pasal.theme`, default `system`); `bindTheme` in the root layout hands it to NativeWind's `colorScheme.set`, at launch and on every change. `tailwind.config.js` has `darkMode: 'class'`. The root layout wraps the stack in the navigation `ThemeProvider`, so headers and the tab bar follow                                                                                        | `app/settings/appearance.tsx`, `theme/apply-theme.ts`, `app/_layout.tsx`                  |
+| 4   | **Notification Preferences**         | `/settings/notifications`: one switch for `whatsapp_opt_in`. It moves at once; a failed save moves it back with a toast                                                                                                                                                                                                                                                                                                                                                         | `app/settings/notifications.tsx`                                                          |
+| 4   | **About Us**                         | `/settings/about`: placeholder description, version, and links to `/legal/privacy` and `/legal/terms` at the bottom (`app/legal/[doc].tsx`, placeholder text)                                                                                                                                                                                                                                                                                                                   | `app/settings/about.tsx`, `app/legal/[doc].tsx`                                           |
+| 4   | **Account Privacy (delete account)** | `/settings/privacy`: a red **Delete Account** button. Press → `GET /api/user/deletion-eligibility`. Not eligible → `Alert.alert("Pending orders", "You have pending orders. Please complete or cancel them before deleting your account.")`. Eligible → a native confirm (Cancel / Delete Account) → `POST /api/user/deletion-request`. On success `clearAccountData` signs out and removes the account's data, then `/`; a 409 from the request shows the pending-orders alert | `app/settings/privacy.tsx`, `features/account/clear-account-data.ts`                      |
+
+**New and changed local state.**
+
+| Store                | Key / version                       | New fields                                                                                                                                         |
+| -------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useOnboardingStore` | `hamro-pasal.onboarding` **v2**     | `languageChosen` (a v1 slice migrates as false). `resetOnboarding` still resets only the auth wall                                                 |
+| `useProfileStore`    | `hamro-pasal.profile` **v2**        | `consents { user_id, terms_accepted_at, whatsapp_opt_in } \| null` and `onboarding { user_id } \| null`, both tied to the account like the profile |
+| `useThemeStore`      | `hamro-pasal.theme` v1 (plain MMKV) | `theme: 'system' \| 'light' \| 'dark'`. A device preference: kept across sign-out and account deletion, never sent to the server                   |
+
+**The mock API (`src/mocks`).**
+
+- `account-handlers.ts`: MSW handlers for the four routes above, one in-memory account. They are
+  the standing handlers of the Jest server (`src/test/msw.ts`), so every sign-in test has an
+  answer for the language sync.
+- `dev-mocks.ts#startDevMocks`: in a **development build with
+  `EXPO_PUBLIC_MOCK_ACCOUNT_API=true`** in `apps/mobile/.env`, MSW's React Native server
+  (`msw/native`) answers those routes on the device and lets every other request through. There
+  the eligibility answer counts the open orders this phone tracks. **Off by default**; both
+  imports sit inside the `__DEV__` branch, and a production export was checked to contain neither
+  MSW nor the handlers.
+- `apiRequest` gained the `PATCH` method.
+
+**Without the backend (and without the dev mock).** `PATCH /api/me` answers the catch-all 404:
+
+- the profile and consents are saved **on the phone only**, with the phone's clock for the terms
+  time (`updateAccount` resolves null for a 404); a network failure saves nothing and says so;
+- the language sync and the WhatsApp switch are local;
+- **Delete Account cannot complete**: the eligibility call fails and the app says "Couldn't reach
+  the server". Both stores require working account deletion, so this endpoint gates submission.
+
+**Behaviour to know.**
+
+- **Dark mode is wired, not finished.** The theme reaches NativeWind, React Native's
+  `Appearance`, the navigation chrome and the status bar. `dark:` classes exist on the Profile
+  tab, the four settings pages, the legal page, the language screen, the sign-in screens and
+  Complete Profile. **Home, the shop page, the cart, checkout, the order screens and the
+  vendor / rider screens have no `dark:` classes yet**: in Dark they keep light bodies under dark
+  headers. Raw hex icon colours do not follow the theme either. A full dark pass is its own task.
+- The language question is also asked once on an installation that predates it (a signed-in
+  customer included; vendors and riders are sent to their dashboards first and never see it).
+- An account without a name that existed before this build is not forced through onboarding (the
+  cart still asks for the profile); only `is_new_user` sign-ins are.
+- Pasting a "+977…" number **over a field that already holds ten digits** is cut to ten
+  characters by the OS and gives a wrong number; clearing the field first works.
+- Android's hardware Back on the mandatory profile screen leaves it, and the tabs send the
+  customer straight back; the cart (a root-stack screen) can still be seen behind it, and still
+  refuses checkout without a profile.
+- After a deletion request the phone forgets the profile, consents, address book, orders,
+  receipts, delivery codes, favourites and cart. Language, theme and the onboarding answers stay.
+- Sign-out still keeps local data (unchanged); only deletion clears it.
+- `APP_VERSION` is the constant `1.0.0` (`features/settings/app-version.ts`); `app.json` still
+  says `0.0.0`. Set both together for the first release.
+- About Us, the two legal documents and the Nepali strings of this section are placeholders /
+  unreviewed.
+
+**Tests.** Mobile **1301** (+54): `features/account/user-lifecycle.test.tsx` (43, msw: the
+language store, screen, toggle and sync; the number field's cap and refused keystrokes; the
+keyboard behaviour per platform; guest gating in three places; the new-account route, required
+terms, optional WhatsApp, the exact request, 404 and network outcomes, edit mode, another
+account's consents; the mock API; the Profile rows and footer; Appearance; the WhatsApp switch and
+its rollback; About; and deletion: blocked, cancelled, confirmed, preferences kept, a 409 after the
+check, unreachable server), `theme/apply-theme.test.ts` (7) and four routing cases in
+`VendorRouting.test.tsx`. Updated for the new behaviour: `profile.test.tsx` (saving needs the
+terms box and goes through msw), `LoginFlow.test.tsx`, `ux-polish.test.tsx`, `polish.test.tsx`,
+`FloatingCartBanner.test.tsx`. Mutation-checked (each fails at least one test): hearts shown to
+guests, no native cap at ten, terms not required, no language redirect, no onboarding redirect,
+deletion despite open orders, deletion keeping the session, a new user not held, the switch not
+rolled back, no Android keyboard behaviour. One mutant survives by design: syncing a guest's
+language (the request is never sent without a token). `tsc`, `eslint`, `prettier` clean; the
+Android bundle exports in production and development mode.
+
+**Not seen on a device.** Unverified in particular: `behavior: 'height'` on Android for these
+screens (§8X found it unreliable inside a `Modal`; these are stack screens), the iOS header
+offset (status bar + 44 pt, not measured from the navigator), the dynamic `maxLength` on both
+keyboards, the theme switch at runtime (and `Appearance.setColorScheme` with
+`userInterfaceStyle: automatic`), the header toggle's placement, and **MSW's React Native server
+itself**: MSW's guide asks for `react-native-url-polyfill` and `fast-text-encoding`, which are
+not installed (React Native 0.86 ships its own `URL` and `TextEncoder`); if the mock fails to
+start it logs `[mocks] could not start MSW` and the app runs without it.
+
+## 8Z.9 Customer UI polish 3: the cart leaves the tabs, cart banner, rotating search hints, sheet bound to the cart (2026-10-07)
+
+Mobile only. No API, shared-types, SPEC or database change; §8Z.5 (settlement models, ad billing,
+opt-in discounts, `POST /api/cart/quote`) is untouched and still unbuilt.
+
+**Routing change (structural).**
+
+- **The Cart is no longer a tab.** `app/(tabs)/cart.tsx` moved to **`app/cart.tsx`**, a screen of
+  the root stack. Its URL is still `/cart`. Because it is outside `(tabs)`, opening it covers the
+  bottom tab bar natively (no `tabBarStyle` toggling). It draws its own stack header (title "Cart",
+  back arrow) and pads its action bar by the bottom safe-area inset itself.
+- The tab bar is now **Shops / Profile** (`app/(tabs)/_layout.tsx`; the cart tab and its badge are gone).
+- **The way in is `FloatingCartBanner`** (`features/cart/FloatingCartBanner.tsx`): a green bar,
+  "`<n> items | Rs. <item total>`" and "View Cart >", shown whenever the cart has a line. It is
+  mounted once in `app/(tabs)/(home)/_layout.tsx`, under the Shops tab's stack and above the tab
+  bar, in normal flow (it covers no content), so it is on the feed and on a shop's page. **There is
+  no way to open an empty cart, and none from the Profile tab.**
+- **"Add more items"** in the cart now calls `router.dismissTo('/vendor/[id]')` (pop back down to
+  the tabs and open the shop there) instead of `push`, which from the root stack would have put a
+  second copy of the tabs on top of the cart.
+- **Order tracking has no back button** (`headerBackVisible: false`, no `headerLeft`, no back
+  swipe). A **"Back to Home"** button runs `router.dismissAll()` (when there is something to
+  dismiss) and then `router.replace('/')`, so the cart and Payment Options under a just-placed
+  order cannot be returned to. This applies to an order opened from "Your Orders" as well.
+  **Android's hardware Back is not intercepted**: it still goes one screen down.
+
+| #   | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Where                                                                        |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 1   | **Rotating search placeholders.** `RotatingPlaceholder` draws the placeholder over the empty input and cycles its phrases every 2000 ms with a fade (`Animated`, native driver). One `setInterval` in a `useEffect`, cleared (and the fade stopped) on unmount and while the field has text. Home: groceries / snacks / "your favorite shop". Shop: `Search for <subcategory>...` for each of that shop's sections, else "Search in this shop". The inputs no longer have a native `placeholder`; their accessibility label is unchanged    | `components/RotatingPlaceholder.tsx`, Home, `ShopHeader.tsx`                 |
+| 2   | **Shop header:** the rating pill and count are absolutely positioned in the white card's top right corner. **Vendor card:** a heart on the cover (`absolute right-2 top-2 z-10`) toggles `useFavouritesStore` without opening the shop (also on "Explore Further" cards); the rating moved from the cover to the name row; the offer is a small red tag beside the delivery time and distance (no longer a headline over the photo)                                                                                                         | `ShopHeader.tsx`, `VendorCard.tsx`                                           |
+| 3   | **Item detail sheet reads the cart.** A product already in the cart opens on the cart's quantity; its - / + change the cart line directly and the button reads "DONE · Rs. <line total>". Not in the cart: starts at 1, "ADD · Rs. …" as before. "+" at the stock (or the 99-per-line limit) stays pressable, dimmed, and answers with the toast **"Maximum stock reached"**; the menu row's "+" does the same (the amber banner is no longer used for it)                                                                                  | `ProductDetailSheet.tsx`, shop page                                          |
+| 3   | **Out of stock:** no ADD button and no quantity control (row and sheet); `OUT OF STOCK` on a `bg-black/40` veil over the picture. **Image fallback:** `ProductImage` shows a grey tile with a shop icon when a product has no photo **or its photo fails to load**                                                                                                                                                                                                                                                                          | `components/ProductImage.tsx`, `MenuProductRow.tsx`                          |
+| 5   | **Mock "Free delivery".** A mock offer label containing "free delivery" (any case) shows the delivery fee as **FREE** in the cart's bill and leaves it out of the displayed total, on Payment Options ("You save …") and, through the new receipt field `deliveryDiscountNpr` (default 0, old receipts still load), in Bill Details and "Your Orders". Same rules as §8Z.6: `__DEV__` only, display only, **the server still charges the fee**, nothing is sent. `mockFreeDelivery` and `receiptMockSavingsNpr` join the §8Z.6 removal list | `mock-promotions.ts`, `cart-totals.ts`, `demo-pricing.ts`, `BillDetails.tsx` |
+| 5   | **Payment veil.** Confirming on Payment Options shows a full-screen translucent overlay with a spinner for 1500 ms (`PAYMENT_PROCESSING_MS`), then hands the choice to the cart as before. It is a cosmetic wait in front of the real checkout request, not a simulated payment; leaving the screen cancels it                                                                                                                                                                                                                              | `app/checkout/payment-options.tsx`                                           |
+| 5   | **Toasts** were already the app's own bottom toast (`ToastHost`); it now sits 56 px higher while the cart has items, clear of the banner and the cart's action bar. **Skeletons:** the order screen's spinner is now `OrderSkeleton` (same test id `order-loading`)                                                                                                                                                                                                                                                                         | `Toast.tsx`, `Skeleton.tsx`                                                  |
+
+**Behaviour to know.**
+
+- **Not seen on a device.** Unverified in particular: `dismissTo` into the nested Shops stack,
+  `dismissAll` + `replace('/')` from the order screen, the overlaid placeholder's alignment with
+  the typed text, the heart inside the pressable card (nested press targets), and the banner's
+  height beside the "ITEMS" button.
+- The heart is a button inside a button: on iOS VoiceOver the card may be read as one element.
+- The cart has no skeleton because it still has no loading state (it renders from storage).
+- The two remaining `Alert.alert` calls are questions with two answers (replace a Home / Work
+  address, replace the cart on Reorder), not notifications, and were left as they are.
+- The product cards of the Home **search results** (`features/discovery/ProductCard.tsx`) were not
+  changed: they keep their own stepper, notice text and badge.
+- i18n: `menu.stockLimit` and `menu.outOfStock` are deleted; new keys under `discovery.searchHints`,
+  `menu`, `cartBanner`, `cart.free`, `order.backHome`, `paymentOptions.processing`. The new
+  Nepali strings are unreviewed.
+
+**Tests.** Mobile **1247** (+51): `components/ux-polish.test.tsx` (the rotation, its interval
+cleared on unmount / mid-fade / while typing, the image fallback and veil, the card's heart and
+tag, the toast offset), `features/cart/FloatingCartBanner.test.tsx` (the banner, the Shops layout
+mounting it, the tabs without a cart), `features/promo/free-delivery.test.tsx`, and new cases in
+the shop, cart, two-step checkout, category navigation and order tracking tests. Tests that
+asserted the old behaviour (offer on the cover, "Out of stock" text, the stock banner, the sheet
+adding on top of the cart, the immediate hand-over) were rewritten. Mutation-checked: no
+`clearInterval` (2 fail), the sheet ignoring the cart (3), a case-sensitive "free delivery" (5), no
+`clearTimeout` on the veil (1). `tsc`, `eslint`, `prettier` clean.
+
+## 8Z.8 Customer UI polish 2: tab reset, two-step checkout, skeletons, themed dialog, favourites (2026-10-07)
+
+Mobile only. No API, shared-types, SPEC or database change; §8Z.5 (settlement models, ad
+billing, opt-in discounts, the quote contract) is untouched and still unbuilt.
+
+| #   | Change                                                                                                                                                                                                                                                                                                                         | Where                                                                                |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| 1   | **Shops tab reset.** Pressing "Shops" while it is the current tab and a shop is open in its stack dispatches `POP_TO_TOP` at that stack (`tabResetAction`). Pressed from another tab it only switches back, keeping where the customer was                                                                                     | `app/(tabs)/_layout.tsx` (`listeners.tabPress`), `features/navigation/tab-reset.ts`  |
+| 1   | **Address book header:** a Back arrow at the top left replaces the "Done" button                                                                                                                                                                                                                                               | `features/address/AddressBookModal.tsx`                                              |
+| 2   | **Home search placeholder:** "Search for groceries, snacks or shops" (the shop page keeps "Search in this shop", the location picker its own)                                                                                                                                                                                  | `en.json` / `ne.json` `discovery.searchPlaceholder`                                  |
+| 2   | **Ratings, compact and top right:** `RatingSummary` = small green pill + "(200+)" in 11 px grey. On a vendor card it sits on a white chip in the cover's top right corner (the "Ad" badge is top left); on the shop page it is at the top right of the white card, beside the name. The long "(200+ ratings)" strings are gone | `components/RatingPill.tsx`, `VendorCard.tsx`, `features/menu/ShopHeader.tsx`        |
+| 2   | **Clear Cart** uses the app's own `ConfirmModal` (white card, icon, "Clear Cart?", **Cancel** / **Yes, Clear**; the backdrop and Android Back cancel) instead of `Alert.alert`                                                                                                                                                 | `components/ConfirmModal.tsx`, `app/(tabs)/cart.tsx`                                 |
+| 2   | **Skeleton loaders** (`SkeletonGroup`: grey blocks pulsing together, one Reanimated animation per group) replace the spinners for the Home feed, a category's shops, search results and the shop page. They keep the old test ids (`feed-loading`, `category-shops-loading`, `products-loading`, `menu-loading`)               | `components/Skeleton.tsx`, `ShopsFeed.tsx`, `ProductResults.tsx`, Home, shop page    |
+| 3   | **Two-step checkout.** The cart no longer picks a payment method: its bottom bar is one button, **"Proceed to Pay • Rs. <total>"**, which opens the new route. The bill, "Add more items", the delivery address and Clear Cart now scroll with the items; only the action bar is fixed                                         | `app/(tabs)/cart.tsx`                                                                |
+| 3   | **New route `/checkout/payment-options`** (`app/checkout/payment-options.tsx`): the amount to pay, the payment methods as a radio list, and **"Pay Rs. …"** / **"Place Order • Rs. …"** for cash                                                                                                                               | `app/checkout/payment-options.tsx`, `features/checkout/payment-choice.ts`            |
+| 4   | **"Add more items"** under the bill opens the menu of the shop the cart is from (`/vendor/[id]` with the cart's vendor id). Hidden while a reservation waits for payment                                                                                                                                                       | `app/(tabs)/cart.tsx`                                                                |
+| 5   | **Favourites:** a heart at the top right of the shop page's banner saves or removes the shop; Profile has a **Favourites** row opening `/favourites` (saved shops newest first; a row opens the shop, its heart removes it)                                                                                                    | `store/useFavouritesStore.ts`, `app/favourites.tsx`, `ShopHeader.tsx`, `profile.tsx` |
+
+**How the two steps fit together (the checkout machinery did not move).**
+
+- The Cart still owns everything that was tested before: the delivery-area check, `POST
+/api/cart/checkout`, the receipt, the reservation countdown, the gateway WebView, Cancel
+  Payment and the error messages.
+- The Payment Options screen only **chooses**. Confirming writes the method to
+  `usePaymentChoiceStore` (memory) and calls `router.back()`; the Cart, still mounted under the
+  stack, picks it up once (`PaymentChoiceRunner`), re-checks that it may proceed (signed in, name
+  on the profile, address, minimum order, no over-stock line, not locked) and starts. A choice
+  arriving while the cart may not proceed is dropped.
+- **The methods come from a mock quote:** `mockPaymentOptions()` returns the `payment_options`
+  shape of §8Z.5 (`{ method, available, reason? }`) with all three methods available. It carries
+  `// TODO: Replace with backend /cart/quote response`. The screen renders whatever list it is
+  given (an unavailable method is shown disabled; an unknown one gets a generic icon), so Model A
+  "cash only" or a future card method needs no layout change.
+- **The demo discount carries over.** Both steps call one function, `features/cart/cart-totals.ts
+#cartTotals` (the mock math and its TODO moved there from the cart), so the bill's Total, the
+  "Proceed to Pay" amount and the Payment Options amount are the same figure; the second screen
+  also says "You save Rs. …". Still display only (§8Z.6): the order is charged in full.
+- `PaymentMethodPicker.tsx` (the inline picker) is deleted.
+
+**Backend: favourites (not built).**
+
+```sql
+CREATE TABLE user_favourites (
+  user_id    uuid NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
+  vendor_id  uuid NOT NULL REFERENCES vendors(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, vendor_id)                       -- one row per customer and shop; leads the user_id FK
+);
+CREATE INDEX user_favourites_vendor_id_idx ON user_favourites (vendor_id);   -- the other FK (Phase 23 audit test)
+```
+
+```jsonc
+// GET    /api/me/favourites                 Bearer CUSTOMER → 200, newest first
+{ "favourites": [{ "vendor": {/* FeedVendor */}, "created_at": "…" }] }
+// PUT    /api/me/favourites/:vendor_id      → 204 (also on repeat); 404 VENDOR_NOT_FOUND; 422 FAVOURITES_LIMIT_REACHED (details.max 100)
+// DELETE /api/me/favourites/:vendor_id      → 204 (also when it was not saved)
+```
+
+- A shop that is no longer LIVE stays in the table and is left out of the list (it returns if the
+  shop comes back). The feed may later carry `is_favourite` per entry for a signed-in customer.
+- Until then favourites live on the phone (`useFavouritesStore`, plain MMKV
+  `hamro-pasal.favourites` v1, newest 100, cleared by the SPEC §1 purge): they do not follow the
+  account to another device, a guest has them too, and signing out keeps them. On sign-in the app
+  should upload what the phone holds (one `PUT` each) and then read the server's list.
+
+**Behaviour to know.**
+
+- **The cart has no skeleton** because it has no loading state: it renders from the phone's
+  storage at once. It will need one for the quote; the building blocks are in `Skeleton.tsx`.
+- The tab reset is unit-tested as a pure function; **whether Expo Router delivers `tabPress` to
+  `listeners` and honours the targeted `POP_TO_TOP` on the device is unverified** (SDK 57 bundles
+  its own navigation, so the action is dispatched as a plain object).
+- Between the two steps the Android Back button returns to the cart with nothing chosen.
+- "Reorder" (§8Z.7) still uses the system alert for "Replace cart items?"; only Clear Cart was
+  moved to the themed dialog.
+- The Home placeholder does not say "dishes": the catalogue is groceries and general goods.
+
+**Tests.** Mobile **1196** (+32): `two-step-checkout.test.tsx` (the shared totals, the screen's
+options, amount and wording, the hand-over, the redirect without a cart or a session, and the
+two screens together placing a COD order), `navigation/polish.test.tsx` (the tab reset's three
+cases, the address book arrow, the placeholder, the rating chip, the dialog, the skeletons'
+busy state, the favourites store, screen and Profile row), new cart cases (the single button and
+its amount with and without the demo discount, a choice ignored below the minimum order, Add more
+items, the themed dialog) and the shop page's heart. Migrated: every test that pressed the inline
+picker now uses `src/test/pay-with.ts`, which does what the second screen does. `tsc`, `eslint`
+clean; the Android bundle exports. **Not seen on a device.** New Nepali strings are unreviewed.
+
+## 8Z.7 Customer UI polish: auth input, inline quantity, shop header, cart safety, rich order history (2026-10-07)
+
+Mobile, plus **one backend constant** (the OTP lifetime). No route, schema, migration or contract
+changed, and nothing of §8Z.5 (settlement models, ad billing, opt-in discounts, cart math) was
+touched: those remain specified and unbuilt.
+
+> **Corrected the same day (final):** (a) the phone field has **no** `maxLength`; the ten-digit limit is enforced in code (`sanitizePhoneInput` on every change, so a pasted or auto-filled "+977 98…" works and an eleventh digit never shows). (b) The OTP lifetime is **back at 120 s** with the resend cooldown at **60 s** (SPEC unchanged from before; `OTP_TTL_SECONDS = 120`): a new code can be requested after 60 s while a delayed one stays valid for 2 minutes. Requesting a new code replaces the earlier one immediately (existing behaviour). Rows 1 of the table and the two "Behaviour to know" bullets about `maxLength` and the 60 s lifetime are superseded by this note. No backend change remains from this section.
+
+**The Order History UI now supports the rich receipt breakdown.** "Your Orders" cards and the
+order detail screen show the shop, the items and a **Bill Details** block laid out exactly as the
+discount engine will fill it: Item Total, Delivery Fee, Platform Fee, Shop Discount, Total,
+Payment Method.
+
+| #   | Change                                                                                                                                                                                                                                                                                                                                                                                               | Where                                                                                             |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| 1   | **Phone field:** `maxLength={10}`, digits only (`sanitizePhoneInput`: Nepali digits converted, separators dropped, a pasted +977 / 977 taken off), number pad. A number is accepted only at **exactly ten digits** (`toTenDigitNepalPhone`), then by the shared +977 rule                                                                                                                            | `features/auth/login-form.ts`, `PhoneSignInForm.tsx`                                              |
+| 1   | **OTP lifetime = resend cooldown = 60 s** (it was 120 s / 60 s). `OTP_TTL_SECONDS` is now 60; the SMS says "It expires in 1 minute."; SPEC Nepal §4 amended. Supersedes every "2 min" in §8A                                                                                                                                                                                                         | `packages/shared-types/src/domain/constants.ts`, `apps/api/src/auth/otp-auth-service.ts`, SPEC.md |
+| 2   | **Inline quantity:** a menu row's **Add** becomes a **- n +** control as soon as it is pressed. "+" is the same add as before (so stock and cart limits still report in the banner); "-" lowers by one and at one removes the item, bringing Add back. Disabled while a checkout waits for payment or the shop does not deliver here. The "n in cart" text on the row is gone (the control shows it) | `features/menu/MenuProductRow.tsx`                                                                |
+| 2   | **Product photos:** every row has a 64 px thumbnail: the photo, or a branded placeholder (brand-tinted tile with a basket icon). Tapping a photo opens it full screen (`ImageViewerModal`: plain `Modal`, sideways paging over all of the product's photos, "1 / 3", close button). The placeholder opens nothing. Tapping the name still opens the item detail sheet                                | `components/ImageViewerModal.tsx`, `MenuProductRow.tsx`, `menu-sections.ts` (`imageUrls`)         |
+| 3   | **Shop header:** the rating pill is followed by the count, rounded down with a plus ("(200+ ratings)", exact below ten; `ratingCountDisplay`). A location line shows the neighbourhood and Palika ("Thamel, Kathmandu Metropolitan City"); distance and delivery time moved to the line under it                                                                                                     | `features/menu/ShopHeader.tsx`, `promo-model.ts`                                                  |
+| 4   | **Clear Cart** asks first: `Alert.alert("Clear Cart", "Are you sure you want to remove all items?", [Cancel, Clear Cart])`. Nothing is removed until confirmed                                                                                                                                                                                                                                       | `app/(tabs)/cart.tsx`                                                                             |
+| 5   | **Your Orders:** each card shows the shop name and location, a status pill (green Delivered, red Cancelled / Failed), the items as "1x Basmati Rice 5kg & 2 more", the total and payment method, and **Reorder**. Tapping the card opens the order                                                                                                                                                   | `app/orders.tsx`, `features/order/order-history.ts`                                               |
+| 5   | **Order detail:** shop name, location and status at the top; the timeline (the existing discrete-node tracker); the items with line totals; **Bill Details**; the delivery address. The cancellation panel, delivery code and dispute button are unchanged                                                                                                                                           | `app/order/[id]/index.tsx`, `features/order/BillDetails.tsx`                                      |
+
+**Where the order history's data comes from.**
+
+- New store **`useOrderReceiptStore`** (plain MMKV, key `hamro-pasal.order-receipts` v1, newest
+  20, Zod-validated on restore, cleared by the SPEC §1 purge). The cart saves one receipt when
+  checkout succeeds: the cart's shop (enough to rebuild the cart), its location, the items, the
+  **server's** `subtotal_npr` and `delivery_fee_npr`, platform fee 0, the delivery address as one
+  line, and the mock discount (below).
+- It exists because **the API has no order list and its order detail has no shop name**. It is
+  the phone's own record: an order placed on another phone (or before this build) has no receipt
+  and shows its code, status, total and payment method only, with no Reorder. Backend items
+  already listed: `GET /api/orders` with `vendor_business_name` (BACKEND_CHECKLIST section 2).
+- **Real vs mock in the bill:** Item Total, Delivery Fee, Platform Fee and the payment method are
+  real. **Shop Discount and the Total it produces are the §8Z.6 demo math** (development builds
+  only; the server charged the full total). The rating count and the shop's neighbourhood are
+  mock extras (`rating_count`, `locality` in `mock-promotions.ts`; proposed feed fields of the
+  same names); the Palika is real.
+- **§8Z.6 changed with this:** the in-memory `useDemoPricingStore` is deleted. The mock discount
+  now lives on the receipt (`shopDiscountNpr`, `shopOfferLabel`), so it survives a relaunch, and
+  `demoTotalNpr(order.totalNpr, receipt?.shopDiscountNpr)` is used by the list, the order header
+  and Bill Details. The removal checklist of §8Z.6 applies to those call sites and to the two
+  receipt fields instead of the store.
+- **Reorder** puts the receipt's items back in the cart at their remembered prices (checkout
+  re-prices) and opens the cart. Same shop: quantities are added. Another shop's cart: the
+  "Replace cart items?" alert first. A checkout waiting for payment: refused with a toast. Stock
+  is not checked until checkout.
+
+**Behaviour to know.**
+
+- **A hard `maxLength` of 10 truncates a pasted or auto-filled "+977 98…" before the app sees
+  it** (the OS cuts it to ten characters), leaving an invalid number the customer must retype.
+  Typing is unaffected. If autofill matters more than the hard stop, drop `maxLength` and rely on
+  `sanitizePhoneInput`, which already caps at ten digits and strips the prefix.
+- **60 s is short for SMS in Nepal.** A code that arrives late is already dead; the customer then
+  resends (possible at the same second). The countdown on the code screen was already 60 s, so the
+  two now agree. If delivery proves slow, raise both constants together.
+- The API was changed, so **the API must be rebuilt and redeployed** (`pnpm build`) for the 60 s
+  lifetime to take effect; an old API keeps codes alive for 120 s while the app shows 60.
+- The timeline has no timestamps per step (the tracker never had them).
+
+**Tests.** Mobile **1161** (+40): the phone field's sanitising and ten-digit rule; the shop
+header's count buckets and location; the inline control (appears on Add, raises, lowers, removes
+at one, stops at stock, frozen during checkout, reflects the cart); the placeholder and the
+photo viewer; the clear-cart alert (shown, cancel keeps, confirm empties); the receipt store
+(cap, validation, restore); the order cards, every Reorder path, the order detail and the bill
+with and without a discount or a receipt, in Nepali too; checkout saving the receipt while
+sending no discount. Updated for the new behaviour: `VendorMenuScreen.test.tsx`,
+`shop-detail.test.tsx`, `demo-pricing.test.tsx`, two fixtures. API: `otp-store.test.ts` and
+`auth-api.int.test.ts` (auth unit 18, auth integration 31, all passing). `tsc`, `eslint` clean;
+the Android bundle exports. **Not seen on a device.** The new Nepali strings are unreviewed.
+
+## 8Z.6 TEMPORARY demo pricing in the customer app: must be removed in Phase 2 (2026-10-07)
+
+> **Updated by §8Z.7:** `useDemoPricingStore` no longer exists. The mock discount is kept on the order's local receipt (`useOrderReceiptStore`: `shopDiscountNpr`, `shopOfferLabel`) and is also shown in the order's Bill Details. Everything else below still holds.
+
+**The Cart and the customer's order screens currently contain temporary frontend math for vendor
+discounts, added only so stakeholder demos look complete. It is not a pricing implementation.
+In Phase 2 it must be ripped out entirely and replaced by the `POST /api/cart/quote` response
+(§8Z.5 section 5); no part of it is to be kept, extended or "connected" to the backend.**
+
+Mobile only. No API, shared-types, SPEC or backend-architecture change. Development builds only
+(`PROMO_MOCKS_ENABLED = __DEV__`): a preview or production build shows no discount anywhere and
+every total is the server's.
+
+| Where                                                                                       | What the temporary code does                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `features/promo/mock-promotions.ts#mockShopDiscountPaisa`                                   | Turns a mock offer **label** into an amount: `"10% OFF"` → that share of the subtotal; `"Flat Rs. 200 OFF"` → that amount, capped at the subtotal. Every other label (`Free delivery`, `Buy 1 Get 1`, `Dashain Sale`) → 0                                   |
+| `app/(tabs)/cart.tsx` (`// TODO: Replace with backend /cart/quote response`)                | Reads the cart shop's mock `top_offer`, renders a green **"Shop Discount · <label>"** row (`cart-shop-discount`) between Subtotal and Delivery fee, and shows `total - discount` as the Total. The minimum-order check still uses the undiscounted subtotal |
+| `features/promo/demo-pricing.ts` (`// TODO: Remove mock pricing when /cart/quote is ready`) | `useDemoPricingStore`: order id → the discount the cart displayed, recorded by the cart when checkout succeeds (memory only, last 20 orders, cleared by the SPEC §1 purge). `demoTotalNpr(serverTotal, discount)` subtracts it for display                  |
+| `app/order/[id]/index.tsx`, `app/orders.tsx`                                                | Show `demoTotalNpr(order.totalNpr, …)` instead of the stored total, so order tracking and "Your Orders" match the cart                                                                                                                                      |
+
+**What it does not change (by design, and why a demo still has seams).**
+
+- **Nothing sent to or stored from the server.** The checkout request is unchanged (ids and
+  quantities), the order is priced in full by the API (`subtotal + delivery_fee`), and
+  `useCheckoutStore` / `useOrderStore` keep the server's `total_npr`. Only the rendered number
+  differs.
+- **The eSewa / Khalti page shows and charges the full amount.** The payment request is created
+  and signed by the backend for the real total, and the app must never alter it. **Demo with
+  Cash on Delivery** for a consistent story; a prepaid demo shows the higher amount on the
+  gateway page.
+- **The shop's and the rider's screens are not adjusted** (`VendorOrderCard`, `CashToCollect`):
+  the cash a rider is told to collect is the real total. A demo that switches to the vendor or
+  rider device shows the undiscounted amount.
+- The remembered discount is lost on relaunch; the customer screens then show the server total
+  for that order.
+- A push notification, the vendor's wallet and every ledger figure are real.
+
+**Removal checklist (Phase 2, with BACKEND_CHECKLIST.md section 5 step 2).**
+
+1. Delete `features/promo/demo-pricing.ts` and its test, and its three call sites (the
+   `remember(...)` call in the cart's checkout `onSuccess`, the two `demoTotalNpr(...)` uses), and
+   the reset in `features/territory/purge-local-data.ts`.
+2. Delete `mockShopDiscountPaisa` and the block under the cart's TODO; render `vendor_offer`,
+   `platform_promo` and `total_npr` from the quote, and take the payment methods from its
+   `payment_options`.
+3. The order screens read the order's own `total_npr`, which the server will then send already
+   discounted, with the discount lines from the order snapshot.
+4. `grep -rn "mock pricing\|/cart/quote" apps/mobile/app apps/mobile/src` must then find nothing.
+
+**Tests.** Mobile **1121** (+15 over §8Z.5): `CartScreen.test.tsx` (+9: the line's position,
+label and green amount, following quantity changes, a flat offer and its cap, no line for labels
+without an amount or for no offer, the minimum order on the subtotal, Nepali digits; the file now
+mocks `vendorExtras` so its other totals stay the server's) and `demo-pricing.test.tsx` (6: the
+subtraction and its floor, nothing remembered for no discount, the 20-order cap, the cart
+recording the discount at checkout while sending none of it, Your Orders showing the cart's total
+with the store still holding the server's). `tsc`, `eslint` clean. **Not seen on a device.**
+
+## 8Z.5 Business and settlement architecture: discounts, ads, three settlement models, cart math (2026-10-07)
+
+**Status.** SPEC.md was amended by the user's decision (Vendor Pricing "Dual-Layer Billing";
+Financial Governance "Vendor Ledger and Settlement Models"; new core sections 7 Discounts,
+8 Ad Monetization, 9 Checkout and Cart Math Protocol; customer flow step 7; vendor flow steps
+10–12; Super Admin steps 5–6; data models; edge cases 5–8; verification tests 5–8; eSewa
+"Amount"). **None of the backend below is built.** No migration, route, shared-types schema or
+service changed: checkout still charges `subtotal + delivery_fee`, every vendor still behaves as
+Model B, and the payment request is still created by the separate `initiate` call. The only code
+in this section is two customer UI elements on mock data ("Customer app" below).
+
+This **replaces the deferral recorded in §8Z.4**: the discount engine is now specified. Until it
+is built, §8Z.4's rule still describes the running code (promotions and offer labels are visual
+and change no price), and the mocks stay `__DEV__`-only.
+
+### Final decisions (user, 2026-10-07): these govern wherever the text below differs
+
+| #   | Decision                                                                                         | What it means for the build                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Model C (`DIRECT_PREPAID`) is Phase 3 / deferred.** Models A and B are the Phase 1 / 2 targets | Nothing of Model C is built in Phases 1–2: no `vendor_gateway_accounts`, no vendor-credential signing, no `ORDER_FEE_DEBIT` / `ORDER_REFUND` path. The enum value is created (so no later enum migration is needed) but **cannot be selected**: a request for it answers `422 SETTLEMENT_MODEL_UNAVAILABLE`. Reasons: eSewa / Khalti merchant terms are unconfirmed, and the refund exposure                                                                                                                                                             |
+| 2   | **When Model C is activated it requires a strict Fixed Reserve**                                 | `vendor_ledgers.prepaid_floor_npr` is that reserve: **default and minimum 5000 NPR** (`CHECK (prepaid_floor_npr >= 5000)` for a Model C row), Superadmin configurable upwards. An order is offered only if `balance - (C + A) >= reserve`; a balance **below** the reserve suspends the shop; it is restored at `balance >= reserve`. Ads may be bought only with `balance - price_or_budget >= reserve`. Refunds are debited from the balance, which is what the reserve covers. Every "floor", "0" and ">" stated for Model C below reads as this rule |
+| 3   | **Ad credit guard in Model B is enforced**                                                       | A `FLAT_RATE` purchase is **refused** with `422 AD_EXCEEDS_PENDING_PAYOUT` (`details.ad_price_npr`, `balance_npr`, `pending_escrow_npr`) when `balance + pending_escrow < ad_price`. Evaluated under the vendor row lock, with `pending_escrow` = Phase 12's `pendingEscrowOf`. No longer optional                                                                                                                                                                                                                                                       |
+| 4   | **Sponsored feed listings stay**                                                                 | Up to **two** sponsored shops lead the main feed, nearest first, each with `is_sponsored: true` (the "Ad" badge, built). Only shops that deliver to the customer are eligible; never in "Explore Further". Details under the table                                                                                                                                                                                                                                                                                                                       |
+
+- Decision 4, precisely: `GET /api/vendors` orders "Delivers to you" as [≤ 2 ACTIVE `FEED_LISTING`
+  purchases among the serviceable shops, nearest first] + [everyone else by the chosen sort]. Only
+  those ≤ 2 entries carry `is_sponsored: true`; a further sponsored shop is listed in its normal
+  place **without** the flag, so the badge always means "this position was paid for". The app's
+  own sort (§8Z.3) must keep flagged entries first once the server sends the flag; today the mock
+  badge does not reorder anything.
+- Decisions 1–2 remove "Model C credentials", "Model C refund exposure" and "Who refunds in
+  Model C" from the open questions for Phases 1–2; they are preconditions of Phase 3.
+
+### Reconciliations made while writing this (accepted by the user 2026-10-07)
+
+| Asked                                                          | Specified as                                                                                                                                                          | Why                                                                                                                                                      |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a `vendor_ledgers` wallet table tracking balance and fees owed | `vendor_ledgers` exists, one row per vendor, but its balances are **projections maintained by the ledger triggers**; money still moves only through balanced journals | SPEC §5 prohibits single-entry wallet tables (migration 0004 dropped one; Phase 22 decision). A directly written balance cannot be audited or reconciled |
+| the shop "flags `is_active: false`"                            | the existing `vendors.status = 'SUSPENDED'` with `status_before_debt_suspension`                                                                                      | One suspension mechanism already drives the feed, checkout, SMS and restore (Phases 12–15). A second flag would disagree with it                         |
+| three models                                                   | **Model B is the default and is what is built today.** Model A is Model B without digital payments. A Model B shop's cash orders use Model A's credit rule (as today) | Keeps every existing vendor and test valid; migration sets all vendors to `PLATFORM_ESCROW`                                                              |
+| campaigns "created by Admin", vendors opt in                   | each campaign states `vendor_share_percent` (0–100); the opt-in row stores it. The platform funds the rest                                                            | An opt-in is only meaningful (and only dispute-proof) if it records what the vendor agreed to pay                                                        |
+| `subtotal - vendor_offer - platform_promo + delivery_fee`      | exactly that for the customer; **commission is charged on `subtotal - vendor_offer - vendor share of the promo`**                                                     | Otherwise the vendor pays commission on money it never received, or the platform earns commission on its own subsidy                                     |
+| `PER_ORDER_PREMIUM`                                            | a fixed fee on **every DELIVERED order placed while the ad is ACTIVE**, not only orders that came through the ad                                                      | Click attribution can be disputed; "placed while the ad ran" is a fact in the database                                                                   |
+| upfront recharge for ads in Models A and C                     | `FLAT_RATE`: the price is taken at purchase. `PER_ORDER_PREMIUM`: the vendor sets a budget, which is **held** at purchase and drawn per order                         | A per-order fee cannot be "upfront" without a budget; a held budget also caps the vendor's exposure                                                      |
+| token generated before the checkout response                   | checkout returns `payment_session`; the existing `POST /api/payments/*/initiate` stay for a retry and re-issue a session for the **stored** total                     | The app's "Pay with …" retry needs a fresh `transaction_uuid` / `pidx`                                                                                   |
+| checkout decides which payment options to display              | a new **quote** call returns the priced cart and `payment_options` before the customer chooses; checkout re-evaluates and refuses a method not on the list            | The customer picks the method before `POST /api/cart/checkout` exists for that cart                                                                      |
+
+### 1. Discounts (dispute-proof)
+
+```sql
+CREATE TYPE discount_kind AS ENUM ('FLAT', 'PERCENTAGE');
+
+-- A vendor's own offer. Rules are immutable: an edit ends this row and inserts a new one.
+CREATE TABLE vendor_offers (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  vendor_id           uuid NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
+  kind                discount_kind NOT NULL,
+  value               numeric(12,2) NOT NULL,      -- NPR for FLAT; percent (0 < v <= 100) for PERCENTAGE
+  max_discount_npr    numeric(12,2) NULL,          -- cap, PERCENTAGE only
+  min_cart_npr        numeric(12,2) NOT NULL DEFAULT 0,
+  label               text NOT NULL,               -- "Flat Rs. 200 OFF": rendered by the server from the rule
+  starts_at           timestamptz NOT NULL DEFAULT now(),
+  ends_at             timestamptz NULL,
+  created_by_user_id  uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,  -- must be this vendor's user
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  ended_at            timestamptz NULL,            -- switched off; never deleted
+  ended_by_user_id    uuid NULL REFERENCES users(id) ON DELETE RESTRICT,
+  replaces_offer_id   uuid NULL REFERENCES vendor_offers(id) ON DELETE RESTRICT,
+  CHECK (value > 0 AND (kind <> 'PERCENTAGE' OR value <= 100)),
+  CHECK (max_discount_npr IS NULL OR (kind = 'PERCENTAGE' AND max_discount_npr > 0)),
+  CHECK (min_cart_npr >= 0),
+  CHECK (kind <> 'FLAT' OR min_cart_npr >= value),          -- a flat offer never exceeds its own minimum cart
+  CHECK (ends_at IS NULL OR ends_at > starts_at),
+  CHECK ((ended_at IS NULL) = (ended_by_user_id IS NULL))
+);
+CREATE INDEX vendor_offers_live_idx ON vendor_offers (vendor_id, starts_at) WHERE ended_at IS NULL;
+-- trigger: UPDATE may only set ended_at / ended_by_user_id, once. Everything else is frozen.
+
+-- A platform campaign. Applies to NO shop until that shop opts in.
+CREATE TABLE platform_campaigns (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                  text NOT NULL,
+  kind                  discount_kind NOT NULL,
+  value                 numeric(12,2) NOT NULL,
+  max_discount_npr      numeric(12,2) NULL,
+  min_cart_npr          numeric(12,2) NOT NULL DEFAULT 0,
+  vendor_share_percent  numeric(5,2) NOT NULL CHECK (vendor_share_percent BETWEEN 0 AND 100),
+  terms_version         integer NOT NULL DEFAULT 1,   -- raised when anything a vendor agreed to changes
+  starts_at             timestamptz NOT NULL,
+  ends_at               timestamptz NOT NULL,
+  is_active             boolean NOT NULL DEFAULT true,
+  created_by_user_id    uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,   -- SUPER_ADMIN
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  updated_at            timestamptz NOT NULL DEFAULT now(),
+  CHECK (value > 0 AND (kind <> 'PERCENTAGE' OR value <= 100)),
+  CHECK (ends_at > starts_at)
+);
+-- trigger: kind, value, max_discount_npr, min_cart_npr, vendor_share_percent may change only
+-- together with terms_version + 1. A raised version makes every existing opt-in stale (below).
+
+-- The junction: the vendor's own consent. One live row per (campaign, vendor).
+CREATE TABLE campaign_opt_ins (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  campaign_id           uuid NOT NULL REFERENCES platform_campaigns(id) ON DELETE RESTRICT,
+  vendor_id             uuid NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
+  terms_version         integer NOT NULL,           -- the version the vendor was shown
+  terms_snapshot        jsonb NOT NULL,             -- kind, value, cap, min cart, vendor_share_percent, dates
+  opted_in_by_user_id   uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  opted_in_at           timestamptz NOT NULL DEFAULT now(),
+  opted_out_by_user_id  uuid NULL REFERENCES users(id) ON DELETE RESTRICT,
+  opted_out_at          timestamptz NULL,
+  CHECK ((opted_out_at IS NULL) = (opted_out_by_user_id IS NULL))
+);
+CREATE UNIQUE INDEX campaign_opt_ins_live_uidx ON campaign_opt_ins (campaign_id, vendor_id) WHERE opted_out_at IS NULL;
+CREATE INDEX campaign_opt_ins_vendor_idx ON campaign_opt_ins (vendor_id);
+-- trigger on INSERT: opted_in_by_user_id must be vendors.user_id of vendor_id (a SUPER_ADMIN id is
+--   refused by the database, not only by the route), and terms_version must be the campaign's current one.
+-- trigger on UPDATE: only the two opted_out_* columns, once.
+
+-- Strict audit trail. Append-only (trigger refuses UPDATE and DELETE, like ledger_entries).
+CREATE TABLE audit_logs (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  occurred_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
+  actor_user_id  uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  actor_role     user_role NOT NULL,
+  action         text NOT NULL,     -- see the list below
+  vendor_id      uuid NULL REFERENCES vendors(id) ON DELETE RESTRICT,
+  entity_type    text NOT NULL,     -- 'vendor_offer' | 'campaign_opt_in' | 'ad_purchase' | 'vendor_ledger' | 'platform_campaign' | 'home_promotion'
+  entity_id      uuid NOT NULL,
+  before_state   jsonb NULL,
+  after_state    jsonb NOT NULL,
+  request_id     text NULL,
+  ip_address     inet NULL,
+  user_agent     text NULL
+);
+CREATE INDEX audit_logs_vendor_idx ON audit_logs (vendor_id, occurred_at);
+CREATE INDEX audit_logs_entity_idx ON audit_logs (entity_type, entity_id, occurred_at);
+CREATE INDEX audit_logs_actor_idx  ON audit_logs (actor_user_id);
+```
+
+- **Audit actions** (each written by the service in the **same transaction** as the change, so a
+  discount cannot exist without its row): `VENDOR_OFFER_CREATED`, `VENDOR_OFFER_ENDED`,
+  `CAMPAIGN_CREATED`, `CAMPAIGN_TERMS_CHANGED`, `CAMPAIGN_OPTED_IN`, `CAMPAIGN_OPTED_OUT`,
+  `AD_PURCHASED`, `AD_CANCELLED`, `AD_PAUSED_BUDGET_EXHAUSTED` (actor = the system user),
+  `SETTLEMENT_MODEL_CHANGE_REQUESTED`, `SETTLEMENT_MODEL_CHANGED`, `LEDGER_RECHARGED`.
+- **Why a vendor cannot dispute a deduction.** Each order stores the offer id / opt-in id and a
+  copy of the rule (section 4). The offer row names the vendor user who created it; the opt-in row
+  names the vendor user who joined and holds the terms as shown; the audit row has the timestamp,
+  the actor, the IP and the request id; none of the three can be edited or deleted; and the
+  database itself refuses an opt-in made by anyone but the shop's own account.
+- **Changed campaign terms:** a campaign whose terms version was raised stops applying to a shop
+  until that shop opts in again to the new version (the old opt-in is closed by the system and a
+  new invite appears). Orders already priced keep their snapshot.
+- **Selection:** per order at most one vendor offer and one campaign; in each layer the rule that
+  qualifies (`subtotal >= min_cart_npr`, inside its dates, live) and gives the larger discount
+  wins, ties to the older row.
+- Routes: vendor `GET / POST /api/vendor/offers`, `POST /api/vendor/offers/:id/end`;
+  `GET /api/vendor/campaigns` (invites + joined), `POST /api/vendor/campaigns/:id/opt-in
+{ terms_version }` (409 `CAMPAIGN_TERMS_CHANGED` if stale), `POST …/opt-out`. Admin
+  `GET / POST / PUT /api/admin/campaigns` (**no opt-in route exists for admins**),
+  `GET /api/admin/audit-logs?vendor_id=&entity_type=&cursor=`.
+- **Vendor App "Marketing" tab** (SPEC vendor flow step 10): two sections, **My Offers** and
+  **Campaign Invites**, and the entry to the Ad Marketplace. Not built (neither in the mobile
+  vendor dashboard nor in the web Vendor Portal).
+
+### 2. Ad monetization and dual-layer billing
+
+```sql
+CREATE TYPE ad_billing_model AS ENUM ('FLAT_RATE', 'PER_ORDER_PREMIUM');
+CREATE TYPE ad_slot          AS ENUM ('CAROUSEL', 'FEATURED', 'FEED_LISTING');
+CREATE TYPE ad_purchase_status AS ENUM ('ACTIVE', 'PAUSED', 'ENDED', 'CANCELLED');
+
+-- The Ad Marketplace catalogue, published by a Super Admin. A price list, not a charge.
+CREATE TABLE ad_products (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                text NOT NULL,
+  slot                ad_slot NOT NULL,
+  billing_model       ad_billing_model NOT NULL,
+  price_npr           numeric(12,2) NOT NULL CHECK (price_npr > 0),  -- per period (FLAT_RATE) or per order (PER_ORDER_PREMIUM)
+  duration_days       integer NOT NULL CHECK (duration_days BETWEEN 1 AND 90),
+  is_active           boolean NOT NULL DEFAULT true,
+  created_by_user_id  uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at          timestamptz NOT NULL DEFAULT now()
+);
+-- Prices are immutable per row: a new price is a new product row; the old one is deactivated.
+
+-- The vendor's explicit agreement. The only thing that can make a promotion sponsored or create an ad charge.
+CREATE TABLE ad_purchases (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  vendor_id             uuid NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
+  ad_product_id         uuid NOT NULL REFERENCES ad_products(id) ON DELETE RESTRICT,
+  billing_model         ad_billing_model NOT NULL,       -- copied: what the vendor agreed to
+  price_npr             numeric(12,2) NOT NULL,          -- copied at purchase
+  budget_npr            numeric(12,2) NULL,              -- PER_ORDER_PREMIUM: the most the vendor will spend
+  settlement_model      settlement_model NOT NULL,       -- the shop's model at purchase: decides collection
+  status                ad_purchase_status NOT NULL DEFAULT 'ACTIVE',
+  starts_at             timestamptz NOT NULL,
+  ends_at               timestamptz NOT NULL,
+  agreed_by_user_id     uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,  -- must be the vendor's user (trigger)
+  agreed_at             timestamptz NOT NULL DEFAULT now(),
+  idempotency_key       text NOT NULL,
+  hold_transaction_id   uuid NULL REFERENCES ledger_transactions(id) ON DELETE RESTRICT,  -- price or budget taken / held
+  UNIQUE (vendor_id, idempotency_key),
+  CHECK ((billing_model = 'PER_ORDER_PREMIUM') = (budget_npr IS NOT NULL)),
+  CHECK (budget_npr IS NULL OR budget_npr >= price_npr),
+  CHECK (ends_at > starts_at)
+);
+CREATE INDEX ad_purchases_vendor_idx ON ad_purchases (vendor_id, status);
+
+-- The admin promo payload of §8Z.4 gains two fields:
+ALTER TABLE home_promotions
+  ADD COLUMN is_sponsored   boolean NOT NULL DEFAULT false,
+  ADD COLUMN ad_purchase_id uuid NULL REFERENCES ad_purchases(id) ON DELETE RESTRICT,
+  ADD CONSTRAINT home_promotions_sponsored_check CHECK (is_sponsored = (ad_purchase_id IS NOT NULL));
+```
+
+```jsonc
+// POST /api/admin/promotions  (the §8Z.4 body, plus:)
+{
+  /* placement, image_url, title, subtitle, target_type, target_value, display_order, is_active, starts_at, ends_at */
+  "is_sponsored": true, // default false
+  "ad_purchase_id": "uuid",
+} // required exactly when is_sponsored; else must be null or absent
+// 422 AD_PURCHASE_REQUIRED       sponsored without a purchase
+// 422 AD_PURCHASE_MISMATCH       the purchase is not ACTIVE, belongs to another slot (CAROUSEL vs FEATURED),
+//                                or its vendor is not the promotion's SHOP target
+// GET /api/home/promotions and the feed then carry "is_sponsored": true, and the app shows "Ad".
+```
+
+- **No unilateral billing, enforced three times:** the route (`AD_PURCHASE_REQUIRED`), the CHECK
+  on `home_promotions`, and the ledger (an `AD_*` line can only be posted by a journal that names
+  an `ad_purchases` row whose `agreed_by_user_id` is the vendor's user).
+- A sponsored promotion's dates must lie inside the purchase's. A sponsored promotion targets the
+  purchasing shop (`target_type = 'SHOP'`, that vendor's id).
+- `FEED_LISTING` needs no promotion row: while the purchase is ACTIVE the feed marks the entry
+  `is_sponsored: true` and lists it first **within "Delivers to you"** (at most 2 sponsored shops,
+  nearest first). A shop that does not deliver to the customer is never promoted to them.
+- Vendor routes: `GET /api/vendor/ads/products` (the marketplace, with `collection` describing
+  how this shop would be charged under its model and `recharge_required_npr`),
+  `POST /api/vendor/ads/purchases { ad_product_id, starts_at, budget_npr?, idempotency_key,
+agreed: true }`, `GET /api/vendor/ads/purchases`, `POST …/:id/cancel`. Admin
+  `GET / POST /api/admin/ads/products` only.
+- **Dual layer on every statement.** Layer 1 base: `PLATFORM_COMMISSION`, `SUBSCRIPTION_FEE`.
+  Layer 2 add-ons: `AD_FLAT_FEE`, `AD_ORDER_PREMIUM`. They are different ledger line types posted
+  to different revenue accounts (below) and are never summed into one figure on the vendor's
+  ledger, the settlement, or the payout statement.
+
+### 3. Vendor ledger and the three settlement models
+
+```sql
+CREATE TYPE settlement_model AS ENUM ('COD_CREDIT', 'PLATFORM_ESCROW', 'DIRECT_PREPAID');  -- A, B, C
+
+ALTER TABLE vendors ADD COLUMN settlement_model settlement_model NOT NULL DEFAULT 'PLATFORM_ESCROW';
+
+-- One row per vendor. Balances are PROJECTIONS: only the ledger's posting trigger writes them.
+CREATE TABLE vendor_ledgers (
+  vendor_id            uuid PRIMARY KEY REFERENCES vendors(id) ON DELETE RESTRICT,
+  settlement_model     settlement_model NOT NULL,         -- mirrors vendors.settlement_model (same transaction)
+  balance_npr          numeric(12,2) NOT NULL DEFAULT 0,  -- = vendors.wallet_balance_npr (kept; this is its home going forward)
+  commission_owed_npr  numeric(12,2) NOT NULL DEFAULT 0,  -- Layer 1 debits not yet covered (Model A debt, by line type)
+  ad_fees_owed_npr     numeric(12,2) NOT NULL DEFAULT 0,  -- Layer 2 charges still to be netted from payouts (Model B)
+  ad_budget_held_npr   numeric(12,2) NOT NULL DEFAULT 0,  -- PER_ORDER_PREMIUM budgets held (Models A and C)
+  credit_limit_npr     numeric(12,2) NOT NULL DEFAULT -2000 CHECK (credit_limit_npr BETWEEN -2000 AND 0),  -- Model A floor
+  prepaid_floor_npr    numeric(12,2) NOT NULL DEFAULT 0 CHECK (prepaid_floor_npr >= 0),                     -- Model C (Phase 3): the Fixed Reserve, min 5000; suspend below it
+  updated_at           timestamptz NOT NULL DEFAULT now(),
+  CHECK (commission_owed_npr >= 0 AND ad_fees_owed_npr >= 0 AND ad_budget_held_npr >= 0)
+);
+
+-- Itemisation: every posting says what it is.
+CREATE TYPE ledger_line_type AS ENUM (
+  'ORDER_PROCEEDS', 'DELIVERY_FEE',
+  'PLATFORM_COMMISSION', 'SUBSCRIPTION_FEE',                 -- Layer 1
+  'AD_FLAT_FEE', 'AD_ORDER_PREMIUM', 'AD_BUDGET_HOLD', 'AD_BUDGET_RELEASE',   -- Layer 2
+  'DISCOUNT_VENDOR_OFFER', 'DISCOUNT_CAMPAIGN_VENDOR_SHARE', 'DISCOUNT_CAMPAIGN_PLATFORM_SHARE',
+  'REFUND', 'RECHARGE', 'PAYOUT', 'ADJUSTMENT');
+ALTER TABLE ledger_entries ADD COLUMN line_type ledger_line_type NOT NULL DEFAULT 'ADJUSTMENT';
+ALTER TABLE ledger_entries ADD COLUMN ad_purchase_id uuid NULL REFERENCES ad_purchases(id) ON DELETE RESTRICT;
+-- CHECK: line_type LIKE 'AD_%' requires ad_purchase_id.
+-- New ledger_account_type values: AD_REVENUE, AD_BUDGET_CLEARING, PROMO_EXPENSE, REFUND_CLEARING.
+-- New ledger_transaction_kind values: AD_PURCHASE, AD_BUDGET_RELEASE, LEDGER_RECHARGE, ORDER_FEE_DEBIT, ORDER_REFUND.
+
+-- Model C only (Phase 3, do not create before then): the vendor's own gateway credentials.
+CREATE TABLE vendor_gateway_accounts (
+  vendor_id          uuid NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
+  gateway            text NOT NULL CHECK (gateway IN ('ESEWA', 'KHALTI')),
+  merchant_code      text NOT NULL,          -- eSewa product_code / Khalti merchant id
+  secret_ciphertext  bytea NOT NULL,         -- envelope-encrypted; the key is not in the database
+  verified_at        timestamptz NULL,       -- a test payment succeeded
+  PRIMARY KEY (vendor_id, gateway)
+);
+```
+
+|                     | **A `COD_CREDIT`**                                                                               | **B `PLATFORM_ESCROW`** (default, built today)                                | **C `DIRECT_PREPAID`**                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Customer pays       | cash to the vendor or rider                                                                      | the platform (eSewa / Khalti); cash also allowed                              | the vendor's merchant account (eSewa / Khalti); cash also allowed                           |
+| Who holds the money | the vendor                                                                                       | the platform (SYSTEM_ESCROW) until DELIVERED                                  | the vendor, immediately                                                                     |
+| When fees are taken | at DELIVERED: ledger debited for commission and per-order fees                                   | at DELIVERED: netted out of the escrowed amount                               | **at PLACED**: debited from the prepaid balance; reversed if the order is cancelled         |
+| Ledger sign         | runs negative (credit)                                                                           | positive (earnings awaiting payout); cash orders may push it negative as in A | must stay at or above the Fixed Reserve (prepaid)                                           |
+| Auto-suspension     | balance strictly below `credit_limit_npr` (-2000)                                                | only through its cash orders, by the same limit                               | balance below `prepaid_floor_npr` (reserve, min 5000)                                       |
+| Lifting it          | recharge until the balance is 0 or more (existing rule)                                          | the same                                                                      | recharge until the balance is back at the reserve                                           |
+| Refund              | n/a before delivery (no money taken); after delivery a dispute refund is debited from the ledger | paid from escrow; the simplest case                                           | paid to the customer by the platform (REFUND_CLEARING) and debited from the prepaid balance |
+| Payout              | none (the vendor already has the cash)                                                           | periodic, from the ledger (Phase 22 payout requests)                          | none (the vendor already has the money)                                                     |
+| Recharge            | eSewa / Khalti top-up (`LEDGER_RECHARGE`)                                                        | not needed                                                                    | eSewa / Khalti top-up to the reserve before trading                                         |
+
+- **Suspension stays one mechanism.** `WalletService.applyThreshold` gains the model: A and B use
+  the credit limit (today's rule); C (Phase 3) suspends below the Fixed Reserve and restores at it. The same
+  `status_before_debt_suspension` column, `vendor.suspended_for_debt` / `vendor.restored` events
+  and SMS apply. The database trigger `enforce_vendor_wallet_limit` is extended, not replaced.
+- **Recharge** replaces the mock top-up of Phase 12.5: `POST /api/vendor/ledger/recharge/initiate
+{ amount_npr, method }` → an eSewa / Khalti payment **to the platform**, confirmed like an order
+  payment, posting `GATEWAY_CLEARING → VENDOR_WALLET` with line type `RECHARGE`.
+- **Changing model:** `POST /api/vendor/ledger/settlement-model { model }` records a request;
+  a Super Admin approves; refused while the shop has an order that is not DELIVERED, CANCELED or
+  FAILED, an ACTIVE ad purchase, or a negative balance. Moving to C also needs a verified
+  `vendor_gateway_accounts` row. Both steps are audited.
+- **Each order keeps its model** (`orders.settlement_model_locked`), so an order placed under one
+  model settles under it even if the shop changes later.
+
+### 4. How the three settlement models integrate with the ad engine
+
+One purchase flow, one set of ledger line types; **only the moment of collection differs**, and
+it is fixed on the purchase row (`ad_purchases.settlement_model`).
+
+|                                         | **A `COD_CREDIT`**                                                          | **B `PLATFORM_ESCROW`**                                                                                                                                                      | **C `DIRECT_PREPAID`**                           |
+| --------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| May buy when                            | `balance - price_or_budget >= 0` (ads are never bought on credit)           | `FLAT_RATE`: `balance + pending_escrow >= price`, else `422 AD_EXCEEDS_PENDING_PAYOUT`. `PER_ORDER_PREMIUM`: always                                                          | (Phase 3) `balance - price_or_budget >= reserve` |
+| If not                                  | `422 LEDGER_RECHARGE_REQUIRED`, `details.recharge_required_npr`             | –                                                                                                                                                                            | `422 LEDGER_RECHARGE_REQUIRED`                   |
+| `FLAT_RATE` at purchase                 | VENDOR_WALLET -P → AD_REVENUE +P (`AD_FLAT_FEE`)                            | as much of P as the available balance covers is posted now; the rest becomes `ad_fees_owed_npr`                                                                              | VENDOR_WALLET -P → AD_REVENUE +P                 |
+| `FLAT_RATE` afterwards                  | nothing                                                                     | each order settlement first pays down `ad_fees_owed_npr` (its own `AD_FLAT_FEE` posting) before crediting the vendor; payout requests cannot exceed `balance - ad_fees_owed` | nothing                                          |
+| `PER_ORDER_PREMIUM` at purchase         | budget held: VENDOR_WALLET -B → AD_BUDGET_CLEARING +B (`AD_BUDGET_HOLD`)    | nothing held; `budget_npr` is only a spending cap                                                                                                                            | budget held, as in A                             |
+| `PER_ORDER_PREMIUM` per delivered order | AD_BUDGET_CLEARING -f → AD_REVENUE +f (`AD_ORDER_PREMIUM`)                  | one more posting inside the order's settlement journal: from the escrowed amount to AD_REVENUE (`AD_ORDER_PREMIUM`)                                                          | from the held budget, as in A                    |
+| Budget used up                          | the ad is PAUSED before the next order (audited); the vendor may add budget | the ad ENDS at the cap                                                                                                                                                       | PAUSED, as in A                                  |
+| Ad ends or is cancelled                 | the unused budget is released back (`AD_BUDGET_RELEASE`)                    | any `ad_fees_owed` for a `FLAT_RATE` period already started stays due; nothing else                                                                                          | released back, as in A                           |
+
+- **Why this is clean:** the ad engine never asks "which model?" when it charges. A purchase
+  either has money already set aside (A and C: taken or held at purchase) or a claim on money the
+  platform already holds (B: netted in settlement). Per-order charging is one function,
+  `chargeOrderPremium(order, purchase)`, with two sources (`AD_BUDGET_CLEARING` or the order's own
+  escrow), chosen by `ad_purchases.settlement_model`.
+- **Commission and ads never mix:** `PLATFORM_COMMISSION` goes to PLATFORM_REVENUE, `AD_*` to
+  AD_REVENUE, in separate postings of the same journal. The vendor's ledger and payout statement
+  group lines by layer.
+- **Model B ad credit is bounded (decided).** A `FLAT_RATE` purchase is refused when
+  `balance + pending_escrow < ad_price` (`422 AD_EXCEEDS_PENDING_PAYOUT`), so the platform never
+  sells an ad for more than it already holds for that vendor. What remains: a pending order that
+  is later cancelled or refunded can leave part of `ad_fees_owed_npr` uncovered; it is then netted
+  from the shop's next settlements.
+
+### 5. Checkout and cart math protocol
+
+```
+S   = sum(price_npr x quantity)                      database prices
+Dv  = vendor offer on S                              FLAT: value;  PERCENTAGE: min(S x value%, cap)      (0 if none qualifies)
+Dp  = campaign on (S - Dv)                           same formulas, from the opt-in's terms_snapshot      (0 if none)
+Dpv = round_half_up(Dp x vendor_share_percent)       the vendor's part;   Dpp = Dp - Dpv  (the platform's)
+F   = delivery fee                                   never discounted
+T   = S - Dv - Dp + F                                what the customer pays and what the gateway is asked for
+C   = round_half_up(rate x (S - Dv - Dpv))           commission; 0 on SUBSCRIPTION
+A   = per-order ad premium                           0 unless a PER_ORDER_PREMIUM purchase is ACTIVE
+
+vendor net (Model B, fleet delivery)  = S - Dv - Dpv - C - A          (+ F on SELF_DELIVERY)
+platform                              = C + A - Dpp                   (Dpp is posted to PROMO_EXPENSE)
+```
+
+- All arithmetic in integer paisa; each rounding is half-up to the paisa, once, where shown.
+  Invariants checked before the order is written: `Dv <= S`, `Dv + Dp <= S`, `T >= F`.
+- MOV is checked on **S**. Worked example (SPEC verification test 5): S 1000, FLAT 100, campaign
+  10% at 50% vendor share, F 50, rate 10% → Dv 100, Dp 90 (45 / 45), **T 860**, C 85.50,
+  vendor net 769.50, rider 50, platform 85.50 - 45 = 40.50; 769.50 + 50 + 40.50 = 860.
+
+**New columns on `orders`** (all written once, at checkout, with the order):
+`vendor_offer_id`, `vendor_offer_discount_npr`, `campaign_opt_in_id`, `platform_promo_discount_npr`,
+`platform_promo_vendor_share_npr`, `ad_purchase_id`, `ad_order_premium_npr`,
+`settlement_model_locked`, `discount_snapshot jsonb` (the offer row and the opt-in's
+`terms_snapshot` as applied). CHECKs: discounts ≥ 0; an id is set exactly when its amount is > 0;
+`vendor share <= promo discount`; `subtotal - both discounts >= 0`. `platform_commission_amount`
+keeps its meaning (now on the reduced base). `planSettlement`, the reconciliation job and the
+payment amount checks read these columns only.
+
+```jsonc
+// POST /api/cart/quote        public for a guest cart, Bearer when signed in. No lock, no order.
+// body: { vendor_id, items[{ product_id, quantity }], delivery_address? }
+{ "subtotal_npr": 1000,
+  "vendor_offer":   { "id": "uuid", "label": "Flat Rs. 100 OFF", "discount_npr": 100 } | null,
+  "platform_promo": { "campaign_id": "uuid", "label": "Dashain 10%", "discount_npr": 90 } | null,
+  "delivery_fee_npr": 50,
+  "total_npr": 860,
+  "payment_options": [
+    { "method": "ESEWA",  "available": true },
+    { "method": "KHALTI", "available": true },
+    { "method": "COD",    "available": false, "reason": "COD_NOT_AVAILABLE" } ] }
+
+// POST /api/cart/checkout     request unchanged (the client still sends NO amounts)
+// response gains, beside order / reservation / delivery_otp / replayed:
+{ "order": { /* OrderView + */ "vendor_offer_discount_npr": 100, "platform_promo_discount_npr": 90, "total_npr": 860 },
+  "payment_session":
+      { "method": "ESEWA",  "payment_url": "https://…", "http_method": "POST", "fields": { "total_amount": "860", "signature": "…", … } }
+    | { "method": "KHALTI", "pidx": "…", "payment_url": "https://…", "expires_at": "…" }
+    | null }                                   // COD
+// 422 PAYMENT_METHOD_UNAVAILABLE   details.payment_options   the method is not offered for this shop now
+// 409 QUOTE_CHANGED                details.quote             only if the client sent expected_total_npr and it differs
+// 502 PAYMENT_GATEWAY_ERROR                                  Khalti initiate failed: no order is kept, the lock is released
+```
+
+- **Token generation:** the eSewa form (HMAC-SHA256 over `total_amount,transaction_uuid,
+product_code`, Base64; SPEC rule unchanged) and the Khalti `pidx` (amount in paisa) are created
+  for **T** inside the checkout transaction's request and returned in `payment_session`. The
+  confirmation compares the gateway's amount with the stored T (±0.01 NPR) under the order row
+  lock, as today. `POST /api/payments/{esewa,khalti}/initiate` remain for a retry and always sign
+  the stored T.
+- `expected_total_npr` is optional and only lets the app detect that an offer ended between the
+  quote and checkout; it never sets a price.
+- An idempotent replay returns the same discounts (they are on the order) and a fresh
+  `payment_session`.
+
+**Payment routing** (`payment_options`, evaluated in the quote and again in checkout under the
+vendor row lock):
+
+| Shop's model | COD                                               | eSewa / Khalti                                                                                                                                                           |
+| ------------ | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A            | offered                                           | never (`reason: "SETTLEMENT_MODEL"`)                                                                                                                                     |
+| B            | offered                                           | offered, into platform escrow with the platform's credentials                                                                                                            |
+| C            | offered while `balance - (C + A) > prepaid_floor` | offered while `balance - (C + A) > prepaid_floor` **and** the shop has a verified gateway account for that method; never at a balance of 0 (`reason: "PREPAID_BALANCE"`) |
+
+In every model COD also needs the customer's eligibility (published rating ≥ 3.0, SPEC §6). A
+suspended shop is not orderable at all. No option available → `422 VENDOR_UNAVAILABLE`.
+
+- **Model C payment:** the session is built with the vendor's `merchant_code` and decrypted
+  secret; the callback / lookup is verified with the same; on success the order is PLACED and PAID
+  with **no escrow capture** (the platform received nothing), and `ORDER_FEE_DEBIT` posts
+  VENDOR_WALLET -(C + A) → PLATFORM_REVENUE / AD_REVENUE in the same transaction, suspending the
+  shop if that crosses the floor. A cancellation inside the 60 s window posts `ORDER_REFUND`:
+  REFUND_CLEARING pays the customer T, VENDOR_WALLET is debited T and credited back C + A.
+
+### Customer app (built, on mock data)
+
+| Element           | Where                                                                    | Behaviour                                                                                                                                                                                                            |
+| ----------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **"Ad" badge**    | `components/VendorCard.tsx`, top-left of the cover (`vendor-ad-<id>`)    | Shown when `VendorExtras.is_sponsored`. Small dark translucent label, white 10 px upper-case "Ad" ("विज्ञापन"); screen readers hear "Sponsored". Not shown otherwise. It does not reorder the feed (the server will) |
+| **Discount pill** | `features/menu/ShopHeader.tsx`, under the white info card (`shop-offer`) | The shop's `top_offer` in a soft-red pill (`bg-red-50`, `border-red-100`, bold `text-red-700`, tag icon). It **moved out of the white card**, where §8Z.3 had it. Hidden when the shop has no offer                  |
+
+- `VendorExtras` gained `is_sponsored` (proposed feed field: `entry.is_sponsored`). Mocks: **New
+  Road Electronics** (delivers to Thamel) and **Jawalakhel Dashain Bazaar** (Lalitpur) are
+  sponsored; no other shop is. Still `__DEV__`-only.
+- The tag is an Ionicons glyph, not an emoji (the app's icon rule; emoji render differently per
+  Android vendor).
+- **Superseded for the cart display by §8Z.6:** development builds now show a temporary mock
+  "Shop Discount" line and total (demo only, to be removed). The statement below still holds for
+  what is charged.
+- **The pill and the card's offer line are still labels.** The cart shows no discount line and
+  charges none until the quote / checkout contract above ships; then the cart must render
+  `vendor_offer`, `platform_promo` and `total_npr` from the quote and take its payment methods
+  from `payment_options` (`PaymentMethodPicker` currently offers all three).
+- Tests: mobile **1106** (+1; fixtures and the moved pill updated): the badge on a sponsored
+  card's cover with its accessible name and on no other card, the pill outside the card with its
+  label, the two sponsored mock shops. `tsc`, `eslint` clean; Android bundle exports. **Not seen
+  on a device.** The three new Nepali strings are unreviewed.
+
+### Open risks (after the decisions at the top of this section)
+
+- **Phase 3 preconditions for Model C** (not open questions for Phases 1–2): written confirmation
+  that eSewa's and Khalti's merchant terms allow the platform to operate a vendor's credentials;
+  envelope encryption with a managed key for those secrets; and the Fixed Reserve (min 5000 NPR)
+  in place. A single refund larger than the reserve still exceeds it: the shop is then suspended
+  owing the difference, so Phase 3 should also cap a Model C order's total at the reserve, or
+  size the reserve per shop.
+- Model A after delivery: a dispute refund has no escrow to draw on either; it is debited from
+  the ledger like C.
+- `vendors.wallet_balance_npr` and `vendor_ledgers.balance_npr` would be the same projection in
+  two places during the transition; drop the vendors column once every reader has moved.
+- Sponsored feed ranking is decided and now in SPEC (customer flow step 3): two labelled
+  entries at the top of the serviceable section.
+- Tax (VAT on platform fees and ad sales, invoices to vendors) is not addressed anywhere in SPEC.
+- This is several phases of backend work; the suggested order is in BACKEND_CHECKLIST.md
+  section 5.
+
+## 8Z.4 Promotion targets (SHOP / CATEGORY / DISCOUNT_TAG) and the showcase seed (2026-10-07)
+
+Mobile, plus **development fixtures in `packages/db`** (the seed script). No API route,
+shared-types, migration or SPEC change. The components of §8Z.3 were confirmed on a physical
+Android device by the user (carousel auto-scroll, the overlapping shop header, the item sheet's
+height, the row's direct Add beside the sheet). **What this section adds has not been run on a
+device.**
+
+### Decision: Phase 1 promotions are visual only (user, 2026-10-07)
+
+> Later the same day the discount, ad and settlement architecture was specified (§8Z.5, SPEC core sections 7–9). It is not built: the rule below still describes the running code.
+
+- **The discount / coupon engine is deferred to Phase 2.** SPEC.md and the checkout pricing are
+  unchanged and must stay so until then: no promotion, banner, offer tile or offer label alters
+  the cart, the delivery fee, the order total, the commission or the ledger.
+- In Phase 1 a promotion does exactly one thing when tapped: it **navigates or filters** (below).
+  "10% OFF" is a label used to pick shops, not a price rule.
+- Offer labels, ratings, covers and the promotions themselves stay `__DEV__`-gated mock data
+  (`features/promo/mock-promotions.ts`). A preview or production build shows none of them.
+- This supersedes §8Z.3 "C. Offers" as the plan of record: nothing there is to be built now.
+  When Phase 2 starts, that list (offer table, discount line on the order, who funds it,
+  settlement and gateway amount) is the scope to specify in SPEC first.
+
+### The promotion model (`features/promo/promo-model.ts`)
+
+```ts
+type PromoTargetType = 'SHOP' | 'DISCOUNT_TAG' | 'CATEGORY';
+type PromoPlacement = 'CAROUSEL' | 'FEATURED';
+
+interface Promotion {
+  id: string;
+  placement: PromoPlacement; // CAROUSEL: the large banner carousel. FEATURED: an offer tile
+  image_url: string | null; // required for CAROUSEL
+  title: string | null; // required for FEATURED
+  subtitle: string | null;
+  target_type: PromoTargetType | null; // both null: shown, not tappable
+  target_value: string | null;
+}
+```
+
+This replaces §8Z.3's `target: { type: 'vendor' | 'category', … }` union and its
+`target_vendor_id` / `target_category_id` columns. `promoTarget(promotion)` returns
+`{ type, value }` or null (no type, or a blank value); a promotion without a target renders as
+an image / text and is not pressable.
+
+| `target_type`  | `target_value`                  | On tap (`app/(tabs)/(home)/index.tsx#openPromotion`)                                                                                                                                                                                                                                                         |
+| -------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SHOP`         | a vendor id (uuid)              | `router.push({ pathname: '/vendor/[id]', params: { id } })`: the existing shop route. Nothing on Home changes. A shop that is gone shows the shop page's own "This shop isn't available."                                                                                                                    |
+| `CATEGORY`     | a category **slug** (`festive`) | `findCategoryByTarget` (slug, else the display name, any case) → `setChosenCategoryId`, **the same state a category tile sets**, so the feed, the tile highlight and the empty state behave identically. Any offer-label filter is cleared. Unknown category → toast "This offer isn't available right now." |
+| `DISCOUNT_TAG` | an offer label (`10% OFF`)      | Home keeps only the shops whose `offer_tags` contain the label (`vendorIdsWithOfferTag`; case and surrounding spaces ignored, whole label only), in both sections. Any category filter is cleared. A green chip with the label appears beside Filter; tapping it removes the filter                          |
+
+- **Scroll to the shops.** CATEGORY and DISCOUNT_TAG set `scrollToShops`; `ShopsFeed` then scrolls
+  by the measured height of the list header (banners, offers, categories, filter bar), which puts
+  "Delivers to you" at the top, and reports back so it happens once. A list already on screen
+  scrolls at once; a list rebuilt after the category's shops load scrolls from its header's
+  `onLayout`. SHOP does not scroll.
+- **Filters combine.** After a label filter, tapping a category tile narrows it further
+  (intersection). Tapping a promotion always replaces both with its own target.
+- **No shop left:** "No shops near you have a "…" offer right now." (or the category message)
+  with **All Shops**, which clears both filters. The promotions stay on screen above it.
+- A promotion may point at a **subcategory**; it filters, and no tile is highlighted (tiles are
+  root categories).
+- Sorting (§8Z.3) applies on top of either filter. Shops that do not deliver here still appear
+  under "Explore Further", disabled, as everywhere else.
+
+### Mock data
+
+**Shops and products are not mocked in the app.** The feed, the menus and the taxonomy are live
+API responses (Phase 6.5 deleted the client mocks: a client-side vendor could not be checked out
+from). "More mock vendors" is therefore **more seed data**, served by the real API with the real
+PostGIS delivery rules:
+
+- **`packages/db/src/scripts/seed-showcase.ts`**, called by `pnpm db:seed` on a fresh **and** on
+  an already seeded database. Idempotent and additive (categories by slug, accounts and shops by
+  phone, products by shop + name); never runs with `NODE_ENV=production`. **Run on the local dev
+  database on 2026-10-07 (twice, second run a no-op).**
+- Three new root categories, two subcategories each: **Electronics** (`electronics`:
+  `mobile-accessories`, `home-appliances`), **Festive & Dashain** (`festive`: `puja-samagri`,
+  `gifts-sweets`), **Snacks** (`snacks`: `chips-namkeen`, `biscuits-cookies`).
+- Seven new LIVE shops (32 products, each with a description; one is out of stock). With the two
+  from before, **nine LIVE shops**:
+
+| Shop (vendor phone)                    | Palika, scope                        | From Thamel | From Pulchowk | Sells                       |
+| -------------------------------------- | ------------------------------------ | ----------- | ------------- | --------------------------- |
+| Thamel Kirana Pasal (9800000011)       | Kathmandu MC, radius 5 km            | 0.2 km ✓    | 4.2 km ✓      | groceries                   |
+| Asan Masala & Snacks (9800000015)      | Kathmandu MC, radius 3 km            | 0.8 km ✓    | 3.3 km ✓ \*   | snacks, beaten rice         |
+| New Road Electronics (9800000014)      | Kathmandu MC, radius 8 km, fleet     | 1.2 km ✓    | 3.0 km ✓      | electronics                 |
+| Himalayan Gadget Hub (9800000019)      | Kathmandu MC, **nation-wide**, fleet | 1.6 km ✓    | 3.0 km ✓      | electronics                 |
+| Jawalakhel Dashain Bazaar (9800000017) | Lalitpur MC, **city-wide**, fleet    | 4.7 km ✗    | 0.8 km ✓      | festive                     |
+| Patan Organic Store (9800000012)       | Lalitpur MC, city-wide, fleet        | 4.9 km ✗    | 0.9 km ✓      | groceries                   |
+| Boudha Fresh Mart (9800000016)         | Kathmandu MC, radius 4 km            | 5.1 km ✗    | 6.4 km ✗      | vegetables, dairy, sel roti |
+| Kirtipur Kirana Pasal (9800000020)     | Kirtipur Municipality, radius 2 km   | 5.2 km ✗    | 4.1 km ✗      | groceries, snacks           |
+| Bhaktapur Durbar Sweets (9800000018)   | Bhaktapur Municipality, radius 6 km  | 12.5 km ✗   | 10.8 km ✗     | sweets, juju dhau, snacks   |
+
+✓ / ✗ = delivers / "Explore Further" for the seeded customers (Aarav in Thamel, Sita in
+Pulchowk), by SPEC §2 with the 10% buffer. Distances were measured with PostGIS on the seeded
+rows. \* 3.29 km on a 3 km radius: inside only because of the buffer (limit 3.3 km), a live
+example of the drift grace. City-wide shops match only when the browse location carries a
+Palika (a saved address, not a bare GPS fix; §8T).
+
+- **Mock extras for these shops** are curated in `MOCK_SHOPS`, **keyed by business name** (the
+  seed's ids are random per database): ratings 3.9–4.8 with one unrated shop, preparation 10–40
+  min, cost 150–2100, and the labels `10% OFF` (Thamel, Asan, Jawalakhel), `Free delivery`
+  (Himalayan, Patan), `Dashain Sale` (Asan, New Road, Jawalakhel), `Flat Rs. 200 OFF` (New Road),
+  `Buy 1 Get 1` (Bhaktapur); Boudha and Kirtipur carry none. Any other shop falls back to values
+  derived from its id. `vendorExtras` now takes `{ id, business_name }`.
+- **Mock promotions** (`homePromotions(feed)`): four banners (CATEGORY `festive`, SHOP Asan,
+  DISCOUNT_TAG `10% OFF`, one artwork-only) and six tiles (two more labels, CATEGORY
+  `electronics` and `snacks`, SHOP New Road, `Dashain Sale`). A SHOP mock names its shop and gets
+  that shop's real id from the loaded feed, so `target_value` is a vendor id exactly as the API
+  will send it; until the feed has that shop the mock is left out.
+- On a database without the showcase seed the CATEGORY mocks answer "This offer isn't available
+  right now." and the SHOP mocks do not appear. Run `pnpm db:seed`.
+
+### Backend: the targeting contract (not built; no Admin UI yet)
+
+**What the Admin UI will send to create a promotion.**
+
+```jsonc
+// POST /api/admin/promotions            Bearer SUPER_ADMIN            → 201 { "promotion": { …, "id", "created_at", "updated_at" } }
+// PUT  /api/admin/promotions/:id        the same body, replaces every field
+{
+  "placement": "CAROUSEL", // "CAROUSEL" | "FEATURED"
+  "image_url": "https://cdn.hamropasal.np/promotions/dashain-2083.webp",
+  // http(s) URL; required for CAROUSEL, optional (null) for FEATURED
+  "title": "Dashain offers are here", // 1–60 chars; required for FEATURED, optional (null) for CAROUSEL
+  "subtitle": "Tika, sweets and gifts", // 1–80 chars or null
+  "target_type": "CATEGORY", // "SHOP" | "DISCOUNT_TAG" | "CATEGORY" | null
+  "target_value": "festive", // see the table; null exactly when target_type is null
+  "display_order": 0, // int ≥ 0, default 0
+  "is_active": true, // default true
+  "starts_at": "2026-10-10T00:00:00+05:45", // or null: from now
+  "ends_at": "2026-10-25T23:59:59+05:45", // or null: until switched off; must be after starts_at
+}
+```
+
+| `target_type`  | `target_value` must be                                  | Checked on write                                                                    | Refusal                                                |
+| -------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `SHOP`         | the `vendors.id` (uuid) of a LIVE vendor                | the vendor exists and is LIVE                                                       | `422 PROMOTION_TARGET_NOT_FOUND` (details.target_type) |
+| `CATEGORY`     | the `categories.slug` of an active category (any level) | the slug exists and the category and its ancestors are active                       | `422 PROMOTION_TARGET_NOT_FOUND`                       |
+| `DISCOUNT_TAG` | an offer label, 1–40 chars, trimmed                     | format only (a label no shop carries yet is allowed; the app shows its empty state) | `400 VALIDATION_FAILED`                                |
+| `null`         | `null`                                                  | –                                                                                   | `400 VALIDATION_FAILED` if a value is sent             |
+
+- The image is uploaded first: `POST /api/admin/promotions/image` (multipart, one JPEG / PNG /
+  WebP by its own bytes, 5 MB, the existing local storage under `<UPLOADS_DIR>/promotions/`) →
+  `{ "url": "…" }`, which the Admin UI puts in `image_url`.
+- Other refusals: `400 VALIDATION_FAILED` (missing image for CAROUSEL, missing title for
+  FEATURED, bad dates), `404 PROMOTION_NOT_FOUND` on PUT / DELETE, 401 / 403 as everywhere.
+
+**Table** (replaces the `home_promotions` sketch of §8Z.3 A: the placement values and the target
+columns changed).
+
+```sql
+CREATE TYPE promotion_placement   AS ENUM ('CAROUSEL', 'FEATURED');
+CREATE TYPE promotion_target_type AS ENUM ('SHOP', 'DISCOUNT_TAG', 'CATEGORY');
+CREATE TABLE home_promotions (
+  id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  placement          promotion_placement NOT NULL,
+  image_url          text NULL,
+  title              text NULL,
+  subtitle           text NULL,
+  target_type        promotion_target_type NULL,
+  target_value       text NULL,
+  display_order      integer NOT NULL DEFAULT 0 CHECK (display_order >= 0),
+  is_active          boolean NOT NULL DEFAULT true,
+  starts_at          timestamptz NULL,
+  ends_at            timestamptz NULL,
+  created_by_user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,   -- + its index
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now(),                       -- set_updated_at trigger
+  CHECK (placement <> 'CAROUSEL' OR image_url IS NOT NULL),
+  CHECK (placement <> 'FEATURED' OR title IS NOT NULL),
+  CHECK ((target_type IS NULL) = (target_value IS NULL)),
+  CHECK (target_value IS NULL OR btrim(target_value) <> ''),
+  CHECK (starts_at IS NULL OR ends_at IS NULL OR starts_at < ends_at)
+);
+CREATE INDEX home_promotions_listing_idx ON home_promotions (placement, is_active, display_order);
+```
+
+- `target_value` is text for all three types (the user's contract), so **no foreign key guards a
+  SHOP or CATEGORY target**. The write validates it, and the public read drops a promotion whose
+  shop is no longer LIVE or whose category is hidden or gone, so the app is never handed a dead
+  target. A category is referenced by slug: renaming a slug (admin PUT) must update the
+  promotions that use it, or refuse while one does.
+
+**What the customer app reads.**
+
+```jsonc
+// GET /api/home/promotions        public, no token; Cache-Control: public, max-age=60
+{ "banners": [ { "id": "uuid", "placement": "CAROUSEL", "image_url": "https://…",
+                 "title": "Dashain offers are here" | null, "subtitle": "…" | null,
+                 "target_type": "CATEGORY", "target_value": "festive" } ],
+  "offers":  [ { "id": "uuid", "placement": "FEATURED", "image_url": "https://…" | null,
+                 "title": "10% OFF", "subtitle": "Selected shops" | null,
+                 "target_type": "DISCOUNT_TAG", "target_value": "10% OFF" } ] }
+```
+
+- Active, inside `starts_at … ends_at`, by `display_order` then `created_at`. Two empty arrays is
+  a normal answer (both rows hide). This is exactly `HomePromotions` in `promo-model.ts`.
+
+**Offer labels on shops (what DISCOUNT_TAG filters by).**
+
+- `vendors.offer_tags text[] NOT NULL DEFAULT '{}'`, at most 5 labels of 1–40 chars, and
+  `vendors.top_offer text NULL` (must be one of the labels). **Phase 1: written by a Super Admin
+  only** (`PUT /api/admin/vendors/:id/offers { offer_tags, top_offer }`), as marketing labels
+  with no effect on any price. Both go in the feed and menu vendor object (strict schemas: ship
+  with an app build).
+- Matching is case-insensitive on the trimmed label. With many shops, add
+  `GET /api/vendors?offer_tag=` (a GIN index on `offer_tags`, lower-cased) so the filter is not
+  limited to the 100 nearest per section; the app's `vendorIdsWithOfferTag` then goes away.
+- Phase 2 replaces these free-text labels with labels rendered from real offers.
+
+### Tests
+
+Mobile **1105** (+21): new `features/promo/promo-targets.test.tsx` (the three target types and
+`promoTarget`; category lookup by slug and name; label matching; the mock source: every target
+type present, SHOP ids taken from the feed in either section and left out without the shop,
+every label carried by a seeded shop, the nine curated shops; and on the Home screen: SHOP from a
+banner and a tile, CATEGORY filtering like the tile with the tile highlighted, the scroll after
+the rebuilt list is laid out and only once, a name and a subcategory as targets, an unknown
+category, DISCOUNT_TAG in both sections with the immediate scroll, case-insensitive labels, the
+chip, the empty state and its way back, one promotion replacing another, a tile narrowing a
+label). `premium-home.test.tsx` and `shop-detail.test.tsx` were updated for the new shapes.
+`tsc --noEmit`, `eslint .` clean; the Android bundle exports; the full suite passed in one run.
+
+- Under Jest a `SectionList` has no scroll responder, so the scroll tests supply one
+  (`SectionList.prototype.getScrollResponder`) and assert the `scrollTo({ y: <header height> })`
+  call. **The scroll itself is unverified on a device.**
+- The seed has no automated test (as before): it was verified by running it twice against the
+  local database and reading the rows back. `packages/db` `tsc` and `eslint` are clean.
+- No mutation checks were run. The three new Nepali strings (`promo.unavailable`, `tagEmpty`,
+  `removeTag`) are unreviewed.
+
+## 8Z.3 Premium Home and shop page: banners, offers, sort sheet, vendor cards, shop header, item sheet (2026-10-06)
+
+Mobile only. **No API, shared-types, database or SPEC change, and no new dependency.** Five UI
+pieces were built against **temporary mock data**; the backend each one needs is specified under
+"Backend required" below and is **not built**.
+
+### The mock source (read this first)
+
+| File                                | Holds                                                                                                                                              |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `features/promo/promo-model.ts`     | The shapes (`PromoBanner`, `FeaturedOffer`, `PromoTarget`, `VendorExtras`) with the field names proposed for the API, and `deliveryWindow`         |
+| `features/promo/mock-promotions.ts` | **The only file that invents data.** `homePromotions()` (3 banners, 4 offers) and `vendorExtras(vendorId)` (cover, rating, prep time, cost, offer) |
+
+- **`PROMO_MOCKS_ENABLED = __DEV__`.** A development client shows the mocks. A `preview` /
+  `production` build gets no banners, no offers and no extras, so every screen falls back to its
+  plain layout. Invented ratings and "20% OFF" lines must never reach a customer: **no checkout
+  code applies any discount** (SPEC has none).
+- `vendorExtras` derives its values from a hash of the vendor id, so a shop keeps the same
+  rating, time and cost between renders and launches. One shop in five has no rating and one in
+  three no offer, to exercise those layouts.
+- Mock images are `https://picsum.photos/seed/…` (random photographs, need a connection,
+  development only). Every image sits on a tinted placeholder, so a failed load is not a hole.
+- Mock banner and offer targets are `null` (seed ids differ per database), so tapping a mock does
+  nothing. The navigation for real targets is wired and tested (vendor → the shop page, category
+  → the Home category filter).
+- **To go live:** make `homePromotions` a TanStack query over `GET /api/home/promotions`, read
+  the extras from the feed / menu entry instead of `vendorExtras`, delete `mock-promotions.ts`.
+  No component changes: they take the shapes of `promo-model.ts`.
+
+### What was built
+
+| #   | Feature                                                                 | How it works now                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Banner carousel** (`features/promo/BannerCarousel.tsx`)               | Full-width paging `ScrollView`, 160 px cards, title / subtitle over a dark fade when the banner has a title. Advances every `BANNER_INTERVAL_MS` (4 s), wraps to the first, pauses while the customer drags, continues from the page they left. Dots under it. One banner: no timer, no dots. **No banners: renders nothing**                                                                                                                                                             |
+| 1   | **Featured offers** (`features/promo/FeaturedOffers.tsx`)               | Heading + a horizontal row of 112 px square tiles (image or a tag icon, title, subtitle). **No offers: renders nothing, heading included**                                                                                                                                                                                                                                                                                                                                                |
+| 2   | **Sort & filter** (`features/feed/SortFilterSheet.tsx`, `feed-sort.ts`) | A "Filter" pill under the categories opens a bottom sheet (plain `Modal`) with five radio buttons: Relevance (default), Delivery Time, Rating, Cost: Low to High, Cost: High to Low. A choice applies only with **Apply**; **Clear Filters** returns to Relevance and closes; the backdrop closes without applying. An active sort shows as a chip beside the pill (tap to remove)                                                                                                        |
+| 3   | **Vendor card** (`components/VendorCard.tsx`)                           | Cover image (160 px; 96 px tinted placeholder without one) with the offer in white over a bottom gradient, then name + green rating pill, "30–40 mins · 1.3 km away", and the existing scope / delivery fee / minimum order lines in small grey text. Unknown values are left out (no pill, no offer, no time). Explore Further cards stay dimmed, disabled, badged, and promise no time                                                                                                  |
+| 4   | **Shop header** (`features/menu/ShopHeader.tsx`)                        | 192 px banner; a white card overlapping its lower edge (`-mt-12`) with the name, a prominent rating pill, distance, delivery time and the best offer; then a search field with the microphone placeholder. The stack header is **off** once the menu has loaded and a round back button sits on the banner (`router.back()`); while loading or failed the stack header is still shown                                                                                                     |
+| 4   | **Search inside a shop** (`menu-sections.ts#searchMenu`)                | Local: keeps the menu lines whose name contains every word typed (case-insensitive), regrouped into their sections. No match: "No items match …" and the ITEMS button hides                                                                                                                                                                                                                                                                                                               |
+| 5   | **Item detail sheet** (`features/menu/ProductDetailSheet.tsx`)          | Tapping a product (its photo, name or price) opens a bottom sheet: 224 px photo (or a placeholder), name, price per unit, stock, description, a rating pill **only when a rating is passed**, a − / + picker and "ADD · Rs. total". The picker follows the product-list rules (`maxAddable`, `clampQuantity`: never past stock minus what the cart holds). ADD adds that quantity and closes. A shop that does not deliver here, or a pending checkout, shows the reason and disables ADD |
+
+**Shared pieces.** `components/RatingPill.tsx` (green pill, Devanagari digits under `ne`),
+`components/ImageScrim.tsx` (the bottom fade), `lib/optional-linear-gradient.ts` (the guarded
+`expo-linear-gradient` load, moved out of `HeaderGradient.tsx` so both use one copy; a dev client
+without the native view gets a flat translucent band).
+
+**Behaviour to know.**
+
+- **Home layout changed:** the banners, offers, category row and Filter pill are now the list's
+  header (`ShopsFeed` `header` prop → `ListHeaderComponent`), so they scroll away with the shops.
+  Before, the category row was fixed above the list. They are hidden while searching, as before.
+- **Sorting happens on the device, inside each section.** Shops that deliver always stay above
+  "Explore Further" (SPEC customer flow step 3). Unknown values sort last in both directions;
+  ties keep the server's order. It can only reorder what the feed returned (at most 100 per
+  section, the nearest), which is the reason for the server-side `sort` parameter below.
+- **Delivery time is an estimate:** `prep_minutes + ceil(distance_km × 3)`, shown rounded up to
+  5 as a ten-minute window. 3 min/km is a constant in `promo-model.ts`, not measured.
+- **The row's Add button still adds one unit directly** (existing behaviour and tests kept);
+  tapping the rest of the row opens the sheet. Routing Add through the sheet as well is a
+  one-line change in `app/(tabs)/(home)/vendor/[id].tsx` if that is preferred.
+- **Descriptions and photos in the sheet are real data, not mocks.** The page already scanned
+  `GET /api/products?vendor_id=` for the subcategories (§8Z); the same scan now also yields
+  `description`, `unit` and the first of `image_urls` (`useMenuCatalog`, replacing
+  `useMenuCategories`; query key `['vendor-menu-catalog', id]`). No extra request. Rows show a
+  64 px thumbnail when a photo exists. A product beyond the scan's 250-product cap, or opened
+  before the scan answers, shows no description, no photo and the price without a unit.
+- **No product rating exists.** SPEC's reviews are per order, between customer and shop. The
+  sheet accepts a `rating` and the page passes `null`.
+- **Distance on the shop page** is read from the cached feed (`queryClient.getQueryData`, no
+  request). A shop opened without that feed on the device shows no distance and no time.
+- **The search placeholder is "Search in this shop"**, not the requested "Search for dishes":
+  the catalogue is groceries and general goods. One string in `en.json` / `ne.json` to change.
+- When a cart holds another shop's items, ADD in the sheet closes the sheet and the existing
+  replace-cart dialog takes over, with the chosen quantity.
+
+### Backend required (not built)
+
+Field names follow the existing contracts (snake_case, `_npr`, strict Zod objects in
+shared-types). **`feedVendorSchema`, `feedEntrySchema`, `menuProductSchema` and
+`vendorMenuSchema` are strict: each addition must land in shared-types and ship with an app
+build, API first.**
+
+**A. Admin banners and offers.** (The target columns, the placement values and the public response below are **superseded by §8Z.4**: `target_type` + `target_value`, `CAROUSEL` / `FEATURED`.)
+
+```sql
+CREATE TYPE promotion_placement AS ENUM ('BANNER', 'OFFER');
+CREATE TABLE home_promotions (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  placement           promotion_placement NOT NULL,
+  title               text NULL,            -- 1–60 chars, non-blank when present
+  subtitle            text NULL,            -- 1–80 chars
+  image_url           text NULL,            -- http(s)
+  target_vendor_id    uuid NULL REFERENCES vendors(id)    ON DELETE CASCADE,
+  target_category_id  uuid NULL REFERENCES categories(id) ON DELETE CASCADE,
+  display_order       integer NOT NULL DEFAULT 0 CHECK (display_order >= 0),
+  is_active           boolean NOT NULL DEFAULT true,
+  starts_at           timestamptz NULL,
+  ends_at             timestamptz NULL,
+  created_by_user_id  uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),   -- set_updated_at trigger
+  CHECK (placement <> 'BANNER' OR image_url IS NOT NULL),   -- a banner is its artwork
+  CHECK (placement <> 'OFFER'  OR title IS NOT NULL),       -- an offer tile needs its text
+  CHECK (num_nonnulls(target_vendor_id, target_category_id) <= 1),
+  CHECK (starts_at IS NULL OR ends_at IS NULL OR starts_at < ends_at)
+);
+CREATE INDEX home_promotions_listing_idx ON home_promotions (placement, is_active, display_order);
+-- plus one index per foreign key (the Phase 23 audit test fails without them)
+```
+
+```jsonc
+// GET /api/home/promotions        public, no token (like /api/categories); Cache-Control: public, max-age=60
+{ "banners": [ { "id": "uuid", "image_url": "https://…", "title": "Dashain offers" | null,
+                 "subtitle": "…" | null,
+                 "target": { "type": "vendor", "vendor_id": "uuid" }
+                         | { "type": "category", "category_id": "uuid" } | null } ],
+  "offers":  [ { "id": "uuid", "image_url": "https://…" | null, "title": "Up to 50% OFF",
+                 "subtitle": "Groceries" | null, "target": … } ] }
+```
+
+- Listed: `is_active`, inside `starts_at … ends_at`, ordered by `display_order`, then
+  `created_at`. A row whose target vendor is not LIVE, or whose category is hidden, is left out.
+  Both arrays empty is a normal answer: the app then shows neither row.
+- Admin (SUPER_ADMIN): `GET / POST /api/admin/promotions`, `PUT / DELETE /api/admin/promotions/:id`
+  and `POST /api/admin/promotions/:id/image` (multipart, one JPEG / PNG / WebP by its own bytes,
+  5 MB, stored under `<UPLOADS_DIR>/promotions/` through the existing local storage). A
+  **Promotions** tab in `apps/admin`. Each write gets an audit log line.
+- Optional later: `lat` / `lng` on the public read, to drop a banner whose shop does not deliver
+  to the customer.
+
+**B. Shop fields for the card, the header and sorting.**
+
+| Column on `vendors`    | Type                                     | Written by                                                                                                           |
+| ---------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `cover_image_url`      | `text NULL`                              | the vendor: `POST /api/vendor/profile/cover` (multipart, same rules as product photos); a field in the Vendor Portal |
+| `prep_time_minutes`    | `integer NULL CHECK (BETWEEN 5 AND 180)` | the vendor, in the Vendor Portal (`PUT /api/vendor/profile`)                                                         |
+| `rating_average`       | `numeric(2,1) NULL`                      | the platform: average of **public** CUSTOMER_TO_VENDOR reviews (`reviewIsPublic`, so the double blind holds)         |
+| `rating_count`         | `integer NOT NULL DEFAULT 0`             | the same write                                                                                                       |
+| **`average_cost_npr`** | `numeric(12,2) NULL`                     | the platform (below)                                                                                                 |
+
+- **How "Cost" sorting works (recommended).** Store one number per shop, `average_cost_npr`, and
+  sort on it: `ORDER BY average_cost_npr ASC | DESC NULLS LAST, distance, id`. Do **not** average
+  product prices inside the feed query (a join and an aggregate over every product of every
+  nearby shop on each request).
+  - **Definition:** the **median `price_npr` of the shop's active, in-stock products**. The
+    median, not the mean: one refrigerator in a kirana's catalogue must not make it "expensive".
+    Null for a shop with no such product (sorts last both ways).
+  - **Refresh:** in the transaction of every vendor product write that can change it (create,
+    `PUT`, hide / show, stock to or from 0): one aggregate over one shop's products, which the
+    `(vendor_id, is_active)` index serves. Plus a nightly task on the existing
+    `midnight-maintenance` queue (`VENDOR_STATS_REFRESH`) that recomputes every shop, so a missed
+    write heals itself. Checkout decrements that take a product to 0 are left to the nightly run.
+  - **Alternative, `price_tier` (1–3):** easier to show ("Rs · Rs Rs · Rs Rs Rs") but it sorts
+    coarsely and needs thresholds per category of shop. If a tier is wanted for display, derive
+    it from `average_cost_npr` at read time; keep the amount as the stored value.
+  - Once shops have enough delivered orders, the mean `subtotal` of the last 90 days of DELIVERED
+    orders is the better "what a basket costs here" (same column, another refresh query).
+- **Rating refresh:** `ReviewService.submit` recomputes the shop's two columns in its
+  transaction whenever it publishes a customer review; the nightly task covers reviews that
+  become public by the 48 h rule without any write.
+- **Feed contract** (`GET /api/vendors`):
+
+```jsonc
+// each entry
+{ "vendor": { /* existing fields */
+              "cover_image_url": "https://…" | null,
+              "rating_average": 4.3 | null, "rating_count": 128,
+              "prep_time_minutes": 20 | null,
+              "average_cost_npr": 450 | null,
+              "top_offer": "20% OFF up to Rs. 100" | null },      // see C
+  "distance_km": 1.285, "serviceable": true,
+  "estimated_delivery_minutes": 24 | null }                        // prep + travel, server-computed
+// new query parameter, default relevance:
+//   ?sort=relevance | delivery_time | rating | cost_low_to_high | cost_high_to_low
+```
+
+- The sort is applied **in SQL, inside each section, before the 100-per-section cap**; that is
+  what the device-side sort cannot do. Unknown values last. The app then sends its chosen `sort`
+  (it becomes part of the feed query key) and drops `sortFeed`.
+- `estimated_delivery_minutes` replaces the app's 3 min/km constant; the server can later base
+  it on the fulfilment mode and real rider data.
+- **Menu contract** (`GET /api/vendors/:id/products`): the response gains `distance_km` (so the
+  shop header no longer depends on the cached feed) and `vendor` carries the same new fields.
+
+**C. Offers ("70% OFF"): decided 2026-10-07, deferred to Phase 2 (§8Z.4). Phase 1 promotions and offer labels are visual only and change no cart math. The notes below are the Phase 2 scope.**
+
+- SPEC has **no discounts**: checkout prices from the database, commission is a share of the
+  subtotal, the ledger journals balance to the paisa. A label that says "20% OFF" while checkout
+  charges full price is a false statement to the customer.
+- If offers are real, they are a feature of their own and SPEC must be amended first:
+  `vendor_offers (id, vendor_id, kind PERCENT | FLAT | FREE_DELIVERY, value, max_discount_npr,
+min_order_npr, starts_at, ends_at, is_active)`, a discount line on the order snapshot
+  (`discount_npr`, `offer_id`), a decision on who pays for it (the shop's payout or the
+  platform's revenue) reflected in `planSettlement`, the discount in the eSewa / Khalti amount
+  check, and `top_offer` in the feed rendered by the server from the best running offer.
+- Until then the API should send `top_offer: null`, and the app shows no offer line.
+
+**D. Menu products: description, unit, photos.**
+
+- Nothing new in the database: `products.description`, `unit` and `image_urls` exist since
+  Phase 17 and vendors already write them (Phase 19).
+- `menuProductSchema` gains `description: string | null`, `unit: string`, `image_urls: string[]`
+  (and `category_id` / `category_name`, already proposed in §8Z). The app then drops
+  `useMenuCatalog`, its extra requests and the 250-product cap.
+- **Product ratings: not recommended now.** They are not in SPEC and would need their own
+  review flow. If added later: `rating_average` / `rating_count` on the menu product; the sheet
+  already renders a pill when it is given one.
+
+### Tests
+
+Mobile **1084** (+57): `features/promo/premium-home.test.tsx` (36: the delivery estimate, the
+mock source, the carousel's auto-scroll / pause / wrap / single banner under fake timers, both
+rows rendering nothing when empty, `sortFeed` for every order with unknown values and ties, the
+sheet's Apply / Clear / backdrop rules, the card with and without each extra, and the Home
+screen with promotions, without them, and through each sort) and
+`features/menu/shop-detail.test.tsx` (21: the header with and without extras, distance from the
+cached feed, the back button, the in-shop search, the sheet opening without adding, quantity and
+stock limits, sold out, not serviceable, pending checkout, the replace-cart hand-over, the row's
+direct Add, `fetchMenuCatalog`). Two assertions in `VendorMenuScreen.test.tsx` were narrowed (a
+sold-out row now has a "View …" button, so "no button in the row" became "no Add button").
+Both new files replace `mock-promotions` with `jest.mock`, so they do not depend on the invented
+values. `tsc --noEmit` and `eslint .` clean; the Android bundle exports. `ReviewPrompt.test.tsx`
+failed once in the full parallel run and passed alone (the known timing flake).
+
+**Not run on a device, and no mutation checks were run.** Unverified in particular: the
+carousel's paging and auto-scroll feel, the card overlapping the banner (`-mt-12`) on Android,
+the shadow of the cards on iOS, the sheets' heights on small screens, and the shop page without
+its stack header (status-bar icons over a light or dark banner are not adapted). The new Nepali
+strings (`feedSort.*`, `promo.*`, six `menu.*`, two `vendor.*`) are unreviewed.
+
+## 8Z.2 Time-of-day Home header (2026-10-06)
+
+Visual only. `features/location/header-phase.ts` + `HeaderGradient.tsx` + `LocationHeader.tsx`.
+
+| Phase     | Local hours (`Date#getHours()`) | Gradient (top → bottom)                         | Text / chevron |
+| --------- | ------------------------------- | ----------------------------------------------- | -------------- |
+| morning   | 05–11                           | `#FFE98A → #FFF6CC → #F9FAFB`                   | dark           |
+| afternoon | 12–16                           | `#FFC400 → #FFB347 → #FFE4A8 → #F9FAFB`         | dark           |
+| evening   | 17–19                           | `#F2545B → #FF8C5A → #FFC1CC → #F9FAFB`         | dark           |
+| night     | 20–04                           | `#070B24 → #131C4D → #2A3780` (dark throughout) | white          |
+
+- `useHeaderPhase` re-reads the clock every minute and when the app returns to the foreground.
+  `HeaderGradient` takes an optional `phase` prop that overrides the clock (tests, previews).
+- **Night:** `Stars` renders 14 absolutely positioned white dots (plain `View`s, classes written
+  out in full so Tailwind finds them; no image, no SVG) in the upper half of the header.
+- **Contrast:** `HeaderGradient` provides the tone through `HeaderToneProvider`; `LocationHeader`
+  reads `useHeaderTone()` and switches "Hamro Pasal in", the location text and the chevron to
+  white at night ("Select Location" becomes amber instead of brand red). Outside a gradient the
+  tone is dark. The search bar and the profile button stay white in every phase.
+- Toggling text / background colour classes is safe (NativeWind's preset turns the Tailwind
+  opacity-variable plugins off); the rule of §8Z.1 concerns `shadow-*` / `ring-*` only.
+- The dev-client fallback (flat bands when the native gradient view is missing) uses the same
+  phase colours.
+- **Not handled:** the OS status bar icons stay in their default style, so at night they are dark
+  on the navy header. Fixing it properly needs a status-bar style that follows screen focus.
+- Tests: mobile **1027** (+19: the hour boundaries, the themes, the clock hook, stars and tone per
+  phase). Colours were chosen by eye and **not seen on a device**.
+
+## 8Z.1 Fix: "Couldn't find a navigation context" when a category is tapped (2026-10-06)
+
+Not a routing problem and no layout changed. **Cause:** the category tile in
+`features/discovery/CategoryCarousel.tsx` had `shadow-sm` on one branch of a ternary
+(`selected ? '… bg-brand-light' : 'bg-white shadow-sm'`). NativeWind 4 implements `shadow-*`
+(and `ring-*`) with CSS variables; a view whose className **gains** such a class after its first
+render is "upgraded" by `react-native-css-interop`, and in development that path prints the view's
+props with `JSON.stringify`, which walks into React Navigation objects and throws this error
+(`render-component.js#printUpgradeWarning`). Selecting a category moved the shadow from one tile
+to another, so the first tap crashed. Jest did not catch it: the stylesheet is not compiled there.
+
+- **Fix:** the tile keeps `border-2 shadow-sm` in both states; only `border-brand bg-brand-light`
+  vs `border-transparent bg-white` changes.
+- **Rule for this codebase:** a `shadow-*` / `ring-*` class is never one side of a condition. Keep
+  it on in every state and vary border, background or opacity. An element that is mounted or
+  unmounted with its shadow is fine (that is its first render).
+- **Guard:** `src/components/nativewind-shadow-guard.test.ts` scans every `.tsx` under `app/` and
+  `src/` for a string literal containing `shadow` / `ring` directly after `?` or `:` and fails with
+  the file and line. Mutation-checked (reintroducing the pattern fails it). It is a line-based
+  heuristic: a condition split so the class is not on the same line as its `?` / `:` would slip by.
+- This was the only such place in the app. Mobile tests **1008**. **The fix itself was reasoned
+  from the library source and is not confirmed on the device.**
+
+## 8Z. Category navigation: Home carousel, sectioned shop page, ITEMS menu (2026-10-06)
+
+Mobile only; no API, shared-types or SPEC change. Cart, checkout and stores are untouched.
+
+**There is no frontend mock data to extend.** The feed and the menus are live API responses
+validated by strict shared-types schemas (`feedVendorSchema`, `menuProductSchema`), and neither
+carries a category. Adding `categories` / `subcategory` to the app's types alone would make the
+app reject today's responses, so **the app derives both from endpoints that already exist**; the
+cleaner contract is under "Backend contract (recommended)".
+
+| Feature                                                                                        | How it works now                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Home: "What's on your mind?"** (`features/discovery/CategoryCarousel.tsx`)                   | A horizontal row of round tiles above the feed: "All Shops" + the **root categories** of `GET /api/categories` (the category's `icon_url`, else an icon guessed from its slug). Hidden while searching                                                                                                                                                                                                                                             |
+| **Category → shops** (`features/discovery/category-shops.ts`)                                  | Tapping a category reads `GET /api/products?category_id=<id>&limit=50` (the API includes subcategories), collects the `vendor.id`s, and the feed keeps only those shops, still split into "Delivers to you" / "Explore Further". "All Shops", or tapping the chosen tile again, clears it. No shop → "No shops near you sell X yet."                                                                                                               |
+| **Shop page sections** (`features/menu/menu-sections.ts`, `app/(tabs)/(home)/vendor/[id].tsx`) | The menu (`GET /api/vendors/:id/products`, unchanged) is rendered in a `SectionList` grouped by each product's own category (the subcategory: "Tea & Coffee"). The product → category map comes from `GET /api/products?vendor_id=<id>&limit=50`; names and order from the taxonomy. Unknown products go to a last "Other" section; with no category known at all there is one "All items" section                                                 |
+| **ITEMS button and sheet**                                                                     | A dark pill, bottom-right of the shop page (`absolute bottom-6 right-4`; the list has 96 px of bottom padding so the last row is not hidden). It opens a bottom sheet (plain `Modal` + backdrop) listing each section with its count, "Tea & Coffee (8)". Tapping one closes the sheet and calls `scrollToLocation({ sectionIndex, itemIndex: 0 })`; `onScrollToIndexFailed` scrolls by the average row height when the target is not laid out yet |
+
+- `scanProducts` (`api/catalog.ts`) reads the public product list page by page, **at most 5 pages
+  (250 products)**. Consequences: a category with more than 250 active products can miss shops
+  whose products sort later by name, and a shop with more than 250 products shows the rest under
+  "Other".
+- Each category tap costs up to 5 requests (cached per category for 1 min); each shop page costs
+  the menu plus up to 5 (cached per shop for 1 min) plus the taxonomy (5 min).
+- The shop page lives in the Shops tab's stack, so the tab bar is outside the screen and the
+  button cannot cover it. **There is no "View Cart" banner in the app** (the cart is its own
+  tab), so nothing else sits at the bottom of that screen.
+- Categories are the Super Admin's taxonomy (seed: one root, Groceries, with six subcategories),
+  so the carousel shows what is in the database, not a fixed "Clothes / Groceries / Electronics".
+- §8W item 8 removed a different control (a Shops / category toggle that swapped the feed for a
+  **product** list). This row filters **shops** and leaves the feed in place.
+
+### Backend contract (recommended, not required)
+
+```jsonc
+// GET /api/vendors (feed)  — each vendor gains the root categories it sells in:
+{ "vendor": { "id": "…", "business_name": "…", /* existing fields */
+              "category_ids": ["<root category uuid>", "…"] }, "distance_km": 1.2, "serviceable": true }
+//   optional server-side filter instead of the scan:  GET /api/vendors?lat=&lng=&category_id=<uuid>
+
+// GET /api/vendors/:id/products (menu)  — each product gains its subcategory:
+{ "id": "…", "name": "…", "price_npr": 450, "in_stock": true, "stock_quantity": 12,
+  "category_id": "<uuid>" | null, "category_name": "Tea & Coffee" | null }
+```
+
+- Both schemas are strict, so `feedVendorSchema` / `menuProductSchema` in shared-types must change
+  with the API, and the API must ship before the app. The app would then drop `scanProducts`,
+  the 250-product caps and the extra requests; `groupMenu` and the UI stay as they are.
+
+### Tests
+
+Mobile **1006** (+14): `features/menu/category-navigation.test.tsx` (the paged scan and its cap;
+the carousel, filtering by category, reset, empty state, hidden while searching; `groupMenu`;
+section headers with counts, the sheet's entries, `scrollToLocation` with the right section, the
+backdrop, the one-section fallback). The msw server now has a standing empty `GET /api/products`.
+`tsc`, `eslint` clean; Android bundle exports. **Not run on a device**: the jump scroll on a long
+real menu and the sheet's feel are unverified.
+
+## 8Y. Home header: gradient, "Hamro Pasal in", round profile button (2026-10-06)
+
+Visual only; no routing, store or API change. **One new native dependency: `expo-linear-gradient`
+~57.0.2 (the development client must be rebuilt to draw the real gradient).**
+
+- `features/location/HeaderGradient.tsx` wraps the location row and the search bar on Home. It
+  draws `['#FFD700', '#FFE873', '#F9FAFB']` top to bottom (daytime, hardcoded; the last stop is
+  `bg-gray-50`, so the header fades into the screen) and pads the top by the safe-area inset.
+- **A dev client built before the package was added has no native gradient view.** The component
+  checks `requireOptionalNativeModule('ExpoLinearGradient')` and only then requires
+  `expo-linear-gradient`; otherwise it draws three flat bands of the same colours
+  (`header-gradient-fallback`), so Home never red-screens on an old client. After
+  `eas build --profile development` the real gradient appears with no code change.
+- `LocationHeader`: "Hamro Pasal in" (`text-xl font-extrabold`), the location label with a
+  chevron beneath it (same tap target and store logic), a round white profile button at the right
+  (`/profile`). The row has no background of its own.
+- The search bar is white, `rounded-xl`, `shadow-sm`, with the search icon and the microphone
+  placeholder, inside the gradient.
+- The `(home)` stack's header is off for the feed (`headerShown: false` on `index`); the shop page
+  keeps its native header with Back.
+- Tests: mobile **992** (+1, the header block and its two tap targets). Jest runs the fallback
+  path or the mocked native view, whichever the Jest preset provides; **the real gradient has not
+  been seen on a device.**
+
+## 8X. Android QA: keyboard, replace confirmation, search debounce, map centring, track-order (2026-10-06)
+
+Mobile only. No API, shared-types or SPEC change, and **no new backend work is required by this
+section**: the push payload below is what the worker already sends (Phase 20, §8M).
+
+| #   | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Where                                                                  |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 1   | **Keyboard on Android.** `react-native-keyboard-aware-scroll-view` is not in the project, so: `KeyboardAvoidingView` uses `behavior` `'padding'` on iOS and **`undefined` on Android**; the form's `ScrollView` gets **`paddingBottom` = 48 + the keyboard height** on Android (`lib/useKeyboardHeight.ts`: `keyboardDidShow` / `keyboardDidHide`); and a field that takes focus is scrolled to the top of the visible area 300 ms later (`measureLayout` against the scroll content). `keyboardShouldPersistTaps="handled"` as before. This supersedes §8W item 6 (`behavior: 'height'` did not work inside a `Modal`) | `components/AddressFormModal.tsx`                                      |
+| 2   | **Replace confirmation.** Saving from the address book as Home / Work while another entry holds that tag shows `Alert.alert("Replace Home address?", "A Home address already exists. Do you want to replace it?", [Cancel, Replace])`. Nothing is saved, and the form stays open, until **Replace**. Editing the Home entry itself, a free tag, and Other do not ask. The store still overwrites if called directly (§8W item 1)                                                                                                                                                                                        | `features/address/AddressBookModal.tsx` (`tagHolder`)                  |
+| 3   | **Search debounce 500 → 1200 ms** (`PLACE_SEARCH_DEBOUNCE_MS`) for the location search                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `features/location/place-search.ts`                                    |
+| 4   | **Map opens where the form points.** "Set on map" with no pin yet geocodes "`<Palika>, <District>`" (whatever of the two is filled) through the place search (`geocodeArea`, first match in Nepal) and opens the map there; the button reads "Locating…" meanwhile. An existing pin wins; nothing typed, or nothing found, opens on the Kathmandu default                                                                                                                                                                                                                                                               | `components/AddressFormModal.tsx`, `features/location/place-search.ts` |
+| 5   | **`/track-order`.** The cart's "Track order" button pushes `/track-order?id=<order id>`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `app/track-order.tsx`, `features/checkout/CheckoutStatus.tsx`          |
+
+**Order tracking flow (what exists).**
+
+- `app/track-order.tsx` is the single entry: it takes `id`, or picks the newest order still on its
+  way (else the newest of all) from `useOrderStore`, and **replaces itself with the live tracking
+  screen `/order/[id]`** (Phase 8: discrete state nodes updated over Socket.io `/orders`, the 60 s
+  cancel window, the delivery code, the dispute entry). With no order it shows "No order to
+  track". It does not duplicate the tracker.
+- Entry points: the cart's "Track order" (after an order is placed), **a tapped order
+  notification** (new: `features/notifications/notification-taps.ts`, mounted by
+  `PushNotifications`; it handles a tap while the app runs and the tap that launched it, for
+  pushes with `audience: "CUSTOMER"`), and Profile → Your Orders → an order (straight to
+  `/order/[id]`).
+- Live state changes while the app is open come over the socket, not from the push; the push is
+  what reaches a closed or backgrounded app.
+
+### Push notification contract (order status → customer / vendor)
+
+Already implemented by the worker (`apps/worker/src/notifications/order-push.ts`, consumer
+`order-push-notifications`); restated here as the contract the app depends on. With
+`MOCK_SERVICES=true` the same payload is logged as `[MOCK PUSH] -> …` instead of being sent (§8Q).
+
+```jsonc
+// POST https://exp.host/--/api/v2/push/send        Content-Type: application/json
+// body: an array, one message per device token (≤ 100 per request)
+[
+  {
+    "to": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]", // device_tokens.token of the recipient
+    "title": "Order accepted", // omitted on data-only pushes
+    "body": "The shop is preparing order #4FA5B6.", // omitted on data-only pushes
+    "sound": "default", // omitted on data-only pushes
+    "priority": "high",
+    "channelId": "orders", // Android channel the app creates; omitted on data-only
+    "_contentAvailable": true, // data-only pushes only (wakes the app silently)
+    "data": {
+      "type": "order.state_changed", // literal; anything else is ignored by the app
+      "notification_id": "<outbox event_id, uuid>", // de-duplicates a push delivered twice
+      "order_id": "<orders.id, uuid>", // opened by /track-order?id=
+      "state": "PREPARING", // OrderState after the change
+      "audience": "CUSTOMER", // "CUSTOMER" | "VENDOR"
+      "data_only": false, // true ⇒ the app posts the visible notification itself
+      "title": "Order accepted", // always present in data (used for data-only)
+      "body": "The shop is preparing order #4FA5B6.",
+    },
+  },
+]
+```
+
+| Order change             | `state`            | To                                   | Kind      | Title                    |
+| ------------------------ | ------------------ | ------------------------------------ | --------- | ------------------------ |
+| placed (paid or COD)     | `PLACED`           | vendor                               | data-only | New order                |
+| **accepted** by the shop | `PREPARING`        | customer                             | visible   | Order accepted           |
+| **out for delivery**     | `OUT_FOR_DELIVERY` | customer                             | data-only | Your order is on its way |
+| delivered                | `DELIVERED`        | customer                             | visible   | Order delivered          |
+| cancelled                | `CANCELED`         | customer (+ vendor if it was placed) | visible   | Order cancelled          |
+| failed                   | `FAILED`           | customer                             | visible   | Order not completed      |
+
+- There is no `ACCEPTED` order state in SPEC: "accepted" is the change to **`PREPARING`**.
+- `data` is validated on the device with `orderPushDataSchema` (shared-types
+  `api/notifications.ts`); extra keys are tolerated, a missing or unknown `type` / `state` is
+  ignored. `#4FA5B6` is the last 6 hex digits of the order id, upper case.
+- Recipients: the customer's `users.id`, the vendor through `vendors.user_id`; every device
+  registered with `POST /api/notifications/device-token`.
+- Still true from §13: no push has been delivered to a real device (FCM V1 / APNs credentials are
+  not on the EAS project), push is best effort (no retry), texts are English only.
+
+**Behaviour to know.**
+
+- Map centring uses the same public Nominatim server as the search (one request per "Set on map"
+  when no pin exists): the rate-limit caveat of §8V applies, and a refusal simply opens the map on
+  the default.
+- The focus scroll relies on `measureLayout` between the field and the scroll content
+  (`collapsable={false}` on both). **Verified in Jest only for the padding; the scroll itself and
+  the feel on a real Android keyboard need a device check.**
+- The replace confirmation lives in the address book. The cart's first-address form (empty book)
+  cannot conflict, and `setAddress` (legacy single-address callers) does not ask.
+
+### Tests
+
+Mobile **991** (+18): `features/order/android-qa.test.tsx` (Android padding follows the keyboard
+and not on iOS; the alert's title, message and buttons, nothing saved before Replace, no alert for
+a free tag; the 1200 ms constant; `geocodeArea`; the map's centre for typed area / not found /
+existing pin / nothing typed; `orderToTrack`, the redirect, the empty state, the cart button; the
+notification tap while running and at launch). `tsc`, `eslint` clean; Android bundle exports.
+
+## 8W. QA fixes: address tags, cancel payment, cart conflict, unified search, WhatsApp OTP, keyboard, tab bar (2026-10-06)
+
+Mobile and one SPEC.md line (Nepal §4, WhatsApp). **No API or shared-types change.** Two flows
+need backend work to be complete; both are specified under "Backend endpoints required".
+
+| #   | Fix                                                                                                                                                                                                                                                                                                            | Where                                                   |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| 1   | **One Home, one Work.** `saveAddress` with a Home / Work draft overwrites the entry that already has the tag (same id); editing another entry into the tag removes the old holder; Other is unlimited (book max 10). A stored book with duplicates keeps the last of each tag on restore                       | `store/useAddressStore.ts` (`isUniqueLabel`)            |
+| 2   | **"Cancel Payment"** on the locked cart (under the countdown and "Pay with …"): calls `POST /api/orders/:id/abandon` (**proposed, not built**), then ends the checkout session on the phone: countdown gone, lock-status polling stops, cart editable, items kept. Disabled while a payment is being confirmed | `api/abandon-checkout.ts`, `app/(tabs)/cart.tsx`        |
+| 3   | **Cross-shop alert.** Adding from another shop is still blocked by the cart store; the dialog now reads "Your cart contains items from [Shop A]. Do you want to discard them to start a new order with [Shop B]?" with **Clear Cart** and **Cancel**                                                           | `components/ReplaceCartModal.tsx`                       |
+| 4   | **Unified search.** The Home search lists shops whose name contains every word typed (from the feed already on the device, both sections) above the products the server matches by name. A shop match suppresses "no products"                                                                                 | `features/discovery/ProductResults.tsx#matchingVendors` |
+| 5   | **"Get OTP via WhatsApp"** on the code screen: the same send request with `channel: 'WHATSAPP'`                                                                                                                                                                                                                | `api/auth.ts`, `app/verify-otp.tsx`                     |
+| 6   | **Keyboard.** The address form is inside `KeyboardAvoidingView` (padding on iOS, height on Android) around the `ScrollView` (extra bottom padding, drag to dismiss)                                                                                                                                            | `components/AddressFormModal.tsx`                       |
+| 7   | **Tab bar on a shop's page.** The Shops tab is now a stack: `app/(tabs)/(home)/_layout.tsx` with `index.tsx` (the feed) and `vendor/[id].tsx` (moved from `app/vendor/`). URLs are unchanged (`/`, `/vendor/[id]`); the Shops tab button pops back to the feed                                                 | `app/(tabs)/(home)/*`, `app/(tabs)/_layout.tsx`         |
+| 8   | **No "Shops / Groceries" toggle.** `CategoryPills` is deleted and Home no longer requests the taxonomy; products are reached by search. `GET /api/categories` and the `category_id` filter remain on the API, unused by the app                                                                                | `app/(tabs)/(home)/index.tsx`                           |
+
+**Behaviour to know.**
+
+- **Cancel Payment today is local only.** Until the endpoint exists the request answers 404 and
+  the app unlocks anyway (`AbandonOutcome = 'local_only'`): **the server's Redis lock keeps the
+  stock for the rest of its 600 s and the order stays PENDING_PAYMENT.** A customer who cancels
+  and checks out again at once gets a new order and a second lock, and can be refused
+  `409 INSUFFICIENT_STOCK` by their own first hold when stock is tight. `409 ORDER_STATE_CONFLICT`
+  from the endpoint means the payment landed first: the session is kept and the lock-status poll
+  opens the order.
+- **Cancel Payment cannot stop a payment already being made** on the gateway's page. If money
+  arrives after an abandon, the backend must treat it like `PAID_AFTER_SESSION_EXPIRED` and flag
+  the refund.
+- **WhatsApp today fails cleanly.** `otpSendRequestSchema` is a strict object, so the current API
+  answers `400 VALIDATION_FAILED` for the extra key; the app shows "WhatsApp codes aren't
+  available yet. Use the SMS code." The SMS request is unchanged (no `channel` key).
+- Unified search matches shop **names** only on the device; it does not list the products of a
+  matching shop (open the shop). Product matching is still the server's word-prefix search.
+- With the toggle gone there is no category browsing in the app.
+- The `(home)` stack draws the "Shops" header itself; the tab's own header is off for that tab.
+
+### Backend endpoints required (not built)
+
+**A. Abandon a pending checkout.**
+
+```jsonc
+// POST /api/orders/:id/abandon        Bearer CUSTOMER (order owner), no body
+// 200 (also on repeat)
+{ "order_id": "uuid", "state": "CANCELED" }
+// 404 ORDER_NOT_FOUND            not the caller's order, or unknown
+// 409 ORDER_STATE_CONFLICT       details.state: the order is no longer PENDING_PAYMENT
+//                                (the payment was confirmed first: PLACED, or FAILED)
+```
+
+- In one transaction under `SELECT … FOR UPDATE` on the order: only `PENDING_PAYMENT` →
+  `CANCELED` (`placed_at` stays NULL: check `orders_placed_at_check` allows CANCELED without it,
+  or add an `ABANDONED`-style rule), write `order.state_changed`; after commit release the Redis
+  reservation (`inv:{vendor}:res:{reservation}` and its holds). No stock to restore (stock is
+  decremented only at the claim).
+- The existing payment confirmation must then refuse or refund a late payment for that order:
+  today `OrderService.cancel` deliberately excludes PENDING_PAYMENT for exactly this reason.
+  Reuse the `PAID_AFTER_SESSION_EXPIRED` path and set `refund_required`.
+
+**B. OTP by WhatsApp.**
+
+```jsonc
+// POST /api/auth/otp/send
+{ "phone": "+9779800000001", "channel": "WHATSAPP" } // channel optional, default "SMS"
+// 200  unchanged body { phone, expires_in_seconds, resend_after_seconds }
+// 503 OTP_CHANNEL_UNAVAILABLE    no WhatsApp provider configured (the app tells the customer to use SMS)
+// 502 SMS_DELIVERY_FAILED        (or a WHATSAPP_DELIVERY_FAILED) when the provider refuses
+```
+
+- `otpSendRequestSchema` gains `channel: z.enum(['SMS', 'WHATSAPP']).default('SMS')`; a WhatsApp
+  adapter beside the SMS ones (WhatsApp Business Cloud API authentication template, or the SMS
+  vendor's WhatsApp product), selected per request. The cooldown, TTL and attempt rules are per
+  phone, whatever the channel.
+
+### Tests
+
+Mobile **973** (+13 net): `features/checkout/qa-fixes.test.tsx` (cancel payment: released, 404 /
+offline → local unlock, 409 keeps the order; WhatsApp: payload, countdown, both "unavailable"
+answers, cooldown; the keyboard container), address-store cases for unique tags and the restore
+dedupe, unified-search cases and `matchingVendors`; the category-pill tests are deleted and the
+discovery tests reach products by searching. `tsc`, `eslint` clean; the Android bundle exports
+with the moved routes. **Not run on a device**: the tab bar on the shop page, the keyboard
+behaviour on Android inside the modal, and the back gesture in the new stack are unverified.
+
+## 8V. Location flow: permission on the welcome screen, live place search (2026-10-06)
+
+Mobile and one SPEC.md paragraph (Customer Flow step 0). No API change. **Supersedes §8T's
+"the OS prompt appears over the splash" and §8U's description of the search field.**
+
+### Permission sequence
+
+```
+splash ─ LocationCheck (TerritoryGate)
+  ├─ signed in, or login already skipped  → check WITH the OS prompt (as before)
+  └─ first-time visitor (headed to /welcome) → check WITHOUT the prompt (getForegroundPermissionsAsync)
+        → splash ends, deviceChecked = true
+/welcome mounted, deviceChecked && no device position
+  → useBrowseLocationStore.requestLocationPrompt()          locationPrompt: idle → requested
+  → useTerritoryGuard re-runs WITH the prompt: the OS dialog appears over the welcome screen
+        ├─ allowed  → device = {lat, lng, label}; locationPrompt = answered; the welcome screen stays
+        └─ refused / no fix → device = null; locationPrompt = answered
+              → the welcome screen opens "Select delivery location" (banner + Enable) at once
+                   ├─ a location is chosen → override written, authWallSkipped = true, router.replace('/')
+                   └─ dismissed → back on the welcome screen; not reopened
+```
+
+- New store state `locationPrompt: 'idle' | 'requested' | 'answered'` (memory) with
+  `requestLocationPrompt` / `markLocationPromptAnswered`; `useTerritoryGuard(deps, { promptAtBoot })`.
+- A position already granted on an earlier launch is found by the boot check, so nothing is asked
+  and nothing opens. A permission refused permanently makes the OS answer without a dialog: the
+  selector then opens on every launch that reaches the welcome screen.
+- **Choosing a location on the welcome screen skips the login** (the visitor continues as a
+  guest), as requested. Blocked positions (outside Nepal) are still handled by the gate.
+- `LocationSelectorModal` is exported from `features/location/LocationHeader.tsx` and used by the
+  Home header and the welcome screen.
+
+### Live search (`features/location/place-search.ts`)
+
+- `usePlaceSuggestions(input)`: `toPlaceQuery` (trim, collapse spaces, max 100) →
+  `useDebouncedValue(…, 500 ms)` → TanStack query `['place-suggestions', text]`, enabled from
+  **2 characters**, cached 5 min, no retry. One request per rest in typing, with the last text.
+- Request: `GET https://nominatim.openstreetmap.org/search?q=<text>&format=json&addressdetails=1&limit=5&countrycodes=np`
+  (`countrycodes=np` was added to the URL given, so results stay in Nepal), 8 s timeout.
+- `toPlaceSuggestions`: `title` = `name` or the first part of `display_name`; `subtitle` = the
+  rest without "Nepal" and postcodes; `label` (what the Home header shows) = "title, town";
+  results outside `NEPAL_BOUNDING_BOX` or malformed are dropped.
+- **UI:** empty field (or one character) → the default view (Use current location, Pick on the
+  map, saved addresses). Two or more → the default view is replaced by the suggestion rows (amber
+  pin tile, bold title, grey subtitle), "Searching…", "No matching places in Nepal…" or the failure
+  message. A spinner sits inside the search bar while waiting; a clear button otherwise.
+- **Selecting** writes `{ lat, lng, label, municipalityPalika: null }` to
+  `useBrowseLocationStore.override` and closes the selector; the Home header shows the label at
+  once and the feed is asked with the new coordinates.
+- The device-geocoder search (`searchPlace`, the "Search" button, `deps.geocode`) is deleted.
+- **Service caveat:** the public Nominatim server's usage policy does not permit type-ahead
+  (autocomplete) clients and limits an app to about one request per second; it may throttle or
+  block the app. It is acceptable for development only. `PLACE_SEARCH_URL` and `toPlaceSuggestions`
+  are the only two things to change for another provider (Photon, LocationIQ, a self-hosted
+  Nominatim, Google Places).
+
+### Tests
+
+Mobile **960** (+18): new `features/location/live-search.test.tsx` (parsing, the request, default
+view vs suggestions, one request per burst, clear, selection into the store and header, empty and
+failed search, spinner, and the six welcome-screen sequence cases); `TerritoryGate.test.tsx` gained
+the deferred-prompt cases. `tsc`, `eslint` clean; Android bundle exports. **Not run on a device**:
+in particular the OS dialog appearing over the welcome screen, and Nominatim's real answers and
+rate limiting, are unverified.
+
+## 8U. UI polish: tokens, account menu, location selector, place names, address cards (2026-10-06)
+
+Presentation pass on the mobile app. **No API, contract, SPEC or business-rule change**; no new
+dependency.
+
+- **Tokens.** Every `neutral-*` class in `app/` and `src/` became `gray-*` (screens `bg-gray-50`,
+  cards `bg-white`); card borders (`border border-gray-200 bg-white`) became `bg-white shadow-sm`
+  with `rounded-xl` / `rounded-2xl`; inputs keep their border. Secondary text is `text-gray-500`
+  (was 600). Brand red is unchanged. **`shadow-sm` on Android relies on NativeWind mapping it to
+  elevation; not checked on a device.**
+- **Profile tab** (`app/(tabs)/profile.tsx`): a header card (name, else the +977 number, else
+  "Your account"; number and email beneath) and one white menu card with icon, label and chevron
+  rows: **Your Orders**, **Address Book**, Edit / Complete profile, **Log Out**. A guest sees
+  "Log in or sign up" with the two sign-in buttons and none of those rows. Language and the
+  `__DEV__` tools follow.
+  - The number comes from `useProfileStore.account` (`{ user_id, phone }`, encrypted MMKV), saved
+    by `useVerifyOtp`; like the profile it is shown only to the account it belongs to. A session
+    started before this change (or with the dev token) has none until the next sign-in.
+  - **Your Orders** is the new `app/orders.tsx` (`/orders`): the orders in `useOrderStore`
+    (this phone's record, at most 20, newest first), each opening `/order/[id]`. **The API has no
+    order-list endpoint**, so orders placed on another device are not listed.
+- **"Select delivery location"** (the selector in `features/location/LocationHeader.tsx`,
+  restyled): a red banner **"Device location not enabled" + Enable** (`Linking.openSettings()`)
+  while `useBrowseLocationStore.device` is null; the search field "Search for area, street
+  name..."; rows "Use current location" (crosshair) and "Pick on the map"; then the saved
+  addresses as tagged rows (signed in only). Every choice still writes `override` in
+  `useBrowseLocationStore`.
+  - **It opens by itself once** on Home when the boot check has answered and no location is known
+    (new flag `deviceChecked`, set by `useTerritoryGuard`); dismissed, it leaves the "Select
+    Location" prompt.
+  - After "Enable", the gate's foreground re-check captures the position when the customer comes
+    back with the permission on; the banner then disappears.
+- **Place names instead of coordinates.** `features/location/describe-place.ts#describePlace`:
+  `expo-location` `reverseGeocodeAsync` (street, district, city, subregion: the first two distinct),
+  then **OpenStreetMap Nominatim** (`/reverse`, 5 s timeout) when the device gives nothing; null
+  when neither names the place. Used for the device position at boot, "Use current location", a
+  pin dropped on the map (name looked up 600 ms after the map rests), and the address form's pin.
+  Unnamed places read "Current location" / "Pinned location" / "Pin set". **No latitude or
+  longitude is rendered anywhere** (`address.pin.coords` is deleted).
+  - Nominatim's public server allows about one request per second per app and asks for an
+    identifying User-Agent, which a React Native `fetch` cannot fully control: fine as a fallback
+    in development, **replace with a keyed geocoder before launch**.
+  - The name is display only: it is not stored with a saved address and does not fill the
+    Province / District / Palika fields.
+  - Jest mocks `describePlace` globally (`jest.setup.ts`, unnamed by default).
+- **Address cards** (`features/address/AddressBookModal.tsx#AddressSummary`, shared by the cart,
+  the address book and the selector): an icon tile per tag (Home amber, Work blue, Other violet),
+  the tag in bold, and the full address in words ("<landmark>, <tole>, <palika>-<ward>,
+  <district>") on at most two lines, plus the recipient for Other.
+- **Tests:** mobile **942** (+19): `features/profile/account-menu.test.tsx` (header variants,
+  menu rows, guest, orders list, the selector auto-opening, `describePlace` and its Nominatim
+  fallback), plus updated address form, cart and location tests. `tsc`, `eslint` clean; Android
+  bundle exports. `ReviewPrompt.test.tsx` again failed once in a full parallel run and passed in
+  the next (the known timing flake). **Nothing here was looked at on a device**: spacing, shadows
+  and colours are unverified visually.
+
+## 8T. Boot flow, auth wall, Home header, delivery-area check, optional email (2026-10-06)
+
+Third QA pass. **Mobile and SPEC.md only; no API, shared-types or database change.** SPEC.md was
+amended by the user's decision in three places (Tenant Isolation, Customer Flow step 0–3, step 6).
+**It supersedes, where they differ:** §8S (the feed's default location, the mandatory email, the
+header's Thamel fallback), §9.7 (the gate's locked permission and no-fix screens) and §8R
+("sign-in is asked for in the Cart and Profile only").
+
+### Decisions taken (user, 2026-10-06)
+
+| Topic                       | Decision                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Map library                 | Stay on the WebView + OpenStreetMap picker (no dev-client rebuild). Tile-provider caveat of §8S stands |
+| Email                       | **Optional.** `full_name` alone completes the profile                                                  |
+| Location permission refused | **The app opens anyway** (SPEC §1 amended): no lock screen, the customer selects a location by hand    |
+| Cross-area checkout         | Checked on the device before checkout (below). The backend owner implements the contracts of §8S       |
+
+### App boot → permission → auth / skip → Home
+
+```
+launch
+  └─ TerritoryGate (root, above every route)
+       1. SplashView for SPLASH_MIN_DURATION_MS (1500 ms): logo placeholder + "Hamro pasal sajilo cha hai"
+       2. LocationCheck (splash still up):
+            requestForegroundPermissionsAsync  ── OS dialog only if the app may still ask
+            ├─ granted → position → inside Nepal?  ── yes → useBrowseLocationStore.device = {lat, lng, label}
+            │                                      └─ no  → "Service Unvailable in your territory" + purge (unchanged)
+            └─ refused / no fix → device = null, the app opens
+  └─ app/(tabs)/_layout.tsx
+       role VENDOR / DRIVER → their dashboard (unchanged)
+       no session and !authWallSkipped → <Redirect href="/welcome" />
+  └─ app/welcome.tsx: +977 number + "Continue" (OTP)  |  "Skip login" → authWallSkipped = true → "/"
+  └─ Home
+```
+
+| State                                         | Store                                                       | Storage    | Notes                                                                                                                                         |
+| --------------------------------------------- | ----------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `device: { lat, lng, label \| null } \| null` | `useBrowseLocationStore`                                    | memory     | captured on every launch; `label` from the device geocoder (`placeName`: district, city, subregion), filled in after boot without delaying it |
+| `authWallSkipped: boolean`                    | `useOnboardingStore` (new), key `hamro-pasal.onboarding` v1 | plain MMKV | persisted: a guest is not asked again on later launches. Reset by the SPEC §1 purge                                                           |
+
+- **Splash** (`features/boot/SplashView.tsx`) is a React view inside the gate's full-screen modal,
+  not the native splash (`expo-splash-screen` is not configured, so the OS shows its default
+  launch screen for the moment before JavaScript runs). `LogoPlaceholder` is two triangles over a
+  storefront icon: **placeholder art**.
+- **Permission is asked once per launch at most.** The foreground re-check uses
+  `getForegroundPermissionsAsync` (`TerritoryDeps.currentPermission`), so a customer who refused
+  is not prompted every time they return to the app. The gate's "Location access needed" and "We
+  couldn't find your location" screens and their strings are deleted.
+- **SPEC §1 consequence:** a device with location refused is never checked against Nepal. The
+  blocking screen (and the purge) still apply whenever a position is obtained outside Nepal,
+  including on a later foreground check after the permission is granted.
+- **Welcome / auth wall** (`app/welcome.tsx`): `ImageBackground` with
+  **`assets/images/auth-wall-placeholder.png`** (a generated gradient standing in for the Nepal
+  shop sketch: replace the file, keep the name), "Skip login" at the top right, the logo, and a
+  card with the phone field and "Continue". The field and request are
+  `features/auth/PhoneSignInForm.tsx`, now shared with `/login`. After the code is verified the
+  code screen leaves with `router.replace('/')` (nothing to go back to).
+- A customer who signs out without ever having skipped is sent to `/welcome` again; a guest who
+  skipped is not. `/login` (cart, Profile) is unchanged.
+- **Testing from outside Nepal** (unchanged): real GPS blocks and purges; in a dev client use the
+  simulator on the blocking screen or the Profile tab ("Nepal"). Refusing the location permission
+  now also gets past the gate.
+
+### Home header (`features/location/LocationHeader.tsx`, `app/(tabs)/index.tsx`)
+
+- **Row 1:** pin icon + location text (tap → the selector of §8S) and a profile icon at the top
+  right (`/profile`).
+- **Location text and feed location, in this order:** the manual selection → **the device
+  position** ("<place name>" or "Current location") → the selected delivery address →
+  **"Select Location"**. `useCustomerLocation` follows the same order (this is new: §8S put the
+  delivery address first and had no device position).
+- **No location known** (`useHasBrowseLocation` false): the feed is **not requested**; the body
+  shows "Select a location to see the shops near you." with a button that opens the same
+  selector; products found by search are browse-only ("Select a location to order.").
+- **Row 2:** full-width search bar (the existing product search) with a search icon and a
+  **microphone that is a placeholder**: it shows the toast "Voice search is coming soon." and
+  records nothing.
+- A device position has no Palika, so with GPS as the default **CITY_WIDE shops show under
+  "Explore Further"** unless the customer picks a saved address in the selector (needs the PostGIS
+  Palika lookup of §8S, contract D).
+
+### Delivery-area check before checkout
+
+- "Proceed to Checkout" first runs `features/checkout/delivery-area.ts#checkDeliveryArea`:
+  `GET /api/vendors/:id/products` for the cart's shop **with the delivery address's coordinates
+  and Palika**, and reads the server's `serviceable` (SPEC §2 is evaluated by the API, not copied
+  to the device). Always a fresh request.
+- `serviceable: false` → **no checkout request**; `DeliveryAreaModal`: "This shop does not deliver
+  to your selected address…", **Change Address** (opens the address book) and Close.
+- The answer cannot be fetched → no checkout request, the network error message. A shop that is
+  gone (404) is left to checkout's own `VENDOR_UNAVAILABLE`.
+- **This is a client-side guard only.** `POST /api/cart/checkout` still accepts an address outside
+  the shop's scope from any other client. Recommended backend rule: `422 OUTSIDE_DELIVERY_AREA`
+  from checkout (reuse the CatalogService SQL), after which the app maps that code to the same
+  modal.
+
+### Profile: email optional
+
+`profileDetailsSchema.email` is nullable; a blank field is stored as `null`; the gate in the cart
+needs only the name. **Contract C of §8S changes accordingly:** `PATCH /api/me` takes
+`{ "full_name": "…", "email": "…" | null }`, and `profile_complete` means "has a name".
+
+### Tests
+
+Mobile **923** (+26), `tsc --noEmit` and `eslint .` clean, Android bundle exports (2186 modules).
+New `features/boot/boot-flow.test.tsx` (onboarding store, welcome screen, header variants, no feed
+without a location, profile icon, mic placeholder, `placeName`, the five delivery-area outcomes);
+`TerritoryGate.test.tsx` rewritten for the new rules (opens when refused or without a fix, stores
+the position and its name, forgets it on a block, prompts only at boot, splash minimum time);
+`VendorRouting.test.tsx` (redirect to `/welcome`); `profile.test.tsx` (name alone). The msw server
+has a second standing handler (a serviceable vendor menu) because every checkout now asks it first.
+**Not run on a device**: the splash timing, the OS permission dialog over the splash, the image
+background and the redirect to `/welcome` are verified only in Jest. No mutation checks were run.
+The new Nepali strings are unreviewed, and the tagline is shown in Roman script in both languages.
+
+## 8S. Address book, map pin, recipient details, profile onboarding, browse location (2026-10-05)
+
+Second QA pass. **Mobile only: no API, shared-types, database or contract file changed.** Everything
+below works against the current API; what the API would need to store any of it is listed in
+"Backend contract requirements" at the end and is **not built**.
+
+### Frontend state
+
+| Store                          | Key / version                         | Storage        | Holds                                                                                                                                                                                                                                       |
+| ------------------------------ | ------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useAddressStore`              | `hamro-pasal.delivery-address` **v2** | encrypted MMKV | `addresses: SavedAddress[]` (max 10), `selectedId`; `address` (the selected entry's `NepalAddress`) is derived and is still what checkout sends and what `useCustomerLocation` reads. A v1 slice (`{ address }`) migrates to one HOME entry |
+| `useProfileStore` (new)        | `hamro-pasal.profile` v1              | encrypted MMKV | `profile: { full_name, email, user_id } \| null`. **Local only**: never sent to the server                                                                                                                                                  |
+| `useBrowseLocationStore` (new) | –                                     | memory         | `override: { lat, lng, label, municipalityPalika } \| null`                                                                                                                                                                                 |
+
+- `SavedAddress = { id (uuid, made on the device), label: HOME \| WORK \| OTHER, recipient: { name, phone: +9779XXXXXXXXX } \| null, address: NepalAddress }`.
+  The schema requires a recipient for OTHER and forbids one for HOME / WORK; entries that fail it
+  are dropped on restore. Several entries may share a label.
+- `saveAddress(draft, id?)` adds or replaces and **selects** the entry (returns null when the book
+  is full); `selectAddress`, `removeAddress` (selection falls to the first remaining entry);
+  `setAddress(address)` is kept for the old single-address callers.
+- All three stores are reset by `purgeLocalData` (SPEC §1). **Sign-out keeps the address book and
+  the profile** on the phone; the profile is tied to the account (below), the address book is not.
+
+### 1. Cart for a guest
+
+`app/(tabs)/cart.tsx` renders `DeliveryAddressCard`, the "add an address" notice and
+`PaymentMethodPicker` only when `selectHasSession`. Signed out: items, totals, "Sign in to
+Checkout", "Clear cart". The address the tester saw was not a mock: it was the address saved on
+that phone earlier, shown regardless of the session.
+
+### 2. Address book and map pin
+
+- Cart → "Deliver to": with an empty book the form opens directly; otherwise **Change** opens
+  `features/address/AddressBookModal.tsx` (tap an entry to deliver there, Edit, Remove, "Add a new
+  address").
+- `AddressFormModal` now takes and returns an `AddressDraft` (`{ label, recipient, address }`): a
+  Home / Work / Other row at the top, and two ways to set the pin: **"Set on map"** and the existing
+  "Use my current location".
+- **Map (`components/MapPinPicker.tsx`, `features/location/map-pin.ts`)**: a Leaflet page on
+  OpenStreetMap tiles inside the `react-native-webview` the app already ships. A pin is fixed at
+  the centre; the customer moves the map under it; the page posts the centre after every move;
+  "Use this location" is disabled until a centre inside `NEPAL_BOUNDING_BOX` has arrived.
+  - **Why not `react-native-maps` (decision to confirm):** it is a native module, so the dev client
+    would have to be rebuilt, and on Android it needs a Google Maps API key in `app.json` (the app
+    crashes on the first map without one). The WebView map runs in the current dev client with no
+    key. The picker is one component with the props `{ initial, onConfirm, onClose }`, so swapping
+    the implementation touches that file only.
+  - It loads Leaflet from `unpkg.com` and tiles from `tile.openstreetmap.org`: it needs a
+    connection, and OSM's public tile servers are **not for production traffic** (use a paid tile
+    provider, Mapbox or Google before launch).
+
+### 3. Recipient for an "Other" address
+
+Choosing **Other** shows "Recipient name" (1–80 chars) and "Recipient mobile number" (validated
+with the sign-in screen's `toNepalPhone`: 10 digits starting with 9, ASCII or Devanagari, stored as
+strict +977). Both are required for Other and discarded for Home / Work. The cart and the address
+book show "For <name> · +977 98…".
+**The recipient is not sent to the server**: `checkoutRequestSchema.delivery_address` is a strict
+`nepalAddressInputSchema` and would answer 400 for extra keys. Until the contract below exists,
+**the shop and the rider do not see the recipient**.
+
+### 4. Complete Profile
+
+- `app/complete-profile.tsx` (route `/complete-profile`): Full name (2–80) and Email, validated by
+  `profileDetailsSchema`; saved to `useProfileStore` with the account id, then back to the caller.
+  Signed out it redirects to `/login`. The same screen edits the details.
+- **Gate:** in the cart a signed-in customer without a profile sees "Add your name and email before
+  placing an order." and **"Complete your profile"** instead of "Proceed to Checkout"
+  (`features/profile/profile-form.ts#useCurrentProfile`). Browsing and the cart itself are not
+  intercepted.
+- **Profile tab:** name and email with "Edit profile", or the prompt with "Complete your profile".
+- **Whose profile:** `tokenSubject` (`lib/access-token-role.ts`) reads the unverified `sub` of the
+  access token (else the refresh token); a stored profile counts only if its `user_id` equals it,
+  so another account signing in on the phone is asked again and never sees the previous details.
+- **Limits:** the server knows nothing of it. It is lost with the app's data, asked again on
+  another phone, and not enforced by the API (a modified client can check out without it). Email is
+  **not in SPEC's user model**; nothing verifies the address.
+
+### 5. Browse location
+
+- `features/location/LocationHeader.tsx`, mounted at the top of the Shops tab: "Shops near
+  <label>". Tapping it opens a picker: **search** a place by name, **pick on the map** (the same
+  `MapPinPicker`), **use my current location**, one of the **saved addresses** (signed in only), or
+  **"Use my delivery address"** to clear the override.
+- `useCustomerLocation` returns the override when there is one, so **`GET /api/vendors` and every
+  menu** are asked with the chosen `lat` / `lng`; the query key changes, so they refetch. The
+  server already sorts by distance from those coordinates.
+- Search is `features/location/place-search.ts`: `expo-location`'s `geocodeAsync("<text>, Nepal")`
+  (the device's geocoder, no key), first result inside Nepal's box, labelled with the typed text.
+  It returns one place, not a list of suggestions, and its coverage of Nepali localities depends on
+  the device.
+- A searched or pinned point has **no Palika**, so `municipality_palika_string` is not sent and
+  CITY_WIDE shops show as not delivering there; choosing a saved address sends its Palika.
+- **The override never changes the delivery address.** A customer can therefore fill a cart from a
+  shop that delivers to the browsed area but not to their address, and checkout still does not
+  check serviceability (§13, backlog item 6).
+- Memory only: a relaunch returns to the delivery address.
+
+### Tests
+
+Mobile **897** (+55), `tsc --noEmit` and `eslint .` clean, `expo export --platform android` bundles
+(2179 modules). New: `useAddressStore.test.ts` (book, selection, edit, remove, recipient rule,
+limit, v1 migration, repair), `address-form.test.ts` (label and recipient rules),
+`AddressFormModal.test.tsx` (label row, recipient fields, map pin confirm, outside Nepal),
+`CartScreen.test.tsx` (guest sees no address or payment, profile gate, another account's profile,
+address book switch and remove), `features/profile/profile.test.tsx` (token subject, validation,
+store, screen), `features/location/browse-location.test.tsx` (search, map page and messages,
+store, the header driving the feed's coordinates, saved address, GPS, map, guest).
+`setupApiTestEnvironment` now also saves a profile and clears the override.
+**Not run on a device.** The map page in particular has only been exercised through the WebView
+stand-in: tile loading, gestures and `postMessage` on a real phone are unverified. No mutation
+checks were run for this pass. The new Nepali strings have not been reviewed by a native speaker.
+
+### Backend contract requirements (not built)
+
+Field names follow the existing contracts (snake_case, strict objects, +977 phones).
+
+**A. Recipient on an order (needed for requirement 3 to reach the rider).**
+
+```jsonc
+// POST /api/cart/checkout: one new optional key beside delivery_address
+{
+  "idempotency_key": "…",
+  "vendor_id": "…",
+  "payment_method": "COD",
+  "items": [{ "product_id": "…", "quantity": 1 }],
+  "delivery_address": {/* nepalAddressInputSchema, unchanged */},
+  "delivery_recipient": { "name": "Sita Gurung", "phone": "+9779800000002" }, // or null / omitted
+}
+```
+
+- `order_addresses`: `recipient_name text NULL` (1–80, non-blank), `recipient_phone text NULL`
+  (`^\+9779[0-9]{9}$`), CHECK both null or both set.
+- `orderAddressViewSchema` (customer order detail, `VendorOrderView`, `DeliveryView`) gains
+  `recipient_name` and `recipient_phone`, both nullable, so the shop and the rider see them.
+- The app must then add the recipient to its checkout fingerprint (the idempotency key).
+
+**B. Address book sync (optional: the book works locally without it).**
+
+```jsonc
+// GET /api/addresses → 200
+{ "addresses": [ {
+    "id": "uuid", "label": "HOME" | "WORK" | "OTHER", "is_default": true,
+    "recipient_name": null, "recipient_phone": null,
+    "province_id": 3, "district_string": "Kathmandu",
+    "municipality_palika_string": "Kathmandu Metropolitan City", "ward_number": 26,
+    "tole_locality": "Thamel", "landmark": "Near Kathmandu Guest House",
+    "exact_lat": 27.7154, "exact_lng": 85.3123,
+    "created_at": "…", "updated_at": "…" } ] }
+// POST /api/addresses (201) and PUT /api/addresses/:id (200): the same object without
+//   id / created_at / updated_at; is_default optional. DELETE /api/addresses/:id → 204.
+// Errors: 422 ADDRESS_LIMIT_REACHED (details.max 10), 404 ADDRESS_NOT_FOUND (also another customer's),
+//   400 VALIDATION_FAILED (recipient required for OTHER, forbidden otherwise).
+```
+
+- `customer_addresses` already exists with the Nepal hierarchy and no route; it needs `label`,
+  `recipient_name`, `recipient_phone`, `is_default` (one default per customer).
+
+**C. Profile (needed for requirement 4 to survive the device).**
+
+```jsonc
+// GET /api/me → 200   (any signed-in role)
+{ "user": { "id": "uuid", "phone": "+9779800000001", "role": "CUSTOMER",
+            "full_name": "Aarav Shrestha" | null, "email": "aarav@example.com" | null,
+            "profile_complete": true } }
+// PATCH /api/me  { "full_name": "Aarav Shrestha", "email": "aarav@example.com" } → 200, same body
+// Errors: 400 VALIDATION_FAILED, 409 EMAIL_TAKEN (if emails are unique)
+```
+
+- `users`: `email` (nullable, lower-cased; unique or not is a product decision). SPEC's user has
+  `first_name` / `last_name` (and the dispute chat's privacy filter strips `last_name`): either
+  split `full_name` on the server or store the two fields and have the app send them separately.
+- `authUserSchema` (the `user` of `POST /api/auth/otp/verify`) should carry `profile_complete` (or
+  `email`), so the app knows at sign-in without a second request.
+- To enforce it: `POST /api/cart/checkout` → `422 PROFILE_INCOMPLETE`.
+- **SPEC.md has no email and no profile step**; it should be amended if this becomes a rule.
+
+**D. Browse location: nothing required.** `GET /api/vendors?lat=&lng=` already takes any point in
+Nepal. Optional improvements: the Palika of a point from PostGIS polygons (so CITY_WIDE shops match
+a pinned point), and a place-search endpoint if the device geocoder proves too thin.
+
+## 8R. Guest browsing, guest cart and first QA fixes (2026-10-05)
+
+A UX change after the first device QA pass, not a phase. **It supersedes every earlier statement in
+this file that the feed, a menu or adding to the cart needs a session** (§8 route table rows for
+`/api/vendors`, §9, §9.0, §9.16 "Who can be ordered from", the Phase 7 "Entry points" bullet).
+No table, contract, store or request body changed.
+
+| Area                                                | Before                                                                                                                | Now                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/vendors`, `GET /api/vendors/:id/products` | behind `requireAuth(CUSTOMER)` (401 without a token, 403 for other roles)                                             | **public**, like `/api/categories` and `/api/products`. `apps/api/src/app.ts` mounts `vendorsRouter` without the guard. Responses were already free of phone, wallet and commission                                                                                                                                              |
+| Mobile `fetchFeed` / `fetchVendorMenu`              | sent the Bearer token                                                                                                 | `authenticated: false`: no token sent, no refresh attempted, works signed out                                                                                                                                                                                                                                                    |
+| Shops tab signed out                                | "Sign in to see the shops near you."                                                                                  | the shops. The sign-in branch of `ShopsFeed` and `feed.signInPrompt` are deleted                                                                                                                                                                                                                                                 |
+| Add to cart signed out                              | impossible (the menu and feed could not load; product cards said "Sign in to order.")                                 | allowed from the menu and from product search. `discovery.signInToOrder` is deleted                                                                                                                                                                                                                                              |
+| Where sign-in is asked                              | Feed, Cart, Profile                                                                                                   | **Cart only** ("Sign in to Checkout", unchanged since Phase 7.5) and Profile                                                                                                                                                                                                                                                     |
+| Cart across sign-in                                 | n/a                                                                                                                   | kept: the cart is in plain MMKV (`hamro-pasal.cart`) and nothing in `useVerifyOtp` touches it; the code screen returns to the Cart (`leaveSignIn`). **Sign-out also keeps the cart** (only the session and the query cache are cleared)                                                                                          |
+| Registration                                        | only "Sign in" was visible                                                                                            | Profile has **"Create an account"** → `/login?mode=signup`: the same screen and the same `POST /api/auth/otp/send`, titled "Create your account". The plain sign-in screen says the code also creates an account. **No password and no new endpoint** (SPEC: +977 OTP only; an unknown number becomes a CUSTOMER at verify, §8A) |
+| Android channel sound                               | `setNotificationChannelAsync('orders', { sound: 'default' })` logged "Custom sound 'default' not found in native app" | the `sound` key is omitted, which is how expo-notifications selects the system default sound. No `app.json` change and no bundled sound file                                                                                                                                                                                     |
+
+- **Still requires a session:** checkout, lock status, payments, orders, reviews, uploads, device
+  token registration (all unchanged).
+- **Decision to confirm (SPEC customer flow lists OTP sign-in as step 1):** guest browsing was
+  requested explicitly; the server guard on the two reads had to go for it to work. The feed of
+  every LIVE vendor and each menu's exact stock are now readable without a token; no rate limit.
+- **Vendors and riders** are still redirected to their dashboards by role; a VENDOR token on
+  `/api/vendors` is now 200 instead of 403.
+- **Dev tools were already `__DEV__`-only and were not changed:** `DevSignIn`, `RiderModeEntry` and
+  `TerritorySimulatorControls` on Profile, and the simulator row inside the territory gate
+  (`TerritoryGate.tsx#FullScreen`). `deviceTerritoryDeps` ignores the simulator outside `__DEV__`.
+  A development client is a `__DEV__` build, so they are visible there; a `preview` / `production`
+  EAS build does not render them.
+- **The "Checking your location…" screen is not a dev tool.** It is SPEC §1's blocking gate and
+  stays in production; it disappears by itself once the position is confirmed inside Nepal.
+  **Testing from outside Nepal:** real GPS gives "Service Unvailable in your territory" **and wipes
+  local data, the guest cart included**. In a dev client choose "Nepal" in the simulator; a
+  production build cannot be used from abroad without a mock-location app.
+- **Android channels are immutable once created.** A device that already ran an older build keeps
+  its `orders` channel as first created; if order notifications are silent there, reinstall the
+  app (or clear its data) so the channel is created again.
+- Tests: mobile 842 (+3: guest feed without a token, guest add from a menu and from search, the
+  guest cart unchanged across OTP verify, the sign-up wording, the channel without `sound`); the
+  two tests that asserted the Feed's sign-in prompt were rewritten. API `vendors-api.int.test.ts`:
+  the "requires a customer token" test now asserts 200 for a guest on both routes. Mobile
+  `tsc --noEmit` and `eslint .` clean; `vendors-api`, `e2e-lifecycle` and `orders-api` integration
+  suites pass. `ReviewPrompt.test.tsx` failed once in the full parallel run and passed alone
+  (timing; unrelated). **Not run on a device.**
+- The new Nepali strings (`auth.createAccount`, `signUpTitle`, `signUpSubtitle`, `newHere`) have
+  not been reviewed by a native speaker.
 
 ## 8Q. Local end-to-end harness (Phase 24)
 

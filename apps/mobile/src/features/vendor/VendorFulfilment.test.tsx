@@ -1,11 +1,11 @@
 import type { VendorOrderView } from '@hamro-pasal/shared-types';
-import { fireEvent, screen, waitFor } from '@testing-library/react-native';
-import { router } from 'expo-router';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { delay, http, HttpResponse } from 'msw';
 
 import VendorDashboardScreen from '../../../app/(vendor)/dashboard';
 import { VENDOR_ORDERS_PATH, vendorOrderDecisionPath } from '../../api/vendor-orders';
 import { useToastStore } from '../../store/useToastStore';
+import { useVendorBoardStore } from '../../store/useVendorBoardStore';
 import {
   deliveryCompleted,
   errorBody,
@@ -18,6 +18,7 @@ import { resetMockAudio } from '../../test/fake-audio';
 import { FakeSocket } from '../../test/fake-socket';
 import { apiUrl, capture, server, setupApiTestEnvironment } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
+import type { BoardStage } from './order-board';
 
 let mockSocket = new FakeSocket();
 jest.mock('socket.io-client', () => ({
@@ -60,11 +61,21 @@ function servePost(
   );
 }
 
-async function renderDashboard(): Promise<void> {
+/** Opens the dashboard and, when asked, the board column the test works in. */
+async function renderDashboard(stage?: BoardStage): Promise<void> {
   renderWithProviders(<VendorDashboardScreen />);
   await waitFor(() => {
     expect(screen.queryByTestId('vendor-orders-loading')).not.toBeOnTheScreen();
   });
+  if (stage !== undefined) await showStage(stage);
+}
+
+/** Waits for the column to hold an order (the list request may still be on its way), then opens it. */
+async function showStage(stage: BoardStage): Promise<void> {
+  await waitFor(() => {
+    expect(screen.getByTestId(`stage-count-${stage}`)).not.toHaveTextContent(/^[0०]$/);
+  });
+  fireEvent.press(screen.getByTestId(`stage-${stage}`));
 }
 
 const card = (orderId = NEW_ORDER_ID) => screen.queryByTestId(`vendor-order-${orderId}`);
@@ -83,6 +94,7 @@ beforeEach(() => {
   serverOrders = [];
   posts = [];
   useToastStore.setState({ toast: null });
+  useVendorBoardStore.getState().reset();
   serveOrderList();
 });
 
@@ -92,8 +104,16 @@ describe('vendor dashboard: Dispatch', () => {
 
     await renderDashboard();
 
-    expect(dispatchButton(NEW_ORDER_ID)).not.toBeOnTheScreen(); // PLACED: Accept / Reject
+    await waitFor(() => {
+      expect(card(NEW_ORDER_ID)).toBeOnTheScreen(); // PLACED: Accept / Reject, under New
+    });
+    expect(dispatchButton(NEW_ORDER_ID)).not.toBeOnTheScreen();
+    expect(card(SECOND_ORDER_ID)).not.toBeOnTheScreen();
+
+    await showStage('PREPARING');
+
     expect(dispatchButton(SECOND_ORDER_ID)).toBeOnTheScreen();
+    expect(card(NEW_ORDER_ID)).not.toBeOnTheScreen();
   });
 
   it('dispatches a self-delivery order, which moves to Out for delivery with the code field', async () => {
@@ -103,17 +123,16 @@ describe('vendor dashboard: Dispatch', () => {
       serverOrders = [onTheRoad()];
       return HttpResponse.json({ order_id: NEW_ORDER_ID, state: 'OUT_FOR_DELIVERY' });
     });
-    await renderDashboard();
+    await renderDashboard('PREPARING');
     expect(codeInput()).not.toBeOnTheScreen();
 
     fireEvent.press(screen.getByTestId(`dispatch-${NEW_ORDER_ID}`));
 
     expect(await screen.findByText('Dispatching…')).toBeOnTheScreen();
-    await waitFor(() => {
-      expect(codeInput()).toBeOnTheScreen();
-    });
-    expect(screen.getByText('Out for delivery')).toBeOnTheScreen();
+    await showStage('READY');
+    expect(codeInput()).toBeOnTheScreen();
     expect(dispatchButton()).not.toBeOnTheScreen();
+    expect(screen.getByTestId('stage-count-PREPARING')).toHaveTextContent('0');
     expect(posts).toEqual([
       { path: `/api/vendors/orders/${NEW_ORDER_ID}/dispatch`, body: undefined },
     ]);
@@ -123,13 +142,13 @@ describe('vendor dashboard: Dispatch', () => {
     });
   });
 
-  it('drops a dispatched fleet order from the list (the rider has it)', async () => {
+  it('keeps a dispatched fleet order under Ready until its delivery is announced', async () => {
     serverOrders = [preparing({ fulfillment: 'PLATFORM_FLEET' })];
     servePost(NEW_ORDER_ID, 'dispatch', () => {
       serverOrders = [];
       return HttpResponse.json({ order_id: NEW_ORDER_ID, state: 'OUT_FOR_DELIVERY' });
     });
-    await renderDashboard();
+    await renderDashboard('PREPARING');
 
     fireEvent.press(screen.getByTestId(`dispatch-${NEW_ORDER_ID}`));
 
@@ -137,6 +156,31 @@ describe('vendor dashboard: Dispatch', () => {
       expect(card()).not.toBeOnTheScreen();
     });
     expect(toast()?.message).toBe('Order dispatched. A rider will deliver it.');
+    // The server no longer lists it; the board keeps it under Ready, waiting for its rider.
+    await showStage('READY');
+    expect(card()).toBeOnTheScreen();
+    expect(
+      screen.getByText('Riders have been told. Waiting for one to collect it.'),
+    ).toBeOnTheScreen();
+    expect(codeInput()).not.toBeOnTheScreen();
+    // A live order has no stand-in for the rider: only the server can move it on.
+    expect(screen.queryByTestId(`rider-pickup-${NEW_ORDER_ID}`)).not.toBeOnTheScreen();
+
+    // The rider delivers: the shop's room hears it and the order is Handed Over.
+    act(() => {
+      mockSocket.serverSend('order:state_update', {
+        order_id: NEW_ORDER_ID,
+        state: 'DELIVERED',
+        payment_status: 'PAID',
+        refund_required: false,
+        placed_at: '2026-09-30T10:00:00.000Z',
+        delivered_at: new Date().toISOString(),
+        changed_at: new Date().toISOString(),
+      });
+    });
+    await showStage('HANDED_OVER');
+    expect(card()).toBeOnTheScreen();
+    expect(screen.getByTestId('stage-count-READY')).toHaveTextContent('0');
   });
 
   it('explains 422 CANCELLATION_WINDOW_OPEN with the seconds left and keeps Dispatch', async () => {
@@ -146,7 +190,7 @@ describe('vendor dashboard: Dispatch', () => {
         status: 422,
       }),
     );
-    await renderDashboard();
+    await renderDashboard('PREPARING');
 
     fireEvent.press(screen.getByTestId(`dispatch-${NEW_ORDER_ID}`));
 
@@ -170,9 +214,7 @@ describe('vendor dashboard: Dispatch', () => {
       }),
     );
     renderWithProviders(<VendorDashboardScreen />, { locale: 'ne' });
-    await waitFor(() => {
-      expect(dispatchButton()).toBeOnTheScreen();
-    });
+    await showStage('PREPARING');
 
     fireEvent.press(screen.getByTestId(`dispatch-${NEW_ORDER_ID}`));
 
@@ -189,7 +231,7 @@ describe('vendor dashboard: Dispatch', () => {
         status: 409,
       });
     });
-    await renderDashboard();
+    await renderDashboard('PREPARING');
 
     fireEvent.press(screen.getByTestId(`dispatch-${NEW_ORDER_ID}`));
 
@@ -206,7 +248,7 @@ describe('vendor dashboard: self-delivery handoff', () => {
   it('shows the code field and the cash to collect on a self-delivery order on the road', async () => {
     serverOrders = [onTheRoad()];
 
-    await renderDashboard();
+    await renderDashboard('READY');
 
     expect(codeInput()).toBeOnTheScreen();
     expect(screen.getByTestId(`delivery-cash-${NEW_ORDER_ID}`)).toHaveTextContent(
@@ -218,14 +260,16 @@ describe('vendor dashboard: self-delivery handoff', () => {
   it('never shows the code field on a fleet order', async () => {
     serverOrders = [onTheRoad({ fulfillment: 'PLATFORM_FLEET' })];
 
-    await renderDashboard();
+    // A fleet order waits under Ready for its rider, without the customer's code field.
+    await renderDashboard('READY');
+    expect(card()).toBeOnTheScreen();
 
     expect(codeInput()).not.toBeOnTheScreen();
   });
 
   it('formats the code: ASCII digits only, Nepali digits converted, at most 4', async () => {
     serverOrders = [onTheRoad()];
-    await renderDashboard();
+    await renderDashboard('READY');
     const input = screen.getByTestId(`delivery-otp-${NEW_ORDER_ID}`);
 
     fireEvent.changeText(input, '4a8 2');
@@ -244,7 +288,7 @@ describe('vendor dashboard: self-delivery handoff', () => {
       serverOrders = [];
       return HttpResponse.json(deliveryCompleted(NEW_ORDER_ID));
     });
-    await renderDashboard();
+    await renderDashboard('READY');
 
     fireEvent.changeText(screen.getByTestId(`delivery-otp-${NEW_ORDER_ID}`), '4821');
     fireEvent.press(screen.getByTestId(`deliver-${NEW_ORDER_ID}`));
@@ -257,6 +301,9 @@ describe('vendor dashboard: self-delivery handoff', () => {
       { path: `/api/vendors/orders/${NEW_ORDER_ID}/deliver`, body: { delivery_otp: '4821' } },
     ]);
     expect(toast()).toMatchObject({ message: 'Delivered. Thank you!', tone: 'success' });
+    await showStage('HANDED_OVER');
+    expect(card()).toBeOnTheScreen();
+    expect(screen.getByText('Delivered.')).toBeOnTheScreen();
   });
 
   it('keeps the order on a wrong code, clears the field and shows the tries left', async () => {
@@ -264,7 +311,7 @@ describe('vendor dashboard: self-delivery handoff', () => {
     servePost(NEW_ORDER_ID, 'deliver', () =>
       HttpResponse.json(errorBody('INVALID_OTP', { attempts_remaining: 2 }), { status: 401 }),
     );
-    await renderDashboard();
+    await renderDashboard('READY');
 
     fireEvent.changeText(screen.getByTestId(`delivery-otp-${NEW_ORDER_ID}`), '9999');
     fireEvent.press(screen.getByTestId(`deliver-${NEW_ORDER_ID}`));
@@ -285,7 +332,7 @@ describe('vendor dashboard: self-delivery handoff', () => {
         status: 429,
       }),
     );
-    await renderDashboard();
+    await renderDashboard('READY');
 
     fireEvent.changeText(screen.getByTestId(`delivery-otp-${NEW_ORDER_ID}`), '1234');
     fireEvent.press(screen.getByTestId(`deliver-${NEW_ORDER_ID}`));
@@ -305,7 +352,7 @@ describe('vendor dashboard: self-delivery handoff', () => {
         { status: 409 },
       );
     });
-    await renderDashboard();
+    await renderDashboard('READY');
 
     fireEvent.changeText(screen.getByTestId(`delivery-otp-${NEW_ORDER_ID}`), '1234');
     fireEvent.press(screen.getByTestId(`deliver-${NEW_ORDER_ID}`));
@@ -319,19 +366,8 @@ describe('vendor dashboard: self-delivery handoff', () => {
   it('keeps the alarm silent: an order on the road is not waiting for a decision', async () => {
     serverOrders = [onTheRoad()];
 
-    await renderDashboard();
+    await renderDashboard('READY');
 
     expect(screen.queryByTestId('vendor-alarm-banner')).not.toBeOnTheScreen();
-  });
-});
-
-describe('vendor dashboard: wallet', () => {
-  it('opens the wallet screen (Phase 12)', async () => {
-    jest.mocked(router.push).mockClear();
-    await renderDashboard();
-
-    fireEvent.press(screen.getByTestId('vendor-wallet-link'));
-
-    expect(router.push).toHaveBeenCalledWith('/wallet');
   });
 });

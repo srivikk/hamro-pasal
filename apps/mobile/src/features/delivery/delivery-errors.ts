@@ -1,4 +1,4 @@
-import type { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { z } from 'zod';
 
 import { DELIVERY_ERROR_CODES } from '../../api/delivery';
@@ -23,7 +23,9 @@ export function isStaleDeliveryError(error: unknown): boolean {
   );
 }
 
-type Translate = ReturnType<typeof useTranslation>['t'];
+// Typed as in wallet-format.ts: the alias through useTranslation grew too deep for the
+// compiler once the translation keys passed about 700.
+type Translate = TFunction;
 
 /** The toast for a failed handoff, for the rider's and the vendor's screens alike. */
 export function deliveryErrorMessage(error: unknown, t: Translate): string {

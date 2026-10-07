@@ -79,6 +79,13 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 * **Geospatial Logic:** If a user is at distance $D$, a vendor is serviceable if: Scope is Nation-Wide, OR (Scope is City-Wide AND customer_city = vendor_city), OR (Scope is Radius-Bound AND $D \le \text{Radius} \times 1.1$). The $1.1$ multiplier is the 10% strict GPS drift grace buffer.
 * **Fulfillment Paths:** `SELF_DELIVERY` vs `PLATFORM_FLEET`.
 * **Emergency Rider Override:** If a vendor on `SELF_DELIVERY` cannot fulfill an accepted order, they tap "Emergency Rider." The backend creates a ledger deduction row mapping the platform's delivery fee against the vendor's net payout, and publishes the gig to the `PLATFORM_FLEET`.
+* **Delivery Modularity (amended 2026-10-07; specified, not yet implemented):**
+  * **Mode:** a vendor switches its `fulfillment_mode` between `SELF_DELIVERY` and `PLATFORM_FLEET` (the platform's delivery; the Vendor App labels it "Platform delivery") from the Vendor App. A mode can be chosen only while the Super Admin has it enabled (Super Admin Flow step 4); if a vendor's mode is switched off by the Admin, the shop is not orderable until it chooses an enabled one. The switch applies to new orders at once: every order keeps the mode it was placed under (`fulfillment_locked`).
+  * **Delivery charge:** under `SELF_DELIVERY` the vendor sets its own charge: a base fee (default 0), an optional per-kilometre fee (default 0) and an optional subtotal above which delivery is free. Under `PLATFORM_FLEET` the charge is the platform's, set by the Super Admin, and the vendor cannot edit it. The server computes the charge at checkout and stores it on the order; a later change never alters a placed order.
+  * **Spatial scope, three tiers (one at a time, the `delivery_scope` enum above):**
+    * **Radius** (`RADIUS_BOUND`): `radius_km` is the vendor's maximum radius, with the 10% buffer.
+    * **City / Regional** (`CITY_WIDE`): the vendor lists the municipalities it serves in `serviceable_palikas` (Palika names from the Address System, never free text or ZIP codes; its own Palika is always included). A customer is serviceable when their Palika is in the list.
+    * **National** (`NATION_WIDE`): the shop is serviceable to every address in Nepal (Dharan to Nepalgunj) and no radius applies. Contracts that need a flag expose it as the derived boolean `is_national`.
 
 **3. Inventory Management (The 10-Minute Lock)**
 
@@ -96,6 +103,13 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 * **Subscription Model:** 0% commission. Vendor pays flat monthly fee upfront.
 * **Lock-in Logic:** Upon subscription payment, backend stamps `lock_in_expiry = NOW() + 90 days`. If a downgrade to Platform Fee is requested, the backend validates `NOW() > lock_in_expiry`. If valid, it defers execution by setting `scheduled_downgrade = true` and only changes the model at the end of the current paid billing cycle via a midnight cron job.
 * **Dual-Layer Billing (amended 2026-10-07; specified, not yet implemented):** a vendor's charges have two layers that are never merged. **Layer 1, base enrollment:** the commission per order or the monthly subscription above. **Layer 2, premium add-ons:** sponsored placements the vendor bought itself in the Ad Marketplace (Ad Monetization, section 8). Every statement, ledger line and settlement shows the two layers as separate items.
+* **Onboarding Models (amended 2026-10-07; specified, not yet implemented):** the Super Admin publishes the pricing plans a vendor may choose from. A plan is `FREE` (0% commission and no fee, for the number of Billing Cycles the plan states), `SUBSCRIPTION` or `COMMISSION`, with its rate or monthly fee. A vendor can only select a plan that is currently offered. One Commission plan is marked as the default.
+* **End of a Free plan (decided 2026-10-07):** when a `FREE` plan expires, the vendor reverts automatically to the default Commission plan at that Billing Cycle renewal, unless it queued another plan itself. Its settlement model does not change (`PLATFORM_ESCROW` by default). A queued notification (SMS and push) is sent 7 days before the expiry.
+* **Billing Cycle Lock (amended 2026-10-07; specified, not yet implemented):** every LIVE vendor has a Billing Cycle, which is the **BS (Bikram Sambat) calendar month**: the 1st to the last day (29th to 32nd) of the Nepali month, in `Asia/Kathmandu`, renewed by the midnight cron job (decided 2026-10-07; required for IRD tax reconciliation). A vendor that goes LIVE mid-month has a prorated first cycle that ends on the last day of that BS month, and a monthly fee for it is charged strictly in proportion to the days left (confirmed 2026-10-07): fee × days left ÷ days in that BS month, half-up to the paisa. A vendor may ask to change its pricing plan or the payment methods it accepts at any time, but the backend only **queues** the change with `effective_from` = the end of the current cycle. Nothing changes mid-cycle: the vendor's active plan, commission rate and accepted payment methods are constant for a whole cycle, so every order and settlement of a cycle is accounted under one set of terms.
+  * A queued change can be replaced or withdrawn until the cycle renews. At renewal the job applies it, in one transaction with the start of the new cycle, and writes an audit row.
+  * This generalises the deferred downgrade above: a downgrade from Subscription still requires `NOW() > lock_in_expiry` when it is requested, and is then one more queued change (the `scheduled_downgrade` flag is replaced by the queue).
+  * The payment methods a vendor accepts can only narrow what its settlement model allows (Checkout and Cart Math Protocol, Payment routing), never widen it, and at least one method must remain.
+  * Orders already placed are unaffected: each order holds its own commission, payment method and settlement model.
 
 **5. Financial Governance & Negative Wallets**
 
@@ -145,6 +159,23 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 * **Payment token:** for eSewa and Khalti the backend creates the payment request (the eSewa signed form, the Khalti `pidx`) **for the final discounted total, inside the checkout request, before it answers**. The amount the gateway later confirms must equal that total ($\pm 0.01$ NPR).
 * **Payment routing:** the payment methods a customer may use are decided by the server from the vendor's settlement model and ledger, and from the customer's COD eligibility. Model A: cash only. Model B: eSewa, Khalti and cash. Model C (Phase 3): cash and eSewa / Khalti, each only while the prepaid balance after this order's platform fees stays at or above the Fixed Reserve. The cart shows only the methods the server returned, and checkout refuses any other.
 * **Model C credentials (Phase 3):** the payment request is created and verified with the vendor's own merchant credentials, which the platform stores encrypted.
+
+**10. Fiscal Invoicing (IRD compliance; added 2026-10-07; specified, not yet implemented)**
+
+* **Who issues it:** the vendor is the seller. The platform generates the invoice on the vendor's behalf, in the same database transaction that moves the order to `DELIVERED`, so a delivered order always has exactly one invoice and an undelivered one has none. Every invoice carries the disclaimer "Generated via Hamro Pasal on behalf of the seller."
+* **Tax identity:** a vendor records its 9-digit PAN and whether it is VAT registered (and its legal name, registered address and contact number for the invoice header). The invoice stores a copy of these as they were at issue.
+* **PAN is mandatory (decided 2026-10-07):** no vendor is `LIVE` without a PAN. An existing LIVE vendor that has none is moved automatically to `SUSPENDED_COMPLIANCE`: hidden from customers and not orderable, like any shop that is not LIVE. It returns to its previous status in the same transaction that stores the PAN it uploads from the Vendor App. This status is separate from `SUSPENDED` (debt, or an admin): paying dues never lifts a compliance suspension and a PAN never lifts a debt suspension. Orders it had already accepted are completed; their invoices are issued when the PAN arrives.
+* **Header:** vendor name, address, contact, PAN / VAT number, the disclaimer, and the buyer's name (and PAN, when the buyer gives one).
+* **Metadata:** the Nepal fiscal year (आर्थिक वर्ष, e.g. `2082/083`; it starts on 1 Shrawan), the Bill Number (बिजक नम्बर), the transaction date and time in both AD and BS (Bikram Sambat), and the payment method.
+* **Bill Number:** a strict sequence per vendor, per fiscal year and per document type, starting at 1, **with no gaps and no reuse**. It is taken from a counter row locked inside the issuing transaction (never a database sequence, which leaves gaps on rollback).
+* **Itemised table:** per line: product name, HS Code (required for imported goods, else empty), quantity, unit price, taxable amount, VAT rate and VAT amount.
+* **VAT:** catalogue prices are what the customer pays (VAT inclusive). For a VAT-registered vendor each taxable line is split into taxable amount and **13% VAT**, shown explicitly; exempt products are listed with 0. A vendor that is not VAT registered issues a PAN invoice with no VAT lines. The invoice never changes what the customer pays (Checkout and Cart Math Protocol).
+* **Discounts (decided 2026-10-07):** every discount on the order lowers the taxable amount: the vendor offer and the whole campaign discount, the platform-funded share included.
+* **Totals:** subtotal, discount, taxable amount, VAT, delivery charge, grand total, and the amount in words. **The Grand Total must equal, to the paisa, the total the customer actually paid (the order total).**
+* **Immutability:** an issued invoice and its lines are never updated or deleted; the database refuses both. Any correction or post-delivery refund is a new **Credit Note** or **Debit Note** that references the original invoice, has its own gap-free sequence, and is itself immutable.
+* **View and print tracking:** every view, download and print is logged with the user and the time. The first print is the original; every later one is marked "Copy of Original" with its copy number.
+* **CBMS:** the invoice table holds the fields the IRD's Central Billing Monitoring System takes (seller PAN, buyer PAN and name, fiscal year, invoice number, date in BS, total, taxable, VAT, exempt and export amounts, real-time flag) and a sync status, so a later integration posts existing rows without a schema change. No CBMS call is made in this phase (confirmed 2026-10-07: the handshake with the IRD is a later phase).
+* **Scope:** this section covers the vendor's invoice to the customer. The platform's own invoices to vendors (commission, subscription, ad fees) are not specified yet.
 </core_business_logic>
 
 <user_journeys>
@@ -165,6 +196,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 9. Order tracking utilizes a **Discrete State Node** UI (Order Placed -> Preparing -> Out for Delivery -> Arrived) rather than live map polling to save API costs.
 10. Customer displays 4-digit cryptographic OTP to driver upon handoff.
 11. Double-blind review prompted. 48hr window opens to initiate dispute chat.
+12. **(Added 2026-10-07, not yet implemented.)** The customer can open the order's invoice once it is delivered (Fiscal Invoicing); each view is logged.
 
 **Vendor Flow**
 
@@ -182,6 +214,17 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
     * **Campaign Invites:** the platform campaigns open to the shop, each with its discount, dates and the share the vendor would bear, and an explicit **Opt in** action with a confirmation that restates those terms. Nothing here is on by default. Joined campaigns show the date and the account that joined, with **Opt out**.
 11. **Ad Marketplace (added 2026-10-07, not yet implemented).** Reached from Marketing: the sponsored placements on sale, with price and billing model. Buying one shows the full cost, how it will be collected under the shop's settlement model (recharge first, or deducted from payouts), and requires an explicit agreement.
 12. **Ledger (amended 2026-10-07, not yet implemented).** The wallet screen shows the settlement model, the balance, and separate lines for commission, subscription, ad fees, discounts and refunds; Models A and C have a **Recharge** action (eSewa / Khalti).
+13. **App navigation (added 2026-10-07).** The Vendor App has four persistent tabs: **Live Orders** (home), **Catalogue**, **Ledger** (wallet, finances and invoices) and **Marketing** (offers, campaigns, ads). Every header carries the shop's **Online / Offline** switch and the way into **Shop settings**. Live Orders is a board with four columns, shown one at a time: **New** (`PLACED`), **Preparing** (`PREPARING`), **Ready** (`OUT_FOR_DELIVERY` and still in the shop) and **Handed Over**. "Ready for Pickup" on a Preparing order dispatches it, for either fulfilment mode. The button is disabled, with a countdown, until the customer's 60-second cancellation window has closed (decided 2026-10-07: a guard in the app, no new order state; the server still refuses an early dispatch). The shop's own delivery then waits under Ready for the customer's code; a platform fleet order waits under Ready for its rider (the dispatch notifies the riders) and moves to Handed Over when the rider confirms the pickup (decided 2026-10-07). A delivered order is Handed Over. The columns are a view: no order state is added. The shop sees the customer's first name only (decided 2026-10-07).
+14. **Delivery and scope settings (added 2026-10-07, not yet implemented).** The vendor switches between self delivery and platform delivery (only modes the Admin has enabled), sets its own delivery charge under self delivery, and chooses one scope tier: radius, a list of municipalities, or national (Delivery Modularity).
+15. **Queued billing changes (added 2026-10-07, not yet implemented).** The vendor may choose another pricing plan or change the payment methods it accepts at any time. The app shows the change as "Scheduled", with the date it takes effect (the next Billing Cycle renewal), and lets the vendor withdraw it until then (Billing Cycle Lock).
+16. **Invoices (added 2026-10-07, not yet implemented).** Under Ledger: the shop's invoices and credit / debit notes by fiscal year, with view and print. A reprint is marked as a copy (Fiscal Invoicing).
+17. **Online / Offline (added 2026-10-07, not yet implemented on the server).** The vendor can stop taking new orders at any time. An Offline shop stays in the feed, marked closed and not orderable (`422 VENDOR_UNAVAILABLE` at checkout); orders already placed are unaffected. It is the vendor's own switch and never changes the shop's `status`.
+18. **Tax identity (added 2026-10-07, not yet implemented on the server).** The vendor enters its PAN in Shop settings. A shop suspended for compliance sees why, and is restored when the PAN is saved.
+19. **Catalogue (added 2026-10-07).** The Catalogue tab lists the shop's products, each with an "In Stock / Out of Stock" switch on its row, and a form to add or edit one (name, price, category from the Admin Taxonomy, stock quantity, photos). "Out of Stock" sets an availability flag on the product (default on) and never changes the stock count (decided 2026-10-07): the product stays listed, shown as out of stock and not orderable, until the vendor switches it back. This is separate from hiding a product, which removes it from the catalogue.
+20. **Ledger by settlement model (added 2026-10-07).** The Ledger shows the shop's money as its settlement model defines it. Model A: the credit balance and how much of the credit limit (-2000 NPR) is used. Model B: pending escrow and the amount available for payout. Model C (Phase 3): the active reserve balance against the Fixed Reserve.
+21. **Marketing screens (added 2026-10-07; the screens exist, the backend does not).** The Marketing tab has three sections. **My Offers:** the running vendor-funded offers and a form for a new one (discount type, amount, minimum order). **Campaigns:** the invites, each with its terms and an Opt In that asks the vendor to accept those terms. **Ads:** the placements on sale; a purchase the shop cannot pay for under its settlement model is refused before any agreement is asked ("Insufficient funds for this ad purchase.").
+22. **Analytics (added 2026-10-07, not yet implemented on the server).** Today's sales, the best-selling item, the return on the shop's ads, and the last seven days of sales.
+23. **Vendor account (added 2026-10-07, not yet implemented on the server).** In Shop settings: the app language, the WhatsApp updates consent, and "Delete Shop Account". A shop with a negative ledger balance or an order not yet handed over cannot be deleted; otherwise the vendor confirms, the account is marked for deletion (a soft delete: invoices and financial records are kept) and the shop stops taking orders. The vendor can withdraw the request until the data is purged.
 
 **Delivery Partner (Platform Fleet) Flow**
 
@@ -199,6 +242,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 4. Toggles platform logistics (Enable/Disable Self-Delivery or 3rd Party Fleet).
 5. **(Added 2026-10-07, not yet implemented.)** Creates platform campaigns and invites shops; cannot enrol a shop. Publishes the Ad Marketplace products and their prices; cannot create a sponsored promotion or an ad charge without the vendor's purchase.
 6. **(Added 2026-10-07, not yet implemented.)** Approves settlement model changes and reads the audit log.
+7. **(Added 2026-10-07, not yet implemented.)** Publishes the pricing plans vendors may choose (Free, Subscription, Commission) and the platform delivery charge. Reads every invoice; cannot edit or delete one, and issues a Credit / Debit Note like anyone else when a correction is needed.
 </user_journeys>
 
 <nepal_localizations_and_integrations>
@@ -230,6 +274,15 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 
 * Integrate Sparrow SMS, Aakash SMS, or Firebase Auth. All payloads must prepend `+977`.
 * **WhatsApp fallback (amended 2026-10-06):** the OTP entry screen offers "Get OTP via WhatsApp". The client then calls `POST /api/auth/otp/send` with `{ "phone": "+977…", "channel": "WHATSAPP" }` (`channel` is optional and defaults to `"SMS"`), and the backend delivers the same 6-digit code through a WhatsApp Business provider instead of SMS. The code rules are unchanged (single use, 2-minute expiry, 60-second resend cooldown per number, shared by both channels).
+
+**5. Fiscal Calendar & IRD Invoicing (added 2026-10-07; specified, not yet implemented)**
+
+* **Bikram Sambat:** BS dates are converted from AD with a month-length lookup table (BS months have no formula), in `Asia/Kathmandu`. An invoice stores its BS date as text at issue and never re-derives it.
+* **Fiscal year:** runs from 1 Shrawan to the last day of Ashadh and is written `YYYY/YYY` (e.g. `2082/083`). Bill Numbers restart at 1 in each fiscal year.
+* **Tax IDs:** PAN is 9 digits. A VAT-registered seller's VAT number is its PAN. Standard VAT is 13%.
+* **Amount in words:** uses the Nepali grouping (thousand, lakh, crore), e.g. "Rupees One Lakh Two Thousand Five Hundred and Paisa Fifty Only".
+* **Bilingual labels:** the invoice shows the IRD's Nepali field names beside the English ones (आर्थिक वर्ष, बिजक नम्बर, मिति), and Devanagari numerals under the `ne` locale.
+* **CBMS:** integration with the IRD's Central Billing Monitoring System is deferred; the schema is kept compatible (Fiscal Invoicing).
 </nepal_localizations_and_integrations>
 
 <data_models_and_schemas>
@@ -247,7 +300,7 @@ enum AdBillingModel { FLAT_RATE, PER_ORDER_PREMIUM }
 interface Vendor {
   id: string;
   phone: string; // +977 format
-  status: 'SANDBOXED' | 'APPROVED' | 'LIVE' | 'SUSPENDED';
+  status: 'SANDBOXED' | 'APPROVED' | 'LIVE' | 'SUSPENDED' | 'SUSPENDED_COMPLIANCE'; // SUSPENDED_COMPLIANCE added 2026-10-07: LIVE without a PAN
   pricing_model: 'SUBSCRIPTION' | 'COMMISSION';
   lock_in_expiry: Date | null;
   commission_rate: number;
@@ -259,6 +312,59 @@ interface Vendor {
   wallet_balance_npr: number;
   fulfillment_mode: FulfillmentMode;
   settlement_model: SettlementModel; // added 2026-10-07; existing vendors are PLATFORM_ESCROW
+  // Added 2026-10-07 (specified, not yet implemented): delivery, billing cycle, tax identity.
+  // pricing_model also gains 'FREE'.
+  serviceable_palikas: string[];           // CITY_WIDE tier; always includes municipality_palika_string
+  delivery_fee_per_km_npr: number;         // SELF_DELIVERY only, default 0 (the base fee also defaults to 0)
+  free_delivery_above_npr: number | null;  // SELF_DELIVERY only
+  accepted_payment_methods: ('ESEWA' | 'KHALTI' | 'COD')[];
+  billing_cycle_started_at: Date | null;   // null until LIVE
+  billing_cycle_ends_at: Date | null;      // the 1st of the next BS month; queued changes take effect here
+  accepting_orders: boolean;               // the vendor's Online / Offline switch, default true
+  legal_name: string | null;
+  tax_id: string | null;                   // 9-digit PAN; mandatory: LIVE without it becomes SUSPENDED_COMPLIANCE
+  is_vat_registered: boolean;
+}
+
+// Added 2026-10-07 (specified, not yet implemented). A change waits for the cycle to renew.
+interface QueuedSettingChange {
+  id: string;
+  vendor_id: string;
+  setting: 'PRICING_PLAN' | 'PAYMENT_METHODS';
+  requested_value: unknown;                // the plan id, or the list of methods
+  status: 'PENDING' | 'APPLIED' | 'WITHDRAWN' | 'SUPERSEDED';
+  requested_by_user_id: string;
+  requested_at: Date;
+  effective_from: Date;                    // = billing_cycle_ends_at when requested
+  applied_at: Date | null;
+}
+
+// Added 2026-10-07 (specified, not yet implemented). Immutable once issued.
+interface Invoice {
+  id: string;
+  document_type: 'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE';
+  vendor_id: string;
+  order_id: string;
+  reference_invoice_id: string | null;     // notes only: the invoice they correct
+  fiscal_year: string;                     // "2082/083"
+  bill_number: number;                     // gap-free per vendor, fiscal year and document type
+  issued_at: Date;                         // AD
+  issued_date_bs: string;                  // "2082-06-21"
+  seller_name: string; seller_address: string; seller_phone: string;
+  seller_tax_id: string; seller_is_vat_registered: boolean;
+  buyer_name: string; buyer_tax_id: string | null;
+  payment_method: 'ESEWA' | 'KHALTI' | 'COD';
+  subtotal: number; discount: number;
+  taxable_amount: number; vat_rate: number; vat_amount: number; exempt_amount: number;
+  delivery_charge: number;
+  grand_total: number;
+  amount_in_words: string;
+  print_count: number;
+  cbms_status: 'NOT_REQUIRED' | 'PENDING' | 'SYNCED' | 'FAILED';
+  lines: {
+    product_name: string; hs_code: string | null; quantity: number; unit_price: number;
+    taxable_amount: number; vat_rate: number; vat_amount: number;
+  }[];
 }
 
 interface OrderSnapshot {
@@ -310,6 +416,13 @@ interface VendorLedger {
 6. **Sponsored without a purchase:** the database must refuse `is_sponsored = true` on a promotion that has no `ad_purchases` row, and an ad charge without one.
 7. **Prepaid reserve (Model C, Phase 3):** fees are debited under the vendor row lock. If an order's fees would take the balance below the Fixed Reserve, that order is not offered; a debit (a refund, for example) that leaves the balance below the reserve suspends the shop in the same transaction.
 8. **Ad budget exhausted:** a `PER_ORDER_PREMIUM` ad whose held budget cannot cover the next fee is paused before that order is charged; an order is never charged a premium the budget did not hold.
+9. **Change requested on the renewal boundary (added 2026-10-07, not yet implemented):** a request and the renewal job take the same vendor row lock. A request committed before the renewal is applied by it; one that arrives after waits a full cycle. A change is never applied twice or half-applied.
+10. **Invoice numbering under concurrency:** two orders of one shop delivered at the same moment get consecutive Bill Numbers; a delivery that rolls back consumes no number. The first invoice after 1 Shrawan is number 1 of the new fiscal year, decided by the issue time in `Asia/Kathmandu`.
+11. **Invoice tampering:** the database refuses `UPDATE` (other than the print counter and CBMS sync fields) and `DELETE` on invoices and invoice lines, for every role including the Super Admin.
+12. **Scope emptied or mode disabled:** a `CITY_WIDE` vendor always keeps its own Palika in `serviceable_palikas`; a vendor whose delivery mode the Admin switched off is not orderable (`422 VENDOR_UNAVAILABLE`) until it picks an enabled one.
+13. **BS month boundary (added 2026-10-07, not yet implemented):** a cycle ends at 00:00 `Asia/Kathmandu` on the 1st of the next BS month, whatever that month's length (29 to 32 days). A shop that goes LIVE on the last day of a month has a one-day first cycle.
+14. **PAN and other suspensions:** a vendor suspended for debt that also lacks a PAN stays `SUSPENDED`; when its dues are cleared it moves to `SUSPENDED_COMPLIANCE`, not `LIVE`. No path sets `LIVE` without a PAN.
+15. **Offline with orders in hand:** switching Offline never cancels or hides an order already placed; the alarm and the 90-second escalation still apply to it.
 </edge_cases_and_constraints>
 
 <verification_and_testing>
@@ -324,6 +437,14 @@ The coding agent must write unit and integration tests (Jest/Supertest) assertin
 7. **Sponsored Needs a Purchase:** assert the database rejects a sponsored promotion and an ad charge that have no `ad_purchases` row, and that an ad charge is posted as its own line type, not as commission.
 8. **Settlement Models:** assert that a Model A shop is offered cash only and is suspended strictly below its credit limit; that buying an ad is refused without sufficient balance in Model A; that in Model B a flat-rate ad is accepted against pending payouts and **refused when `balance + pending_escrow < ad_price`**; and that `DIRECT_PREPAID` cannot be selected while Model C is deferred. (Phase 3, with Model C: a shop below its Fixed Reserve is offered no order and is suspended.)
 9. **Sponsored Feed:** assert that at most two sponsored shops lead the feed, that each is flagged for the "Ad" badge, and that a sponsored shop which does not deliver to the customer is neither moved up nor flagged in the serviceable section.
+10. **Delivery Modularity (added 2026-10-07):** assert a `CITY_WIDE` shop serves a customer whose Palika is in `serviceable_palikas` and not one whose Palika is absent; that a `NATION_WIDE` shop in Dharan is serviceable to an address in Nepalgunj; that a `SELF_DELIVERY` shop with no fee configured charges 0; and that a vendor cannot select a delivery mode the Admin has disabled.
+11. **Billing Cycle Lock:** assert that a pricing-plan or payment-method change made mid-cycle leaves the active values, the commission of an order placed afterwards and the payment methods offered at checkout unchanged; that the renewal job applies it exactly once (also when run twice or concurrently) and writes the audit row; and that a withdrawn change is never applied. Assert that a shop going LIVE mid-month gets a first cycle ending at the start of the next BS month, for months of 29, 30, 31 and 32 days, with a monthly fee prorated by days; that a `FREE` plan at its last renewal reverts to the default Commission plan with the settlement model unchanged; and that its 7-day notice is queued exactly once.
+12. **Fiscal Invoicing:** assert that delivering an order creates exactly one invoice in the same transaction; that 20 concurrent deliveries for one shop yield Bill Numbers 1–20 with no gap or duplicate, and that a rolled-back delivery consumes none; that the first invoice of a new fiscal year is number 1; that 1130 NPR of taxable goods from a VAT-registered vendor shows taxable 1000.00 and VAT 130.00, and a non-VAT vendor shows no VAT; that the grand total equals the order total to the paisa, also for an order with a vendor offer and a platform-funded campaign discount (verification 5: taxable + VAT + delivery = 860); that `UPDATE` and `DELETE` on an issued invoice are refused by the database; that a refund after delivery creates a Credit Note referencing the invoice; and that a second print is logged and returned as copy 1.
+13. **PAN Compliance (added 2026-10-07):** assert that the sweep moves a LIVE vendor without a PAN to `SUSPENDED_COMPLIANCE` and leaves one with a PAN alone; that the suspended shop is absent from the feed and refused at checkout; that saving a valid PAN restores its previous status in the same transaction, and anything but nine digits is refused; that clearing a debt never lifts a compliance suspension; and that no code path can set `LIVE` without a PAN.
+14. **Online / Offline:** assert that an Offline shop is listed as not orderable, that checkout refuses it, that an order placed before the switch can still be accepted, dispatched and delivered, and that the switch never changes `status`.
+15. **Fleet pickup on the board (added 2026-10-07):** assert that a dispatched fleet order is still listed for its shop with its delivery state, that the rider's pickup is announced to the shop's room exactly once, and that the order view sent to a vendor carries the customer's first name and never the last name or the phone.
+16. **Product availability (added 2026-10-07):** assert that switching a product out of stock leaves `stock_quantity` unchanged, that the product is still listed to customers with `in_stock: false`, that checkout refuses it with `409 INSUFFICIENT_STOCK`, that switching it back makes it orderable with its old count, and that a hidden product (`is_active = false`) is unaffected by the flag.
+17. **Shop deletion:** assert that a shop with a negative balance or an order not handed over is refused with every reason named, that a clear shop is marked for deletion and stops taking orders in one transaction, that its invoices and ledger entries remain, and that the request can be withdrawn.
 </verification_and_testing>
 
 <implicit_requirements_and_audit>

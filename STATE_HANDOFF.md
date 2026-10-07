@@ -1100,6 +1100,983 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.14 Vendor App UI, phases 5 and 6: Marketing, Analytics, settings; frontend freeze (2026-10-07)
+
+Mobile only. **No API, shared-types or database change.** SPEC.md gained vendor flow steps 21–23,
+the 60-second guard in step 13, the availability flag in step 19 and verifications 16–17.
+`BACKEND_CHECKLIST.md` sections 6.6–6.10 were updated.
+
+**The Vendor App frontend is frozen with this section.** Every screen of the vendor flow exists.
+What runs on real data and what on samples is in the table at the end; nothing has been seen on a
+device.
+
+### Decisions (user, 2026-10-07)
+
+| Topic                       | Decision                                                                                                      | Effect                                                                                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Ready" and the 60 s window | **No new backend state.** The board disables "Ready for Pickup" until the customer's 60-second window is over | Built (below). The server's `422 CANCELLATION_WINDOW_OPEN` stays as the rule. §8Z.13's "To confirm" is closed                                                                                |
+| Out of Stock                | **A boolean on `products`, default true; the switch sets it and never overwrites the stock count**            | Built in the app, specified for the server (below). **The column is named `is_available`, not `is_active`**: see the note under this table. §8Z.13's "Out of Stock is stock 0" is superseded |
+| Invoices                    | No Print button in the app. The server prints, so copies are numbered                                         | As built                                                                                                                                                                                     |
+
+**Why `is_available` and not `is_active` (to confirm).** `products.is_active` already exists
+(Phase 17, §8K) and means something else: the product is **hidden**. `false` removes it from the
+public list and the shop's menu, makes checkout answer `422 PRODUCT_UNAVAILABLE`, and is what
+`DELETE /api/vendor/products/:id` and the Super Admin's Hide write. Reusing it for the switch
+would make "Out of Stock" delete the product from the customer's view instead of showing it as
+out of stock, and would let a vendor's switch undo an admin's Hide (a risk §13 already lists).
+So the flag asked for is a second column with the asked-for behaviour: boolean, default true,
+toggled by the switch, stock count untouched. If hiding the product is what was meant, the
+change is one line in the app (`PUT …/:id { is_active }` instead of the availability route) and
+no migration.
+
+### Backend required for the availability flag (not built)
+
+```sql
+ALTER TABLE products ADD COLUMN is_available boolean NOT NULL DEFAULT true;
+```
+
+```jsonc
+// PATCH /api/vendor/products/:id/availability     Bearer VENDOR (own product) → 200 (also on repeat)
+{ "is_available": false }
+// → { "product": { /* VendorProductView */ "stock_quantity": 12, "is_available": false } }
+// 404 PRODUCT_NOT_FOUND (also another shop's) · 400 VALIDATION_FAILED
+```
+
+- `stock_quantity` is not touched by the route, and `PATCH …/stock` does not touch the flag.
+- **What a customer sees:** `in_stock = is_available AND stock_quantity > 0` on the public product
+  list and the menu, and `stock_quantity` reported as **0 while unavailable** (the customer app's
+  quantity picker already caps on that number, so it needs no change and the real count is not
+  shown for a product the shop has withdrawn).
+- **Checkout:** an unavailable line is a shortfall with `available: 0`
+  (`409 INSUFFICIENT_STOCK`), in the stock guard and in the Redis lock's availability.
+- `vendorProductViewSchema` (vendor and admin lists) gains `is_available`. Drizzle schema,
+  `productSchema` and `contract.ts` together. `is_active` and its routes are unchanged.
+
+### What was built
+
+| #   | Feature                           | How it works now                                                                                                                                                                                                                                                                                                              | Where                                                                       |
+| --- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| –   | **60-second guard**               | A Preparing card's button reads "Ready for Pickup in 40 s", disabled, with "The customer can still cancel this order." under it, until `placed_at + 60 s`; then it is the normal button. One 1-second timer per waiting card, none afterwards                                                                                 | `VendorOrderCard.tsx#ReadyButton`, `lib/countdown.ts#useSecondsUntil`       |
+| –   | **Availability switch**           | The Catalogue row's switch sets `isAvailable`. Label: "In stock: n", "Out of stock" (switched off, count kept), or "No stock left" (switched on, count 0)                                                                                                                                                                     | `useVendorCatalogueStore.ts`, `app/(vendor)/catalogue.tsx`                  |
+| 5   | **Marketing, three sections**     | A segmented control: **My Offers / Campaigns / Ads**                                                                                                                                                                                                                                                                          | `app/(vendor)/marketing.tsx`, `components/SegmentedControl.tsx`             |
+| 5   | **My Offers**                     | The running vendor-funded offers ("Flat Rs. 100 OFF", minimum order, since when), a line saying the vendor pays for them, **End offer** behind a confirmation, and a floating **New offer** button → `/offer`                                                                                                                 | `features/vendor/MarketingSections.tsx#MyOffers`                            |
+| 5   | **New offer form**                | `/offer`: discount type (flat amount / percentage), amount, minimum order. Creates the offer and returns to Marketing                                                                                                                                                                                                         | `app/(vendor)/offer.tsx`, `features/vendor/marketing-rules.ts`              |
+| 5   | **Campaigns**                     | An inbox of platform campaigns with their terms (discount and cap, minimum order, the vendor's share, dates) and an **Invite** / **Joined** badge. **Opt In** opens a confirmation that restates the terms ("I agree, opt in"); a joined campaign shows the date and **Opt out**                                              | `MarketingSections.tsx#CampaignInvites`                                     |
+| 5   | **Ad Marketplace**                | What the shop can spend, then "Carousel Placement" (7 and 30 days, flat rate) and "Sponsored Search" (per delivered order, with a budget). **Buy** first checks the shop can pay; if not, the error toast **"Insufficient funds for this ad purchase."**; otherwise a confirmation restating the cost and how it is collected | `MarketingSections.tsx#AdMarketplace`, `marketing-rules.ts#canBuyAd`        |
+| 6   | **Analytics**                     | `/analytics`, from the chart icon in the Ledger header. A skeleton while loading, then three cards (Today's Sales, Top Performing Item, Ad ROI) and the last seven days as bars                                                                                                                                               | `app/(vendor)/analytics.tsx`, `features/vendor/mock-analytics.ts`           |
+| 6   | **Settings: preferences**         | The EN / ने language switch and "Get updates on WhatsApp"                                                                                                                                                                                                                                                                     | `app/(vendor)/settings.tsx`, `features/settings/useWhatsAppOptIn.ts`        |
+| 6   | **Settings: Delete Shop Account** | A red button. Pressed: the shop is checked. A negative ledger balance or active orders → an alert naming each reason, nothing else. Clear → a confirmation; on agreement the request is recorded, the shop goes Offline, and the section shows the date with **Cancel deletion request**                                      | `settings.tsx`, `features/vendor/shop-deletion.ts`, `useVendorShopStore.ts` |
+
+`/offer` and `/analytics` are navigator routes with `href: null`, like `/product`, `/invoices`
+and `/settings`.
+
+### Rules the screens enforce
+
+- **Offer form** (`validateOfferForm`, the CHECKs of `vendor_offers`, §8Z.5): a flat amount above
+  0, or a percentage above 0 up to 100; a minimum order of 0 or more, blank meaning none; **a flat
+  discount may not exceed its own minimum order** (so a flat offer always needs one). An offer is
+  never edited: it is ended and a new one made.
+- **Ad purchase** (`canBuyAd`, SPEC Ad Monetization):
+  - Model B: a flat-rate ad needs `balance + pending escrow − flat-rate ads already bought ≥
+price`. A per-order ad is always allowed.
+  - Model A: `balance − cost ≥ 0`, where the cost is the price or the whole budget (never on
+    credit). Model C: the balance must stay at or above the Rs. 5000 reserve.
+  - The check runs **before** the agreement is asked: an ad that cannot be bought never shows its
+    confirmation. The same toast text is used for all three models.
+- **Shop deletion** (`shopDeletionBlockers`): blocked by a negative balance, and by any order not
+  yet handed over.
+
+### What is sample data
+
+| Screen                | Today                                                                                                                                                                                                                                                         | Flag                                                                         | Real source                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Marketing (all three) | `useVendorMarketingStore` (memory): one offer, two campaign invites, three ad products. **No discount reaches any order and no ad is charged**                                                                                                                | `VENDOR_MARKETING_MOCKS_ENABLED = __DEV__`; production shows the placeholder | §8Z.5 and BACKEND_CHECKLIST sections 5 and 6.8 (none built)                                   |
+| Ad funds              | The Ledger's sample figures for the previewed settlement model (`mockWalletBalance`: Model B = 8450 + 3200 = Rs. 11,650), less flat-rate ads bought this sitting. **Not the shop's real balance**                                                             | –                                                                            | `GET /api/vendor/ads/products` (`collection`, `recharge_required_npr`) and the purchase's 422 |
+| Analytics             | One fixed summary, answered after 600 ms so the skeleton shows                                                                                                                                                                                                | `VENDOR_ANALYTICS_MOCKS_ENABLED = __DEV__`; production shows the placeholder | `GET /api/vendor/analytics/summary` (below)                                                   |
+| Language              | **Real**: the app's own setter, copied to the account by `PATCH /api/me` when that exists                                                                                                                                                                     | –                                                                            | unchanged                                                                                     |
+| WhatsApp updates      | **Real mechanism** (the customer's): saved on the phone, sent with `PATCH /api/me`, rolled back with a toast if the server refuses. The endpoint is not built, so today it stays on the phone                                                                 | –                                                                            | `PATCH /api/me` (BACKEND_CHECKLIST section 2)                                                 |
+| Delete Shop Account   | The check uses what the phone knows: the wallet and open orders it last loaded, fleet orders it is tracking, sample orders not handed over (and the sample balance in a development build). **The request is recorded on the phone only: nothing is deleted** | –                                                                            | the two endpoints below                                                                       |
+
+- In a development build the board always holds sample orders, so **Delete Shop Account is
+  blocked there until every sample order is handed over** (or `EXPO_PUBLIC_MOCK_VENDOR_ORDERS=false`).
+  That is the block working, not a fault.
+
+### Backend required for phases 5 and 6 (not built)
+
+**Marketing: no new contract.** The screens were built to §8Z.5's routes:
+
+| The app does                          | Route (§8Z.5)                                                                                                 |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| lists and creates offers, ends one    | `GET / POST /api/vendor/offers`, `POST /api/vendor/offers/:id/end`                                            |
+| lists invites and joined campaigns    | `GET /api/vendor/campaigns`                                                                                   |
+| Opt In (after the confirmation)       | `POST /api/vendor/campaigns/:id/opt-in { terms_version }` (`409 CAMPAIGN_TERMS_CHANGED` → show the new terms) |
+| Opt out                               | `POST /api/vendor/campaigns/:id/opt-out`                                                                      |
+| lists placements and the shop's funds | `GET /api/vendor/ads/products`                                                                                |
+| Buy (after the agreement)             | `POST /api/vendor/ads/purchases { ad_product_id, starts_at, budget_npr?, idempotency_key, agreed: true }`     |
+| the guard                             | `422 AD_EXCEEDS_PENDING_PAYOUT` (Model B), `422 LEDGER_RECHARGE_REQUIRED` (A, C) → the same toast             |
+| shows what is running                 | `GET /api/vendor/ads/purchases`                                                                               |
+
+- "Sponsored Search" is the `FEED_LISTING` slot (the sponsored listing in the feed and in search
+  results); "Carousel Placement" is `CAROUSEL`. The `FEATURED` slot has no card yet.
+- The app's own check is a courtesy: the server's 422 under the vendor row lock is the rule.
+
+**Analytics.**
+
+```jsonc
+// GET /api/vendor/analytics/summary        Bearer VENDOR (own shop) → 200, Cache-Control: no-store
+{ "today_sales_npr": 12450, "today_order_count": 9,                    // DELIVERED today, Asia/Kathmandu
+  "top_item": { "product_name": "…", "units_sold": 14, "sales_npr": 8400 } | null,
+  "ad_roi": { "spend_npr": 1200, "revenue_npr": 5400 } | null,         // last 30 days; null without an ad
+  "daily_sales": [ { "day": "THU", "sales_npr": 6200 }, /* 7 entries, oldest first, today last */ ] }
+```
+
+- "Sales" is the shop's delivered subtotal less its own discounts (what the commission is charged
+  on). `ad_roi.revenue_npr` is the same figure for orders placed while one of its ads was ACTIVE;
+  `spend_npr` is the `AD_FLAT_FEE` + `AD_ORDER_PREMIUM` postings. One query over `orders` /
+  `order_items` on existing indexes; move to a nightly rollup when a shop's history makes it slow.
+
+**Vendor account lifecycle.** Language and WhatsApp use `GET / PATCH /api/me` (BACKEND_CHECKLIST
+section 2, any role). Deletion needs the vendor's own rules, which §8Z.10 left open:
+
+```jsonc
+// GET /api/vendor/deletion-eligibility      Bearer VENDOR → 200
+{ "eligible": false, "blockers": ["NEGATIVE_BALANCE", "ACTIVE_ORDERS"],
+  "wallet_balance_npr": -100, "active_order_count": 2 }
+//   blockers also: "PENDING_PAYOUT", "ACTIVE_AD" (once those exist)
+
+// POST /api/vendor/deletion-request         Bearer VENDOR, no body → 200 (also on repeat)
+{ "account_status": "DELETED_REQUESTED", "deletion_requested_at": "…", "accepting_orders": false }
+// 409 SHOP_NOT_DELETABLE   details.blockers   (re-checked under the vendor row lock)
+
+// DELETE /api/vendor/deletion-request       → 204   (the vendor changed their mind, before the purge)
+```
+
+- A request sets `users.account_status` (§8Z.10) and `vendors.accepting_orders = false` in one
+  transaction, with an audit row. The shop's `status` is not changed. Invoices, ledger entries
+  and audit rows are kept; the purge job anonymises the rest later.
+
+### Behaviour to know
+
+- **The countdown runs on the phone's clock against the server's `placed_at`.** A phone whose
+  clock is ahead enables the button early (the server then answers 422 and the existing toast
+  gives the seconds left); one that is behind keeps it disabled a little longer. §12's rule about
+  not anchoring timers on server timestamps was written for the customer's countdown; here the
+  server's refusal makes a wrong clock harmless.
+- An ended offer disappears (the list shows running offers only); there is no history view.
+- Opting out has no confirmation; opting in always has one.
+- Ad "purchases" stack: buying the same placement twice is allowed and each takes its price.
+- The WhatsApp hint says order alerts are not affected: the vendor's order SMS and pushes do not
+  depend on this consent.
+- A deletion request does not sign the vendor out, and cancelling it does not switch the shop
+  back Online.
+- `app/settings/notifications.tsx` (the customer's screen) now uses the same `useWhatsAppOptIn`
+  hook; its tests pass unchanged.
+- New Nepali strings (`vendorMarketing.*`, `vendorAnalytics.*`, the settings') are unreviewed.
+
+### The frozen Vendor App: every route and its data
+
+| Route              | Screen                               | Data                                                              |
+| ------------------ | ------------------------------------ | ----------------------------------------------------------------- |
+| `/dashboard` (tab) | Live Orders board                    | **real** (API, socket, alarm) + sample orders in development      |
+| `/catalogue` (tab) | products, availability switch        | sample (the API exists for everything but the availability route) |
+| `/product`         | add / edit a product                 | sample                                                            |
+| `/wallet` (tab)    | Ledger by settlement model           | **real** for Model B; samples for A and C                         |
+| `/invoices`        | invoices and the fiscal document     | sample                                                            |
+| `/analytics`       | metric cards and chart               | sample                                                            |
+| `/marketing` (tab) | offers, campaigns, ads               | sample                                                            |
+| `/offer`           | new offer                            | sample                                                            |
+| `/settings`        | PAN, delivery, preferences, deletion | on the phone (language and WhatsApp use the real account call)    |
+| every header       | Online / Offline switch, gear        | on the phone                                                      |
+
+### Tests
+
+Mobile **1487** (+46) in 98 suites, one full run. `tsc --noEmit`, `eslint .` and `prettier`
+clean; the Android bundle exports.
+
+- `VendorMarketing.test.tsx` (24): the offer rules; `canBuyAd` for the three models at the
+  boundary; My Offers (list, the vendor-pays line, End behind a confirmation); the form (flat,
+  percentage with Nepali digits, both refusals); Campaigns (terms, the confirmation's title, body
+  and buttons, Cancel, agreement, the other campaign untouched, opt out); the Ad Marketplace
+  (**the Rs. 15,000 ad refused with the toast and no confirmation**, an affordable one bought
+  only after agreement, funds going down, the third purchase refused, a per-order ad always
+  allowed, Model A refused).
+- `VendorAnalytics.test.tsx` (5): the ratio and bar helpers; the skeleton, then the three cards;
+  seven bars with the best day tallest and today highlighted; Nepali digits.
+- `VendorAccount.test.tsx` (11): the language switch; WhatsApp on for this account; the deletion
+  rule; refused for a negative balance, for active orders, for a fleet order still waiting (both
+  reasons named), not for a delivered order; the confirmation, Cancel, agreement (request
+  recorded, shop Offline, still signed in), cancelling, another account's request.
+- Updated: `VendorBoard.test.tsx` (+3: the countdown from 40 s to enabled under fake timers,
+  enabled at once after 60 s, Nepali digits), `VendorCatalogue.test.tsx` (the flag keeps the
+  count; "No stock left"), `shop-settings.test.ts` (+1: the deletion request across a relaunch),
+  `VendorRouting.test.tsx` (the two routes, the Analytics link and both back buttons).
+- **No mutation checks were run.** **Not seen on a device.** Unverified in particular: three
+  icons and the switch in the Ledger header on a narrow phone, the segmented control's Nepali
+  labels, the floating "New offer" button inside the scrolling section, alert text wrapping for
+  the long opt-in terms, the bar chart's proportions, and the per-second re-render of a card
+  with the code field focused.
+
+## 8Z.13 Vendor App UI, phases 2 and 4: Catalogue, Ledger by settlement model, Invoices; two corrections (2026-10-07)
+
+Mobile only. **No API, shared-types or database change.** SPEC.md gained vendor flow steps 19–20,
+the corrected board mapping in step 13 and verification 15. **`BACKEND_CHECKLIST.md` now has
+section 6**, with every endpoint of §8Z.11–8Z.13 (PAN compliance, shop settings, invoicing,
+billing cycles, board support, wiring).
+
+### Confirmations and corrections (user, 2026-10-07)
+
+| Topic                      | Decision                                                                                                                      | Effect                                                                                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prorated first fee         | Strictly by days                                                                                                              | SPEC and §8Z.11 already said so; the open question is closed                                                                                              |
+| Customer name on a card    | First name only                                                                                                               | As built. Backend: `VendorOrderView.customer_first_name`                                                                                                  |
+| Fleet order after dispatch | "Ready for Pickup" exists for fleet orders too. The order is **Ready** until the driver confirms pickup, then **Handed Over** | The board changed (below). §8Z.12's "a fleet order skips Ready" is superseded                                                                             |
+| Municipalities             | Never free text. A hard-coded list of major Palikas in a searchable picker                                                    | `mock-palikas.ts` (10 names) + `components/SearchableSelect.tsx`; `validateShopSettings` drops any name not on the list. §8Z.12's free-text input is gone |
+
+**"Ready" is still a view, not an order state.** For a fleet order it is `OUT_FOR_DELIVERY` whose
+delivery has not been picked up. That maps onto what exists: dispatch already creates the
+delivery as `OFFERED` (the gig riders see), and `POST /api/deliveries/:id/pickup` is the driver's
+confirmation. No `READY` value was added to SPEC's `OrderState`. **Settled in §8Z.14:** no new state; the app
+disables the button for the 60 seconds. What was asked: if "Ready" must be
+reachable before the customer's 60-second window closes, it needs its own state.
+
+### The board after the correction
+
+- `stageOf(order, riderPickedUp)`: `OUT_FOR_DELIVERY` is **Ready** for the shop's own delivery
+  (until the customer's code) and for a fleet order until its rider's pickup; then **Handed
+  Over**. `BoardOrder.awaitingRider` marks the fleet order under Ready; its card reads "Riders
+  have been told. Waiting for one to collect it." and never has the code field.
+- **Live fleet orders:** the server stops listing the order at dispatch and announces no pickup,
+  so the app keeps it under Ready from its own record (`useVendorBoardStore.departed`, memory,
+  newest 30) and moves it to Handed Over when the shop's socket room hears `DELIVERED`
+  (`useVendorOrdersRealtime` gained an `onStateUpdate` callback; `settleDeparted`). A canceled or
+  failed one is removed. **So a live fleet order reaches Handed Over at delivery, not at pickup,
+  until the backend sends the pickup** (BACKEND_CHECKLIST 6.6), and a relaunch forgets it.
+- **Sample fleet orders** have a "Rider picked up (sample)" button under Ready that stands in for
+  the driver (`markMockPickedUp`). Live orders never show it.
+- Renamed: `handedOver` → `departed`, `recordHandedOver` → `recordDeparted`.
+
+### What was built
+
+| #   | Feature                | How it works now                                                                                                                                                                                                                                                                                                                                                                                                                | Where                                                                                     |
+| --- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| 2   | **Catalogue list**     | A `FlatList` of the shop's products: icon tile, name, category, price, "In stock: n" or "Out of stock", and a `Switch` on every row. The switch acts at once. Tapping the rest of the row opens the product                                                                                                                                                                                                                     | `app/(vendor)/catalogue.tsx`                                                              |
+| 2   | **Add / edit product** | A floating "Add product" button → `/product`; a row → `/product?id=`. Form: name, price, category (searchable dropdown), stock quantity, an "Add photos" placeholder (a toast: coming soon). Save validates, stores, toasts and returns to the Catalogue                                                                                                                                                                        | `app/(vendor)/product.tsx`, `features/vendor/product-form.ts`                             |
+| 4   | **Ledger by model**    | The balance card follows the settlement model. **A:** credit balance + a ten-block bar of the credit limit used ("Rs. 1200 of your Rs. 2000 credit used"; red from 80%). **B:** Pending escrow and Available for payout. **C:** Active reserve balance against the Rs. 5000 Fixed Reserve. The suspension banner, Pay dues and the transaction list are unchanged                                                               | `features/vendor/WalletSummary.tsx`, `app/(vendor)/wallet.tsx`, `vendor-finance-mocks.ts` |
+| 4   | **Invoices list**      | `/invoices` (the receipt icon in the Ledger header): one card per invoiced order (bill number, fiscal year, order code, BS date, buyer, total) with **View Invoice**                                                                                                                                                                                                                                                            | `app/(vendor)/invoices.tsx`                                                               |
+| 4   | **Invoice document**   | A full-screen modal with the invoice as a fiscal document, black on white: seller name, address, contact, PAN / VAT number; "Tax Invoice"; Fiscal Year (आर्थिक वर्ष), Bill No. (बिजक नम्बर), BS date, AD date and time (Nepal Time), payment method, buyer; per line the quantity × rate, HS code, taxable amount, VAT 13% and amount; subtotal, discount, taxable, VAT, delivery, Grand Total, amount in words; the disclaimer | `features/vendor/InvoiceDocument.tsx`, `invoice-math.ts`, `mock-invoices.ts`              |
+| –   | **Searchable picker**  | A closed control that opens a search field over a short list; choosing closes it. Used for the product category (single choice) and the municipalities (adds to a removable list; a chosen one is no longer offered)                                                                                                                                                                                                            | `components/SearchableSelect.tsx`                                                         |
+
+`/product` is a navigator route with `href: null`, like `/settings` and `/invoices`: the tab bar
+stays, and its back arrow returns to the Catalogue.
+
+### What is sample data, and where the real data will come from
+
+| Screen               | Today                                                                                                                                     | Flag                                                                                         | Real source                                                                                            |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Catalogue, product   | `useVendorCatalogueStore` (memory): the seeded Thamel shop's five products; adds and edits live until relaunch                            | `VENDOR_CATALOGUE_MOCKS_ENABLED = __DEV__`; a production build shows the placeholder         | **The API exists** (`/api/vendor/products`, §8K, §8L): this is app wiring only (BACKEND_CHECKLIST 6.7) |
+| Categories           | `MOCK_PRODUCT_CATEGORIES`: the six seeded subcategories, by slug                                                                          | –                                                                                            | `GET /api/categories` (public; the app already has `fetchCategories`)                                  |
+| Ledger, model B      | **Real** (`GET /api/vendors/wallet/balance`); the sample only while that cannot be loaded                                                 | `VENDOR_FINANCE_MOCKS_ENABLED` (`__DEV__`, off with `EXPO_PUBLIC_MOCK_VENDOR_FINANCE=false`) | unchanged                                                                                              |
+| Ledger, models A / C | Always sample figures (the server knows no model but B), chosen with the "Preview a settlement model" chips, shown only with the flag on  | the same                                                                                     | `settlement_model` + `vendor_ledgers` (§8Z.5; BACKEND_CHECKLIST 6.7)                                   |
+| Invoices             | Three sample invoices in fiscal year 2082/083 (bills 41–43), computed by `buildInvoice`; the seller PAN is the one saved in Shop settings | `INVOICE_MOCKS_ENABLED = __DEV__`; a production build lists none                             | `GET /api/vendor/invoices[/:id]` (§8Z.11; BACKEND_CHECKLIST 6.4)                                       |
+| Municipalities       | `MOCK_PALIKAS`, ten names                                                                                                                 | –                                                                                            | the canonical Palika list in shared-types (BACKEND_CHECKLIST 6.1)                                      |
+
+- Every sample screen says so on screen ("Sample catalogue on this phone…", "Sample figures, not
+  your real balance.", "Sample invoices…").
+- Jest turns the finance samples off globally (`jest.setup.ts`), so `VendorWallet.test.tsx` still
+  runs against msw unchanged; `VendorLedgerModels.test.tsx` turns them on.
+
+### Behaviour to know
+
+- **Superseded by §8Z.14:** "Out of Stock" is now a flag (`is_available`); the count is kept.
+- **"Out of Stock" is stock 0.** The server has one stock number and no in-stock flag (§8K). The
+  switch sets the quantity to 0 and remembers what it was (`restockQuantity`); switching back
+  restores it, or 1 for a product that never had stock. Wired to the API this is
+  `PATCH …/stock`, and the remembered quantity lives on the phone unless the optional
+  `products.restock_quantity` is added.
+- A product name is unique per shop (the API's `409 PRODUCT_NAME_TAKEN`), checked in the form
+  without regard to case. Price: above 0, at most two decimals, up to 1,000,000. Stock: a whole
+  number, 0 allowed.
+- The product form has no delete or hide, no description or unit, and no photos yet.
+- **Invoice arithmetic is real, the dates are not converted.** `invoice-math.ts` implements the
+  rules of SPEC section 10 (VAT split per line in paisa, the discount spread by largest
+  remainder, the shop's own delivery as a taxed line, a fleet delivery charge outside the shop's
+  sales, amount in words with lakh / crore) and is tested against SPEC's own figures. The sample
+  AD and BS dates were paired by hand; **no BS calendar code exists yet**.
+- The invoice modal has no Print or Share button: printing must go through the server's print
+  endpoint so the copy number is recorded (§8Z.11), and that does not exist yet.
+- In model B the card shows the wallet balance and "Available for payout" (the balance, or 0
+  while it is negative): the two figures are equal for a shop that owes nothing.
+- `delivery-errors.ts` types its `t` as i18next's `TFunction` now: with over 700 translation keys
+  the alias through `useTranslation` exceeded the compiler's depth limit. No behaviour change.
+- Removed strings: `vendorTabs.invoiceList.*`, `vendorWallet.balance`, `vendorShop.palikaPlaceholder`.
+  The new Nepali strings (`vendorCatalogue.*`, `invoice.*`, the wallet's) are unreviewed.
+
+### Tests
+
+Mobile **1441** (+56) in 95 suites, one full run. `tsc --noEmit`, `eslint .` and `prettier`
+clean; the Android bundle exports.
+
+- `VendorCatalogue.test.tsx` (28): the form rules, the picker's filter, the store (seed, the
+  switch both ways, a product that never had stock, add in name order, edit), the list (row
+  contents, the switch acting on its row only, Add and row navigation, Nepali digits, empty), and
+  the form screen (add with a picked category, incomplete, duplicate name, edit, the reused
+  route starting fresh, the photo placeholder).
+- `VendorInvoices.test.tsx` (15): SPEC verification 12's 1130 → 1000.00 + 130.00, verification
+  5's 860 with every discount lowering the taxable amount, the discount spread, own vs fleet
+  delivery, a non-VAT seller and an exempt product, amounts in words, Nepal Time; the samples
+  adding up; the list, the whole document field by field, that it uses no colour class, the fleet
+  delivery label and buyer PAN, the shop's own saved PAN.
+- `VendorLedgerModels.test.tsx` (10): the credit fraction, the card for A (bar at 0, 60 and 100%),
+  B (escrow, available, nothing available while negative) and C, the default; the screen with
+  samples on (real balance for B, samples for A and C, the fallback when the wallet cannot load).
+- Updated: `order-board.test.ts` (+6: the pickup rule, `awaitingRider`, `markMockPickedUp`,
+  `settleDeparted`), `VendorBoard.test.tsx` and `VendorFulfilment.test.tsx` (a fleet order under
+  Ready, then Handed Over on the sample pickup / the announced delivery), `VendorSettings.test.tsx`
+  (+1: the picker, and that nothing typed can be added), `shop-settings.test.ts` (+1: unknown
+  names dropped), `VendorRouting.test.tsx` (the `/product` route; the Catalogue and Invoices
+  placeholder cases are gone).
+- **No mutation checks were run.** **Not seen on a device**: the picker opening inside the
+  scrolling settings form with the keyboard up, the floating Add button over the list, the row's
+  switch beside the pressable row, the invoice's column widths on a narrow phone, and the modal's
+  safe-area insets are verified only in Jest.
+
+## 8Z.12 Vendor App UI, phases 1 and 3: Online switch, Shop settings, the Live Orders board (2026-10-07)
+
+Mobile only. **No API, shared-types or database change.** SPEC.md gained vendor flow steps 17–18
+and the board's column mapping in step 13 (with the decisions recorded in §8Z.11). What the
+server needs for these screens is under "Backend required" and is **not built**.
+
+### What was built
+
+| #   | Feature                     | How it works now                                                                                                                                                                                                                                                                                                                                                      | Where                                                                                           |
+| --- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| 1   | **Online / Offline switch** | In the header of every vendor screen (`screenOptions.headerRight`; the Ledger's own header keeps it beside the Invoices icon). Writes `useVendorShopStore.online`. Offline shows a dark banner on the board and stops the sample orders. **On the phone only: it does not stop real orders yet**                                                                      | `features/vendor/VendorOnlineToggle.tsx`, `app/(vendor)/_layout.tsx`                            |
+| 1   | **Shop settings**           | `/settings`, opened from the gear at the header's left (a navigator route with `href: null`; back returns to the tab the vendor came from, `backBehavior="history"`). PAN; delivery mode; scope tier; for self delivery the three charges. Save validates, stores for the signed-in account and toasts. Sign out moved here from the dashboard                        | `app/(vendor)/settings.tsx`, `features/vendor/shop-settings.ts`, `useShopSettings.ts`           |
+| 1   | **PAN reminder**            | An amber banner on the board while this account has saved no settings; tapping it opens Shop settings                                                                                                                                                                                                                                                                 | `app/(vendor)/dashboard.tsx`                                                                    |
+| 3   | **The board**               | A segmented control, **New → Preparing → Ready → Handed Over**, each with its count, over one `FlatList` showing the selected column. Opens on New. Pull to refresh reloads the live orders                                                                                                                                                                           | `app/(vendor)/dashboard.tsx`, `features/vendor/OrderStageTabs.tsx`, `order-board.ts`            |
+| 3   | **Order cards**             | Order code, total, customer first name (or "Customer"), time since placement ("4 min ago"), payment method, items, address. New: a pulsing red dot, red card, **Accept Order** and a smaller Reject. Preparing: **Ready for Pickup**. Ready: the cash to collect and the customer's 4-digit code field. Handed Over: "Delivered." or "Given to a rider for delivery." | `features/vendor/VendorOrderCard.tsx`                                                           |
+| 3   | **Sample orders**           | Development builds only: one sample order per column at launch, then a new one under New every 30 s while the shop is Online. Tagged **SAMPLE**. Their buttons move them on the device only                                                                                                                                                                           | `features/vendor/vendor-order-mocks.ts`, `useVendorOrderSimulator.ts`, `useVendorBoardStore.ts` |
+
+**The board is a view of the existing order states** (`order-board.ts#stageOf`). SPEC has no
+"ready" state and none was added.
+
+| Column      | Orders in it                                                                                  | Action                                                                              |
+| ----------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| New         | `PLACED`                                                                                      | Accept Order (→ `PREPARING`), Reject (→ `CANCELED`); the existing endpoints         |
+| Preparing   | `PREPARING`                                                                                   | Ready for Pickup = the existing **dispatch** (→ `OUT_FOR_DELIVERY`, 60 s rule kept) |
+| Ready       | `OUT_FOR_DELIVERY` with `SELF_DELIVERY`: packed, the shop's staff hand it over                | the customer's code (→ `DELIVERED`); the existing endpoint                          |
+| Handed Over | `DELIVERED`; or `OUT_FOR_DELIVERY` of a fleet order (a rider has it: out of the shop's hands) | none                                                                                |
+
+- **Live orders keep every Phase 10–11.5 behaviour**: the same queries, mutations, socket room,
+  toasts and looping alarm. Only the layout changed. The button labels changed ("Accept Order",
+  "Ready for Pickup"); the test ids did not (`accept-`, `reject-`, `dispatch-`, `deliver-`).
+- **Handed Over is this sitting's record for live orders.** `GET /api/vendors/orders` lists open
+  orders only, so the app remembers (memory, newest 30) the orders it saw leave: delivered with
+  the code, or a fleet order it dispatched. A relaunch, or an order finished from another
+  device, is not there. It is cleared when the dashboard closes (sign-out).
+- **Superseded by §8Z.13 (user correction):** a fleet order now waits under Ready until its
+  rider collects it. What this bullet described:
+- **A fleet order skips Ready**: the server stops listing it at dispatch, so the board cannot
+  show "waiting for the rider". "Ready for Pickup" on a fleet order moves it straight to Handed
+  Over.
+- **Customer name:** the API sends none to vendors (`VendorOrderView` is strict and nameless), so
+  a live card says "Customer". Sample orders carry a first name.
+
+### State
+
+| Store                 | Key / version                | Storage        | Holds                                                                                                                                                                                  |
+| --------------------- | ---------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useVendorShopStore`  | `hamro-pasal.vendor-shop` v1 | encrypted MMKV | `online` (default true) and `stored { userId, settings }`. Settings are shown only to the account that saved them (`settingsFor`, the token subject), re-validated with Zod on restore |
+| `useVendorBoardStore` | –                            | memory         | `mocks` (sample orders), `handedOver` (live orders seen leaving), the sample sequence                                                                                                  |
+
+- `ShopSettings = { taxId, fulfillmentMode: SELF_DELIVERY | PLATFORM_FLEET, deliveryScope:
+RADIUS_BOUND | CITY_WIDE | NATION_WIDE, radiusKm | null, serviceablePalikas[],
+baseDeliveryFeeNpr, perKmFeeNpr, freeDeliveryAboveNpr | null }`.
+- **Form rules** (`validateShopSettings`): PAN exactly nine digits (Nepali digits converted; the
+  field never holds a tenth); radius above 0 up to 100 km, only for Radius; at least one
+  municipality (max 30, no duplicates in any letter case), only for City / Regional; charges are
+  amounts with at most two decimals, blank base and per-km mean 0, a blank threshold means none.
+  Fields that do not apply are saved empty: no radius outside Radius, no municipalities outside
+  City, **no charges under platform delivery** (the three inputs are hidden there).
+- Both stores are reset by the SPEC §1 purge. Sign-out keeps the shop settings on the phone.
+
+### The sample orders (TEMPORARY)
+
+- `VENDOR_ORDER_MOCKS_ENABLED = __DEV__ && EXPO_PUBLIC_MOCK_VENDOR_ORDERS !== 'false'`. On in a
+  development client by default; set the variable to `false` in `apps/mobile/.env` to work with
+  real orders only. A preview / production build shows none. Jest turns them off globally
+  (`jest.setup.ts`); `VendorBoard.test.tsx` turns them on.
+- With them on, the board is shown at once, without waiting for the server; if the live orders
+  cannot be loaded a notice says so and the samples stay usable. With them off the screen waits
+  and shows the load error as before.
+- `useVendorOrderSimulator`: a `useEffect` interval of 30 s (`MOCK_ORDER_INTERVAL_MS`) that adds a
+  `PLACED` sample through the Zustand store. No arrival while 5 samples already wait, and only
+  the newest 30 finished samples are kept (the screen is meant to stay open all day).
+- **A sample never rings the alarm** and never reaches the server: Accept, Reject, Ready for
+  Pickup and the code field (any four digits) only move it in the store. The alarm and the red
+  banner are for live orders; samples show the pulse and the red New count.
+- **Removal:** delete `vendor-order-mocks.ts`, `useVendorOrderSimulator`'s first hook, the
+  `mocks` half of `useVendorBoardStore`, the `mock` branches of the four handlers in
+  `dashboard.tsx`, `VendorBoard.test.tsx` and the line in `jest.setup.ts`.
+
+### Rendering (the screen stays open 24/7)
+
+- One `FlatList` of the selected column: `initialNumToRender` 6, `maxToRenderPerBatch` 6,
+  `windowSize` 5, `removeClippedSubviews` on Android, a stable `keyExtractor`.
+- Rows are `memo`ised (`BoardCard`) and the four handlers keep their identity (`useCallback`
+  over TanStack's stable `mutate`), so a change to one order re-renders that row.
+- Ages come from `useMinuteClock`: it checks the clock every 15 s and changes state only when
+  the wall-clock minute changes, so the list re-renders once a minute, not once a second. An age
+  can read up to a minute low, never high.
+- The pulse is one Reanimated shared value per waiting card, on the UI thread.
+- Everything else is NativeWind classes. The exceptions are values React Native only takes as
+  props: the `Switch` track colours, icon colours, the list's `contentContainerStyle` and the
+  pulse's animated opacity.
+
+### Behaviour to know
+
+- **The Online switch and the settings are not sent anywhere.** A real customer can still order
+  from an "Offline" shop, the PAN typed here does not lift a compliance suspension, and the feed
+  still uses the scope and fee the server holds. The settings screen says "Saved on this phone
+  for now". Both carry a `TODO` naming the endpoint.
+- **Superseded by §8Z.13:** municipalities are picked from a searchable list, not typed.
+- Municipalities are typed as free text: shared-types has provinces and districts but **no list
+  of the 753 Palikas**. The server will have to match names; a picker needs that list first.
+- The per-km fee field is always shown under self delivery, with the hint that it is charged
+  only for the Radius scope (§8Z.11).
+- The board does not jump to New when an order arrives; the New tab's count turns red and, for
+  live orders, the alarm rings from any tab (the dashboard stays mounted under the tab bar).
+- The dashboard's "Wallet" button is gone (the Ledger tab) and its test was deleted.
+- Unused strings `vendorDashboard.newOrders / preparing / outForDelivery / wallet` were removed.
+- New Nepali strings (`vendorShop.*`, the board's) are unreviewed.
+
+### Backend required (not built)
+
+**A. Shop availability** (the Online switch).
+
+```sql
+ALTER TABLE vendors ADD COLUMN accepting_orders boolean NOT NULL DEFAULT true;
+```
+
+```jsonc
+// PUT /api/vendor/availability      Bearer VENDOR (own shop, any status) → 200 (also on repeat)
+{ "accepting_orders": false }
+// → { "vendor_id": "uuid", "accepting_orders": false, "status": "LIVE" }
+```
+
+- It never changes `status` and is independent of every suspension. The feed keeps the shop,
+  with `accepting_orders: false` on the entry (the app shows it closed, carts disabled); checkout
+  answers `422 VENDOR_UNAVAILABLE`. Orders already placed are untouched.
+- The vendor's `GET /api/vendors/wallet/balance` (or a new `GET /api/vendor/profile`) should
+  return it, so a second device shows the same switch. The app then replaces the local `online`
+  with a query plus an optimistic mutation that rolls back on failure.
+
+**B. Shop settings.** `PUT /api/vendor/tax-identity` (§8Z.11, decision 4) and
+`GET / PUT /api/vendor/delivery-settings` (§8Z.11 section 1) take exactly what the form holds;
+`ShopSettings` maps field for field (`taxId` → `tax_id`, `perKmFeeNpr` →
+`delivery_fee_per_km_npr`, …). A `GET /api/vendor/profile` returning both, `status` and
+`accepting_orders` in one call would let the app drop the local copy and show the compliance
+suspension itself, not just the reminder.
+
+**C. The board's two gaps.**
+
+- `VendorOrderView` gains `customer_first_name: string | null` (first name only: the rule that
+  keeps `last_name` and the phone from vendors stands). Strict schema: API first, then an app
+  build.
+- `GET /api/vendors/orders` should also return (a) the shop's fleet orders `OUT_FOR_DELIVERY`
+  with the delivery's state (`OFFERED | ASSIGNED | PICKED_UP`), so Ready can show "waiting for a
+  rider" until pickup, and (b) today's `DELIVERED` orders (or a `?include=handed_over` page), so
+  Handed Over survives a relaunch. The app then drops `useVendorBoardStore.handedOver`.
+
+### Tests
+
+Mobile **1385** (+79), 92 suites, one full run. `tsc --noEmit`, `eslint .` and `prettier` clean;
+the Android bundle exports.
+
+- `shop-settings.test.ts` (25): PAN and amount input, every validation rule, the municipality
+  list, the form round trip; the shop store (defaults, relaunch, invalid save refused, a stored
+  slice that no longer passes dropped, settings per account).
+- `order-board.test.ts` (26): the column of every state and fulfilment, ordering, no duplicates,
+  ages; the sample generator and seed; the board store's caps; the simulator under fake timers
+  (seed at once, one order per 30 s, nothing while disabled, no timer left); the minute clock.
+- `VendorBoard.test.tsx` (15, samples on): the four columns, card contents, filtering, the pulse
+  without the alarm, every action on a sample (and that no request is sent), a fleet sample, a
+  new arrival, live orders beside samples, an unreachable server, cleanup on close, arrivals
+  stopping while Offline, the PAN reminder per account.
+- `VendorSettings.test.tsx` (13): PAN input and its error, charge fields shown only for self
+  delivery, scope fields per tier, municipalities, saving and reopening, platform delivery saved
+  without charges, another account's settings hidden, sign out, the switch (EN / NE).
+- `VendorRouting.test.tsx` (+1): the gear and the switch in the shared header, Settings out of the
+  tab bar. `VendorFulfilment.test.tsx` and `VendorDashboard.test.tsx` now open the column they
+  work in and assert the Handed Over record; the wallet-button test is deleted.
+- **No mutation checks were run.** **Not seen on a device**: the header with a gear, a title and
+  a switch on a narrow phone, the segmented control's four labels in Nepali, the pulse, the
+  `Switch` colours, `removeClippedSubviews` with the code field focused, and `router.back()` from
+  Settings under `backBehavior="history"` are verified only in Jest.
+
+## 8Z.11 Vendor operations and IRD compliance: delivery modularity, billing cycle lock, fiscal invoicing; Vendor App tabs (2026-10-07)
+
+**Status.** SPEC.md was amended by the user's decision: Dual-Fulfillment "Delivery Modularity";
+Vendor Pricing "Onboarding Models" and "Billing Cycle Lock"; new core section 10 Fiscal Invoicing;
+customer flow step 12; vendor flow steps 13–16; Super Admin step 7; Nepal section 5 (fiscal
+calendar); data models (`Vendor` additions, `QueuedSettingChange`, `Invoice`); edge cases 9–12;
+verification tests 10–12. **None of the backend below is built**: no migration, route,
+shared-types schema or service changed. The only code in this section is the Vendor App's tab
+navigation with three placeholder screens ("Vendor App navigation" below).
+`BACKEND_CHECKLIST.md` was not updated.
+
+**Not legal advice.** The invoice rules below are written from the IRD's published e-billing
+requirements as understood here. Have a Nepali tax adviser confirm the open questions at the end
+before the first real invoice is issued.
+
+### Final decisions (user, 2026-10-07): these govern wherever the text below differs
+
+The reconciliation table that follows was accepted, including the delivery charge as base +
+per-km + free-above.
+
+| #   | Decision                                                                                                                                  | What it means for the build                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | **Every discount lowers the taxable amount**, the platform-funded share included. Grand Total = `total_npr` paid                          | No "paid by Hamro Pasal" row. `invoices.discount_npr` = vendor offer + the whole campaign discount; `grand_total_npr` must equal `orders.total_npr` to the paisa, asserted by `InvoiceService` before insert (a mismatch aborts the delivery transaction and is a bug, never a rounding allowance). The two `grand_total_npr` CHECKs already express it                                                                                                                                                                                                                                                                                                |
+| 2   | **The Billing Cycle is the BS calendar month**, not 30 rolling days. A mid-month joiner's first cycle is prorated to the month's last day | `billing_cycle_started_at` = the instant the shop goes LIVE; `billing_cycle_ends_at` = 00:00 Asia/Kathmandu on the 1st of the next BS month (exclusive end, so the cycle covers the 1st to the 29th–32nd). Every later cycle is one whole BS month. Month lengths come from the `bikram-sambat.ts` table (new helper `nextBsMonthStart`). A subscription's first fee is `monthly_fee × days left ÷ days in that month`, half-up to the paisa. The renewal job is unchanged except for how it computes the next end. All shops now renew on the same night: the job stays one transaction per vendor                                                    |
+| 3   | **A FREE plan that expires reverts to the default Commission plan automatically**, with a notice 7 days before                            | "PLATFORM_ESCROW (Commission)" is read as: pricing plan → the default `COMMISSION` plan; the settlement model is untouched (it is already `PLATFORM_ESCROW` by default, §8Z.5). `pricing_plans.is_default boolean` with a partial unique index (one default, must be `COMMISSION` and offered). The reversion is applied by the renewal job as if it were a queued change (`VENDOR_SETTING_CHANGE_APPLIED`, actor = the system user); a change the vendor queued itself wins. Notice: a BullMQ delayed job at `free plan end − 7 days` writes `vendor.free_plan_expiring` to the outbox (`notifications.broadcast`) → SMS + push, once per plan period |
+| 4   | **PAN is mandatory. A LIVE vendor without one becomes `SUSPENDED_COMPLIANCE`** until it uploads it in the app                             | New `vendor_status` value (SPEC's "one suspension status" rule is amended: debt and admin suspensions stay `SUSPENDED`; this one is separate because paying dues must never lift it and a PAN must never lift a debt suspension). Hidden from the feed and not orderable (both already require `LIVE`). Details under the table                                                                                                                                                                                                                                                                                                                        |
+| 5   | **CBMS: the schema is sufficient; the handshake is a later phase**                                                                        | Nothing to build now. `cbms_status` stays `NOT_REQUIRED` on every invoice until then                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+
+- Decision 4, precisely:
+  - **Sweep:** a one-off task (and the nightly `VENDOR_COMPLIANCE_SWEEP` on `midnight-maintenance`
+    as the safety net) moves every `LIVE` vendor with `tax_id IS NULL` to `SUSPENDED_COMPLIANCE`,
+    remembering `status_before_compliance_suspension = 'LIVE'`, with `vendor.suspended_for_compliance`
+    in the outbox (SMS + push: "Add your PAN in the app to bring your shop back") and an audit row.
+    Run it before `vendors_live_tax_identity_check` is added.
+  - **Restore:** `PUT /api/vendor/tax-identity { tax_id, is_vat_registered, legal_name?,
+registered_address? }` saves the PAN and, in the same transaction under the vendor row lock,
+    returns a `SUSPENDED_COMPLIANCE` vendor to its remembered status (`vendor.restored`).
+    `400 VALIDATION_FAILED` for anything but nine digits. A PAN can be corrected later; invoices
+    already issued keep the one they were issued with.
+  - **One gate for LIVE:** every path that sets `status = 'LIVE'` (go-live, the debt restore of
+    `WalletService`, an admin Restore) sends a vendor without a PAN to `SUSPENDED_COMPLIANCE`
+    instead. A vendor suspended for debt or by an admin keeps that status; the PAN is checked when
+    it would come back.
+  - **Orders already placed** when a shop is swept are completed as usual. Such an order has no
+    PAN to print: its invoice is issued when the PAN arrives (the restore transaction issues the
+    missing invoices in delivery order, numbered then). This is the only case where an invoice is
+    not issued in the delivery transaction.
+  - The wallet floor CHECK and trigger (`… OR status = 'SUSPENDED'`) are untouched: a shop that
+    takes no orders posts no debits.
+  - The app's "PAN reminder" banner and the Shop settings screen are built (§8Z.12).
+
+### Reconciliations made while writing this (accepted by the user 2026-10-07)
+
+| Asked                                                             | Specified as                                                                                                                                                                          | Why                                                                                                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PLATFORM_DELIVERY`                                               | the existing `fulfillment_mode = 'PLATFORM_FLEET'`; "Platform delivery" is the label in the app                                                                                       | One enum already drives dispatch, deliveries, settlement and `fulfillment_locked`. A second name for the same value would split them                        |
+| `max_radius_km`, `is_national`                                    | the existing `radius_km` and `delivery_scope = 'NATION_WIDE'`; `is_national` is a derived boolean in API views                                                                        | SPEC's `delivery_scope` enum is implemented in the feed SQL and tested at the 1.1× boundary. A boolean beside the enum could disagree with it               |
+| `serviceable_cities` (array)                                      | `vendors.serviceable_palikas text[]`: canonical Palika names, the shop's own always included                                                                                          | CLAUDE.md rule 5: the address model is Province / District / Palika / Ward. "City" has no definition in it; a Palika does                                   |
+| three tiers                                                       | one tier at a time (the enum), not a combination                                                                                                                                      | "Radius plus two far cities" would need per-tier fees and a new feed query; nothing asked for it                                                            |
+| "dynamic delivery charges (defaulting to 0)"                      | base fee (default 0) + optional per-km fee (default 0, `RADIUS_BOUND` only) + optional free-above threshold                                                                           | "Dynamic" was not defined. This is the smallest rule that varies with the order. A per-km fee on a nation-wide shop would price Dharan → Nepalgunj absurdly |
+| "Free" onboarding model                                           | `pricing_model` gains `FREE`; plans are rows a Super Admin publishes (`pricing_plans`)                                                                                                | "Admins can offer varying models" needs something an admin can publish and withdraw                                                                         |
+| changes effective "upon the renewal of the current Billing Cycle" | a cycle per vendor (first written as 30 days; **decided: the BS calendar month**, decision 2 above); `vendor_setting_changes` rows with `effective_from`, applied by the midnight job | SPEC had a monthly subscription fee but no cycle dates. A queue table (not a JSON column) gives one audited row per request and a partial unique index      |
+| queued: payment methods and commission model                      | exactly those two. Delivery mode, delivery charge and scope apply to new orders at once. A settlement model change keeps its own admin-approved flow (§8Z.5)                          | Only those two were named. Each order already snapshots its fee and mode, so an immediate change cannot disturb a placed order                              |
+| invoice "when an order is completed"                              | issued inside the transaction that sets `DELIVERED` (the shared `DeliveryHandoff`)                                                                                                    | The one code path to DELIVERED. Same commit = every delivered order has an invoice and a rollback returns its number                                        |
+| "13% VAT breakdown"                                               | catalogue prices stay VAT inclusive; the invoice splits each taxable line: `taxable = round_half_up(gross / 1.13)`, `vat = gross - taxable`                                           | Adding VAT on top would change every total, the cart math of §8Z.5 and the gateway amounts. The customer pays what the menu showed                          |
+| Credit / Debit Notes                                              | rows of the same `invoices` table (`document_type`), each with its own gap-free sequence                                                                                              | Same header, same immutability, same CBMS fields; the IRD numbers sales and returns separately                                                              |
+
+### 1. Delivery modularity and spatial scope
+
+```sql
+ALTER TABLE vendors
+  ADD COLUMN serviceable_palikas      text[]        NOT NULL DEFAULT '{}',
+  ADD COLUMN delivery_fee_per_km_npr  numeric(12,2) NOT NULL DEFAULT 0 CHECK (delivery_fee_per_km_npr >= 0),
+  ADD COLUMN free_delivery_above_npr  numeric(12,2) NULL CHECK (free_delivery_above_npr > 0),
+  ADD CONSTRAINT vendors_serviceable_palikas_size_check CHECK (cardinality(serviceable_palikas) BETWEEN 1 AND 30),
+  ADD CONSTRAINT vendors_own_palika_served_check CHECK (municipality_palika_string = ANY (serviceable_palikas));
+-- hand-added backfill before the two CHECKs: serviceable_palikas = ARRAY[municipality_palika_string]
+ALTER TABLE vendors ALTER COLUMN base_delivery_fee_npr SET DEFAULT 0;
+CREATE INDEX vendors_serviceable_palikas_idx ON vendors USING gin (serviceable_palikas);
+
+ALTER TABLE platform_settings
+  ADD COLUMN self_delivery_enabled      boolean       NOT NULL DEFAULT true,
+  ADD COLUMN platform_fleet_enabled     boolean       NOT NULL DEFAULT true,
+  ADD COLUMN platform_delivery_fee_npr  numeric(12,2) NOT NULL DEFAULT 50 CHECK (platform_delivery_fee_npr >= 0);
+```
+
+- **Feed and checkout serviceability** (`CatalogService`, one SQL expression, reused by the
+  checkout check of BACKEND_CHECKLIST section 2): `CITY_WIDE` becomes
+  `:palika = ANY (vendors.serviceable_palikas)` (it was `municipality_palika_string = :palika`).
+  `RADIUS_BOUND` and `NATION_WIDE` are unchanged. `feedVendorSchema` gains `serviceable_palikas`
+  and `is_national` (strict schema: API first, then an app build).
+- **Delivery charge**, computed in `CheckoutService` and stored on the order as today:
+  - `SELF_DELIVERY`: `F = base_delivery_fee_npr + ceil(distance_km) × delivery_fee_per_km_npr`
+    (the per-km part only for `RADIUS_BOUND`), and `F = 0` when
+    `free_delivery_above_npr` is set and the subtotal reaches it.
+  - `PLATFORM_FLEET`: `F = platform_settings.platform_delivery_fee_npr`.
+  - The feed's `base_delivery_fee_npr` then shows the mode's base figure; an exact fee for a
+    cart is the quote's (§8Z.5 `POST /api/cart/quote`).
+- **Routes.** Vendor `GET / PUT /api/vendor/delivery-settings { fulfillment_mode, delivery_scope,
+radius_km, serviceable_palikas, base_delivery_fee_npr, delivery_fee_per_km_npr,
+free_delivery_above_npr }`: `422 DELIVERY_MODE_DISABLED`, `422 PALIKA_UNKNOWN`
+  (`details.palikas`; names are checked against `localization/nepal-geography`),
+  `400 VALIDATION_FAILED` (a fee under `PLATFORM_FLEET`, a radius above the platform maximum).
+  Admin `PUT /api/admin/settings/logistics` for the three `platform_settings` columns (Super
+  Admin flow step 4, never built).
+- A vendor whose mode the Admin disabled is treated as not LIVE by the feed and checkout
+  (`422 VENDOR_UNAVAILABLE`) and sees a banner; its status column is not changed.
+- `EMERGENCY_FLEET` is unchanged: it is a per-order override, never a vendor's mode.
+
+### 2. Billing cycle lock
+
+```sql
+ALTER TYPE pricing_model ADD VALUE 'FREE';      -- its own migration, before first use (see 0019)
+
+-- What a Super Admin offers. Terms are immutable per row: a new rate is a new plan.
+CREATE TABLE pricing_plans (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name                text NOT NULL,
+  model               pricing_model NOT NULL,                    -- FREE | SUBSCRIPTION | COMMISSION
+  commission_rate     numeric(5,2)  NOT NULL DEFAULT 0 CHECK (commission_rate BETWEEN 0 AND 100),
+  monthly_fee_npr     numeric(12,2) NOT NULL DEFAULT 0 CHECK (monthly_fee_npr >= 0),
+  duration_cycles     integer NULL CHECK (duration_cycles > 0),  -- FREE: how many cycles it lasts
+  is_offered          boolean NOT NULL DEFAULT true,
+  created_by_user_id  uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  CHECK (model = 'COMMISSION' OR commission_rate = 0),
+  CHECK (model = 'SUBSCRIPTION' OR monthly_fee_npr = 0),
+  CHECK ((model = 'FREE') = (duration_cycles IS NOT NULL))
+);
+
+ALTER TABLE vendors
+  ADD COLUMN pricing_plan_id           uuid NULL REFERENCES pricing_plans(id) ON DELETE RESTRICT,
+  ADD COLUMN accepted_payment_methods  payment_method[] NOT NULL DEFAULT '{ESEWA,KHALTI,COD}'
+             CHECK (cardinality(accepted_payment_methods) >= 1),
+  ADD COLUMN billing_cycle_started_at  timestamptz NULL,
+  ADD COLUMN billing_cycle_ends_at     timestamptz NULL,
+  ADD CONSTRAINT vendors_billing_cycle_check CHECK (
+    (billing_cycle_started_at IS NULL) = (billing_cycle_ends_at IS NULL)
+    AND (billing_cycle_ends_at IS NULL OR billing_cycle_ends_at > billing_cycle_started_at));
+CREATE INDEX vendors_billing_cycle_ends_at_idx ON vendors (billing_cycle_ends_at)
+  WHERE billing_cycle_ends_at IS NOT NULL;                       -- the renewal job's queue
+
+CREATE TYPE vendor_setting        AS ENUM ('PRICING_PLAN', 'PAYMENT_METHODS');
+CREATE TYPE setting_change_status AS ENUM ('PENDING', 'APPLIED', 'WITHDRAWN', 'SUPERSEDED');
+
+-- The queue. A row is the vendor's request; only the renewal job applies it.
+CREATE TABLE vendor_setting_changes (
+  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  vendor_id             uuid NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
+  setting               vendor_setting NOT NULL,
+  current_value         jsonb NOT NULL,          -- what was active when it was requested
+  requested_value       jsonb NOT NULL,          -- { "pricing_plan_id": … } | { "methods": [ … ] }
+  status                setting_change_status NOT NULL DEFAULT 'PENDING',
+  requested_by_user_id  uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,   -- the vendor's user
+  requested_at          timestamptz NOT NULL DEFAULT now(),
+  effective_from        timestamptz NOT NULL,    -- = vendors.billing_cycle_ends_at at request time
+  closed_at             timestamptz NULL,        -- applied, withdrawn or superseded
+  CHECK ((status = 'PENDING') = (closed_at IS NULL)),
+  CHECK (effective_from > requested_at)
+);
+CREATE UNIQUE INDEX vendor_setting_changes_pending_uidx ON vendor_setting_changes (vendor_id, setting)
+  WHERE status = 'PENDING';                                      -- one waiting change per setting
+CREATE INDEX vendor_setting_changes_due_idx ON vendor_setting_changes (effective_from) WHERE status = 'PENDING';
+CREATE INDEX vendor_setting_changes_requested_by_idx ON vendor_setting_changes (requested_by_user_id);
+```
+
+- **Why a table and not a `queued_settings_changes` JSON column:** each request is its own row
+  with who and when (dispute-proof, like §8Z.5's opt-ins), the partial unique index makes "one
+  pending change per setting" a database rule, and the renewal job reads an index instead of
+  scanning every vendor.
+- **Request** (`POST /api/vendor/billing/changes { setting, value }`, one transaction under the
+  vendor row lock `FOR NO KEY UPDATE`): validate (below), mark an existing PENDING row of that
+  setting `SUPERSEDED`, insert the new one with `effective_from = billing_cycle_ends_at`, write an
+  audit row. Answers **202** with the row. A value equal to the active one only withdraws the
+  pending change.
+  - `422 PRICING_PLAN_NOT_OFFERED`; `409 LOCK_IN_ACTIVE` (`details.lock_in_expiry`) for leaving a
+    subscription inside its 90 days; `422 PAYMENT_METHOD_NOT_ALLOWED` (`details.allowed`) for a
+    method the shop's settlement model does not permit; `400 VALIDATION_FAILED` for an empty list.
+- **Withdraw:** `DELETE /api/vendor/billing/changes/:id` → 204 (PENDING → WITHDRAWN; also on
+  repeat); `409 SETTING_CHANGE_CLOSED` once applied.
+- **Read:** `GET /api/vendor/billing` → the active plan, accepted methods, cycle dates, the
+  pending changes and the plans on offer. Admin `GET / POST /api/admin/pricing-plans`,
+  `POST …/:id/withdraw` (stops new selections; vendors already on it keep it).
+- **Renewal** (`BILLING_CYCLE_RENEWAL`, a fourth task on the existing `midnight-maintenance`
+  queue, Asia/Kathmandu). For each vendor with `billing_cycle_ends_at <= now()`, **one
+  transaction per vendor** under the vendor row lock, re-checking the date after the lock:
+  1. apply every PENDING change with `effective_from <= now()`: set `pricing_plan_id`,
+     `pricing_model`, `commission_rate` (and `lock_in_expiry = now() + 90 days` on entering a
+     subscription), or `accepted_payment_methods`; mark it `APPLIED`;
+  2. start the next cycle: `started_at` = the old `ends_at`, `ends_at` = the first instant of the
+     following BS month (`nextBsMonthStart`, Asia/Kathmandu), repeated if the job missed several;
+     if the vendor is on a `FREE` plan whose `duration_cycles` are now used up, move it to the
+     default Commission plan in this step (decision 3 above);
+  3. one `audit_logs` row per applied change (`VENDOR_SETTING_CHANGE_APPLIED`; the request wrote
+     `VENDOR_SETTING_CHANGE_REQUESTED`). A rerun or a second worker finds the date already moved.
+- **Reads that must use the active values only:** `CheckoutService` (commission rate),
+  `payment_options` (§8Z.5: the routing table ∩ `accepted_payment_methods`), the feed. No code
+  reads a PENDING row to make a decision.
+- `vendors.scheduled_downgrade` and the `SUBSCRIPTION_DOWNGRADE` placeholder task are replaced by
+  the queue and this job; drop the column in the migration that adds the queue (nothing reads it).
+- **The first plan** is chosen at APPROVED → LIVE and is immediate: no cycle exists yet, and going
+  LIVE starts the first one.
+- Depends on `audit_logs` (§8Z.5 step 1).
+
+### 3. Fiscal invoicing
+
+```sql
+-- Tax identity on the shop (copied into every invoice at issue).
+ALTER TABLE vendors
+  ADD COLUMN legal_name          text NULL,
+  ADD COLUMN registered_address  text NULL,
+  ADD COLUMN tax_id              text NULL CHECK (tax_id ~ '^[0-9]{9}$'),          -- PAN; the VAT number is the PAN
+  ADD COLUMN is_vat_registered   boolean NOT NULL DEFAULT false,
+  ADD COLUMN status_before_compliance_suspension vendor_status NULL,              -- what a PAN upload restores
+  ADD CONSTRAINT vendors_live_tax_identity_check                                  -- added after the compliance sweep (decision 4 above)
+    CHECK (status <> 'LIVE' OR tax_id IS NOT NULL),
+  ADD CONSTRAINT vendors_compliance_suspension_check                              -- like the debt and admin columns of 0014 / 0015
+    CHECK ((status = 'SUSPENDED_COMPLIANCE') = (status_before_compliance_suspension IS NOT NULL)
+           AND status_before_compliance_suspension IS DISTINCT FROM 'SUSPENDED_COMPLIANCE');
+-- ALTER TYPE vendor_status ADD VALUE 'SUSPENDED_COMPLIANCE' goes in its own migration first (see 0019).
+
+ALTER TABLE products
+  ADD COLUMN hs_code      text NULL CHECK (hs_code ~ '^[0-9]{4,8}$'),
+  ADD COLUMN is_imported  boolean NOT NULL DEFAULT false,
+  ADD COLUMN is_vat_exempt boolean NOT NULL DEFAULT false,
+  ADD CONSTRAINT products_imported_hs_code_check CHECK (NOT is_imported OR hs_code IS NOT NULL);
+
+CREATE TYPE fiscal_document_type AS ENUM ('INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE');
+CREATE TYPE cbms_sync_status     AS ENUM ('NOT_REQUIRED', 'PENDING', 'SYNCED', 'FAILED');
+
+-- The gap-free counter: one row per seller, fiscal year and document type, locked FOR UPDATE
+-- inside the issuing transaction. Never a SEQUENCE (a rollback would burn a number).
+CREATE TABLE invoice_sequences (
+  vendor_id      uuid NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
+  fiscal_year    text NOT NULL CHECK (fiscal_year ~ '^[0-9]{4}/[0-9]{3}$'),       -- "2082/083"
+  document_type  fiscal_document_type NOT NULL,
+  last_number    integer NOT NULL DEFAULT 0 CHECK (last_number >= 0),
+  PRIMARY KEY (vendor_id, fiscal_year, document_type)
+);
+
+CREATE TABLE invoices (
+  id                        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  document_type             fiscal_document_type NOT NULL,
+  vendor_id                 uuid NOT NULL REFERENCES vendors(id) ON DELETE RESTRICT,
+  order_id                  uuid NOT NULL REFERENCES orders(id)  ON DELETE RESTRICT,
+  reference_invoice_id      uuid NULL REFERENCES invoices(id)    ON DELETE RESTRICT,   -- notes: the invoice corrected
+  reason                    text NULL,                                                 -- notes: why
+  -- metadata
+  fiscal_year               text NOT NULL CHECK (fiscal_year ~ '^[0-9]{4}/[0-9]{3}$'),
+  bill_number               integer NOT NULL CHECK (bill_number >= 1),
+  issued_at                 timestamptz NOT NULL DEFAULT now(),                        -- AD
+  issued_date_bs            text NOT NULL CHECK (issued_date_bs ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'),
+  payment_method            payment_method NOT NULL,
+  -- header: the seller as it was at issue, and the buyer
+  seller_name               text NOT NULL,
+  seller_address            text NOT NULL,
+  seller_phone              text NOT NULL,
+  seller_tax_id             text NOT NULL CHECK (seller_tax_id ~ '^[0-9]{9}$'),
+  seller_is_vat_registered  boolean NOT NULL,
+  buyer_name                text NOT NULL,
+  buyer_tax_id              text NULL CHECK (buyer_tax_id ~ '^[0-9]{9}$'),
+  platform_disclaimer       text NOT NULL,
+  -- totals (NPR, 2 decimals; a note's amounts are positive, its type gives the direction)
+  subtotal_npr              numeric(12,2) NOT NULL CHECK (subtotal_npr >= 0),          -- goods, VAT inclusive, before discount
+  discount_npr              numeric(12,2) NOT NULL DEFAULT 0 CHECK (discount_npr >= 0),
+  taxable_amount_npr        numeric(12,2) NOT NULL CHECK (taxable_amount_npr >= 0),
+  vat_rate_percent          numeric(5,2)  NOT NULL,                                    -- 13.00, or 0 for a non-VAT seller
+  vat_amount_npr            numeric(12,2) NOT NULL CHECK (vat_amount_npr >= 0),
+  exempt_amount_npr         numeric(12,2) NOT NULL DEFAULT 0 CHECK (exempt_amount_npr >= 0),  -- sales carrying no VAT
+  delivery_charge_npr       numeric(12,2) NOT NULL DEFAULT 0 CHECK (delivery_charge_npr >= 0),
+  delivery_charged_by       text NOT NULL CHECK (delivery_charged_by IN ('VENDOR', 'PLATFORM')),
+  grand_total_npr           numeric(12,2) NOT NULL,
+  amount_in_words           text NOT NULL,
+  -- tracking and CBMS (the only columns that may change after issue)
+  print_count               integer NOT NULL DEFAULT 0 CHECK (print_count >= 0),
+  first_printed_at          timestamptz NULL,
+  cbms_status               cbms_sync_status NOT NULL DEFAULT 'NOT_REQUIRED',
+  cbms_is_realtime          boolean NULL,
+  cbms_synced_at            timestamptz NULL,
+  cbms_response             jsonb NULL,
+  content_hash              text NOT NULL,                                             -- SHA-256 of the header, totals and lines as issued
+  UNIQUE (vendor_id, document_type, fiscal_year, bill_number),
+  CHECK ((document_type = 'INVOICE') = (reference_invoice_id IS NULL)),
+  CHECK ((document_type = 'INVOICE') = (reason IS NULL)),
+  CHECK (seller_is_vat_registered OR (vat_amount_npr = 0 AND taxable_amount_npr = 0)),
+  CHECK (grand_total_npr = subtotal_npr - discount_npr + delivery_charge_npr),
+  CHECK (grand_total_npr = taxable_amount_npr + vat_amount_npr + exempt_amount_npr
+                           + CASE WHEN delivery_charged_by = 'PLATFORM' THEN delivery_charge_npr ELSE 0 END)
+);
+CREATE UNIQUE INDEX invoices_order_invoice_uidx ON invoices (order_id) WHERE document_type = 'INVOICE';
+CREATE INDEX invoices_order_id_idx   ON invoices (order_id);
+CREATE INDEX invoices_reference_idx  ON invoices (reference_invoice_id) WHERE reference_invoice_id IS NOT NULL;
+CREATE INDEX invoices_vendor_list_idx ON invoices (vendor_id, fiscal_year, issued_at, id);
+CREATE INDEX invoices_cbms_queue_idx ON invoices (issued_at) WHERE cbms_status IN ('PENDING', 'FAILED');
+
+CREATE TABLE invoice_lines (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_id          uuid NOT NULL REFERENCES invoices(id) ON DELETE RESTRICT,
+  line_number         integer NOT NULL CHECK (line_number >= 1),
+  line_type           text NOT NULL CHECK (line_type IN ('ITEM', 'DELIVERY')),   -- DELIVERY: the vendor's own charge
+  product_id          uuid NULL REFERENCES products(id) ON DELETE RESTRICT,
+  product_name        text NOT NULL,                                             -- copied
+  hs_code             text NULL,
+  quantity            integer NOT NULL CHECK (quantity >= 1),
+  unit_price_npr      numeric(12,2) NOT NULL,                                    -- VAT inclusive, as charged
+  line_discount_npr   numeric(12,2) NOT NULL DEFAULT 0,
+  taxable_amount_npr  numeric(12,2) NOT NULL,
+  vat_rate_percent    numeric(5,2)  NOT NULL,
+  vat_amount_npr      numeric(12,2) NOT NULL,
+  line_total_npr      numeric(12,2) NOT NULL,
+  UNIQUE (invoice_id, line_number),
+  CHECK ((line_type = 'ITEM') = (product_id IS NOT NULL))
+);
+CREATE INDEX invoice_lines_product_id_idx ON invoice_lines (product_id) WHERE product_id IS NOT NULL;
+
+-- Every view, download and print. Append-only.
+CREATE TABLE invoice_access_log (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  invoice_id   uuid NOT NULL REFERENCES invoices(id) ON DELETE RESTRICT,
+  user_id      uuid NOT NULL REFERENCES users(id)    ON DELETE RESTRICT,
+  actor_role   user_role NOT NULL,
+  action       text NOT NULL CHECK (action IN ('VIEW', 'DOWNLOAD', 'PRINT')),
+  copy_number  integer NULL,          -- PRINT only: 0 = the original, n = "Copy of Original (n)"
+  occurred_at  timestamptz NOT NULL DEFAULT clock_timestamp(),
+  ip_address   inet NULL,
+  user_agent   text NULL,
+  CHECK ((action = 'PRINT') = (copy_number IS NOT NULL))
+);
+CREATE INDEX invoice_access_log_invoice_idx ON invoice_access_log (invoice_id, occurred_at);
+CREATE INDEX invoice_access_log_user_idx    ON invoice_access_log (user_id);
+```
+
+- **Immutability, in the database** (the pattern of `ledger_entries`, migration 0006):
+  - `invoices`: a trigger refuses `DELETE` and `TRUNCATE`, and refuses any `UPDATE` that changes a
+    column other than `print_count`, `first_printed_at` and the four `cbms_*` columns.
+    `print_count` may only grow by 1.
+  - `invoice_lines` and `invoice_access_log`: `UPDATE`, `DELETE` and `TRUNCATE` refused; lines can
+    be inserted only in the transaction that created their invoice (deferred constraint trigger,
+    as for journal postings), and an invoice must have at least one line and totals equal to the
+    sum of its lines at COMMIT.
+  - `invoice_sequences`: only `last_number = last_number + 1` is allowed.
+  - `content_hash` lets a later audit prove a row is what was issued even against a superuser.
+- **Issuing** (`InvoiceService.issueForOrder(tx, order)`, called by `DeliveryHandoff.handOver`
+  after the settlement, so the rider's and the vendor's handoff both issue):
+  1. `fiscal_year` and `issued_date_bs` from the database clock in Asia/Kathmandu, through a new
+     shared-types module (`localization/bikram-sambat.ts`: a BS month-length table, AD ↔ BS,
+     `fiscalYearOf`; none exists today);
+  2. `INSERT … ON CONFLICT DO NOTHING` the counter row, then
+     `UPDATE invoice_sequences SET last_number = last_number + 1 … RETURNING` (the row lock
+     serialises concurrent deliveries of one shop);
+  3. lines from `order_items` (+ the product's `hs_code`, `is_vat_exempt` as they are now), the
+     discount spread over the lines in proportion (largest-remainder, so the paisa add up), the
+     VAT split per line, a `DELIVERY` line when the vendor charged the fee;
+  4. the invoice and its lines; `amount_in_words` from a new `amountInWords` helper (lakh / crore).
+- **VAT arithmetic** (integer paisa, like every other amount): per taxable line with gross `g`
+  after its discount: `taxable = round_half_up(g × 100 / 113)`, `vat = g − taxable`. An exempt
+  line, and every line of a non-VAT seller, goes to `exempt_amount_npr` with VAT 0.
+- **Delivery charge on the invoice:** under `SELF_DELIVERY` it is the vendor's sale (a `DELIVERY`
+  line, taxed like goods). Under fleet delivery it is not the vendor's revenue: it is printed as
+  its own total row "Delivery charge (Hamro Pasal delivery)" and stays out of the vendor's taxable
+  sales.
+- **Notes.** Amounts on a Credit Note may not exceed what the invoice still has uncredited (checked
+  under the invoice row lock). Issued automatically when a refund is paid after delivery (dispute
+  resolution, once built), or by the vendor with a reason:
+  `POST /api/vendor/invoices/:id/notes { document_type, reason, lines[] }`. A cancellation before
+  delivery needs no note (no invoice exists yet).
+- **Routes.**
+
+  | Route                                                                 | Who                    | Answers                                                                                                                        |
+  | --------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+  | `GET /api/orders/:id/invoice`                                         | customer (order owner) | the invoice and its notes; logs VIEW. `404 INVOICE_NOT_FOUND` before delivery                                                  |
+  | `GET /api/vendor/invoices?fiscal_year=&document_type=&limit=&cursor=` | vendor (own shop)      | newest first, keyset; no log                                                                                                   |
+  | `GET /api/vendor/invoices/:id`                                        | vendor (own shop)      | header, metadata, lines, totals, `print_count`; logs VIEW                                                                      |
+  | `POST /api/vendor/invoices/:id/print`                                 | vendor (own shop)      | `{ copy_number, label }` (`"ORIGINAL"` or `"COPY OF ORIGINAL (n)"`); under the row lock: `print_count + 1` and a PRINT log row |
+  | `GET /api/admin/invoices?vendor_id=&fiscal_year=&cursor=`             | Super Admin            | read only; logs VIEW per opened invoice                                                                                        |
+  - Another shop's or customer's invoice is `404`. The API returns structured JSON; rendering
+    (screen, PDF, thermal printer) is the client's, which must print the label it was given.
+
+- **Privacy:** the vendor's invoice shows the buyer's name. That is a deliberate exception to the
+  strict `VendorOrderView` (no customer name); the phone number is still never shown.
+- **CBMS forward compatibility.** The columns map onto the IRD's bill and return payloads as
+  published (re-check against the current CBMS API document before integrating):
+
+  | CBMS field                                                                                  | Source                                                                                |
+  | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+  | `seller_pan`, `buyer_pan`, `buyer_name`                                                     | `seller_tax_id`, `buyer_tax_id`, `buyer_name`                                         |
+  | `fiscal_year`                                                                               | `fiscal_year` (the IRD writes it `2082.083`: reformat at send time)                   |
+  | `invoice_number`, `invoice_date`                                                            | `bill_number` (with the shop's prefix), `issued_date_bs`                              |
+  | `total_sales`, `taxable_sales_vat`, `vat`                                                   | `grand_total_npr`, `taxable_amount_npr`, `vat_amount_npr`                             |
+  | `tax_exempted_sales`                                                                        | `exempt_amount_npr`                                                                   |
+  | `export_sales`, excise, HST, ESF fields                                                     | 0 (not sold here)                                                                     |
+  | `isrealtime`, `datetimeclient`                                                              | `cbms_is_realtime`, `issued_at`                                                       |
+  | return: `ref_invoice_number`, `credit_note_number`, `credit_note_date`, `reason_for_return` | `reference_invoice_id` → its `bill_number`; `bill_number`; `issued_date_bs`; `reason` |
+
+  The sync would be a worker consumer of an `invoice.issued` outbox event that posts rows with
+  `cbms_status = 'PENDING'` using the vendor's CBMS credentials (a per-vendor secret, like the
+  Model C gateway accounts of §8Z.5) and stores the answer. Not specified further.
+
+### Suggested build order
+
+1. `bikram-sambat.ts` + `amountInWords` in shared-types, with pinned date vectors (pure, testable
+   alone).
+2. Delivery modularity (independent of everything else; unblocks the vendor settings screen).
+3. Vendor tax identity + product `hs_code` / flags (Vendor Portal and app forms).
+4. Invoices: tables and triggers, `InvoiceService`, the hook in `DeliveryHandoff`, read / print routes.
+5. `audit_logs` (§8Z.5 step 1), then pricing plans, the queue and the renewal job.
+6. Credit / Debit Notes (with dispute resolution), then CBMS.
+
+### Vendor App navigation (built)
+
+Mobile only. `app/(vendor)/_layout.tsx` changed from a `Stack` to **`Tabs`** (same vendor-only
+guard). URLs did not change: `/dashboard` is still where a vendor lands.
+
+| Tab (label)        | Route file                   | URL          | Content today                                                                                |
+| ------------------ | ---------------------------- | ------------ | -------------------------------------------------------------------------------------------- |
+| Live Orders (home) | `app/(vendor)/dashboard.tsx` | `/dashboard` | the Phase 10 / 11.5 dashboard, unchanged                                                     |
+| Catalogue          | `app/(vendor)/catalogue.tsx` | `/catalogue` | placeholder (the API exists: `/api/vendor/products`, §8K, §8L)                               |
+| Ledger             | `app/(vendor)/wallet.tsx`    | `/wallet`    | the Phase 12 / 12.5 wallet, unchanged; a receipt icon in its header opens Invoices           |
+| Marketing          | `app/(vendor)/marketing.tsx` | `/marketing` | placeholder (My Offers, Campaign Invites, Ad Marketplace: §8Z.5, unbuilt)                    |
+| (no tab)           | `app/(vendor)/invoices.tsx`  | `/invoices`  | placeholder; `href: null`, so the tab bar stays but shows no button for it; back → `/wallet` |
+
+- The three placeholders render `features/vendor/VendorSectionPlaceholder.tsx`. Replace the
+  screen file when a section is built; turn a tab into a folder with its own `_layout.tsx`
+  (a `Stack`) when it needs screens of its own (the pattern of `app/(tabs)/(home)/`).
+- The dashboard and the wallet still set their header title with `<Stack.Screen options>`; inside
+  `Tabs` that sets the tab screen's options. Each tab therefore has an explicit `tabBarLabel`, so
+  the bar reads "Live Orders" / "Ledger" under headers titled "Incoming orders" / "Wallet".
+- **Superseded by §8Z.12:** the dashboard's "Wallet" and Sign out buttons are gone (the Ledger
+  is a tab, Sign out is in Shop settings), and the header has a settings gear and the Online
+  switch.
+- The alarm is unaffected in code, but **the dashboard now stays mounted while another tab is
+  open**, so it keeps ringing for a new order from any tab (before, leaving for the wallet kept
+  it mounted too, under the stack). Not checked on a device.
+- Strings: `vendorTabs.*` (EN / NE; the Nepali is unreviewed).
+- **Tests.** `VendorRouting.test.tsx` (its `expo-router` stand-in now renders each declared tab):
+  the vendor guard as before, the four tabs in order with Invoices out of the bar, the Ledger
+  header link and the way back, the three placeholders. Mobile **1306** (+5; the full suite passed in one run). `tsc`,
+  `eslint`, `prettier` clean. **Not run on a device**: `href: null` keeping the tab bar on
+  `/invoices`, the header buttons' placement and the tab order are verified only in Jest.
+
+### Open questions (for the user and a tax adviser)
+
+Settled on 2026-10-07 and removed from this list: discounts and VAT, the cycle length, the
+prorated first fee (strictly by days), what follows a Free plan, existing shops without a PAN,
+and CBMS timing (see "Final decisions" at the
+top of this section).
+
+- **Buyer on a retail invoice.** Whether the buyer's name is required, or "Cash" suffices below
+  the IRD's threshold; and collecting a buyer PAN at checkout for business customers.
+- **Invoice number format** as printed (bare number, or a prefix per shop) and whether a vendor
+  that already bills with its own IRD-approved software may issue through the platform at all.
+- **Orders delivered before this ships** get no invoice (numbering starts with the first delivery
+  after deployment). Still to confirm.
+- **Legal name and registered address:** only the PAN was made mandatory. The invoice header also
+  prints the vendor's name and address; until a shop gives them, `business_name` and its Palika
+  line are what the header would show. Decide whether they block LIVE too.
+- **Platform invoices to vendors** (commission, subscription, ads, with VAT) are still
+  unspecified (also listed in §8Z.5).
+- **Retention** of invoices and the access log, and how account deletion (§8Z.10) anonymises a
+  buyer whose name is on an immutable invoice.
+- **CBMS credentials** are per seller; whether the platform may hold and use them needs the same
+  kind of confirmation as Model C's gateway credentials.
+
 ## 8Z.10 User lifecycle and Profile overhaul: language, consent onboarding, appearance, account deletion (2026-10-07)
 
 Mobile only. **No API, shared-types, SPEC or database change was made.** §8Z.5 (settlement

@@ -236,8 +236,11 @@ describe('vendor dashboard: the incoming-order alarm (expo-audio)', () => {
     await waitFor(() => {
       expect(useToastStore.getState().toast?.message).toBe('Order accepted. Start preparing it.');
     });
-    expect(screen.getByText('Preparing')).toBeOnTheScreen();
+    expect(screen.getByTestId('stage-count-PREPARING')).toHaveTextContent('1');
+    expect(screen.getByTestId('stage-count-NEW')).toHaveTextContent('0');
     expect(screen.queryByTestId(`accept-${NEW_ORDER_ID}`)).not.toBeOnTheScreen();
+    fireEvent.press(screen.getByTestId('stage-PREPARING'));
+    expect(orderCard(NEW_ORDER_ID)).toBeOnTheScreen();
     expect(player.play).toHaveBeenCalledTimes(1); // it did not start again
   });
 

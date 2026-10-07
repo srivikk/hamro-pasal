@@ -3,13 +3,10 @@ import { Redirect } from 'expo-router';
 import { Switch, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { useUpdateAccount } from '../../src/api/account';
 import { MenuCard } from '../../src/components/MenuRow';
-import { useCurrentConsents } from '../../src/features/profile/profile-form';
 import { SettingsPage } from '../../src/features/settings/SettingsPage';
+import { useWhatsAppOptIn } from '../../src/features/settings/useWhatsAppOptIn';
 import { selectHasSession, useAuthStore } from '../../src/store/useAuthStore';
-import { selectSessionUserId, useProfileStore } from '../../src/store/useProfileStore';
-import { useToastStore } from '../../src/store/useToastStore';
 import { colors } from '../../src/theme/colors';
 
 /**
@@ -20,31 +17,9 @@ import { colors } from '../../src/theme/colors';
 export default function NotificationPreferencesScreen() {
   const { t } = useTranslation();
   const signedIn = useAuthStore(selectHasSession);
-  const userId = useAuthStore(selectSessionUserId);
-  const optedIn = useCurrentConsents()?.whatsapp_opt_in ?? false;
-  const updateAccount = useUpdateAccount();
-  const showToast = useToastStore((state) => state.show);
+  const { optedIn, pending, change } = useWhatsAppOptIn();
 
   if (!signedIn) return <Redirect href="/login" />;
-
-  const change = (next: boolean): void => {
-    if (updateAccount.isPending) return;
-    const { setWhatsAppOptIn } = useProfileStore.getState();
-    setWhatsAppOptIn(next, userId);
-    updateAccount.mutate(
-      { whatsapp_opt_in: next },
-      {
-        onSuccess: (user) => {
-          // The server's answer wins (null: no such route yet, the phone's copy stands).
-          if (user !== null) setWhatsAppOptIn(user.whatsapp_opt_in, userId);
-        },
-        onError: () => {
-          setWhatsAppOptIn(!next, userId);
-          showToast(t('notificationPrefs.failed'), 'error');
-        },
-      },
-    );
-  };
 
   return (
     <SettingsPage title={t('notificationPrefs.title')} testID="notification-prefs-screen">
@@ -65,7 +40,7 @@ export default function NotificationPreferencesScreen() {
             testID="whatsapp-opt-in-switch"
             accessibilityLabel={t('notificationPrefs.whatsapp')}
             value={optedIn}
-            disabled={updateAccount.isPending}
+            disabled={pending}
             onValueChange={change}
             trackColor={{ true: colors.brand }}
           />

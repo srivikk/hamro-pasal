@@ -1,26 +1,71 @@
 import type { UserRole } from '@hamro-pasal/shared-types';
-import { screen } from '@testing-library/react-native';
+import { fireEvent, screen, within } from '@testing-library/react-native';
+import { router } from 'expo-router';
 import type * as ReactModule from 'react';
 import type * as ReactNativeModule from 'react-native';
 
 import TabsLayout from '../../../app/(tabs)/_layout';
 import VendorLayout from '../../../app/(vendor)/_layout';
+import VendorMarketingScreen from '../../../app/(vendor)/marketing';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useOnboardingStore } from '../../store/useOnboardingStore';
 import { useProfileStore } from '../../store/useProfileStore';
 import { accessTokenFor } from '../../test/access-tokens';
 import { renderWithProviders } from '../../test/render';
 
-// Stand-ins that show which navigator (or redirect) a layout rendered.
+interface HeaderOptions {
+  headerLeft?: () => ReactModule.ReactNode;
+  headerRight?: () => ReactModule.ReactNode;
+}
+
+interface TabScreenProps {
+  name: string;
+  options?: HeaderOptions & { href?: string | null };
+}
+
+// Stand-ins that show which navigator (or redirect) a layout rendered: each declared tab is a
+// `tab-<name>` element saying whether it has a tab-bar button, followed by its header buttons.
+// The header every tab shares (settings gear, Online switch) is rendered once, in `shared-header`.
 jest.mock('expo-router', () => {
-  const { createElement } = jest.requireActual<typeof ReactModule>('react');
+  const { createElement, Fragment } = jest.requireActual<typeof ReactModule>('react');
   const { Text, View } = jest.requireActual<typeof ReactNativeModule>('react-native');
-  const Tabs = Object.assign(() => createElement(View, { testID: 'customer-tabs' }), {
-    Screen: () => null,
-  });
+  const Tabs = Object.assign(
+    ({
+      children,
+      screenOptions,
+    }: {
+      children?: ReactModule.ReactNode;
+      screenOptions?: HeaderOptions;
+    }) =>
+      createElement(
+        View,
+        { testID: 'tabs' },
+        createElement(
+          View,
+          { testID: 'shared-header' },
+          screenOptions?.headerLeft?.(),
+          screenOptions?.headerRight?.(),
+        ),
+        children,
+      ),
+    {
+      Screen: ({ name, options }: TabScreenProps) =>
+        createElement(
+          Fragment,
+          null,
+          createElement(
+            Text,
+            { testID: `tab-${name}` },
+            options?.href === null ? 'hidden' : 'shown',
+          ),
+          options?.headerLeft?.(),
+          options?.headerRight?.(),
+        ),
+    },
+  );
   return {
     Redirect: ({ href }: { href: string }) => createElement(Text, { testID: 'redirect' }, href),
-    Stack: () => createElement(View, { testID: 'vendor-stack' }),
+    router: { push: jest.fn(), navigate: jest.fn(), back: jest.fn() },
     Tabs,
   };
 });
@@ -43,25 +88,91 @@ describe('vendor-only route group app/(vendor)', () => {
 
     renderWithProviders(<VendorLayout />);
 
-    expect(screen.getByTestId('vendor-stack')).toBeOnTheScreen();
+    expect(screen.getByTestId('tab-dashboard')).toBeOnTheScreen();
   });
 
-  it.each<UserRole>(['CUSTOMER', 'DRIVER', 'SUPER_ADMIN'])(
-    'sends a %s to the customer app',
-    (role) => {
-      signIn(role);
+  it('has four tabs, Live Orders first, and keeps the other routes out of the tab bar', () => {
+    signIn('VENDOR');
 
-      renderWithProviders(<VendorLayout />);
-
-      expect(screen.getByTestId('redirect')).toHaveTextContent('/');
-      expect(screen.queryByTestId('vendor-stack')).not.toBeOnTheScreen();
-    },
-  );
-
-  it('sends a signed-out user (e.g. a vendor who just signed out) to the customer app', () => {
     renderWithProviders(<VendorLayout />);
 
-    expect(screen.getByTestId('redirect')).toHaveTextContent('/');
+    const tabs = screen.getAllByTestId(/^tab-/);
+    expect(tabs.map((tab) => String(tab.props.testID))).toEqual([
+      'tab-dashboard',
+      'tab-catalogue',
+      'tab-wallet',
+      'tab-marketing',
+      'tab-invoices',
+      'tab-product',
+      'tab-offer',
+      'tab-analytics',
+      'tab-settings',
+    ]);
+    expect(screen.getByTestId('tab-invoices')).toHaveTextContent('hidden');
+    for (const name of ['product', 'offer', 'analytics']) {
+      expect(screen.getByTestId(`tab-${name}`)).toHaveTextContent('hidden');
+    }
+    expect(screen.getByTestId('tab-settings')).toHaveTextContent('hidden');
+    for (const name of ['dashboard', 'catalogue', 'wallet', 'marketing']) {
+      expect(screen.getByTestId(`tab-${name}`)).toHaveTextContent('shown');
+    }
+  });
+
+  it('opens Invoices from the Ledger header and returns to the Ledger from there', () => {
+    signIn('VENDOR');
+    renderWithProviders(<VendorLayout />);
+
+    fireEvent.press(screen.getByTestId('vendor-invoices-link'));
+    expect(router.push).toHaveBeenCalledWith('/invoices');
+
+    fireEvent.press(screen.getByTestId('vendor-invoices-back'));
+    expect(router.navigate).toHaveBeenCalledWith('/wallet');
+  });
+
+  it('puts the settings gear and the Online switch in the header every tab shares', () => {
+    signIn('VENDOR');
+    renderWithProviders(<VendorLayout />);
+    const shared = within(screen.getByTestId('shared-header'));
+
+    expect(shared.getByTestId('vendor-online-toggle')).toBeOnTheScreen();
+    fireEvent.press(shared.getByTestId('vendor-settings-link'));
+    expect(router.push).toHaveBeenCalledWith('/settings');
+
+    // The Ledger replaces the right side with its own buttons: the switch must still be there.
+    expect(screen.getAllByTestId('vendor-online-toggle')).toHaveLength(2);
+
+    fireEvent.press(screen.getByTestId('vendor-settings-back'));
+    expect(router.back).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the product form from the Catalogue and returns there', () => {
+    signIn('VENDOR');
+    renderWithProviders(<VendorLayout />);
+
+    fireEvent.press(screen.getByTestId('vendor-product-back'));
+
+    expect(router.navigate).toHaveBeenCalledWith('/catalogue');
+  });
+
+  it('opens Analytics from the Ledger header, and returns from it and from the offer form', () => {
+    signIn('VENDOR');
+    renderWithProviders(<VendorLayout />);
+
+    fireEvent.press(screen.getByTestId('vendor-analytics-link'));
+    expect(router.push).toHaveBeenCalledWith('/analytics');
+
+    fireEvent.press(screen.getByTestId('vendor-analytics-back'));
+    expect(router.navigate).toHaveBeenLastCalledWith('/wallet');
+
+    fireEvent.press(screen.getByTestId('vendor-offer-back'));
+    expect(router.navigate).toHaveBeenLastCalledWith('/marketing');
+  });
+
+  it('opens Marketing on My Offers', () => {
+    renderWithProviders(<VendorMarketingScreen />);
+
+    expect(screen.getByTestId('marketing-section-OFFERS')).toBeSelected();
+    expect(screen.getByTestId('marketing-offers')).toBeOnTheScreen();
   });
 });
 
@@ -72,7 +183,7 @@ describe('customer tabs', () => {
     renderWithProviders(<TabsLayout />);
 
     expect(screen.getByTestId('redirect')).toHaveTextContent('/dashboard');
-    expect(screen.queryByTestId('customer-tabs')).not.toBeOnTheScreen();
+    expect(screen.queryByTestId('tab-(home)')).not.toBeOnTheScreen();
   });
 
   it('send a vendor there after a relaunch too (only the refresh token and role survive)', () => {
@@ -102,7 +213,7 @@ describe('customer tabs', () => {
 
     renderWithProviders(<TabsLayout />);
 
-    expect(screen.getByTestId('customer-tabs')).toBeOnTheScreen();
+    expect(screen.getByTestId('tab-(home)')).toBeOnTheScreen();
     expect(screen.queryByTestId('redirect')).not.toBeOnTheScreen();
   });
 });
@@ -112,13 +223,13 @@ describe('boot flow: the welcome screen', () => {
     renderWithProviders(<TabsLayout />);
 
     expect(screen.getByTestId('redirect')).toHaveTextContent('/welcome');
-    expect(screen.queryByTestId('customer-tabs')).not.toBeOnTheScreen();
+    expect(screen.queryByTestId('tab-(home)')).not.toBeOnTheScreen();
   });
 
   it('asks again after a sign-out when the login was never skipped', () => {
     signIn('CUSTOMER');
     const view = renderWithProviders(<TabsLayout />);
-    expect(screen.getByTestId('customer-tabs')).toBeOnTheScreen();
+    expect(screen.getByTestId('tab-(home)')).toBeOnTheScreen();
     view.unmount();
 
     useAuthStore.getState().clearSession();
@@ -160,20 +271,20 @@ describe('first launch and new-account onboarding', () => {
     useProfileStore.getState().completeOnboarding();
     renderWithProviders(<TabsLayout />);
 
-    expect(screen.getByTestId('customer-tabs')).toBeOnTheScreen();
+    expect(screen.getByTestId('tab-(home)')).toBeOnTheScreen();
   });
 
   it('never holds another account, or a guest, for an onboarding that is not theirs', () => {
     useProfileStore.getState().requireOnboarding('another-user-id');
     signIn('CUSTOMER');
     const other = renderWithProviders(<TabsLayout />);
-    expect(screen.getByTestId('customer-tabs')).toBeOnTheScreen();
+    expect(screen.getByTestId('tab-(home)')).toBeOnTheScreen();
     other.unmount();
 
     useAuthStore.getState().clearSession();
     useOnboardingStore.getState().skipAuthWall();
     renderWithProviders(<TabsLayout />);
 
-    expect(screen.getByTestId('customer-tabs')).toBeOnTheScreen();
+    expect(screen.getByTestId('tab-(home)')).toBeOnTheScreen();
   });
 });

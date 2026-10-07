@@ -36,3 +36,22 @@ export function useNow(): number {
   }, []);
   return now;
 }
+
+/**
+ * Whole seconds left until `deadlineMs`, rounded up, re-rendering once per second while any are
+ * left and not at all afterwards (an unreadable deadline counts as passed).
+ */
+export function useSecondsUntil(deadlineMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  const open = now < deadlineMs;
+  useEffect(() => {
+    if (!open) return undefined;
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [open]);
+  return open ? Math.ceil((deadlineMs - now) / 1000) : 0;
+}

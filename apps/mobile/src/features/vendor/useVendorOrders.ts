@@ -1,6 +1,7 @@
 import {
   ORDER_SOCKET_EVENTS,
   orderStateUpdateSchema,
+  type OrderStateUpdate,
   vendorSubscribeAckSchema,
   type DeliveryConfirmedResponseBody,
   type VendorOrderDecisionResponseBody,
@@ -8,7 +9,7 @@ import {
   type VendorOrderView,
 } from '@hamro-pasal/shared-types';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { z } from 'zod';
 
@@ -47,9 +48,19 @@ export function useVendorOrdersQuery() {
  * `vendor:{id}` room on every (re)connect and refetches the open orders after each join (catch-up)
  * and on each `order:state_update` of the shop's orders (a new PLACED order, or a customer
  * cancellation). A new order's items are not in the update, hence a refetch rather than a patch.
+ * `onStateUpdate` also receives each valid update (the board follows orders the list has dropped).
  */
-export function useVendorOrdersRealtime(enabled: boolean, socketFactory?: SocketFactory): void {
+export function useVendorOrdersRealtime(
+  enabled: boolean,
+  socketFactory?: SocketFactory,
+  onStateUpdate?: (update: OrderStateUpdate) => void,
+): void {
   const queryClient = useQueryClient();
+  // Read at call time, so a new callback never reconnects the socket.
+  const listener = useRef(onStateUpdate);
+  useEffect(() => {
+    listener.current = onStateUpdate;
+  }, [onStateUpdate]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -86,18 +97,21 @@ export function useVendorOrdersRealtime(enabled: boolean, socketFactory?: Socket
       subscribe();
     };
 
-    const onStateUpdate = (payload: unknown): void => {
-      if (orderStateUpdateSchema.safeParse(payload).success) refetch();
+    const onUpdate = (payload: unknown): void => {
+      const update = orderStateUpdateSchema.safeParse(payload);
+      if (!update.success) return;
+      listener.current?.(update.data);
+      refetch();
     };
 
     socket.on('connect', onConnect);
-    socket.on(ORDER_SOCKET_EVENTS.stateUpdate, onStateUpdate);
+    socket.on(ORDER_SOCKET_EVENTS.stateUpdate, onUpdate);
     socket.connect();
 
     return () => {
       if (retryTimer !== null) clearTimeout(retryTimer);
       socket.off('connect', onConnect);
-      socket.off(ORDER_SOCKET_EVENTS.stateUpdate, onStateUpdate);
+      socket.off(ORDER_SOCKET_EVENTS.stateUpdate, onUpdate);
       close();
     };
   }, [enabled, queryClient, socketFactory]);

@@ -262,6 +262,128 @@ Schemas, formulas and contracts: STATE_HANDOFF.md §8Z.5. Rules: SPEC.md core se
 
 ---
 
+## 6. Vendor operations and IRD compliance (specified 2026-10-07, nothing built)
+
+Rules: SPEC.md Dual-Fulfillment "Delivery Modularity", Vendor Pricing "Billing Cycle Lock", core section 10 "Fiscal Invoicing", Nepal section 5. Schemas, triggers and decisions: STATE_HANDOFF.md §8Z.11 (start with "Final decisions"). What the Vendor App already shows from sample data: §8Z.12 and §8Z.13. Every new or changed response shape lands in `packages/shared-types` first (strict schemas).
+
+**Decided 2026-10-07:** every discount lowers the taxable amount and the Grand Total equals `total_npr`; the Billing Cycle is the BS calendar month, first cycle and first fee prorated by days; an expired Free plan reverts to the default Commission plan with a 7-day notice; a LIVE vendor without a PAN becomes `SUSPENDED_COMPLIANCE`; vendors see the customer's first name only; a fleet order stays "Ready" until its rider confirms the pickup; CBMS is a later phase.
+
+### 6.1 Shared building blocks (do these first)
+
+- [ ] **P0 `localization/bikram-sambat.ts` in shared-types.** A BS month-length table (lookup, no formula), AD ↔ BS in `Asia/Kathmandu`, `fiscalYearOf(date)` → `"2082/083"` (the year starts on 1 Shrawan), `nextBsMonthStart(date)`, `daysInBsMonth`. Pin known date pairs in tests (7 October 2025 = 21 Ashwin 2082).
+- [ ] **P0 `amountInWords(npr)` in shared-types** (thousand / lakh / crore, "and Paisa … Only"). A working version with tests is in `apps/mobile/src/features/vendor/invoice-math.ts`; move it, do not rewrite it.
+- [ ] **P0 The canonical Palika list in shared-types** (753 municipalities with province and district), exported for the API's validation and the app's picker. The app uses a 10-name stand-in today (`mock-palikas.ts`).
+- [ ] **P1 `audit_logs`** (BACKEND_CHECKLIST section 5 step 1). The billing queue and the compliance sweep write to it.
+
+### 6.2 PAN compliance and tax identity — P0
+
+- [ ] **Migration A (own file, before first use):** `ALTER TYPE vendor_status ADD VALUE 'SUSPENDED_COMPLIANCE'`.
+- [ ] **Migration B:** `vendors.legal_name`, `registered_address`, `tax_id` (`^[0-9]{9}$`), `is_vat_registered`, `status_before_compliance_suspension`; `vendors_compliance_suspension_check`. Drizzle schema, `vendorSchema` and `contract.ts` together.
+- [ ] **`PUT /api/vendor/tax-identity`** (VENDOR, own shop, any status).
+  - Body `{ tax_id, is_vat_registered, legal_name?, registered_address? }` → `200 { vendor_id, tax_id, is_vat_registered, status }`.
+  - `400 VALIDATION_FAILED` for anything but nine digits.
+  - Same transaction, vendor row lock: a `SUSPENDED_COMPLIANCE` shop returns to `status_before_compliance_suspension`; write `vendor.restored`; issue the invoices its delivered orders were waiting for (6.4).
+- [ ] **Compliance sweep.** One-off run, then nightly `VENDOR_COMPLIANCE_SWEEP` on `midnight-maintenance`: every `LIVE` vendor with `tax_id IS NULL` → `SUSPENDED_COMPLIANCE`, outbox `vendor.suspended_for_compliance` (SMS + push), audit row. Only after it has run: add `vendors_live_tax_identity_check`.
+- [ ] **One gate for LIVE.** Go-live, `WalletService`'s debt restore and the admin Restore each send a vendor without a PAN to `SUSPENDED_COMPLIANCE` instead of `LIVE`.
+- [ ] **Worker:** SMS + push templates for `vendor.suspended_for_compliance`.
+- [ ] **Admin vendor list:** show the new status and suspension kind `COMPLIANCE`; Restore is refused while the PAN is missing.
+- [ ] Test: SPEC verification 13.
+
+### 6.3 Shop settings: availability, delivery mode, scope, charges — P0 / P1
+
+- [ ] **P0 `vendors.accepting_orders boolean NOT NULL DEFAULT true`** and **`PUT /api/vendor/availability { accepting_orders }`** → `200 { vendor_id, accepting_orders, status }` (also on repeat).
+  - Never changes `status`. Feed entry gains `accepting_orders` (app shows the shop closed, carts disabled). Checkout: `422 VENDOR_UNAVAILABLE`.
+  - Orders already placed are untouched. Test: SPEC verification 14.
+- [ ] **P0 `GET /api/vendor/profile`** (VENDOR): `{ vendor_id, business_name, status, suspension: NONE | DEBT | ADMIN | COMPLIANCE, accepting_orders, tax_id, is_vat_registered, settlement_model, fulfillment_mode, delivery_scope, radius_km, serviceable_palikas, base_delivery_fee_npr, delivery_fee_per_km_npr, free_delivery_above_npr, billing_cycle_ends_at }`. One call replaces the app's local copies of the Online switch and Shop settings.
+- [ ] **P1 Migration:** `vendors.serviceable_palikas text[]` (backfilled with the shop's own Palika, GIN index, size and own-Palika CHECKs), `delivery_fee_per_km_npr`, `free_delivery_above_npr`, `base_delivery_fee_npr` default 0; `platform_settings.self_delivery_enabled`, `platform_fleet_enabled`, `platform_delivery_fee_npr`.
+- [ ] **P1 `GET / PUT /api/vendor/delivery-settings`.**
+  - Body `{ fulfillment_mode, delivery_scope, radius_km, serviceable_palikas, base_delivery_fee_npr, delivery_fee_per_km_npr, free_delivery_above_npr }`.
+  - `422 DELIVERY_MODE_DISABLED`; `422 PALIKA_UNKNOWN` (`details.palikas`) for a name not in the canonical list; `400 VALIDATION_FAILED` for a fee under `PLATFORM_FLEET` or a radius out of range.
+- [ ] **P1 Serviceability SQL** (`CatalogService`, shared with the checkout check of section 2): `CITY_WIDE` = `:palika = ANY (serviceable_palikas)`. `feedVendorSchema` gains `serviceable_palikas`, `is_national`.
+- [ ] **P1 Delivery charge in `CheckoutService`:** self delivery = base + `ceil(km)` × per-km (Radius scope only), 0 at or above the free-delivery threshold; fleet = `platform_delivery_fee_npr`.
+- [ ] **P1 `PUT /api/admin/settings/logistics`** (the two mode switches and the platform fee).
+- [ ] Test: SPEC verification 10.
+
+### 6.4 Fiscal invoicing — P0
+
+- [ ] **Migration:** `fiscal_document_type`, `cbms_sync_status`; `invoice_sequences`, `invoices`, `invoice_lines`, `invoice_access_log` with every CHECK and index of §8Z.11; `products.hs_code`, `is_imported`, `is_vat_exempt`.
+- [ ] **Immutability triggers:** `invoices` refuses DELETE / TRUNCATE and any UPDATE outside `print_count`, `first_printed_at`, `cbms_*`; lines and the access log are append-only; `invoice_sequences` only counts up by 1; lines only in the creating transaction; totals equal the lines at COMMIT.
+- [ ] **`InvoiceService.issueForOrder(tx, order)`**, called by `DeliveryHandoff.handOver` (both the rider's and the vendor's handoff).
+  - Counter row locked `FOR UPDATE` in the delivery transaction (never a SEQUENCE).
+  - Discount spread over the lines (largest remainder), VAT split per line `taxable = round_half_up(g × 100 / 113)`, the shop's own delivery charge as a taxed `DELIVERY` line, a fleet charge outside its taxable sales.
+  - **Assert `grand_total_npr = orders.total_npr` before insert**; a mismatch aborts the delivery.
+  - Reference arithmetic with tests: `apps/mobile/src/features/vendor/invoice-math.ts#buildInvoice`.
+- [ ] **A shop swept for compliance:** deliveries of its open orders succeed without an invoice; the PAN upload issues them (6.2).
+- [ ] **`GET /api/orders/:id/invoice`** (customer, order owner): the invoice and its notes; logs VIEW; `404 INVOICE_NOT_FOUND` before delivery.
+- [ ] **`GET /api/vendor/invoices?fiscal_year=&document_type=&limit=&cursor=`** (newest first, keyset) and **`GET /api/vendor/invoices/:id`** (header, metadata, lines, totals, `print_count`; logs VIEW). Another shop's is 404.
+- [ ] **Printing is server-side only (confirmed 2026-10-07):** the app has no Print button until this route exists, so every copy is numbered.
+- [ ] **`POST /api/vendor/invoices/:id/print`** → `{ copy_number, label }` (`ORIGINAL`, then `COPY OF ORIGINAL (n)`); under the row lock: `print_count + 1` and a PRINT log row.
+- [ ] **`POST /api/vendor/invoices/:id/notes { document_type, reason, lines[] }`** (Credit / Debit Note, own gap-free sequence; a credit may not exceed what is left uncredited). Automatic Credit Note when a refund is paid after delivery (needs dispute resolution).
+- [ ] **`GET /api/admin/invoices?vendor_id=&fiscal_year=&cursor=`** (read only; logs VIEW).
+- [ ] **Vendor product routes** accept `hs_code`, `is_imported`, `is_vat_exempt` (`400` for an imported product without an HS code).
+- [ ] **P2 CBMS** (deferred): a worker consumer of `invoice.issued` posting `PENDING` rows with the seller's CBMS credentials. Schema is ready; do not start.
+- [ ] Test: SPEC verification 12, including 20 concurrent deliveries → bill numbers 1–20, a rolled-back delivery consuming none, the first invoice after 1 Shrawan being number 1, and UPDATE / DELETE refused for every role.
+
+### 6.5 Billing cycles and pricing plans — P1
+
+- [ ] **Migration A (own file):** `ALTER TYPE pricing_model ADD VALUE 'FREE'`.
+- [ ] **Migration B:** `pricing_plans` (+ `is_default`, one default, a Commission plan); `vendors.pricing_plan_id`, `accepted_payment_methods`, `billing_cycle_started_at`, `billing_cycle_ends_at`; `vendor_setting`, `setting_change_status`, `vendor_setting_changes` (one PENDING row per vendor and setting); drop `vendors.scheduled_downgrade`.
+- [ ] **Going LIVE starts the first cycle:** `ends_at` = 00:00 Asia/Kathmandu on the 1st of the next BS month. A subscription's first fee = `monthly_fee × days left ÷ days in that BS month`, half-up to the paisa (confirmed 2026-10-07).
+- [ ] **`GET /api/vendor/billing`**: active plan, accepted methods, cycle dates, pending changes, plans on offer.
+- [ ] **`POST /api/vendor/billing/changes { setting: PRICING_PLAN | PAYMENT_METHODS, value }`** → **202** with `effective_from`. Supersedes an earlier pending change of that setting; audit row.
+  - `422 PRICING_PLAN_NOT_OFFERED`; `409 LOCK_IN_ACTIVE` (`details.lock_in_expiry`); `422 PAYMENT_METHOD_NOT_ALLOWED` (`details.allowed`); `400 VALIDATION_FAILED` for an empty list.
+- [ ] **`DELETE /api/vendor/billing/changes/:id`** → 204 (withdraw; also on repeat); `409 SETTING_CHANGE_CLOSED`.
+- [ ] **`GET / POST /api/admin/pricing-plans`, `POST …/:id/withdraw`, `POST …/:id/make-default`.**
+- [ ] **Worker `BILLING_CYCLE_RENEWAL`** (midnight, one transaction per vendor under the row lock): apply due PENDING changes, revert an expired Free plan to the default Commission plan (settlement model untouched), start the next BS month, audit rows. Safe to run twice or concurrently.
+- [ ] **Free-plan notice:** a delayed job at `plan end − 7 days` → outbox `vendor.free_plan_expiring` → SMS + push, once per plan period.
+- [ ] **Checkout:** `payment_options` = the settlement-model routing ∩ `accepted_payment_methods` (active values only; never a PENDING row).
+- [ ] Test: SPEC verification 11.
+
+### 6.6 Live Orders board support — P1
+
+- [ ] **`VendorOrderView.customer_first_name: string | null`** (first name only; `last_name` and the phone stay hidden). The app shows "Customer" until then.
+- [ ] **`GET /api/vendors/orders` keeps fleet orders after dispatch**, with `delivery_state: OFFERED | ASSIGNED | PICKED_UP | null`, until the delivery is `PICKED_UP`; and returns the orders handed over or delivered today (or `?include=handed_over`). The app then drops its in-memory record of them.
+- [ ] **Tell the shop when the rider picks up.** `POST /api/deliveries/:id/pickup` writes an outbox event today for nobody: add `delivery.picked_up` and fan it out to the shop's room as `delivery:state_update { order_id, delivery_state }`. The board moves the order from Ready to Handed Over on it.
+- [ ] **Tell riders when an order is ready.** The vendor's dispatch ("Ready for Pickup") should push "Order ready at <shop>" to the assigned rider, or to riders who can take the open gig (no rider push exists today).
+- [ ] **No new order state (decided 2026-10-07).** The board's "Ready" is `OUT_FOR_DELIVERY` not yet collected. The app disables "Ready for Pickup" with a countdown for the customer's 60 seconds; keep `422 CANCELLATION_WINDOW_OPEN` on dispatch as the rule (verify it, nothing to build).
+
+### 6.7 Screens that only need wiring (the API exists)
+
+- [ ] **Catalogue (app work):** the list is `GET /api/vendor/products`, the In Stock switch is the availability route of 6.8, the form is `POST` / `PUT /api/vendor/products`, categories are `GET /api/categories`, photos are `POST …/:id/images`. The app holds a sample catalogue in memory until this is done.
+- [ ] **Ledger by settlement model:** `GET /api/vendors/wallet/balance` gains `settlement_model` and, once `vendor_ledgers` exists (section 5 step 1), `credit_limit_npr`, `ad_fees_owed_npr`, `prepaid_floor_npr`. The app previews models A and C from sample figures until then.
+
+### 6.8 Product availability flag — P0 (decided 2026-10-07)
+
+`products.is_active` already exists and means **hidden** (soft delete, admin Hide). The In Stock / Out of Stock switch is a second flag, `is_available`. Details: STATE_HANDOFF.md §8Z.14.
+
+- [ ] **Migration:** `products.is_available boolean NOT NULL DEFAULT true`. Drizzle schema, `productSchema` and `contract.ts` together.
+- [ ] **`PATCH /api/vendor/products/:id/availability { is_available }`** (VENDOR, own product) → `200 { product }`, also on repeat; `404 PRODUCT_NOT_FOUND` for another shop's. It never changes `stock_quantity`; `PATCH …/stock` never changes the flag.
+- [ ] **`vendorProductViewSchema` gains `is_available`** (vendor and admin lists).
+- [ ] **Customer reads:** `in_stock = is_available AND stock_quantity > 0` on `GET /api/products` and `GET /api/vendors/:id/products`, and `stock_quantity` reported as 0 while unavailable (no customer app change).
+- [ ] **Checkout:** an unavailable line is a shortfall with `available: 0` (`409 INSUFFICIENT_STOCK`), in the stock guard and in the Redis lock's availability.
+- [ ] Test: SPEC verification 16.
+
+### 6.9 Marketing screens — the routes they call (all in section 5; nothing new)
+
+The Vendor App's Marketing tab is built on sample data to these contracts. Build them with section 5 steps 2, 3 and 5.
+
+- [ ] **My Offers:** `GET / POST /api/vendor/offers` (body `{ kind: FLAT | PERCENTAGE, value, min_cart_npr, max_discount_npr?, ends_at? }`; `400` when a flat value exceeds its minimum cart), `POST /api/vendor/offers/:id/end`. Each offer in the list carries the server-rendered `label`.
+- [ ] **Campaigns:** `GET /api/vendor/campaigns` (invites and joined, each with `kind`, `value`, `max_discount_npr`, `min_cart_npr`, `vendor_share_percent`, `terms_version`, dates, `opted_in_at | null`), `POST …/:id/opt-in { terms_version }` (`409 CAMPAIGN_TERMS_CHANGED`), `POST …/:id/opt-out`. No admin opt-in route.
+- [ ] **Ad Marketplace:** `GET /api/vendor/ads/products` (with the shop's `settlement_model`, `available_for_ads_npr`, and per product `collection` and `recharge_required_npr`), `POST /api/vendor/ads/purchases { ad_product_id, starts_at, budget_npr?, idempotency_key, agreed: true }`, `GET /api/vendor/ads/purchases`, `POST …/:id/cancel`.
+- [ ] **The guard the app mirrors:** `422 AD_EXCEEDS_PENDING_PAYOUT` (Model B, `balance + pending_escrow < ad_price`) and `422 LEDGER_RECHARGE_REQUIRED` (Models A and C). The app shows "Insufficient funds for this ad purchase." for both.
+- [ ] Ad products the app sells: slot `CAROUSEL` ("Carousel Placement", flat rate) and slot `FEED_LISTING` ("Sponsored Search", per order with a budget).
+
+### 6.10 Analytics and the vendor account — P2
+
+- [ ] **`GET /api/vendor/analytics/summary`** (VENDOR, own shop, `no-store`): `{ today_sales_npr, today_order_count, top_item: { product_name, units_sold, sales_npr } | null, ad_roi: { spend_npr, revenue_npr } | null, daily_sales: [{ day: SUN…SAT, sales_npr }] }` (7 entries, oldest first; days in Asia/Kathmandu; sales = delivered subtotal less the shop's own discounts). Shape and definitions: STATE_HANDOFF.md §8Z.14.
+- [ ] **Language and WhatsApp consent:** the vendor settings call `PATCH /api/me { language_preference | whatsapp_opt_in }` (section 2, any role). Nothing vendor-specific.
+- [ ] **`GET /api/vendor/deletion-eligibility`** → `{ eligible, blockers: [NEGATIVE_BALANCE | ACTIVE_ORDERS | PENDING_PAYOUT | ACTIVE_AD], wallet_balance_npr, active_order_count }`.
+- [ ] **`POST /api/vendor/deletion-request`** (no body) → `200 { account_status: DELETED_REQUESTED, deletion_requested_at, accepting_orders: false }`, also on repeat; `409 SHOP_NOT_DELETABLE` (`details.blockers`), re-checked under the vendor row lock. One transaction: `users.account_status`, `vendors.accepting_orders = false`, audit row. `vendors.status` is not changed; invoices, ledger entries and audit rows are kept.
+- [ ] **`DELETE /api/vendor/deletion-request`** → 204 (withdraw before the purge).
+- [ ] Test: SPEC verification 17.
+
+---
+
 ## Suggested build order
 
 1. Commit and deploy the public vendor routes.
@@ -273,3 +395,14 @@ Schemas, formulas and contracts: STATE_HANDOFF.md §8Z.5. Rules: SPEC.md core se
 7. Feed `category_ids` and menu categories.
 8. WhatsApp OTP, refunds.
 9. P2 items.
+
+Section 6 (vendor operations and IRD compliance), in this order; it can run alongside items 5–8:
+
+1. 6.1 shared building blocks (BS calendar, amount in words, the Palika list).
+2. 6.2 PAN compliance, then 6.3's availability switch and `GET /api/vendor/profile` (the Vendor App's settings screen and Online switch stop being local).
+3. 6.3 delivery settings and the serviceability / fee changes.
+4. 6.4 invoicing (tables, triggers, issuing in the delivery transaction, read and print routes).
+5. 6.8 the availability flag, then 6.6 board support and 6.7 wiring.
+6. 6.5 billing cycles and pricing plans (after `audit_logs`).
+7. 6.9 follows section 5 (offers with step 2, campaigns with step 3, ads with step 5); 6.10 after `PATCH /api/me` exists.
+8. Credit / Debit Notes with dispute resolution; CBMS last.

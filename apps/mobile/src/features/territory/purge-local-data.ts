@@ -1,5 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
 
+import { useVendorFinanceStore } from '../vendor/vendor-finance-mocks';
 import { getAppStorage } from '../../storage/app-mmkv';
 import { getSecureStorage } from '../../storage/secure-mmkv';
 import { useAddressStore } from '../../store/useAddressStore';
@@ -13,6 +14,10 @@ import { useOnboardingStore } from '../../store/useOnboardingStore';
 import { useOrderReceiptStore } from '../../store/useOrderReceiptStore';
 import { useOrderStore } from '../../store/useOrderStore';
 import { useProfileStore } from '../../store/useProfileStore';
+import { useVendorBoardStore } from '../../store/useVendorBoardStore';
+import { useVendorCatalogueStore } from '../../store/useVendorCatalogueStore';
+import { useVendorMarketingStore } from '../../store/useVendorMarketingStore';
+import { useVendorShopStore } from '../../store/useVendorShopStore';
 
 /**
  * SPEC §1: outside the service territory the app clears its local cache. Everything goes: server
@@ -38,6 +43,11 @@ export function purgeLocalData(queryClient: QueryClient): void {
   useAuthStore.setState(useAuthStore.getInitialState(), true);
   useOrderReceiptStore.setState(useOrderReceiptStore.getInitialState(), true);
   useFavouritesStore.setState(useFavouritesStore.getInitialState(), true);
+  useVendorShopStore.setState(useVendorShopStore.getInitialState(), true);
+  useVendorBoardStore.getState().reset();
+  useVendorCatalogueStore.getState().reset();
+  useVendorMarketingStore.getState().reset();
+  useVendorFinanceStore.setState(useVendorFinanceStore.getInitialState(), true);
 
   getAppStorage().clearAll();
   getSecureStorage().clearAll();

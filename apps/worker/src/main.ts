@@ -1,5 +1,6 @@
 import { BillingCycleRenewalService } from './billing/billing-cycle-renewal';
 import { ComplianceSweepService } from './compliance/compliance-sweep';
+import { MarketingStatusSweepService } from './marketing/marketing-status-sweep';
 import { createDatabase } from '@hamro-pasal/db';
 import { ivrGatewayFromEnv } from '@hamro-pasal/ivr';
 import { createIdempotentProducer, createKafka, DomainEventPublisher } from '@hamro-pasal/kafka';
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
       debtReconciliation: new VendorDebtReconciliationService(db),
       complianceSweep: new ComplianceSweepService(db),
       billingRenewal: new BillingCycleRenewalService(db),
+      marketingSweep: new MarketingStatusSweepService(db, new LedgerService(new WalletService())),
       // Phase 22: verifies (and, if missing, posts) the settlement of every DELIVERED order.
       orderReconciliation: new OrderReconciliationService(
         db,

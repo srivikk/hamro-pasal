@@ -306,5 +306,10 @@ export function entryTypeOf(kind: LedgerTransactionKind, amountNpr: number): Wal
       return 'PAYOUT_HOLD';
     case 'VENDOR_PAYOUT_REVERSAL':
       return 'PAYOUT_REVERSAL';
+    case 'AD_PURCHASE':
+      return 'AD_CHARGE';
+    case 'AD_BUDGET_RELEASE':
+    case 'AD_REFUND':
+      return 'AD_REFUND';
   }
 }

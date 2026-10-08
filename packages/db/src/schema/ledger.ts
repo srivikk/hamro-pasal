@@ -2,7 +2,13 @@ import { sql } from 'drizzle-orm';
 import { check, index, pgTable, text, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 
 import { createdAt, npr, primaryId, updatedAt } from './columns';
-import { ledgerAccountTypeEnum, ledgerTransactionKindEnum, paymentMethodEnum } from './enums';
+import {
+  ledgerAccountTypeEnum,
+  ledgerLineTypeEnum,
+  ledgerTransactionKindEnum,
+  paymentMethodEnum,
+} from './enums';
+import { adPurchases } from './marketing';
 import { orders } from './orders';
 import { users } from './users';
 import { vendors } from './vendors';
@@ -84,10 +90,26 @@ export const ledgerEntries = pgTable(
       .references(() => ledgerAccounts.id, { onDelete: 'restrict' }),
     amount_npr: npr().notNull(),
     created_at: createdAt(),
+    /**
+     * What the posting is (SPEC core 4, Dual-Layer Billing): commission and ad charges are
+     * separate lines. ADJUSTMENT when the journal named none, which is every posting older than
+     * migration 0027.
+     */
+    line_type: ledgerLineTypeEnum().notNull().default('ADJUSTMENT'),
+    /** The vendor's own purchase an AD_* line belongs to (SPEC core 8: no unilateral billing). */
+    ad_purchase_id: uuid().references(() => adPurchases.id, { onDelete: 'restrict' }),
   },
   (t) => [
     index('ledger_entries_transaction_id_idx').on(t.transaction_id),
     index('ledger_entries_account_id_created_at_idx').on(t.account_id, t.created_at),
+    index('ledger_entries_ad_purchase_id_idx')
+      .on(t.ad_purchase_id)
+      .where(sql`${t.ad_purchase_id} IS NOT NULL`),
     check('ledger_entries_amount_non_zero_check', sql`${t.amount_npr} <> 0`),
+    // SPEC edge case 6: the database refuses an ad charge that names no purchase.
+    check(
+      'ledger_entries_ad_line_purchase_check',
+      sql`${t.line_type} NOT IN ('AD_FLAT_FEE', 'AD_ORDER_PREMIUM', 'AD_BUDGET_HOLD', 'AD_BUDGET_RELEASE') OR ${t.ad_purchase_id} IS NOT NULL`,
+    ),
   ],
 );

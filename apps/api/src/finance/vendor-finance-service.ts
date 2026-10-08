@@ -8,6 +8,7 @@ import {
 } from '@hamro-pasal/shared-types';
 import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 
+import { adFeesDuePaisa, collectAdFeesDue } from '../marketing/ad-fees';
 import { VendorAccountNotFoundError } from '../orders/vendor-order-service';
 import { pendingEscrowOf } from '../wallet/vendor-wallet-service';
 
@@ -205,8 +206,18 @@ export class VendorFinanceService {
         return { payout: existing, availableBalanceNpr: vendor.walletBalanceNpr, replayed: true };
       }
 
-      if (amountPaisa > toPaisa(vendor.walletBalanceNpr)) {
-        throw new PayoutExceedsBalanceError(request.amount_npr, vendor.walletBalanceNpr);
+      // Ad fees the shop owes leave the wallet before a withdrawal can (SPEC core 8, Model B).
+      await collectAdFeesDue(tx, this.ledger, vendor.id);
+      const [swept] = await tx
+        .select({ balance: vendors.wallet_balance_npr })
+        .from(vendors)
+        .where(eq(vendors.id, vendor.id));
+      // The balance as it is (negative for a shop in debt), less any fee the wallet could not cover.
+      const withdrawableNpr = toNpr(
+        toPaisa(swept?.balance ?? vendor.walletBalanceNpr) - (await adFeesDuePaisa(tx, vendor.id)),
+      );
+      if (amountPaisa > toPaisa(withdrawableNpr)) {
+        throw new PayoutExceedsBalanceError(request.amount_npr, withdrawableNpr);
       }
 
       const hold = await this.ledger.post(tx, {

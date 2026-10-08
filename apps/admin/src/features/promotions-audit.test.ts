@@ -365,9 +365,8 @@ describe('createAdminApi (promotion endpoints)', () => {
     ]);
   });
 
-  it('offers no sponsorship: every promotion the form builds is an ordinary one', () => {
-    expect(SPONSORSHIP_AVAILABLE).toBe(false);
-    // The form is never shown a purchase field, so the value stays empty.
+  it('offers sponsorship, and builds an ordinary promotion while no purchase is named', () => {
+    expect(SPONSORSHIP_AVAILABLE).toBe(true);
     for (const values of [emptyPromotionForm(), form, formFromPromotion(banner)]) {
       expect(values.adPurchaseId).toBe('');
     }
@@ -397,12 +396,28 @@ describe('createAdminApi (promotion endpoints)', () => {
   });
 
   it('explains the other refusals on the form', () => {
-    for (const code of ['AD_PURCHASE_MISMATCH', 'AD_PURCHASE_REQUIRED']) {
-      expect(promotionSaveError(new ApiError(422, code, 'x'), 'SHOP')).toEqual({
-        field: null,
-        message: 'Sponsored promotions are not available yet: no vendor can buy an ad.',
+    // A refused ad purchase is explained on its own field, by the server's reason.
+    const mismatch = (details?: unknown) =>
+      promotionSaveError(new ApiError(422, 'AD_PURCHASE_MISMATCH', 'x', details), 'SHOP');
+    expect(mismatch({ reason: 'SHOP' })).toEqual({
+      field: 'adPurchaseId',
+      message: 'This ad was bought by another shop: a sponsored promotion targets its buyer.',
+    });
+    expect(mismatch({ reason: 'NOT_RUNNING' }).message).toBe(
+      'This ad purchase is not running: it was cancelled, is paused or has ended.',
+    );
+    expect(mismatch({ reason: 'DATES' }).message).toContain('inside the period');
+    expect(mismatch({ reason: 'SLOT' }).message).toContain('carousel');
+    // An answer without a known reason falls back to "not found".
+    for (const details of [undefined, { reason: 'SOMETHING_NEW' }]) {
+      expect(mismatch(details)).toEqual({
+        field: 'adPurchaseId',
+        message: 'No ad purchase has this id.',
       });
     }
+    expect(promotionSaveError(new ApiError(422, 'AD_PURCHASE_REQUIRED', 'x'), 'SHOP').field).toBe(
+      'adPurchaseId',
+    );
     expect(promotionSaveError(new ApiError(404, 'PROMOTION_NOT_FOUND', 'x'), '').field).toBeNull();
     expect(promotionSaveError(new ApiError(0, 'NETWORK_ERROR', 'x'), '').message).toBe(
       'The API cannot be reached. Try again.',

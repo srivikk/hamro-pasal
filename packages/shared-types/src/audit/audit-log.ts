@@ -48,6 +48,7 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   AD_PURCHASED: 'ad_purchase',
   AD_CANCELLED: 'ad_purchase',
   AD_PAUSED_BUDGET_EXHAUSTED: 'ad_purchase',
+  AD_ENDED: 'ad_purchase',
   PROMOTION_CREATED: 'home_promotion',
   PROMOTION_UPDATED: 'home_promotion',
   PROMOTION_DELETED: 'home_promotion',

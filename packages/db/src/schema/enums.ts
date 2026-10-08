@@ -5,6 +5,7 @@ import {
   disputeStatuses,
   fulfillmentModes,
   ledgerAccountTypes,
+  ledgerLineTypes,
   ledgerTransactionKinds,
   orderStates,
   paymentMethods,
@@ -29,6 +30,7 @@ export const paymentMethodEnum = pgEnum('payment_method', paymentMethods);
 export const paymentStatusEnum = pgEnum('payment_status', paymentStatuses);
 export const ledgerAccountTypeEnum = pgEnum('ledger_account_type', ledgerAccountTypes);
 export const ledgerTransactionKindEnum = pgEnum('ledger_transaction_kind', ledgerTransactionKinds);
+export const ledgerLineTypeEnum = pgEnum('ledger_line_type', ledgerLineTypes);
 export const disputeStatusEnum = pgEnum('dispute_status', disputeStatuses);
 export const reviewDirectionEnum = pgEnum('review_direction', reviewDirections);
 export const deadLetterStatusEnum = pgEnum('dead_letter_status', deadLetterStatuses);

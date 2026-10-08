@@ -84,7 +84,16 @@ describe('timer queues (real Redis)', () => {
       await registerMidnightJobs(queues.midnight);
       await registerMidnightJobs(queues.midnight);
 
-      const schedulers = await queues.midnight.getJobSchedulers();
+      const all = await queues.midnight.getJobSchedulers();
+      // The one hourly task shares the queue: on the hour, every hour (Phase 28).
+      const hourly = all.filter((s) => s.key === 'marketing-status-sweep');
+      expect(hourly).toHaveLength(1);
+      expect(hourly[0]).toMatchObject({ pattern: '0 * * * *', name: 'MARKETING_STATUS_SWEEP' });
+      const untilNext = (hourly[0]?.next ?? 0) - Date.now();
+      expect(untilNext).toBeGreaterThan(0);
+      expect(untilNext).toBeLessThanOrEqual(60 * 60 * 1000);
+
+      const schedulers = all.filter((s) => s.key !== 'marketing-status-sweep');
       expect(schedulers.map((s) => s.key).sort()).toEqual([
         'billing-cycle-renewal',
         'order-reconciliation',
@@ -117,6 +126,7 @@ describe('timer queues (real Redis)', () => {
       },
       onGhostCustomerTimerElapsed: () => Promise.resolve(),
       runMidnightTask: () => Promise.resolve(),
+      runMarketingStatusSweep: () => Promise.resolve(),
     };
     const worker = new Worker(
       queues.vendorAcceptance.name,

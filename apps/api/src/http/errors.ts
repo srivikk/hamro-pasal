@@ -63,7 +63,18 @@ import {
   PanNotVerifiedError,
   SettlementModelNotEscrowError,
 } from '../finance/admin-settlement-service';
+import { AD_PURCHASE_MAX_START_AHEAD_DAYS } from '@hamro-pasal/shared-types';
+
 import { AdProductNotFoundError } from '../marketing/ad-product-service';
+import {
+  AdBudgetInvalidError,
+  AdExceedsPendingPayoutError,
+  AdPurchaseKeyReusedError,
+  AdPurchaseNotCancellableError,
+  AdPurchaseNotFoundError,
+  AdStartOutOfRangeError,
+  LedgerRechargeRequiredError,
+} from '../marketing/ad-purchase-service';
 import {
   CampaignEndedError,
   CampaignNotFoundError,
@@ -371,7 +382,42 @@ export function toHttpError(error: unknown): HttpError {
     });
   }
   if (error instanceof AdPurchaseMismatchError) {
-    return new HttpError(422, 'AD_PURCHASE_MISMATCH', error.message);
+    return new HttpError(422, 'AD_PURCHASE_MISMATCH', error.message, { reason: error.reason });
+  }
+  if (error instanceof AdPurchaseNotFoundError) {
+    return new HttpError(404, 'AD_PURCHASE_NOT_FOUND', 'Ad purchase not found');
+  }
+  if (error instanceof AdPurchaseKeyReusedError) {
+    return new HttpError(409, 'IDEMPOTENCY_KEY_REUSED', error.message);
+  }
+  if (error instanceof AdBudgetInvalidError) {
+    return new HttpError(422, 'AD_BUDGET_INVALID', error.message, {
+      billing_model: error.billingModel,
+      price_npr: error.priceNpr,
+    });
+  }
+  if (error instanceof AdStartOutOfRangeError) {
+    return new HttpError(422, 'AD_START_OUT_OF_RANGE', error.message, {
+      max_days_ahead: AD_PURCHASE_MAX_START_AHEAD_DAYS,
+    });
+  }
+  if (error instanceof AdExceedsPendingPayoutError) {
+    return new HttpError(422, 'AD_EXCEEDS_PENDING_PAYOUT', error.message, {
+      ad_price_npr: error.adPriceNpr,
+      balance_npr: error.balanceNpr,
+      pending_escrow_npr: error.pendingEscrowNpr,
+      ad_fees_due_npr: error.adFeesDueNpr,
+    });
+  }
+  if (error instanceof LedgerRechargeRequiredError) {
+    return new HttpError(422, 'LEDGER_RECHARGE_REQUIRED', error.message, {
+      recharge_required_npr: error.rechargeRequiredNpr,
+    });
+  }
+  if (error instanceof AdPurchaseNotCancellableError) {
+    return new HttpError(409, 'AD_PURCHASE_NOT_CANCELLABLE', error.message, {
+      reason: error.reason,
+    });
   }
   if (error instanceof PricingPlanNotFoundError) {
     return new HttpError(404, 'PRICING_PLAN_NOT_FOUND', 'Pricing plan not found');

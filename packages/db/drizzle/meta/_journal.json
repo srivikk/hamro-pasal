@@ -190,6 +190,13 @@
       "when": 1791453810061,
       "tag": "0026_vendor_requests_and_ads",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1791456637676,
+      "tag": "0027_ledger_lines_ads",
+      "breakpoints": true
     }
   ]
 }

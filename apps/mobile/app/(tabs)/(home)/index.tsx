@@ -36,7 +36,8 @@ import { HeaderGradient } from '../../../src/features/location/HeaderGradient';
 import { LocationHeader } from '../../../src/features/location/LocationHeader';
 import { BannerCarousel } from '../../../src/features/promo/BannerCarousel';
 import { FeaturedOffers } from '../../../src/features/promo/FeaturedOffers';
-import { homePromotions, vendorExtras } from '../../../src/features/promo/mock-promotions';
+import { vendorExtras } from '../../../src/features/promo/mock-promotions';
+import { useHomePromotions } from '../../../src/features/promo/useHomePromotions';
 import type { PromoTarget } from '../../../src/features/promo/promo-model';
 import { useBrowseLocationStore } from '../../../src/store/useBrowseLocationStore';
 import { useToastStore } from '../../../src/store/useToastStore';
@@ -115,9 +116,9 @@ export default function FeedScreen() {
     setScrollToShops(false);
   }, []);
 
-  // The admin's banners and offers (mock data for now, STATE_HANDOFF §8Z.3, §8Z.4). With none,
+  // The admin's banners and offers (GET /api/home/promotions, STATE_HANDOFF §8Z.29). With none,
   // both rows render nothing and the categories sit directly under the header as before.
-  const promotions = homePromotions(feed.data);
+  const promotions = useHomePromotions(feed.data);
   const openPromotion = (target: PromoTarget): void => {
     if (target.type === 'SHOP') {
       router.push({ pathname: '/vendor/[id]', params: { id: target.value } });

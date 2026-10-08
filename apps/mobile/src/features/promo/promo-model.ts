@@ -34,6 +34,8 @@ export interface Promotion {
   /** Both null for a promotion that is only shown; otherwise both set. */
   target_type: PromoTargetType | null;
   target_value: string | null;
+  /** A vendor paid for this placement: it carries the "Ad" label (SPEC core 8). */
+  is_sponsored?: boolean;
 }
 
 export type PromoBanner = Promotion & { placement: 'CAROUSEL'; image_url: string };

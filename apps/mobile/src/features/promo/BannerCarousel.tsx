@@ -85,6 +85,17 @@ export function BannerCarousel({
                   className="h-full w-full"
                   resizeMode="cover"
                 />
+                {banner.is_sponsored === true ? (
+                  <View
+                    className="absolute left-2 top-2 rounded bg-black/60 px-1.5 py-0.5"
+                    accessibilityLabel={t('vendor.sponsoredLabel')}
+                    testID={`banner-ad-${banner.id}`}
+                  >
+                    <Text className="text-[10px] font-bold uppercase text-white">
+                      {t('vendor.sponsored')}
+                    </Text>
+                  </View>
+                ) : null}
                 {banner.title === null ? null : (
                   <>
                     <ImageScrim />

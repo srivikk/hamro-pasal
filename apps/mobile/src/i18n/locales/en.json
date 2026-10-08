@@ -561,7 +561,6 @@
       "ADS": "Ads"
     },
     "cancel": "Cancel",
-    "active": "Active",
     "flatLabel": "Flat Rs. {{value, localizedNumber}} OFF",
     "percentLabel": "{{value, localizedNumber}}% OFF",
     "minOrder": "Minimum order Rs. {{amount, localizedNumber}}",
@@ -614,13 +613,11 @@
       "FEED_LISTING": "Your shop listed first in search and the feed, marked \"Ad\"."
     },
     "flatRate": "Rs. {{price, localizedNumber}} for {{days, localizedNumber}} days (flat rate)",
-    "perOrder": "Rs. {{price, localizedNumber}} per delivered order, up to Rs. {{budget, localizedNumber}}, for {{days, localizedNumber}} days",
     "fundsLabel": {
       "PLATFORM_ESCROW": "Available for ads (balance + pending escrow)",
       "COD_CREDIT": "Ledger balance available for ads",
       "DIRECT_PREPAID": "Prepaid balance (ads must leave the reserve untouched)"
     },
-    "fundsSample": "Sample figure from the Ledger.",
     "buy": "Buy",
     "buyTitle": "Buy {{name}}?",
     "buyBody": "{{price}}.\n\n{{collection}}",
@@ -631,7 +628,41 @@
       "COD_CREDIT": "It is taken from your ledger balance now.",
       "DIRECT_PREPAID": "It is taken from your prepaid balance now."
     },
-    "insufficientFunds": "Insufficient funds for this ad purchase."
+    "insufficientFunds": "Insufficient funds for this ad purchase.",
+    "perOrderFee": "Rs. {{price, localizedNumber}} per delivered order, for {{days, localizedNumber}} days",
+    "loadFailed": "Couldn't load this. Check your connection.",
+    "retry": "Try again",
+    "actionFailed": "That didn't go through. Try again.",
+    "termsChanged": "The terms of this campaign changed. Review them below, then opt in again if you agree.",
+    "termsChangedToast": "The campaign terms changed. Review the new terms.",
+    "campaignGone": "This campaign is no longer open.",
+    "adsEmpty": "No ad placements are on sale right now.",
+    "adGone": "This placement is no longer on sale.",
+    "rechargeNeeded": "Add Rs. {{amount, localizedNumber}} to your ledger to buy this.",
+    "yourAds": "Your ads",
+    "noAds": "You have not bought an ad yet.",
+    "adStatus": {
+      "ACTIVE": "Active",
+      "PAUSED": "Paused",
+      "ENDED": "Ended",
+      "CANCELLED": "Cancelled"
+    },
+    "adPaid": "Paid Rs. {{paid, localizedNumber}} of Rs. {{price, localizedNumber}}",
+    "adBudget": "Spent Rs. {{spent, localizedNumber}} of a Rs. {{budget, localizedNumber}} budget",
+    "adDue": "Rs. {{amount, localizedNumber}} will be deducted from your payouts.",
+    "cancelAd": "Cancel ad",
+    "adCancelled": "Ad cancelled.",
+    "notCancellable": "A flat-rate ad that has started runs to its end and cannot be cancelled.",
+    "startLabel": "Starts",
+    "startNow": "Now",
+    "startInDays_one": "In {{count, localizedNumber}} day",
+    "startInDays_other": "In {{count, localizedNumber}} days",
+    "budgetLabel": "Budget (Rs.)",
+    "budgetHint": "The most you will spend: at least Rs. {{price, localizedNumber}}, one order’s fee.",
+    "buying": "Buying…",
+    "active": "Active",
+    "adId": "Ad ID: {{id}}",
+    "adIdCopy": "Tap to copy"
   },
   "vendorAnalytics": {
     "title": "Analytics",
@@ -765,7 +796,9 @@
       "TOP_UP": "Dues paid",
       "ADJUSTMENT": "Adjustment",
       "PAYOUT_HOLD": "Payout requested",
-      "PAYOUT_REVERSAL": "Payout returned"
+      "PAYOUT_REVERSAL": "Payout returned",
+      "AD_CHARGE": "Ad charge",
+      "AD_REFUND": "Ad refund"
     },
     "payDues": "Pay outstanding balance (Rs. {{amount, localizedNumber}})",
     "paying": "Paying…",

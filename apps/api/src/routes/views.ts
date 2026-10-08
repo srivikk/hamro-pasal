@@ -89,6 +89,7 @@ export function feedEntryView(vendor: CatalogVendor): FeedEntry {
     distance_km: toKm(vendor.distanceM),
     serviceable: vendor.serviceable,
     delivery_available: vendor.deliveryAvailable,
+    is_sponsored: vendor.sponsored === true,
   };
 }
 

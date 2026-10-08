@@ -17,7 +17,7 @@ import { bearer, bodyOf, buildTestApp, errorOf, type TestApp } from './support/h
 import {
   createOrder,
   createUser,
-  createVendor,
+  createVendor as createFixtureVendor,
   markDelivered,
   vendorUserIdOf,
 } from './support/fixtures';
@@ -26,6 +26,13 @@ import {
  * Phase 15: the Super Admin's vendor list and the manual Suspend / Restore overrides, applied by
  * WalletService on real PostgreSQL (wallet trigger, CHECK constraints, outbox).
  */
+/**
+ * GET /api/admin/vendors lists at most 500 shops by name, and the suites share one database: these
+ * shops are named to sort first, so the list always holds them however many other suites ran.
+ */
+const createVendor: typeof createFixtureVendor = (db, options) =>
+  createFixtureVendor(db, { businessName: `AAC Admin ${randomUUID()}`, ...options });
+
 describe('Admin vendor management API', () => {
   let testApp: TestApp;
   let db: Database;

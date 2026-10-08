@@ -26,6 +26,8 @@ export const apiUrl = (path: string): string => `${API_URL}${path}`;
  */
 export const server = setupServer(
   http.get(apiUrl('/api/categories'), () => HttpResponse.json({ categories: [] })),
+  // Home always asks for the admin's promotions; none by default.
+  http.get(apiUrl('/api/home/promotions'), () => HttpResponse.json({ banners: [], offers: [] })),
   http.get(apiUrl('/api/vendors/:id/products'), () => HttpResponse.json(vendorMenu())),
   // The shop page reads its products' categories from the public list; none by default.
   http.get(apiUrl('/api/products'), () => HttpResponse.json({ products: [], next_cursor: null })),

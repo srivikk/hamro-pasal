@@ -1,4 +1,4 @@
-# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring)
+# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
 work without re-deriving it. It describes the tree at the end of **Phase 23 (End-to-End System Audit & Failure Mode Hardening)**, the last planned development phase, on top of Phase 22 (Financial Reconciliation & Payouts), 21 (Rider Dispatch &
@@ -1100,6 +1100,331 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.29 Phase 28, part 3: public Home promotions, sponsored search, the per-order premium function, the purchase id (2026-10-08)
+
+API, `@hamro-pasal/ledger`, one shared contract and the mobile app. **No migration.** SPEC.md was
+not changed. **Not seen on a device and not run against a live API.**
+
+### Asked vs built
+
+| Asked                                    | Built                                                                                                                                                                                                     | Why                                                                                                                                                     |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Tap to Copy" the purchase id            | a row "Ad ID: 5C6D7E8F · Tap to copy" that opens the **system share sheet** with the whole id (it offers Copy); the text is also selectable                                                               | No clipboard module is installed; `expo-clipboard` is a native dependency and a dev-client rebuild. Swap `Share.share` for it in one line if you add it |
+| sponsored shops in `GET /api/search`     | no such route exists. Shop results of the Home search come from the feed already on the device, whose entries the server flags; `matchingVendors` now leads every search with those (at most two) entries | The product search (`GET /api/products`) takes no customer location, so it cannot know who delivers; the feed already decided that on the server        |
+| charge "Vendor Wallet → Ad Revenue"      | Model B: VENDOR_WALLET → AD_REVENUE. Models A / C: **AD_BUDGET_CLEARING** → AD_REVENUE                                                                                                                    | A ledger-funded shop's budget was already taken out of its wallet at purchase; charging the wallet again would bill it twice                            |
+| "currently ACTIVE FEED_LISTING purchase" | the shop's ACTIVE `PER_ORDER_PREMIUM` purchase that was running **when the order was placed** (any slot; the oldest if several)                                                                           | SPEC core 8: the fee is for orders "placed while the ad runs"; the billing model, not the slot, is what makes a purchase per-order                      |
+| audit `AD_PAUSED`                        | the existing `AD_PAUSED_BUDGET_EXHAUSTED`                                                                                                                                                                 | An action is never renamed once defined                                                                                                                 |
+| Home "instead of mock-promotions.ts"     | Home reads the API; **a development build falls back to the samples while the server has no promotion** (or is unreachable). A production build shows only what the server sent                           | Keeps the rows workable on a database with no promotions; say if the fallback should go                                                                 |
+
+### `GET /api/home/promotions` (public, `Cache-Control: public, max-age=60`)
+
+```jsonc
+{ "banners": [ { "id", "placement": "CAROUSEL", "image_url", "title", "subtitle",
+                 "target_type": "SHOP" | "CATEGORY" | "DISCOUNT_TAG" | null, "target_value", "is_sponsored" } ],
+  "offers":  [ /* the same shape, placement "FEATURED" */ ] }
+```
+
+- `PromotionService.listPublic`, one read-only snapshot: `is_active`, `starts_at` null or past,
+  `ends_at` null or future (database clock), by `display_order`, then creation.
+- **Stale target guard:** dropped when its SHOP is not LIVE, its CATEGORY is unknown or hidden (or
+  under a hidden parent), **or it is sponsored and its ad purchase is no longer running**
+  (cancelled, paused, over). Nothing is deleted: the promotion returns when its target does.
+- Contract: shared-types `homePromotionViewSchema`, `homePromotionsResponseSchema`
+  (`api/admin-marketing.ts`). Route `routes/home.ts`, mounted at `/api/home`.
+- Customer app: `api/promotions.ts`, `features/promo/useHomePromotions.ts` (`['home','promotions']`,
+  stale after 60 s, no token). A sponsored banner carries the "Ad" label (`banner-ad-<id>`).
+- Still open from §8Z.4: the promotion image upload; offer labels on shops (`offer_tags`) are
+  still mock extras, so a DISCOUNT_TAG promotion filters by sample data.
+
+### `chargePerOrderAdPremium(tx, ledger, orderId, vendorId)` (`packages/ledger/src/ad-order-premium.ts`)
+
+**Built and tested; not called by any delivery yet.** To wire it: call it in
+`DeliveryHandoff.handOver` after `settleOrderInTransaction`, in the same transaction.
+
+| Outcome              | When                                                                                                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NONE`               | no ACTIVE per-order purchase of the shop covers the order's `placed_at`; unknown order or another shop's                                                                                                     |
+| `CHARGED` (`paused`) | one fee posted (`AD_PURCHASE` journal `ad-order-premium:<purchase>:<order>`, both lines `AD_ORDER_PREMIUM`), `amount_paid_npr` raised. `paused`: less than one fee is left, the ad is now PAUSED and audited |
+| `ALREADY_CHARGED`    | that order was charged before: nothing posted                                                                                                                                                                |
+| `PAUSED_UNCHARGED`   | the budget did not hold one fee: the ad is paused and the order is **not** charged (SPEC edge case 8)                                                                                                        |
+
+- Locks: vendor row (`FOR UPDATE`), purchase row, then the ledger accounts.
+- The pause is audited with `system_actor` `AD_ORDER_PREMIUM`.
+- **To decide before wiring:** a Model B shop's fee comes out of its wallet. After a prepaid
+  order's settlement the wallet covers it; after a **cash** order it can take the wallet negative
+  (as the commission does) and so count toward the debt suspension limit.
+- The nightly reconciliation compares only the settlement journal, so this separate journal does
+  not disturb it.
+
+### Vendor App and search
+
+- "Your ads": each purchase shows `Ad ID: <first 8 characters>` with "Tap to copy"; the tap
+  shares the whole uuid (`shortAdId`, `ad-id-<id>`).
+- Home search: the feed's sponsored entries lead the shop results of every search, whether or not
+  their name matches, each with the card's "Ad" badge; a sponsored shop that also matches is
+  listed once. Product results are unchanged.
+
+### Tests
+
+Run on 2026-10-08 in a fresh session (the session that wrote the code ended before it could record a run).
+
+- **API integration** 743 in 45 suites, **all passing** in one full run. New `ad-premium-and-home-promotions.int.test.ts` (8, real PostgreSQL): one fee per order as its own `AD_ORDER_PREMIUM` lines, a retried order charged once, the ad paused with one audit entry when the budget runs out and no order charged after; a Model A shop's fee drawn from `AD_BUDGET_CLEARING` with its wallet untouched and a later cancel returning only the undrawn part; nothing for an order placed before the ad, another shop's order or an unknown order; six simultaneous deliveries on a budget of two fees → two charges, one pause; pause without a charge when the budget holds less than one fee. Home promotions: public, `max-age=60`, active and inside its dates, grouped and ordered; a shop that stops being LIVE or a hidden category drops its promotion and brings it back; a sponsored banner flagged, then dropped when the vendor cancels the purchase.
+- **A flake found and fixed in that file's fixture.** An earlier full run failed the sponsored-banner test once. Cause: the fixture bought an ad with `starts_at` = this process's "now", and "running" is decided on the database clock, which was measured 22 ms behind the host (Docker Desktop). The fixture ad now starts a minute earlier. `vendor-ads-api.int.test.ts` builds its purchases the same way (`starts_at: new Date()`) and has not failed, but can for the same reason.
+- **Mutation-checked, 3 of 3 killed:** no "budget holds one fee" check before charging (1 test fails), a non-LIVE shop's promotion served (1), a sponsored promotion served without a running purchase (1).
+- Unit suites, all passing: mobile **1505** in 102 suites (+7; new `features/promo/live-promotions.test.tsx`), shared-types 295, ledger 16, api 114, worker 142, admin 285. `pnpm typecheck` and `pnpm lint`: all 16 tasks pass.
+- Not run: the worker and kafka integration suites (no worker code changed in this part). `chargePerOrderAdPremium` has no test inside `packages/ledger` itself: it needs a database, so its tests are the API integration ones above.
+
+## 8Z.28 Phase 28, part 2: Vendor App Marketing wired, the hourly ad status sweep, the sponsored feed (2026-10-08)
+
+Mobile (`apps/mobile`), worker, API and two shared contracts. **No migration.** SPEC.md was not
+changed. **Not seen on a device and not run against a live API or worker.**
+
+### Decision (user, 2026-10-08)
+
+A flat-rate ad cannot be cancelled once it has started (it runs to its end at the price agreed); a
+per-order ad can be cancelled at any time, releasing the unused budget. §8Z.27's "to confirm" is
+closed; the code was already so.
+
+### Asked vs built
+
+| Asked                                                     | Built                                                                                                | Why                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the sweep marks ended **campaigns** `COMPLETED` / `ENDED` | **nothing is written for campaigns**                                                                 | `platform_campaigns` has no status column: "ended" is derived from `ends_at` on the database clock everywhere it matters (the opt-in refuses with `422 CAMPAIGN_ENDED`, the vendor list leaves ended campaigns out). `is_active` means "published", and flipping it would be an admin's unpublish done by a job. A stored status needs a migration and a contract change in the admin app: say if you want it |
+| end ACTIVE purchases past `ends_at`                       | ACTIVE **and PAUSED** ones, and the unused part of a held budget is released in the same transaction | A paused ad's period ends too, and a Model A budget would otherwise stay held for ever                                                                                                                                                                                                                                                                                                                        |
+| pause when `amount_paid_npr >= budget_npr`                | pause when `budget − paid < price`                                                                   | SPEC edge case 8: an ad whose budget cannot cover the **next** fee is paused before that order is charged                                                                                                                                                                                                                                                                                                     |
+| a new BullMQ job, hourly                                  | an hourly scheduler (`0 * * * *`) on the existing maintenance queue, id `marketing-status-sweep`     | One queue and one worker already run the crons; the job schema and processor dispatch the new task apart from the midnight tasks                                                                                                                                                                                                                                                                              |
+| starts_at input                                           | four choices: Now, in 1, 3 or 7 days                                                                 | No date picker is installed (a native dependency and a dev-client rebuild); the server takes any instant up to 90 days ahead                                                                                                                                                                                                                                                                                  |
+
+### The hourly sweep (`apps/worker/src/marketing/marketing-status-sweep.ts`)
+
+- Task `MARKETING_STATUS_SWEEP` (shared-types `jobs/queues.ts`: `MARKETING_STATUS_SWEEP_TASK`,
+  `HOURLY_CRON_PATTERN`), registered by `registerMidnightJobs`, handled by
+  `TimerHandlers.runMarketingStatusSweep`. 3 attempts.
+- **Ends** every ACTIVE or PAUSED purchase with `ends_at <= now()`: `ENDED`, audit `AD_ENDED`
+  (new action; `system_actor` = the job; `after_state.returned_npr`). A held per-order budget
+  (Models A / C) goes back through `releaseUnusedAdBudget` (new, in `@hamro-pasal/ledger`; the
+  vendor's cancel uses the same function and the same journal key, so the two can never both
+  release). A flat fee a Model B shop still owes **stays due** after the ad ends.
+- **Pauses** ACTIVE per-order ads with less than one fee of budget left: `PAUSED`, audit
+  `AD_PAUSED_BUDGET_EXHAUSTED`. Nothing posts a per-order premium yet, so this finds nothing
+  today.
+- One transaction per purchase; locks vendor row, then purchase row, then ledger accounts; the
+  condition is re-read under the locks on the database clock. A rerun or four concurrent runs
+  change a purchase once (tested).
+- This unblocks the settlement model change of a shop whose ads are over (§8Z.27 "Open"), within
+  the hour.
+
+### Sponsored feed (`GET /api/vendors`)
+
+- `feedEntrySchema.is_sponsored` (boolean, **defaults to false**, so an app build reads an older
+  API as "no ads").
+- `CatalogService.listFeed`: shops with a FEED_LISTING purchase that is ACTIVE and inside its
+  period are the advertisers. `withSponsoredFirst` moves the **nearest two** that are serviceable
+  and whose delivery mode is on to the top of `serviceable`, flagged; everyone else, a third
+  advertiser included, keeps its place unflagged. `explore_further` is never touched. Applied
+  before the 100-per-section cap.
+- A shop already had to be LIVE to be in the feed. A purchase that starts later, was cancelled or
+  has ended (by clock, even before the sweep marks it) does not count.
+- Mobile: `VendorCard` shows the "Ad" badge for `entry.is_sponsored` (the development mock flag
+  still draws it too); `sortFeed` keeps flagged entries first under every sort.
+- Not done: the Home search results (`GET /api/products`) carry no sponsorship; "Sponsored
+  Search" is the feed listing only.
+
+### Vendor App: Marketing tab
+
+| Section   | Data                                                                                                        | Files                                                                |
+| --------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| My Offers | **sample**, on the device, development builds (a production build shows a placeholder in this section only) | `MarketingSections.tsx`, `useVendorMarketingStore` (offers only now) |
+| Campaigns | `GET /api/vendor/campaigns`, `POST …/opt-in`, `POST …/opt-out`                                              | `api/vendor-campaigns.ts`, `VendorCampaignsSection.tsx`              |
+| Ads       | `GET /api/vendor/ads/products`, `GET / POST /api/vendor/ads/purchases`, `POST …/cancel`                     | `api/vendor-ads.ts`, `VendorAdsSection.tsx`                          |
+
+Queries and mutations: `features/vendor/useVendorMarketing.ts` (`['vendor','campaigns']`,
+`['vendor','ads','products']`, `['vendor','ads','purchases']`; `staleTime: 0`; mutations are
+never retried automatically; every ad write also invalidates the wallet queries).
+
+- **Campaigns.** Opt In still asks for confirmation with the terms restated, then sends the
+  `terms_version` the card showed. `409 CAMPAIGN_TERMS_CHANGED`: the list is refetched, the card
+  shows a notice above the new terms, and the next confirmation restates and sends the new
+  version. A campaign whose opt-in the server reports `VOIDED` shows the same notice. Opt out has
+  no confirmation (as before).
+- **Ads, buying.** Buy first checks the server's own figures (`canAffordAd`: Model B flat-rate
+  needs `available_for_ads_npr >= price`; Models A / C need `recharge_required_npr == 0`) and
+  answers with the "Insufficient funds" toast without opening anything. Otherwise a bottom sheet:
+  price, how it is collected, the start choice, and for a per-order ad the budget field (at least
+  one fee). **One idempotency key per opening of the sheet**, reused for every retry inside it; a
+  failed request leaves the sheet open. `AD_EXCEEDS_PENDING_PAYOUT` / `LEDGER_RECHARGE_REQUIRED`
+  → the same toast, sheet closed; `AD_BUDGET_INVALID` → the budget field.
+- **Ads, "Your ads".** Status, period, paid of price (or spent of budget), and the amount still to
+  be deducted from payouts. **Cancel is shown only when `canCancelAd`**: never on a flat-rate ad
+  that has started, which shows the warning line instead; a server `409
+AD_PURCHASE_NOT_CANCELLABLE` (a phone clock that is behind) shows the same warning as a toast.
+- Deleted: the campaign and ad samples, `canBuyAd` / `adFundsAvailable`, the "Sample figure"
+  note. The product title is the server's `name` (it was a label per slot).
+- Strings: 25 new `vendorMarketing.*` keys, EN and NE (the Nepali is unreviewed).
+
+### Open
+
+- No per-order premium is posted at delivery; the customer search results are not sponsored.
+- Campaigns have no stored end state (above). A shop is not told when its ad ends or pauses.
+- The purchase sheet has no free date entry, and no way to add budget to a paused ad.
+- A vendor must still tell the admin its purchase id for a carousel banner (the app does not
+  show the id).
+
+### Tests
+
+- **Worker integration** 84 in 11 suites, 82 passed. New `marketing-status-sweep.int.test.ts` (5, real PostgreSQL): ended with the job as actor and no other purchase touched; a held budget returned; once under a rerun and four concurrent runs; the pause rule at its boundary; dispatched as the hourly task and never as a midnight task. `queues.int.test` asserts the hourly scheduler beside the five midnight ones. **The two failures are both Kafka suites** (`outbox-relay` end-to-end, `vendor-notifications` poison pill): the symptom §1 records for another consumer on the same broker (an earlier background run of this suite had not exited, and a dev worker may have been running). No Kafka code changed; rerun them with nothing else on the broker.
+- **API integration** 735 in 44 suites; 732 passed in the full run, which shared the machine with the mobile suite and lint. The three failures pass alone: the two lockout-expiry timing tests and one `admin-vendors-api` case. New `sponsored-feed-api.int.test.ts` (SPEC verification 9: the two nearest advertisers first and flagged, a third unflagged in place, an out-of-range, a not-yet-started and a cancelled advertiser unflagged, none in Explore Further).
+- **Mobile** 1498 in 101 suites; 1494 passed in the full run (run beside the worker suite). The four failures, in `category-navigation`, `ReviewPrompt` (the known flake) and one new ad test, pass when their three files are run alone (50 of 50). New: `VendorMarketingLive.test.tsx` (19, msw through the real `apiRequest` and contracts) and `feed/sponsored-feed.test.tsx` (3); the sample-based campaign and ad tests of `VendorMarketing.test.tsx` are deleted with their samples.
+- shared-types 295, ledger 16, api unit 114, worker unit 142, admin 285: all passing. `tsc` clean in every workspace; ESLint clean after two fixes in the new mobile files.
+- **No mutation checks were run for this part**, and no full suite was rerun after the last lint fixes.
+
+## 8Z.27 Phase 28: vendor ad purchases, ledger line types, sponsored promotions unlocked (2026-10-08)
+
+Backend (`packages/shared-types`, `packages/db`, `packages/ledger`, `apps/api`), the admin
+Promotions form, and two wallet labels in the mobile app. SPEC.md was not changed. **Not run in a
+browser, on a device or against a live API**; the dev database needs `pnpm db:migrate` (0027).
+The Vendor App's Marketing tab still runs on samples.
+
+### Asked vs built (documented contracts kept)
+
+| Asked                                                                  | Built                                                                                                                                                                                            | Why                                                                                                                                                                             |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| add `AD_FLAT_FEE` and `AD_ORDER_PREMIUM` to `ledger_entries.line_type` | the column did not exist: migration 0027 creates `ledger_line_type` with the 15 values of §8Z.5, `ledger_entries.line_type` (NOT NULL, default `ADJUSTMENT`) and `ledger_entries.ad_purchase_id` | BACKEND_CHECKLIST section 5 step 1 was still open. One `CREATE TYPE` now avoids an `ADD VALUE` migration per later line                                                         |
+| `AD_REVENUE` in the account enum                                       | `AD_REVENUE` and `AD_BUDGET_CLEARING`; journal kinds `AD_PURCHASE`, `AD_BUDGET_RELEASE`, `AD_REFUND`                                                                                             | A Model A per-order ad holds its budget (SPEC core 8); a hold needs somewhere to sit and a way back                                                                             |
+| add audit actions `AD_PURCHASED`, `AD_CANCELLED`                       | nothing to add: both were in the contract since Phase 25                                                                                                                                         | –                                                                                                                                                                               |
+| Model B guard: `balance + pending_escrow < price`                      | `balance + pending_escrow − flat fees already due < price`                                                                                                                                       | Without the subtraction two ads could be sold against the same escrow (tested, also for two simultaneous purchases). `details.ad_fees_due_npr` is added to the documented three |
+| promotion check: ACTIVE, slot, buyer                                   | those three, plus: the paid period is not over, and the promotion's dates lie inside the purchase's                                                                                              | §8Z.5 ("dates must lie inside the purchase's"). Nothing sets a purchase to ENDED yet, so "ACTIVE" alone would let a banner outlive what was paid for                            |
+| `POST …/purchases/:id/cancel`                                          | a flat-rate ad can be cancelled only **before it starts** (fee returned, nothing due); a per-order ad at any time (unused budget released)                                                       | §8Z.5: a flat fee "for a period already started stays due". **To confirm**                                                                                                      |
+
+### Migration 0027 (`0027_ledger_lines_ads.sql`)
+
+- `ledger_line_type` enum (shared-types `ledgerLineTypes`); `ledger_entries.line_type`,
+  `ledger_entries.ad_purchase_id` → `ad_purchases` (RESTRICT, partial index).
+- CHECK `ledger_entries_ad_line_purchase_check`: an `AD_FLAT_FEE`, `AD_ORDER_PREMIUM`,
+  `AD_BUDGET_HOLD` or `AD_BUDGET_RELEASE` line names a purchase. With the Phase 27 trigger on
+  `ad_purchases` this is SPEC edge case 6 in the database: no ad charge without the vendor's own
+  purchase.
+- `ledger_account_type` + `AD_REVENUE`, `AD_BUDGET_CLEARING`; `ledger_transaction_kind` +
+  `AD_PURCHASE`, `AD_BUDGET_RELEASE`, `AD_REFUND`. Added, not used in the file (see 0019): both
+  accounts are opened by `LedgerService` on first use, under the advisory lock PAYOUT_CLEARING
+  already used (`ensureSingletonAccount`). No unique index enforces either singleton.
+- **Nothing is backfilled.** Every existing posting, and every non-ad posting written from now on,
+  reads `ADJUSTMENT`: the settlement, payout and top-up journals do not name their lines yet.
+  `ledger_entries` is append-only, so a backfill needs its trigger lifted in a migration.
+- `ledgerEntrySchema` and `contract.ts` carry both columns. `PlannedPosting` gained optional
+  `lineType` and `adPurchaseId`.
+
+### Routes (`/api/vendor/ads`, `requireAuth(VENDOR)`, `no-store`)
+
+```jsonc
+// GET  /api/vendor/ads/products
+{ "settlement_model": "PLATFORM_ESCROW", "available_for_ads_npr": 1950,
+  "products": [ { "id", "name", "slot", "billing_model", "price_npr", "duration_days",
+                  "collection": "PAYOUT_DEDUCTION" | "LEDGER_BALANCE", "recharge_required_npr": 0 } ] }
+// POST /api/vendor/ads/purchases { ad_product_id, starts_at, budget_npr?, idempotency_key, agreed: true }
+//   201 (200 for a replayed key) { "purchase": AdPurchaseView, "available_for_ads_npr", "replayed" }
+//   422 AD_EXCEEDS_PENDING_PAYOUT (details.ad_price_npr, balance_npr, pending_escrow_npr, ad_fees_due_npr)
+//   422 LEDGER_RECHARGE_REQUIRED (details.recharge_required_npr) · 422 AD_BUDGET_INVALID · 422 AD_START_OUT_OF_RANGE
+//   409 IDEMPOTENCY_KEY_REUSED · 404 AD_PRODUCT_NOT_FOUND (unknown or off sale) · 404 VENDOR_NOT_FOUND · 400 VALIDATION_FAILED
+// GET  /api/vendor/ads/purchases            { "purchases": [ AdPurchaseView ] }   newest first, at most 100
+// POST /api/vendor/ads/purchases/:id/cancel 200 { "purchase", "available_for_ads_npr" }, also on repeat
+//   409 AD_PURCHASE_NOT_CANCELLABLE (details.reason STARTED | ENDED) · 404 AD_PURCHASE_NOT_FOUND (also another shop's)
+```
+
+- `AdPurchaseView` = the purchase's terms as agreed, `product_name`, `slot`, `status`, the dates,
+  `amount_paid_npr` and `amount_due_npr`. Contracts: shared-types `api/vendor-ads.ts`.
+- `available_for_ads_npr` (`availableForAdsPaisa`): Model B = balance + pending escrow − flat fees
+  due; Model A = balance; Model C = balance − 5000 (`PREPAID_FIXED_RESERVE_NPR`). Never negative.
+- `starts_at` is from 5 minutes ago to 90 days ahead; `ends_at` = `starts_at` + the product's
+  days. A purchase is `ACTIVE` from the moment it is made, also when it starts later.
+- `budget_npr`: required and at least one fee for `PER_ORDER_PREMIUM`, refused for `FLAT_RATE`.
+- No admin route buys an ad (tested), and the body names no vendor or price.
+
+### What a purchase does (`marketing/ad-purchase-service.ts`, `marketing/ad-fees.ts`)
+
+One transaction: the guard, the `ad_purchases` row, the postings and the `AD_PURCHASED` audit
+entry (actor = the vendor's own account).
+
+| Shop's model | `FLAT_RATE`                                                                                                          | `PER_ORDER_PREMIUM`                                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| A (and C)    | refused unless the balance covers the price; then VENDOR_WALLET −P → AD_REVENUE +P (`AD_FLAT_FEE`)                   | refused unless the balance covers the whole budget; then VENDOR_WALLET −B → AD_BUDGET_CLEARING +B (`AD_BUDGET_HOLD`) |
+| B            | refused when holdings − fees due < P; then what the wallet covers is posted to AD_REVENUE and the rest stays **due** | always allowed; nothing is posted                                                                                    |
+
+- **Fees due (Model B)** are a projection of `ad_purchases` (`price_npr − amount_paid_npr` of
+  the shop's flat-rate purchases that are not cancelled), not a stored balance (`vendor_ledgers`
+  still does not exist).
+- **They are collected from the wallet before money leaves it**: `collectAdFeesDue` (oldest
+  purchase first, never taking the wallet below 0, one `AD_PURCHASE` journal per collection) runs
+  inside `POST /api/admin/finance/settlements/:vendor_id/payout` and the retiring vendor payout
+  request. The settlement list's `available_for_payout_npr` is now wallet − fees due (the formula
+  BACKEND_CHECKLIST 6.11 already stated). A refused payout rolls its collection back.
+- An ad debit never takes a wallet below 0, so it never suspends a shop.
+- **Cancel:** flat-rate before its start → `AD_REFUND` (AD_REVENUE → wallet) and
+  `amount_paid_npr` 0; per-order of a Model A / C shop → `AD_BUDGET_RELEASE` of budget − fees
+  drawn; then `CANCELLED` and the `AD_CANCELLED` audit entry with `returned_npr`.
+- The vendor's wallet ledger shows these as `AD_CHARGE` / `AD_REFUND` (two new
+  `walletEntryTypes`, with EN / NE labels in the mobile app).
+- `GET /api/admin/ads/products` reports a real `active_purchase_count` (ACTIVE and inside the
+  period).
+
+**Lock order, every path:** the vendor row first (`FOR UPDATE` in purchase and cancel, the lock a
+settlement model approval and a payout take), then the purchase row(s), then the ledger accounts
+by id inside `LedgerService.post`. A sponsored promotion write locks its promotion row, then the
+buyer's vendor row and the purchase row (both `FOR SHARE`); nothing takes those in the other
+order.
+
+### Sponsored promotions (`marketing/promotion-service.ts#assertSponsorship`)
+
+`422 AD_PURCHASE_MISMATCH` now carries `details.reason`:
+
+| Reason        | The purchase …                                                                 |
+| ------------- | ------------------------------------------------------------------------------ |
+| `NOT_FOUND`   | does not exist                                                                 |
+| `NOT_RUNNING` | is not ACTIVE, or its period is over                                           |
+| `SLOT`        | did not buy the Home carousel, or the promotion is not a CAROUSEL banner       |
+| `SHOP`        | was made by another shop than the promotion's SHOP target                      |
+| `DATES`       | does not cover the promotion's dates (a sponsored promotion needs an end date) |
+
+- Only `CAROUSEL` can be sponsored: `FEED_LISTING` needs no promotion row and no product sells a
+  Featured Offers tile.
+- Admin app: `SPONSORSHIP_AVAILABLE = true`; the "Ad purchase ID" field is shown and each reason
+  is worded on it (`promotionSaveError`). The admin still has to be given the purchase id by hand:
+  no admin route lists purchases.
+
+### Open
+
+- **Nothing ends, pauses or charges a running ad.** No job sets `ENDED`; no per-order premium is
+  posted at delivery (`AD_ORDER_PREMIUM` is only an enum value), so a per-order ad costs nothing
+  yet and a Model A budget sits held until the vendor cancels. A purchase past its period stays
+  `ACTIVE` in the table, which **blocks that shop's settlement model change** (the approval counts
+  ACTIVE and PAUSED ads).
+- **A Model B fee is collected only at purchase and at a payout**, not as each order settles.
+  Until a payout, the amount due stays in the wallet and the vendor's own wallet screen shows it
+  as balance.
+- `is_sponsored` on the feed and the two-shop sponsored listing are not built.
+- Cancelling a purchase does not hide a promotion already sponsored by it, and the public
+  promotions read (which must drop such a row) does not exist.
+- A flat-rate ad cannot be withdrawn once started; a per-order ad of a Model B shop that is
+  cancelled leaves nothing to settle because nothing was charged.
+- The Vendor App's Marketing tab is not wired (steps in BACKEND_CHECKLIST 6.9).
+- The Model C branch (reserve 5000) is reachable only by setting a shop's model in SQL.
+
+### Tests
+
+- shared-types **295** (+11, `api/vendor-ads.test.ts`), admin **285**, api unit **114**,
+  ledger **16**. db integration **140** (migrations 0000–0027 in one transaction; the contract
+  and the foreign-key index audit pass with the two new columns).
+- api integration: new `vendor-ads-api.int.test.ts` (23): the marketplace per model; the Model B
+  boundary to the paisa; a fee due counted against the next purchase; two simultaneous purchases
+  → one; a retried key; per-order in Model B; **the fee taken before a payout and a refused payout
+  rolling it back**; Model A never on credit; a held budget released on cancel; the refused
+  bodies; the database refusing an ad line without a purchase; cancel before and after the start,
+  three at once, another shop's; a sponsored promotion accepted and each mismatch reason; roles;
+  no admin purchase route. **Full suite: 734 tests in 43 suites; 732 passed in the one full run.** The two failures were re-run with their files and pass: `vendor-finance-api` (this work first reported 0 instead of a negative balance for a shop in debt; fixed) and `deliveries-api` lockout expiry (the known timing flake). The full suite was not run again after that fix.
+- **Mutation-checked, 3 of 3 killed:** fees due ignored in the Model B guard (2 tests fail), no vendor row lock (1; the test needed six simultaneous purchases, two did not catch it), no collection before a payout (1).
+- `tsc` and ESLint clean in all workspaces; `drizzle-kit generate` reports no schema changes.
+- Not run: the worker and kafka integration suites, the mobile suite, `vite build`.
+
 ## 8Z.26 Phase 27: vendor requests (settlement model changes), the ad purchases table, vendor campaign routes (2026-10-08)
 
 Backend (`packages/shared-types`, `packages/db`, `apps/api`) and the last admin tab. SPEC.md was
@@ -1177,7 +1502,7 @@ and `lib/sample-data.ts` are deleted.
 - Model A's behaviour (cash only, the credit rule) is not built: an approved shop is only labelled.
 - The Vendor App has no screen for the request or for the real campaign routes.
 - A vendor cannot withdraw a PENDING request; no notification tells it the decision.
-- `active_purchase_count` on the admin ad price list is still the constant 0.
+- ~~`active_purchase_count` on the admin ad price list is still the constant 0.~~ Real since §8Z.27.
 
 ### Tests
 

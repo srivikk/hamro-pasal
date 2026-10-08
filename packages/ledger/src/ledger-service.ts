@@ -6,7 +6,12 @@ import {
   users,
   type Transaction,
 } from '@hamro-pasal/db';
-import type { DomainEvent, LedgerAccount, LedgerTransactionKind } from '@hamro-pasal/shared-types';
+import type {
+  DomainEvent,
+  LedgerAccount,
+  LedgerAccountType,
+  LedgerTransactionKind,
+} from '@hamro-pasal/shared-types';
 import { eq, inArray, sql } from 'drizzle-orm';
 
 import { toNpr } from './money';
@@ -32,8 +37,14 @@ export type PostResult =
     }
   | { readonly status: 'duplicate'; readonly transactionId: string };
 
-/** pg_advisory_xact_lock key serialising the opening of the PAYOUT_CLEARING account. */
-const PAYOUT_CLEARING_ADVISORY_LOCK = 2200022;
+/** Account types with exactly one account that is opened by the first journal naming it. */
+type LazySingletonAccountType = Extract<
+  LedgerAccountType,
+  'PAYOUT_CLEARING' | 'AD_REVENUE' | 'AD_BUDGET_CLEARING'
+>;
+
+/** pg_advisory_xact_lock key serialising the opening of those accounts. */
+const SINGLETON_ACCOUNT_ADVISORY_LOCK = 2200022;
 
 export class LedgerError extends Error {
   constructor(message: string) {
@@ -104,6 +115,8 @@ export class LedgerService {
         transaction_id: header.id,
         account_id: accountId,
         amount_npr: toNpr(posting.amountPaisa),
+        ...(posting.lineType === undefined ? {} : { line_type: posting.lineType }),
+        ad_purchase_id: posting.adPurchaseId ?? null,
       })),
     );
 
@@ -151,6 +164,8 @@ export class LedgerService {
         case 'SYSTEM_ESCROW':
         case 'PLATFORM_REVENUE':
         case 'PAYOUT_CLEARING':
+        case 'AD_REVENUE':
+        case 'AD_BUDGET_CLEARING':
           return eq(ledgerAccounts.account_type, ref.type);
         case 'GATEWAY_CLEARING':
           return eq(ledgerAccounts.gateway, ref.gateway);
@@ -164,8 +179,12 @@ export class LedgerService {
     if (ref.type === 'DRIVER_WALLET') {
       await this.ensureDriverAccount(tx, ref.driverUserId);
     }
-    if (ref.type === 'PAYOUT_CLEARING') {
-      await this.ensurePayoutClearingAccount(tx);
+    if (
+      ref.type === 'PAYOUT_CLEARING' ||
+      ref.type === 'AD_REVENUE' ||
+      ref.type === 'AD_BUDGET_CLEARING'
+    ) {
+      await this.ensureSingletonAccount(tx, ref.type);
     }
     const [account] = await tx
       .select({ id: ledgerAccounts.id })
@@ -178,20 +197,24 @@ export class LedgerService {
   }
 
   /**
-   * The one PAYOUT_CLEARING account is opened by the first payout (Phase 22): migration 0019 adds
-   * the enum value and PostgreSQL cannot use a new enum value in the transaction that adds it. The
-   * advisory lock makes two first payouts open one account between them.
+   * The one PAYOUT_CLEARING account is opened by the first payout (Phase 22), and the AD_REVENUE
+   * and AD_BUDGET_CLEARING accounts by the first ad charge (Phase 28): migrations 0019 and 0027
+   * add the enum values and PostgreSQL cannot use a new enum value in the transaction that adds
+   * it. The advisory lock makes two first journals open one account between them.
    */
-  private async ensurePayoutClearingAccount(tx: Transaction): Promise<void> {
+  private async ensureSingletonAccount(
+    tx: Transaction,
+    accountType: LazySingletonAccountType,
+  ): Promise<void> {
     const existing = () =>
       tx
         .select({ id: ledgerAccounts.id })
         .from(ledgerAccounts)
-        .where(eq(ledgerAccounts.account_type, 'PAYOUT_CLEARING'));
+        .where(eq(ledgerAccounts.account_type, accountType));
     if ((await existing()).length > 0) return;
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(${PAYOUT_CLEARING_ADVISORY_LOCK})`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${SINGLETON_ACCOUNT_ADVISORY_LOCK})`);
     if ((await existing()).length > 0) return;
-    await tx.insert(ledgerAccounts).values({ account_type: 'PAYOUT_CLEARING' });
+    await tx.insert(ledgerAccounts).values({ account_type: accountType });
   }
 
   /** Driver wallets are opened lazily, on a rider's first settlement. */

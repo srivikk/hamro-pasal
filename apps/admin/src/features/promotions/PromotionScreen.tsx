@@ -37,8 +37,8 @@ type Editor =
 /**
  * Home promotions (STATE_HANDOFF §8Z.4): the banner carousel and the Featured Offers tiles of the
  * customer app's Home. A promotion opens a shop or filters Home; it never changes a price. One is
- * marked as an ad only together with the purchase a vendor made in the Ad Marketplace, which no
- * vendor can make yet: the form offers no sponsorship until then (`SPONSORSHIP_AVAILABLE`).
+ * marked as an ad only together with the purchase a vendor made in the Ad Marketplace: the form
+ * takes that purchase's id and the server checks it (`SPONSORSHIP_AVAILABLE`).
  * Reads and writes /api/admin/promotions.
  */
 export function PromotionScreen() {
@@ -479,8 +479,9 @@ function PromotionModal({
             {errorOf('adPurchaseId')}
             <p className="guardrail">
               Leave it empty for an ordinary promotion. A promotion carries the “Ad” badge only with
-              the purchase a vendor made in the Ad Marketplace, and must then target that vendor’s
-              shop.
+              the purchase a vendor made in the Ad Marketplace. It must then be a carousel banner
+              that targets that vendor’s shop, with its first and last day inside the period the
+              vendor paid for.
             </p>
           </>
         ) : (

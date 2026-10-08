@@ -1,5 +1,6 @@
 import type { BillingCycleRenewalService } from '../billing/billing-cycle-renewal';
 import type { ComplianceSweepService } from '../compliance/compliance-sweep';
+import type { MarketingStatusSweepService } from '../marketing/marketing-status-sweep';
 import {
   ghostCustomerTimerJobSchema,
   midnightMaintenanceJobSchema,
@@ -29,6 +30,8 @@ export interface TimerHandlers {
   onVendorAcceptanceTimeout(job: VendorAcceptanceTimeoutJob): Promise<void>;
   onGhostCustomerTimerElapsed(job: GhostCustomerTimerJob): Promise<void>;
   runMidnightTask(task: MidnightTask): Promise<void>;
+  /** Phase 28: the hourly upkeep of ad purchases. */
+  runMarketingStatusSweep(): Promise<void>;
 }
 
 /** Payloads are validated at the boundary: a malformed job fails loudly (and is retained). */
@@ -41,7 +44,10 @@ export function createProcessors(handlers: TimerHandlers) {
       await handlers.onGhostCustomerTimerElapsed(ghostCustomerTimerJobSchema.parse(job.data));
     },
     midnight: async (job: Job): Promise<void> => {
-      await handlers.runMidnightTask(midnightMaintenanceJobSchema.parse(job.data).task);
+      const { task } = midnightMaintenanceJobSchema.parse(job.data);
+      await (task === 'MARKETING_STATUS_SWEEP'
+        ? handlers.runMarketingStatusSweep()
+        : handlers.runMidnightTask(task));
     },
   };
 }
@@ -105,9 +111,20 @@ export function createTimerHandlers(deps: {
   /** Phase 25. Optional so a worker built without them logs the task instead of failing it. */
   readonly complianceSweep?: Pick<ComplianceSweepService, 'suspendVendorsWithoutPan'>;
   readonly billingRenewal?: Pick<BillingCycleRenewalService, 'renewDueCycles'>;
+  /** Phase 28. Optional like the two above. */
+  readonly marketingSweep?: Pick<MarketingStatusSweepService, 'run'>;
 }): TimerHandlers {
   return {
     ...pendingImplementationHandlers,
+    runMarketingStatusSweep: async () => {
+      if (deps.marketingSweep === undefined) {
+        return pendingImplementationHandlers.runMarketingStatusSweep();
+      }
+      const summary = await deps.marketingSweep.run();
+      console.info(
+        `[worker] marketing sweep: ${String(summary.ended)} ad(s) ended, ${String(summary.paused)} paused, Rs. ${String(summary.budgetReleasedNpr)} of budget released`,
+      );
+    },
     runMidnightTask: async (task) => {
       switch (task) {
         case 'VENDOR_DEBT_RECONCILIATION': {
@@ -157,6 +174,10 @@ export function createTimerHandlers(deps: {
 
 /** Placeholder handlers until the escalation / downgrade phases land. They log and succeed. */
 export const pendingImplementationHandlers: TimerHandlers = {
+  runMarketingStatusSweep: () => {
+    console.warn('[worker] marketing status sweep fired (not wired in this worker)');
+    return Promise.resolve();
+  },
   onVendorAcceptanceTimeout: (job) => {
     console.warn('[worker] vendor acceptance timeout fired (escalation not implemented yet)', job);
     return Promise.resolve();

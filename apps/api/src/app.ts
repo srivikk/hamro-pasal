@@ -20,6 +20,7 @@ import { strictCors } from './http/cors';
 import { errorHandler, HttpError } from './http/errors';
 import { requestId } from './http/request-context';
 import type { AdProductService } from './marketing/ad-product-service';
+import type { AdPurchaseService } from './marketing/ad-purchase-service';
 import type { CampaignService } from './marketing/campaign-service';
 import type { PromotionService } from './marketing/promotion-service';
 import type { DeviceTokenService } from './notifications/device-token-service';
@@ -50,6 +51,8 @@ import { reviewsRouter } from './routes/reviews';
 import { uploadsRouter } from './routes/uploads';
 import { vendorLedgerRouter } from './routes/settlement-model-requests';
 import { vendorBankAccountsRouter, vendorCampaignsRouter } from './routes/vendor-account';
+import { homeRouter } from './routes/home';
+import { vendorAdsRouter } from './routes/vendor-ads';
 import type { SettlementModelRequestService } from './settlement/settlement-model-request-service';
 import { vendorFinanceRouter } from './routes/vendor-finance';
 import { vendorOrdersRouter } from './routes/vendor-orders';
@@ -108,6 +111,8 @@ export interface ApiServices {
   readonly settlementModelRequests: SettlementModelRequestService;
   readonly adProducts: AdProductService;
   readonly promotions: PromotionService;
+  /** Phase 28: the Ad Marketplace as a shop uses it (its own purchases). */
+  readonly adPurchases: AdPurchaseService;
   /** Phase 26: where a shop is paid. */
   readonly vendorBankAccounts: VendorBankAccountService;
   /** Local end-to-end runs: present only with MOCK_SERVICES outside production. */
@@ -160,6 +165,8 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
     );
     // Phase 17. Public reads: the active taxonomy and the active products of LIVE vendors.
     app.use('/api/categories', categoriesRouter(services.categories));
+    // Phase 28. Public: the Home banners and Featured Offers running now.
+    app.use('/api/home', homeRouter(services.promotions));
     app.use('/api/products', productsRouter(services.products));
     app.use(
       '/api/vendor/products',
@@ -181,6 +188,12 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       '/api/vendor/campaigns',
       requireAuth(services.accessTokenSecret, ['VENDOR']),
       vendorCampaignsRouter(services.campaigns),
+    );
+    // Phase 28. The Ad Marketplace: what is on sale and the shop's own purchases.
+    app.use(
+      '/api/vendor/ads',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorAdsRouter(services.adPurchases),
     );
     // Phase 27. The shop's own request to change its settlement model.
     app.use(

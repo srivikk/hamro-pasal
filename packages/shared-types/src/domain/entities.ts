@@ -13,6 +13,7 @@ import {
   disputeStatusSchema,
   fulfillmentModeSchema,
   ledgerAccountTypeSchema,
+  ledgerLineTypeSchema,
   ledgerTransactionKindSchema,
   orderStateSchema,
   paymentMethodSchema,
@@ -330,6 +331,10 @@ export const ledgerEntrySchema = z.strictObject({
   /** Signed change to the account balance; never zero. */
   amount_npr: nprAmountSchema.refine((value) => value !== 0, 'Must be non-zero'),
   created_at: z.date(),
+  /** What the posting is; ADJUSTMENT when its journal named no line. */
+  line_type: ledgerLineTypeSchema,
+  /** The vendor's own purchase an AD_* line belongs to; null on every other line. */
+  ad_purchase_id: z.uuid().nullable(),
 });
 export type LedgerEntry = z.infer<typeof ledgerEntrySchema>;
 

@@ -120,13 +120,22 @@ describe('feed and menu schemas', () => {
 
   it('accept a partitioned feed', () => {
     const body = {
-      serviceable: [{ vendor, distance_km: 0.18, serviceable: true, delivery_available: true }],
+      serviceable: [
+        {
+          vendor,
+          distance_km: 0.18,
+          serviceable: true,
+          delivery_available: true,
+          is_sponsored: false,
+        },
+      ],
       explore_further: [
         {
           vendor: { ...vendor, id: randomUUID() },
           distance_km: 7.2,
           serviceable: false,
           delivery_available: false,
+          is_sponsored: false,
         },
       ],
       delivery_available: true,

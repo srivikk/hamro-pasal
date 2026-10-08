@@ -64,7 +64,15 @@ export function sortFeed(
   const key = SORT_KEYS[sort];
   return {
     ...feed,
-    serviceable: sortEntries(feed.serviceable, key, extrasOf),
+    // The (at most two) sponsored listings paid for the top: a sort reorders everyone else.
+    serviceable: [
+      ...feed.serviceable.filter((entry) => entry.is_sponsored),
+      ...sortEntries(
+        feed.serviceable.filter((entry) => !entry.is_sponsored),
+        key,
+        extrasOf,
+      ),
+    ],
     explore_further: sortEntries(feed.explore_further, key, extrasOf),
   };
 }

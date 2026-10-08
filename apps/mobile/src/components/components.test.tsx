@@ -51,7 +51,13 @@ describe('VendorCard', () => {
     const onPress = jest.fn();
     renderWithProviders(
       <VendorCard
-        entry={{ vendor, distance_km: 1.26, serviceable: true, delivery_available: true }}
+        entry={{
+          vendor,
+          distance_km: 1.26,
+          serviceable: true,
+          delivery_available: true,
+          is_sponsored: false,
+        }}
         onPress={onPress}
       />,
     );
@@ -71,7 +77,13 @@ describe('VendorCard', () => {
     const onPress = jest.fn();
     renderWithProviders(
       <VendorCard
-        entry={{ vendor, distance_km: 9, serviceable: false, delivery_available: true }}
+        entry={{
+          vendor,
+          distance_km: 9,
+          serviceable: false,
+          delivery_available: true,
+          is_sponsored: false,
+        }}
         onPress={onPress}
       />,
     );
@@ -87,7 +99,13 @@ describe('VendorCard', () => {
   it('renders every number in Devanagari under ne', () => {
     renderWithProviders(
       <VendorCard
-        entry={{ vendor, distance_km: 2.04, serviceable: true, delivery_available: true }}
+        entry={{
+          vendor,
+          distance_km: 2.04,
+          serviceable: true,
+          delivery_available: true,
+          is_sponsored: false,
+        }}
       />,
       {
         locale: 'ne',
@@ -111,6 +129,7 @@ describe('VendorCard', () => {
           distance_km: 1,
           serviceable: true,
           delivery_available: true,
+          is_sponsored: false,
         }}
       />,
     );

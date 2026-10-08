@@ -1,11 +1,11 @@
-import { adProducts, recordAuditLog, type Database } from '@hamro-pasal/db';
+import { adProducts, adPurchases, recordAuditLog, type Database } from '@hamro-pasal/db';
 import {
   NO_AUDIT_CONTEXT,
   type AdProductCreate,
   type AdProductUpdate,
   type AuditContext,
 } from '@hamro-pasal/shared-types';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, lte, sql } from 'drizzle-orm';
 
 export type AdProductRow = typeof adProducts.$inferSelect;
 
@@ -44,6 +44,22 @@ export class AdProductService {
       .select()
       .from(adProducts)
       .orderBy(asc(sql`lower(${adProducts.name})`), asc(adProducts.id));
+  }
+
+  /** Purchases running now per product (ACTIVE and inside their period); absent means none. */
+  async activePurchaseCounts(): Promise<Map<string, number>> {
+    const rows = await this.db
+      .select({ productId: adPurchases.ad_product_id, count: sql<number>`count(*)::int` })
+      .from(adPurchases)
+      .where(
+        and(
+          eq(adPurchases.status, 'ACTIVE'),
+          lte(adPurchases.starts_at, sql`now()`),
+          gt(adPurchases.ends_at, sql`now()`),
+        ),
+      )
+      .groupBy(adPurchases.ad_product_id);
+    return new Map(rows.map((row) => [row.productId, row.count]));
   }
 
   create(

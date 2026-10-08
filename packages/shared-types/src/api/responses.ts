@@ -158,6 +158,12 @@ export const feedEntrySchema = z.strictObject({
    * Offline (closed, carts disabled) whatever the customer's location. Derived on every read.
    */
   delivery_available: z.boolean().default(true),
+  /**
+   * True on at most two entries, placed first in the serviceable section: shops with a running
+   * FEED_LISTING ad purchase that deliver here (SPEC core 8). The app shows its "Ad" badge on
+   * exactly these. Defaults to false, so a response from before the field reads as "not an ad".
+   */
+  is_sponsored: z.boolean().default(false),
 });
 export type FeedEntry = z.infer<typeof feedEntrySchema>;
 
@@ -529,6 +535,8 @@ export type VendorWalletBalanceResponseBody = z.infer<typeof vendorWalletBalance
  * - ADJUSTMENT: a Super Admin correction.
  * - PAYOUT_HOLD: the vendor requested a bank withdrawal; the amount left the wallet (Phase 22).
  * - PAYOUT_REVERSAL: that request was rejected; the amount came back.
+ * - AD_CHARGE: the shop's own ad purchase was charged, or its per-order budget held (Phase 28).
+ * - AD_REFUND: an unused ad budget, or a flat-rate ad cancelled before it started, came back.
  */
 export const walletEntryTypes = [
   'ORDER_PAYOUT',
@@ -537,6 +545,8 @@ export const walletEntryTypes = [
   'ADJUSTMENT',
   'PAYOUT_HOLD',
   'PAYOUT_REVERSAL',
+  'AD_CHARGE',
+  'AD_REFUND',
 ] as const;
 export const walletEntryTypeSchema = z.enum(walletEntryTypes);
 export type WalletEntryType = z.infer<typeof walletEntryTypeSchema>;

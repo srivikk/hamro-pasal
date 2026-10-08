@@ -1,5 +1,4 @@
 import { sanitizeAmountInput } from './shop-settings';
-import { PREPAID_RESERVE_NPR, type SettlementModel } from './vendor-finance-mocks';
 
 /** SPEC core sections 7 (Discounts) and 8 (Ad Monetization), as the Vendor App shows them. */
 
@@ -67,75 +66,4 @@ export function validateOfferForm(form: OfferForm): OfferFormResult {
 
   if (!valueOk || errors.minCart !== undefined) return { ok: false, errors };
   return { ok: true, details: { kind: form.kind, value, minCartNpr: minCart } };
-}
-
-/** A platform campaign the shop is invited to (`platform_campaigns`), and its opt-in if any. */
-export interface CampaignInvite {
-  id: string;
-  name: string;
-  kind: DiscountKind;
-  value: number;
-  maxDiscountNpr: number | null;
-  minCartNpr: number;
-  /** The share of each discount this shop would bear; the platform funds the rest. */
-  vendorSharePercent: number;
-  termsVersion: number;
-  startsAt: string;
-  endsAt: string;
-  /** Set once this shop's own account has opted in. */
-  optedInAt: string | null;
-}
-
-export const AD_BILLING_MODELS = ['FLAT_RATE', 'PER_ORDER_PREMIUM'] as const;
-export type AdBillingModel = (typeof AD_BILLING_MODELS)[number];
-
-/** A placement on sale in the Ad Marketplace (`ad_products`). */
-export interface AdProduct {
-  id: string;
-  /** `FEED_LISTING` is the sponsored listing in search and the feed ("Sponsored Search"). */
-  slot: 'CAROUSEL' | 'FEED_LISTING';
-  billingModel: AdBillingModel;
-  /** For the whole period (FLAT_RATE), or per delivered order (PER_ORDER_PREMIUM). */
-  priceNpr: number;
-  durationDays: number;
-  /** PER_ORDER_PREMIUM: the most the ad may cost in all. */
-  budgetNpr: number | null;
-}
-
-export interface AdPurchase {
-  id: string;
-  adProductId: string;
-  purchasedAt: string;
-}
-
-export interface AdFunds {
-  model: SettlementModel;
-  balanceNpr: number;
-  pendingEscrowNpr: number;
-  /** Flat-rate ads already bought: that money is spoken for. */
-  committedNpr: number;
-}
-
-/** What a Model B shop can put towards a flat-rate ad: what the platform already holds for it. */
-export function adFundsAvailable(funds: AdFunds): number {
-  return funds.balanceNpr + funds.pendingEscrowNpr - funds.committedNpr;
-}
-
-/**
- * Whether the shop may buy the ad (SPEC Ad Monetization, "Collection by settlement model"):
- *  - Model B: a flat-rate ad needs `balance + pending escrow >= price`; a per-order ad is always
- *    allowed (its fee comes out of each order's settlement).
- *  - Model A: the price, or the whole budget, must be covered by the balance: never on credit.
- *  - Model C: the same, and the balance must stay at or above the Fixed Reserve.
- */
-export function canBuyAd(funds: AdFunds, product: AdProduct): boolean {
-  const cost = product.billingModel === 'FLAT_RATE' ? product.priceNpr : (product.budgetNpr ?? 0);
-  switch (funds.model) {
-    case 'PLATFORM_ESCROW':
-      return product.billingModel === 'PER_ORDER_PREMIUM' || adFundsAvailable(funds) >= cost;
-    case 'COD_CREDIT':
-      return funds.balanceNpr - funds.committedNpr - cost >= 0;
-    case 'DIRECT_PREPAID':
-      return funds.balanceNpr - funds.committedNpr - cost >= PREPAID_RESERVE_NPR;
-  }
 }

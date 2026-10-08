@@ -41,6 +41,7 @@ import { DrizzleStockReader } from './inventory/stock-reader';
 import { LedgerService } from './ledger/ledger-service';
 import { SettlementService } from './ledger/settlement-service';
 import { AdProductService } from './marketing/ad-product-service';
+import { AdPurchaseService } from './marketing/ad-purchase-service';
 import { CampaignService } from './marketing/campaign-service';
 import { SettlementModelRequestService } from './settlement/settlement-model-request-service';
 import { PromotionService } from './marketing/promotion-service';
@@ -204,6 +205,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     campaigns: new CampaignService(infra.db),
     settlementModelRequests: new SettlementModelRequestService(infra.db),
     adProducts: new AdProductService(infra.db),
+    adPurchases: new AdPurchaseService(infra.db, ledger),
     promotions: new PromotionService(infra.db),
     vendorBankAccounts: new VendorBankAccountService(infra.db),
     async close() {

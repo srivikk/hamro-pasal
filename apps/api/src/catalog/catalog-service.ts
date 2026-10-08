@@ -1,4 +1,12 @@
-import { platformSettings, products, vendors, type Database, type Executor } from '@hamro-pasal/db';
+import {
+  adProducts,
+  adPurchases,
+  platformSettings,
+  products,
+  vendors,
+  type Database,
+  type Executor,
+} from '@hamro-pasal/db';
 import {
   DELIVERY_RADIUS_GPS_DRIFT_MULTIPLIER,
   GEO_SRID,
@@ -6,7 +14,7 @@ import {
   type VendorFeedQuery,
   type VendorFulfillmentMode,
 } from '@hamro-pasal/shared-types';
-import { and, asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, lte, sql, type SQL } from 'drizzle-orm';
 
 /**
  * Upper bound per feed section. A NATION_WIDE catalogue can grow without limit, and the mobile
@@ -36,7 +44,12 @@ export interface CatalogVendor {
   readonly serviceable: boolean;
   /** The shop's delivery mode is one the Super Admin has switched on (else it is forced Offline). */
   readonly deliveryAvailable: boolean;
+  /** One of the (at most two) sponsored listings leading the serviceable section. */
+  readonly sponsored?: boolean;
 }
+
+/** SPEC core 8, "Sponsored feed listings": at most this many lead the feed. */
+export const SPONSORED_FEED_LIMIT = 2;
 
 export interface VendorFeed {
   readonly serviceable: readonly CatalogVendor[];
@@ -82,8 +95,12 @@ export class CatalogService {
       .orderBy(sql`distance_m`, asc(vendors.id));
 
     const all = rows.map(toCatalogVendor);
+    const advertisers = await this.feedAdvertisers();
     return {
-      serviceable: all.filter((v) => v.serviceable).slice(0, FEED_SECTION_LIMIT),
+      serviceable: withSponsoredFirst(
+        all.filter((v) => v.serviceable),
+        advertisers,
+      ).slice(0, FEED_SECTION_LIMIT),
       unserviceable: all.filter((v) => !v.serviceable).slice(0, FEED_SECTION_LIMIT),
       deliveryAvailable: true,
     };
@@ -123,6 +140,23 @@ export class CatalogService {
     };
   }
 
+  /** Shops whose own FEED_LISTING ad purchase is running now (ACTIVE, inside its paid period). */
+  private async feedAdvertisers(): Promise<ReadonlySet<string>> {
+    const rows = await this.db
+      .selectDistinct({ vendorId: adPurchases.vendor_id })
+      .from(adPurchases)
+      .innerJoin(adProducts, eq(adProducts.id, adPurchases.ad_product_id))
+      .where(
+        and(
+          eq(adProducts.slot, 'FEED_LISTING'),
+          eq(adPurchases.status, 'ACTIVE'),
+          lte(adPurchases.starts_at, sql`now()`),
+          gt(adPurchases.ends_at, sql`now()`),
+        ),
+      );
+    return new Set(rows.map((row) => row.vendorId));
+  }
+
   private vendorColumns(customer: VendorFeedQuery, modes: readonly VendorFulfillmentMode[]) {
     return {
       id: vendors.id,
@@ -142,6 +176,28 @@ export class CatalogService {
       delivery_available: modeEnabled(modes).mapWith(Boolean).as('delivery_available'),
     };
   }
+}
+
+/**
+ * SPEC core 8, "Sponsored feed listings". `serviceable` is the shops that deliver to the customer,
+ * nearest first. The nearest two advertisers among them (and only shops that can take an order:
+ * their delivery mode is on) move to the top, flagged; every other shop, a third advertiser
+ * included, keeps its place unflagged, so the badge always means "this position was paid for".
+ * A shop that does not deliver here is never in this list, so an ad never overrides delivery rules.
+ */
+export function withSponsoredFirst(
+  serviceable: readonly CatalogVendor[],
+  advertisers: ReadonlySet<string>,
+): CatalogVendor[] {
+  const sponsored = serviceable
+    .filter((vendor) => advertisers.has(vendor.id) && vendor.deliveryAvailable)
+    .slice(0, SPONSORED_FEED_LIMIT);
+  if (sponsored.length === 0) return [...serviceable];
+  const lead = new Set(sponsored.map((vendor) => vendor.id));
+  return [
+    ...sponsored.map((vendor) => ({ ...vendor, sponsored: true })),
+    ...serviceable.filter((vendor) => !lead.has(vendor.id)),
+  ];
 }
 
 export interface DeliveryPoint {

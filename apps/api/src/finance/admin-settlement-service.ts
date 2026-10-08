@@ -17,6 +17,7 @@ import {
 } from '@hamro-pasal/shared-types';
 import { and, asc, eq, gt, inArray } from 'drizzle-orm';
 
+import { adFeesDueByVendor, adFeesDuePaisa, collectAdFeesDue } from '../marketing/ad-fees';
 import { pendingEscrowByVendor } from '../wallet/vendor-wallet-service';
 import { AdminVendorNotFoundError } from '../wallet/wallet-service';
 import {
@@ -40,7 +41,7 @@ export interface SettlementVendor {
     | 'pan_verified_at'
     | 'settlement_model'
   >;
-  /** What may leave the platform now: the wallet balance, never below 0. */
+  /** What may leave the platform now: the wallet balance less ad fees still due, never below 0. */
   readonly availableForPayoutNpr: number;
   readonly pendingEscrowNpr: number;
   /** Where the payout is sent; null holds every payout. */
@@ -90,8 +91,9 @@ const vendorColumns = {
   settlement_model: vendors.settlement_model,
 };
 
-function availableOf(walletBalanceNpr: number): number {
-  return Math.max(0, walletBalanceNpr);
+/** SPEC core 8, Model B: an ad's flat fee is deducted from the vendor's payouts. */
+function availableOf(walletBalanceNpr: number, adFeesDuePaisa = 0): number {
+  return Math.max(0, toNpr(toPaisa(walletBalanceNpr) - adFeesDuePaisa));
 }
 
 /**
@@ -126,6 +128,7 @@ export class AdminSettlementService {
           .limit(ADMIN_VENDOR_LIST_LIMIT);
         const ids = rows.map((row) => row.id);
         const escrow = await pendingEscrowByVendor(tx, ids);
+        const feesDue = await adFeesDueByVendor(tx, ids);
         const accounts =
           ids.length === 0
             ? []
@@ -141,7 +144,7 @@ export class AdminSettlementService {
         const primary = new Map(accounts.map((account) => [account.vendor_id, account]));
         return rows.map((vendor) => ({
           vendor,
-          availableForPayoutNpr: availableOf(vendor.wallet_balance_npr),
+          availableForPayoutNpr: availableOf(vendor.wallet_balance_npr, feesDue.get(vendor.id)),
           pendingEscrowNpr: escrow.get(vendor.id) ?? 0,
           primaryBankAccount: primary.get(vendor.id) ?? null,
         }));
@@ -201,7 +204,17 @@ export class AdminSettlementService {
       const bankAccount = await primaryBankAccountOf(tx, vendorId);
       if (bankAccount === null) throw new BankAccountMissingError(vendorId);
 
-      const availableNpr = availableOf(vendor.wallet_balance_npr);
+      // Ad fees the shop owes are taken out of the wallet first (AD_REVENUE, their own journal):
+      // what is paid out is what is left.
+      const adFeesCollectedPaisa = await collectAdFeesDue(tx, this.ledger, vendorId);
+      const [swept] = await tx
+        .select({ balance: vendors.wallet_balance_npr })
+        .from(vendors)
+        .where(eq(vendors.id, vendorId));
+      const availableNpr = availableOf(
+        swept?.balance ?? vendor.wallet_balance_npr,
+        await adFeesDuePaisa(tx, vendorId),
+      );
       if (amountPaisa > toPaisa(availableNpr)) {
         throw new PayoutExceedsBalanceError(request.amount_npr, availableNpr);
       }
@@ -246,6 +259,9 @@ export class AdminSettlementService {
         afterState: {
           wallet_balance_npr: after.wallet_balance_npr,
           pan_verified_at: vendor.pan_verified_at.toISOString(),
+          ...(adFeesCollectedPaisa > 0
+            ? { ad_fees_collected_npr: toNpr(adFeesCollectedPaisa) }
+            : {}),
           payout: {
             id: payout.id,
             amount_npr: toNpr(amountPaisa),
@@ -295,7 +311,10 @@ async function settlementVendor(
   const escrow = await pendingEscrowByVendor(tx, [vendor.id]);
   return {
     vendor,
-    availableForPayoutNpr: availableOf(vendor.wallet_balance_npr),
+    availableForPayoutNpr: availableOf(
+      vendor.wallet_balance_npr,
+      await adFeesDuePaisa(tx, vendor.id),
+    ),
     pendingEscrowNpr: escrow.get(vendor.id) ?? 0,
     primaryBankAccount: await primaryBankAccountOf(tx, vendor.id),
   };

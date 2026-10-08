@@ -46,6 +46,13 @@ export const midnightTasks = [
    */
   'BILLING_CYCLE_RENEWAL',
 ] as const;
+/**
+ * Runs every hour on the maintenance queue (Phase 28, SPEC core 8): ends ad purchases whose paid
+ * period is over (releasing a held budget) and pauses per-order ads whose budget is used up.
+ */
+export const MARKETING_STATUS_SWEEP_TASK = 'MARKETING_STATUS_SWEEP';
+export const HOURLY_CRON_PATTERN = '0 * * * *';
+
 export const midnightTaskSchema = z.enum(midnightTasks);
 export type MidnightTask = z.infer<typeof midnightTaskSchema>;
 
@@ -62,6 +69,6 @@ export const ghostCustomerTimerJobSchema = z.strictObject({
 export type GhostCustomerTimerJob = z.infer<typeof ghostCustomerTimerJobSchema>;
 
 export const midnightMaintenanceJobSchema = z.strictObject({
-  task: midnightTaskSchema,
+  task: z.enum([...midnightTasks, MARKETING_STATUS_SWEEP_TASK]),
 });
 export type MidnightMaintenanceJob = z.infer<typeof midnightMaintenanceJobSchema>;

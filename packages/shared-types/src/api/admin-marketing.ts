@@ -285,3 +285,31 @@ export type AdminPromotionListResponseBody = z.infer<typeof adminPromotionListRe
 /** POST (201) and PUT (200) /api/admin/promotions. */
 export const adminPromotionResponseSchema = z.strictObject({ promotion: adminPromotionViewSchema });
 export type AdminPromotionResponseBody = z.infer<typeof adminPromotionResponseSchema>;
+
+// The public read (Phase 28) --------------------------------------------------------------------
+
+/**
+ * One promotion as GET /api/home/promotions serves it to the customer app: what to draw and where
+ * a tap leads. No dates, order or admin fields. `is_sponsored` draws the "Ad" badge.
+ */
+export const homePromotionViewSchema = z.strictObject({
+  id: z.uuid(),
+  placement: promotionPlacementSchema,
+  image_url: z.string().nullable(),
+  title: z.string().nullable(),
+  subtitle: z.string().nullable(),
+  target_type: promotionTargetTypeSchema.nullable(),
+  target_value: z.string().nullable(),
+  is_sponsored: z.boolean().default(false),
+});
+export type HomePromotionView = z.infer<typeof homePromotionViewSchema>;
+
+/**
+ * GET /api/home/promotions (public): the promotions running now, by `display_order`. `banners`
+ * are the CAROUSEL ones, `offers` the FEATURED tiles. Two empty lists is a normal answer.
+ */
+export const homePromotionsResponseSchema = z.strictObject({
+  banners: z.array(homePromotionViewSchema),
+  offers: z.array(homePromotionViewSchema),
+});
+export type HomePromotionsResponseBody = z.infer<typeof homePromotionsResponseSchema>;

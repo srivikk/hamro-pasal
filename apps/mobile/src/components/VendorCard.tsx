@@ -107,7 +107,7 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
             />
           </Pressable>
         ) : null}
-        {extras.is_sponsored ? (
+        {entry.is_sponsored || extras.is_sponsored ? (
           // Paid placement must be recognisable as such: a small, quiet label on the cover.
           <View
             accessible

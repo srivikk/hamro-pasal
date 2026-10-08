@@ -1,6 +1,8 @@
 import {
   GHOST_CUSTOMER_TIMER_MS,
   JOB_QUEUES,
+  HOURLY_CRON_PATTERN,
+  MARKETING_STATUS_SWEEP_TASK,
   MIDNIGHT_CRON_PATTERN,
   midnightTasks,
   NEPAL_TIMEZONE,
@@ -142,4 +144,16 @@ export async function registerMidnightJobs(queue: Queue<MidnightMaintenanceJob>)
       { name: task, data: { task }, opts: { attempts: 3, ...RETENTION } },
     );
   }
+  // The one hourly task shares the maintenance queue (Phase 28): on the hour, every hour.
+  await queue.upsertJobScheduler(
+    MARKETING_SWEEP_SCHEDULER_ID,
+    { pattern: HOURLY_CRON_PATTERN, tz: NEPAL_TIMEZONE },
+    {
+      name: MARKETING_STATUS_SWEEP_TASK,
+      data: { task: MARKETING_STATUS_SWEEP_TASK },
+      opts: { attempts: 3, ...RETENTION },
+    },
+  );
 }
+
+export const MARKETING_SWEEP_SCHEDULER_ID = 'marketing-status-sweep';

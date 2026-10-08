@@ -48,7 +48,7 @@ export function adminCampaignView({ campaign, optInCount }: CampaignWithCount): 
   };
 }
 
-export function adProductView(product: AdProductRow): AdProductView {
+export function adProductView(product: AdProductRow, activePurchaseCount = 0): AdProductView {
   return {
     id: product.id,
     name: product.name,
@@ -57,8 +57,7 @@ export function adProductView(product: AdProductRow): AdProductView {
     price_npr: product.price_npr,
     duration_days: product.duration_days,
     is_active: product.is_active,
-    // No vendor can buy an ad yet (`ad_purchases` arrives with the Ad Marketplace purchase flow).
-    active_purchase_count: 0,
+    active_purchase_count: activePurchaseCount,
     created_at: product.created_at.toISOString(),
   };
 }
@@ -127,8 +126,11 @@ export function mountAdminMarketing(
   });
 
   router.get('/ads/products', async (_req, res) => {
+    const counts = await adProducts.activePurchaseCounts();
     const body: AdminAdProductListResponseBody = {
-      products: (await adProducts.list()).map(adProductView),
+      products: (await adProducts.list()).map((product) =>
+        adProductView(product, counts.get(product.id) ?? 0),
+      ),
     };
     res.json(body);
   });
@@ -150,6 +152,7 @@ export function mountAdminMarketing(
     const body: AdminAdProductResponseBody = {
       product: adProductView(
         await adProducts.update(authOf(req).userId, id, input, auditContextOf(req, res)),
+        (await adProducts.activePurchaseCounts()).get(id) ?? 0,
       ),
     };
     res.json(body);

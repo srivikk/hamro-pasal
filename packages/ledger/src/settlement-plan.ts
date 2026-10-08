@@ -1,4 +1,4 @@
-import type { Order } from '@hamro-pasal/shared-types';
+import type { LedgerLineType, Order } from '@hamro-pasal/shared-types';
 
 import { toPaisa } from './money';
 
@@ -7,6 +7,8 @@ export type AccountRef =
   | { readonly type: 'SYSTEM_ESCROW' }
   | { readonly type: 'PLATFORM_REVENUE' }
   | { readonly type: 'PAYOUT_CLEARING' }
+  | { readonly type: 'AD_REVENUE' }
+  | { readonly type: 'AD_BUDGET_CLEARING' }
   | { readonly type: 'GATEWAY_CLEARING'; readonly gateway: 'ESEWA' | 'KHALTI' }
   | { readonly type: 'VENDOR_WALLET'; readonly vendorId: string }
   | { readonly type: 'DRIVER_WALLET'; readonly driverUserId: string };
@@ -15,6 +17,10 @@ export interface PlannedPosting {
   readonly account: AccountRef;
   /** Signed change to the account balance, in paisa. */
   readonly amountPaisa: number;
+  /** What the posting is; a journal that names none is stored as ADJUSTMENT (the column default). */
+  readonly lineType?: LedgerLineType;
+  /** Required with an AD_* line: the vendor's own purchase the charge belongs to. */
+  readonly adPurchaseId?: string;
 }
 
 export class SettlementPlanError extends Error {

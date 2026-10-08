@@ -561,7 +561,6 @@
       "ADS": "विज्ञापन"
     },
     "cancel": "रद्द गर्नुहोस्",
-    "active": "सक्रिय",
     "flatLabel": "सिधै रु. {{value, localizedNumber}} छुट",
     "percentLabel": "{{value, localizedNumber}}% छुट",
     "minOrder": "न्यूनतम अर्डर रु. {{amount, localizedNumber}}",
@@ -614,13 +613,11 @@
       "FEED_LISTING": "खोज र सूचीमा तपाईंको पसल सबैभन्दा माथि, \"विज्ञापन\" चिन्हसहित।"
     },
     "flatRate": "{{days, localizedNumber}} दिनका लागि रु. {{price, localizedNumber}} (निश्चित दर)",
-    "perOrder": "डेलिभर भएको प्रति अर्डर रु. {{price, localizedNumber}}, बढीमा रु. {{budget, localizedNumber}}, {{days, localizedNumber}} दिनका लागि",
     "fundsLabel": {
       "PLATFORM_ESCROW": "विज्ञापनका लागि उपलब्ध (ब्यालेन्स + एस्क्रोमा बाँकी)",
       "COD_CREDIT": "विज्ञापनका लागि उपलब्ध खाता ब्यालेन्स",
       "DIRECT_PREPAID": "प्रिपेड ब्यालेन्स (विज्ञापनले रिजर्भ छुनु हुँदैन)"
     },
-    "fundsSample": "खाताबाट लिइएको नमुना रकम।",
     "buy": "किन्नुहोस्",
     "buyTitle": "{{name}} किन्ने हो?",
     "buyBody": "{{price}}।\n\n{{collection}}",
@@ -631,7 +628,41 @@
       "COD_CREDIT": "यो अहिले नै तपाईंको खाता ब्यालेन्सबाट लिइन्छ।",
       "DIRECT_PREPAID": "यो अहिले नै तपाईंको प्रिपेड ब्यालेन्सबाट लिइन्छ।"
     },
-    "insufficientFunds": "यो विज्ञापन किन्न रकम अपुग छ।"
+    "insufficientFunds": "यो विज्ञापन किन्न रकम अपुग छ।",
+    "perOrderFee": "प्रति डेलिभर अर्डर रु. {{price, localizedNumber}}, {{days, localizedNumber}} दिनका लागि",
+    "loadFailed": "लोड हुन सकेन। इन्टरनेट जाँच गर्नुहोस्।",
+    "retry": "फेरि प्रयास गर्नुहोस्",
+    "actionFailed": "काम पूरा भएन। फेरि प्रयास गर्नुहोस्।",
+    "termsChanged": "यस अभियानका सर्तहरू परिवर्तन भएका छन्। तलका सर्त हेरेर सहमत भए फेरि सहभागी हुनुहोस्।",
+    "termsChangedToast": "अभियानका सर्त परिवर्तन भए। नयाँ सर्त हेर्नुहोस्।",
+    "campaignGone": "यो अभियान अब खुला छैन।",
+    "adsEmpty": "अहिले कुनै विज्ञापन स्थान बिक्रीमा छैन।",
+    "adGone": "यो स्थान अब बिक्रीमा छैन।",
+    "rechargeNeeded": "यो किन्न आफ्नो खातामा रु. {{amount, localizedNumber}} थप्नुहोस्।",
+    "yourAds": "तपाईंका विज्ञापन",
+    "noAds": "तपाईंले अहिलेसम्म विज्ञापन किन्नुभएको छैन।",
+    "adStatus": {
+      "ACTIVE": "चालु",
+      "PAUSED": "रोकिएको",
+      "ENDED": "सकिएको",
+      "CANCELLED": "रद्द"
+    },
+    "adPaid": "रु. {{price, localizedNumber}} मध्ये रु. {{paid, localizedNumber}} तिरिएको",
+    "adBudget": "रु. {{budget, localizedNumber}} बजेटमध्ये रु. {{spent, localizedNumber}} खर्च",
+    "adDue": "रु. {{amount, localizedNumber}} तपाईंको भुक्तानीबाट कट्टा हुनेछ।",
+    "cancelAd": "विज्ञापन रद्द गर्नुहोस्",
+    "adCancelled": "विज्ञापन रद्द भयो।",
+    "notCancellable": "सुरु भइसकेको फ्ल्याट-रेट विज्ञापन अन्त्यसम्म चल्छ, रद्द गर्न मिल्दैन।",
+    "startLabel": "सुरु",
+    "startNow": "अहिले",
+    "startInDays_one": "{{count, localizedNumber}} दिनपछि",
+    "startInDays_other": "{{count, localizedNumber}} दिनपछि",
+    "budgetLabel": "बजेट (रु.)",
+    "budgetHint": "तपाईंले खर्च गर्ने अधिकतम रकम: कम्तीमा रु. {{price, localizedNumber}}, एक अर्डरको शुल्क।",
+    "buying": "किन्दै…",
+    "active": "सक्रिय",
+    "adId": "विज्ञापन आईडी: {{id}}",
+    "adIdCopy": "कपी गर्न ट्याप गर्नुहोस्"
   },
   "vendorAnalytics": {
     "title": "विश्लेषण",
@@ -765,7 +796,9 @@
       "TOP_UP": "बक्यौता भुक्तानी",
       "ADJUSTMENT": "समायोजन",
       "PAYOUT_HOLD": "रकम निकासी अनुरोध",
-      "PAYOUT_REVERSAL": "निकासी रकम फिर्ता"
+      "PAYOUT_REVERSAL": "निकासी रकम फिर्ता",
+      "AD_CHARGE": "विज्ञापन शुल्क",
+      "AD_REFUND": "विज्ञापन रकम फिर्ता"
     },
     "payDues": "बाँकी रकम तिर्नुहोस् (रु. {{amount, localizedNumber}})",
     "paying": "भुक्तानी हुँदैछ…",

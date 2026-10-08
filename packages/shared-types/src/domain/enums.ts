@@ -73,6 +73,10 @@ export type PaymentStatus = z.infer<typeof paymentStatusSchema>;
  * - DRIVER_WALLET: one per platform-fleet driver. Goes negative while holding COD cash (SPEC float).
  * - PAYOUT_CLEARING: one account (Phase 22). Money vendors asked to withdraw: credited when a payout
  *   is requested, debited back when it is rejected. An approved payout stays here as paid out.
+ * - AD_REVENUE: one account (Phase 28). What vendors paid for their own ad purchases (SPEC core 8,
+ *   Layer 2): kept apart from PLATFORM_REVENUE, which is commission.
+ * - AD_BUDGET_CLEARING: one account (Phase 28). Per-order ad budgets held at purchase for a shop
+ *   that pays from its ledger (Models A and C); what is unused goes back when the ad ends.
  */
 export const ledgerAccountTypes = [
   'SYSTEM_ESCROW',
@@ -81,6 +85,8 @@ export const ledgerAccountTypes = [
   'VENDOR_WALLET',
   'DRIVER_WALLET',
   'PAYOUT_CLEARING',
+  'AD_REVENUE',
+  'AD_BUDGET_CLEARING',
 ] as const;
 export const ledgerAccountTypeSchema = z.enum(ledgerAccountTypes);
 export type LedgerAccountType = z.infer<typeof ledgerAccountTypeSchema>;
@@ -93,6 +99,10 @@ export type LedgerAccountType = z.infer<typeof ledgerAccountTypeSchema>;
  * - ADJUSTMENT: Super Admin correction between accounts.
  * - VENDOR_PAYOUT: a vendor requested a bank withdrawal. VENDOR_WALLET to PAYOUT_CLEARING (Phase 22).
  * - VENDOR_PAYOUT_REVERSAL: the request was rejected. PAYOUT_CLEARING back to VENDOR_WALLET.
+ * - AD_PURCHASE: a vendor's own ad purchase was charged (Phase 28). VENDOR_WALLET to AD_REVENUE (a
+ *   flat fee, in one or several collections) or to AD_BUDGET_CLEARING (a per-order budget held).
+ * - AD_BUDGET_RELEASE: the unused part of a held budget. AD_BUDGET_CLEARING back to VENDOR_WALLET.
+ * - AD_REFUND: a flat-rate ad cancelled before it started. AD_REVENUE back to VENDOR_WALLET.
  */
 export const ledgerTransactionKinds = [
   'PAYMENT_CAPTURE',
@@ -101,9 +111,47 @@ export const ledgerTransactionKinds = [
   'ADJUSTMENT',
   'VENDOR_PAYOUT',
   'VENDOR_PAYOUT_REVERSAL',
+  'AD_PURCHASE',
+  'AD_BUDGET_RELEASE',
+  'AD_REFUND',
 ] as const;
 export const ledgerTransactionKindSchema = z.enum(ledgerTransactionKinds);
 export type LedgerTransactionKind = z.infer<typeof ledgerTransactionKindSchema>;
+
+/**
+ * What one posting is (SPEC core 4 "Dual-Layer Billing", STATE_HANDOFF §8Z.5): every statement
+ * shows commission (Layer 1) and ad charges (Layer 2) as separate lines, never one figure.
+ * ADJUSTMENT is the column's default: a posting written without a line type, which is every
+ * posting from before migration 0027 and, until each journal names its lines, every non-ad one.
+ * The four AD_* lines always name the vendor's own purchase (a database CHECK).
+ */
+export const ledgerLineTypes = [
+  'ORDER_PROCEEDS',
+  'DELIVERY_FEE',
+  'PLATFORM_COMMISSION',
+  'SUBSCRIPTION_FEE',
+  'AD_FLAT_FEE',
+  'AD_ORDER_PREMIUM',
+  'AD_BUDGET_HOLD',
+  'AD_BUDGET_RELEASE',
+  'DISCOUNT_VENDOR_OFFER',
+  'DISCOUNT_CAMPAIGN_VENDOR_SHARE',
+  'DISCOUNT_CAMPAIGN_PLATFORM_SHARE',
+  'REFUND',
+  'RECHARGE',
+  'PAYOUT',
+  'ADJUSTMENT',
+] as const;
+export const ledgerLineTypeSchema = z.enum(ledgerLineTypes);
+export type LedgerLineType = z.infer<typeof ledgerLineTypeSchema>;
+
+/** The lines that exist only through a vendor's own ad purchase (SPEC edge case 6). */
+export const adLedgerLineTypes = [
+  'AD_FLAT_FEE',
+  'AD_ORDER_PREMIUM',
+  'AD_BUDGET_HOLD',
+  'AD_BUDGET_RELEASE',
+] as const satisfies readonly LedgerLineType[];
 
 /**
  * Payout request state machine (Phase 22): PENDING (amount held out of the wallet) → APPROVED (bank

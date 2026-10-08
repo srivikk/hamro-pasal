@@ -34,6 +34,10 @@ export function serviceableVendors(feed: FeedResponse): Map<string, CartVendor> 
 /**
  * The shops of the feed whose name contains every word typed (case-insensitive), serviceable
  * ones first, as the feed orders them. The feed is already on the device, so this is local.
+ *
+ * Sponsored Search (SPEC core 8): the feed's sponsored entries lead every search, whether or not
+ * their name matches. The server flags at most two, only among shops that deliver to the
+ * customer, so nothing here decides who is an ad or who delivers.
  */
 export function matchingVendors(feed: FeedResponse | undefined, text: string): FeedEntry[] {
   const words = text
@@ -41,10 +45,14 @@ export function matchingVendors(feed: FeedResponse | undefined, text: string): F
     .split(/\s+/)
     .filter((word) => word !== '');
   if (feed === undefined || words.length === 0) return [];
-  return [...feed.serviceable, ...feed.explore_further].filter(({ vendor }) => {
-    const name = vendor.business_name.toLowerCase();
-    return words.every((word) => name.includes(word));
-  });
+  const sponsored = feed.serviceable.filter((entry) => entry.is_sponsored);
+  const matches = [...feed.serviceable, ...feed.explore_further].filter(
+    ({ vendor, is_sponsored }) => {
+      const name = vendor.business_name.toLowerCase();
+      return !is_sponsored && words.every((word) => name.includes(word));
+    },
+  );
+  return [...sponsored, ...matches];
 }
 
 /**

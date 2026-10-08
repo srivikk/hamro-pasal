@@ -225,7 +225,8 @@ Schemas, formulas and contracts: STATE_HANDOFF.md §8Z.5. Rules: SPEC.md core se
     - [x] **Admin app:** the Audit log tab reads this route with `useInfiniteQuery`: the action and record type filters are query parameters, "Load older" pages with `next_cursor`, and the search box narrows the loaded entries (the route has no text search). **Wired 2026-10-08** (STATE_HANDOFF.md §8Z.25).
   - Actions the admin screens imply beyond the list of §8Z.5: `PAN_VERIFIED`, `PAN_VERIFICATION_CLEARED`, `PAYOUT_PROCESSED`, `PRICING_PLAN_CREATED`, `PRICING_PLAN_UPDATED`, `AD_PRODUCT_CREATED`, `AD_PRODUCT_UPDATED`, `LOGISTICS_SETTINGS_CHANGED`, `PROMOTION_CREATED`, `PROMOTION_UPDATED`, `PROMOTION_DELETED`, `SETTLEMENT_MODEL_CHANGE_REJECTED`. `action` is `text`, so none needs an enum migration.
   - `before_state` / `after_state` are JSON objects of the fields that matter for the change (the app diffs them by path). Never store a secret, a token or a delivery code in them.
-- [ ] **`ledger_entries.line_type`** (+ `ad_purchase_id`), backfilled for existing postings; new account types `AD_REVENUE`, `AD_BUDGET_CLEARING`, `PROMO_EXPENSE`, `REFUND_CLEARING`. New enum values need their own migration before first use (see migration 0019).
+- [x] **`ledger_entries.line_type`** (+ `ad_purchase_id`) and the account types `AD_REVENUE`, `AD_BUDGET_CLEARING`. **Built 2026-10-08** (migration 0027, STATE_HANDOFF.md §8Z.27): the 15 line types of §8Z.5, default `ADJUSTMENT`; a CHECK refuses an ad line without a purchase.
+  - [ ] **Not backfilled, and only the ad journals name their lines:** every other posting reads `ADJUSTMENT`. Still to add: `PROMO_EXPENSE`, `REFUND_CLEARING` (with the discount engine and refunds).
 - [x] **`vendors.settlement_model`** (migration 0025, 2026-10-08): enum `COD_CREDIT | PLATFORM_ESCROW | DIRECT_PREPAID`, NOT NULL, default `PLATFORM_ESCROW` for every existing and new shop; in `vendorSchema` and `contract.ts`. The settlement list and payout read it (`422 SETTLEMENT_MODEL_NOT_ESCROW`). Nothing can change it yet (the model change request flow of step 4). `vendor_ledgers`, on the line below, is still open.
 - [ ] **`vendors.settlement_model`** (all existing vendors `PLATFORM_ESCROW`) and **`vendor_ledgers`** as a projection written only by the posting trigger. No direct balance writes.
 - [ ] **`orders`**: discount, ad premium and `settlement_model_locked` columns with their CHECKs; Drizzle schema, Zod entity and `contract.ts` together.
@@ -263,11 +264,18 @@ Schemas, formulas and contracts: STATE_HANDOFF.md §8Z.5. Rules: SPEC.md core se
 
 - [x] **`ad_products`** (migration 0024, 2026-10-08): slot `CAROUSEL | FEED_LISTING`, billing model, `price_npr`, `duration_days` 1–90, `is_active`. A trigger refuses any change to the slot, billing model, price or duration. No route yet. `FEATURED` is not a slot: adding it later is one `ALTER TYPE … ADD VALUE` migration.
 - [x] **`ad_purchases` table (migration 0026, 2026-10-08, §8Z.26): schema only.** Status `ACTIVE | PAUSED | ENDED | CANCELLED`; a trigger refuses a purchase the shop's own account did not agree to and any later change of its terms. `home_promotions.ad_purchase_id` is now a foreign key (the pending CHECK is dropped).
-- [ ] **No route buys an ad yet**, so the table is empty: the vendor marketplace routes, the purchase flow per model, `is_sponsored` on the feed entry, `active_purchase_count` on the admin price list (still 0) and real validation of a sponsored promotion (the service still answers `422 AD_PURCHASE_MISMATCH`; the admin form's `SPONSORSHIP_AVAILABLE` stays false).
-- [ ] Purchase flow per model: taken or held at purchase (A; `422 LEDGER_RECHARGE_REQUIRED`), netted from payouts (B). Per-order premium as its own posting; pause on exhausted budget; release on end.
-- [ ] **Model B guard (required):** refuse a `FLAT_RATE` purchase when `balance + pending_escrow < ad_price` → `422 AD_EXCEEDS_PENDING_PAYOUT`, checked under the vendor row lock. Test both sides of the boundary and two concurrent purchases.
-- [ ] **Sponsored feed (required):** `GET /api/vendors` puts up to two ACTIVE `FEED_LISTING` shops first in "Delivers to you", nearest first, with `is_sponsored: true` on exactly those entries; never a shop that does not deliver here. Test: SPEC verification 9.
-- [ ] Admin promo payload accepts `is_sponsored` + `ad_purchase_id` (`422 AD_PURCHASE_REQUIRED`, `AD_PURCHASE_MISMATCH`).
+- [x] **The vendor marketplace routes (2026-10-08, §8Z.27):** `GET /api/vendor/ads/products`, `POST / GET /api/vendor/ads/purchases`, `POST …/:id/cancel`; a real `active_purchase_count` on the admin price list; real validation of a sponsored promotion (`422 AD_PURCHASE_MISMATCH` with `details.reason`); `SPONSORSHIP_AVAILABLE` is on.
+- [x] Purchase flow per model, **at purchase**: taken or held (A; `422 LEDGER_RECHARGE_REQUIRED`); in B the wallet pays what it can and the rest is taken from the wallet before any payout.
+  - [x] **The hourly `MARKETING_STATUS_SWEEP` (2026-10-08, §8Z.28):** ends a purchase at its `ends_at` (audit `AD_ENDED`, the job as actor), releases what is left of a held budget, and pauses a per-order ad with less than one fee of budget.
+  - [x] **`chargePerOrderAdPremium` (2026-10-08, §8Z.29):** the per-order fee as its own `AD_ORDER_PREMIUM` posting, once per order, pausing the ad when the budget runs out. Built and tested in `@hamro-pasal/ledger`.
+  - [ ] **Not wired:** nothing calls it yet. Call it in the delivery transaction after the settlement, and decide first whether a cash order's fee may take a Model B wallet negative.
+  - [ ] **Not built:** collecting a Model B flat fee as each order settles, a notice to the shop when its ad ends or pauses.
+  - [x] **Decided 2026-10-08:** a flat-rate ad can be cancelled only before it starts (then refunded in full); a per-order ad at any time.
+- [x] **Model B guard (required):** a `FLAT_RATE` purchase is refused when `balance + pending_escrow − flat fees already due < ad_price` → `422 AD_EXCEEDS_PENDING_PAYOUT`, under the vendor row lock. Tested to the paisa on both sides and with two simultaneous purchases. **Built 2026-10-08.**
+- [x] **Sponsored feed (required):** `GET /api/vendors` puts up to two ACTIVE `FEED_LISTING` shops first in "Delivers to you", nearest first, with `is_sponsored: true` on exactly those entries; never a shop that does not deliver here. **Built 2026-10-08** (§8Z.28; SPEC verification 9 tested). The customer app shows the badge from the field.
+- [x] Admin promo payload accepts `is_sponsored` + `ad_purchase_id` (`422 AD_PURCHASE_MISMATCH`; `AD_PURCHASE_REQUIRED` stays unreachable behind the schema's 400). **Built 2026-10-08** (§8Z.27): a running carousel purchase, by the targeted shop, covering the promotion's dates.
+  - [x] The Vendor App shows each purchase's id to pass on, and the public read drops a promotion whose purchase is no longer running (2026-10-08, §8Z.29).
+  - [ ] An admin still has no list of purchases to pick the id from.
 - [x] **Admin price list (the Ad products tab is built on it, sample data):** `GET /api/admin/ads/products` (each with a read-only `active_purchase_count`), `POST /api/admin/ads/products { name, slot, billing_model, price_npr, duration_days, is_active }`, `PATCH /api/admin/ads/products/:id { name, is_active }`. **A published product’s slot, billing model, price and duration never change:** any of them in a PATCH is `400 VALIDATION_FAILED`. `price_npr` is an NPR amount under both billing models (a fixed fee per delivered order, never a percentage). No body names a vendor. **Built 2026-10-08** (§8Z.24), each write audited. `active_purchase_count` is 0 until `ad_purchases` exists. The slot is `CAROUSEL | FEED_LISTING` (the admin app’s list no longer has `FEATURED`).
 - [ ] Test: SPEC verification 7.
 
@@ -418,8 +426,9 @@ The Vendor App's Marketing tab is built on sample data to these contracts. Build
 
 - [ ] **My Offers:** `GET / POST /api/vendor/offers` (body `{ kind: FLAT | PERCENTAGE, value, min_cart_npr, max_discount_npr?, ends_at? }`; `400` when a flat value exceeds its minimum cart), `POST /api/vendor/offers/:id/end`. Each offer in the list carries the server-rendered `label`.
 - [ ] **Campaigns:** `GET /api/vendor/campaigns` (invites and joined, each with `kind`, `value`, `max_discount_npr`, `min_cart_npr`, `vendor_share_percent`, `terms_version`, dates, `opted_in_at | null`), `POST …/:id/opt-in { terms_version }` (`409 CAMPAIGN_TERMS_CHANGED`), `POST …/:id/opt-out`. No admin opt-in route.
-- [ ] **Ad Marketplace:** `GET /api/vendor/ads/products` (with the shop's `settlement_model`, `available_for_ads_npr`, and per product `collection` and `recharge_required_npr`), `POST /api/vendor/ads/purchases { ad_product_id, starts_at, budget_npr?, idempotency_key, agreed: true }`, `GET /api/vendor/ads/purchases`, `POST …/:id/cancel`.
-- [ ] **The guard the app mirrors:** `422 AD_EXCEEDS_PENDING_PAYOUT` (Model B, `balance + pending_escrow < ad_price`) and `422 LEDGER_RECHARGE_REQUIRED` (Models A and C). The app shows "Insufficient funds for this ad purchase." for both.
+- [x] **Ad Marketplace:** `GET /api/vendor/ads/products` (with the shop's `settlement_model`, `available_for_ads_npr`, and per product `collection` and `recharge_required_npr`), `POST /api/vendor/ads/purchases { ad_product_id, starts_at, budget_npr?, idempotency_key, agreed: true }`, `GET /api/vendor/ads/purchases`, `POST …/:id/cancel`. **Built 2026-10-08** (§8Z.27).
+- [x] **The guard the app mirrors:** `422 AD_EXCEEDS_PENDING_PAYOUT` (Model B) and `422 LEDGER_RECHARGE_REQUIRED` (Models A and C). Both answer with the message "Insufficient funds for this ad purchase."
+- [x] **App: the Ads and Campaigns sections are wired to these routes (2026-10-08, §8Z.28).** My Offers still runs on samples.
 - [ ] Ad products the app sells: slot `CAROUSEL` ("Carousel Placement", flat rate) and slot `FEED_LISTING` ("Sponsored Search", per order with a budget).
 
 ### 6.10 Analytics and the vendor account — P2
@@ -468,11 +477,11 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 
 1. **A browser pass of the wired admin app** against a migrated dev database (`pnpm db:migrate`, 0021–0025), and the first live run of the new routes.
 2. ~~Vendor requests~~ **done 2026-10-08** (§8Z.26).
-3. **Ad purchases, the flow** (section 5 step 5; the table exists since migration 0026): the vendor marketplace routes, collection per settlement model, the Model B guard, the sponsored feed, real validation of a sponsored promotion; then switch on `SPONSORSHIP_AVAILABLE` in the admin Promotions form.
-4. **The vendor side of campaigns:** the routes are built (§8Z.26). Left: wiring the Vendor App's Campaigns section to them, and a notice to shops whose opt-in a terms change voided.
+3. ~~Ad purchases, the routes~~ **done 2026-10-08** (§8Z.27: marketplace, purchase per model, the Model B guard, cancel, sponsored promotions). The sponsored feed, the job that ends ads and the Vendor App's Ads and Campaigns sections followed the same day (§8Z.28). Left of step 5: the per-order premium at delivery.
+4. **The vendor side of campaigns:** routes (§8Z.26) and the Vendor App's Campaigns section (§8Z.28) are done. Left: a notice to shops whose opt-in a terms change voided.
 5. **Scheduled jobs:** `SETTLEMENT_PAYOUT_RUN` (blocked on the transfer rail), the Free-plan reversion and its 7-day notice in `BILLING_CYCLE_RENEWAL`, `vendor.suspended_for_compliance` SMS / push, the "one gate for LIVE", then `vendors_live_tax_identity_check`.
 6. **Retire vendor payout requests** (6.11) with the legacy Payouts tab and the Vendor Portal's request form.
-7. **Public promotions:** `GET /api/home/promotions`, the image upload, and the customer app's switch from mocks.
+7. **Public promotions:** `GET /api/home/promotions` and the customer app's switch are done (2026-10-08, §8Z.29). Left: the image upload, and `offer_tags` on shops.
 8. The discount engine (section 5 step 2) and fiscal invoicing (6.4).
 
 ## Suggested build order

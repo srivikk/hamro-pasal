@@ -1,5 +1,6 @@
 import {
   adminPromotionViewSchema,
+  adPurchaseMismatchReasonSchema,
   MAX_DISCOUNT_TAG_LENGTH,
   MAX_PROMOTION_DISPLAY_ORDER,
   promotionPlacements,
@@ -8,10 +9,12 @@ import {
   promotionTargetTypeSchema,
   promotionWriteRequestSchema,
   type AdminPromotionView,
+  type AdPurchaseMismatchReason,
   type PromotionPlacement,
   type PromotionTargetType,
   type PromotionWrite,
 } from '@hamro-pasal/shared-types';
+import { z } from 'zod';
 
 import { ApiError } from '../../api/client';
 import { nepalDay, nepalInstant } from '../campaigns/campaign-rules';
@@ -48,12 +51,11 @@ export const PROMOTION_TARGET_LABELS: Readonly<Record<PromotionTargetType, strin
 
 /** The form's fields, as typed. `targetType` '' is "no target"; days are Nepal Time days. */
 /**
- * Whether the form offers sponsorship. Off: `ad_purchases` does not exist yet (BACKEND_CHECKLIST
- * section 5 step 5), the database refuses every sponsored promotion, and naming a purchase can
- * only answer 422 AD_PURCHASE_MISMATCH. The rules below already handle a purchase id; switch
- * this on with the purchase flow and the input returns.
+ * Whether the form offers sponsorship. On since vendors can buy ads (Phase 28,
+ * /api/vendor/ads/purchases): the admin names the vendor's own purchase, and the server checks
+ * that it is running, bought the carousel, belongs to the targeted shop and covers the dates.
  */
-export const SPONSORSHIP_AVAILABLE = false as boolean;
+export const SPONSORSHIP_AVAILABLE = true as boolean;
 
 export interface PromotionFormValues {
   readonly placement: PromotionPlacement;
@@ -299,6 +301,21 @@ const TARGET_NOT_FOUND_MESSAGES: Readonly<Record<PromotionTargetType, string>> =
   DISCOUNT_TAG: 'This offer label was refused.',
 };
 
+/** Why the server refused the named ad purchase (`details.reason` of 422 AD_PURCHASE_MISMATCH). */
+const AD_PURCHASE_MISMATCH_MESSAGES: Readonly<Record<AdPurchaseMismatchReason, string>> = {
+  NOT_FOUND: 'No ad purchase has this id.',
+  NOT_RUNNING: 'This ad purchase is not running: it was cancelled, is paused or has ended.',
+  SLOT: 'Only a Home carousel banner can be sponsored, by a purchase of a carousel ad.',
+  SHOP: 'This ad was bought by another shop: a sponsored promotion targets its buyer.',
+  DATES:
+    'The promotion must start and end inside the period the ad purchase paid for (it needs a last day).',
+};
+
+function mismatchReasonOf(details: unknown): AdPurchaseMismatchReason {
+  const parsed = z.object({ reason: adPurchaseMismatchReasonSchema }).safeParse(details);
+  return parsed.success ? parsed.data.reason : 'NOT_FOUND';
+}
+
 /** The server's refusals of POST / PUT /api/admin/promotions. */
 export function promotionSaveError(
   error: unknown,
@@ -313,10 +330,14 @@ export function promotionSaveError(
             targetType === '' ? 'The target was not found.' : TARGET_NOT_FOUND_MESSAGES[targetType],
         };
       case 'AD_PURCHASE_REQUIRED':
+        return {
+          field: 'adPurchaseId',
+          message: 'A sponsored promotion names the ad purchase of the vendor who bought it.',
+        };
       case 'AD_PURCHASE_MISMATCH':
         return {
-          field: null,
-          message: 'Sponsored promotions are not available yet: no vendor can buy an ad.',
+          field: 'adPurchaseId',
+          message: AD_PURCHASE_MISMATCH_MESSAGES[mismatchReasonOf(error.details)],
         };
       case 'PROMOTION_NOT_FOUND':
         return {

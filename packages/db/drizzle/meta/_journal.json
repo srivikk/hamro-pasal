@@ -246,6 +246,13 @@
       "when": 1791479131093,
       "tag": "0034_vendor_offers",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1791481921350,
+      "tag": "0035_order_vendor_offer",
+      "breakpoints": true
     }
   ]
 }

@@ -29,6 +29,8 @@ const order = {
   payment_status: 'PENDING',
   fulfillment: 'SELF_DELIVERY',
   subtotal_npr: 1000,
+  vendor_offer_discount_npr: 0,
+  platform_promo_discount_npr: 0,
   delivery_fee_npr: 50,
   total_npr: 1050,
   created_at: '2026-09-29T10:00:00.000Z',

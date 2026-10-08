@@ -52,6 +52,7 @@ import {
 } from '../catalog/product-service';
 import { OrderNotFoundError, OrderNotPlaceableError } from '../checkout/checkout-service';
 import { CheckoutRejectedError } from '../checkout/pricing';
+import { InvoiceFontUnavailableError } from '../invoices/invoice-fonts';
 import {
   DeliveryAlreadyAssignedError,
   DeliveryNotFoundError,
@@ -341,6 +342,10 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof PrimaryBankAccountRequiredError) {
     return new HttpError(409, 'PRIMARY_BANK_ACCOUNT_REQUIRED', error.message);
+  }
+  if (error instanceof InvoiceFontUnavailableError) {
+    // The cause (a missing server file) is logged at startup; the client only needs "not now".
+    return new HttpError(503, 'INVOICE_PRINT_UNAVAILABLE', 'Invoices cannot be printed right now');
   }
   if (error instanceof InvoiceNotFoundError) {
     return new HttpError(404, 'INVOICE_NOT_FOUND', 'Invoice not found');

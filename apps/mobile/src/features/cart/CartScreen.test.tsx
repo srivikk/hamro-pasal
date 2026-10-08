@@ -4,6 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { Alert } from 'react-native';
 
 import CartScreen from '../../../app/cart';
+import { CART_QUOTE_PATH } from '../../api/cart-quote';
 import { CHECKOUT_PATH } from '../../api/mutations';
 import { KHALTI_INITIATE_PATH } from '../../api/payments';
 import { useAddressStore } from '../../store/useAddressStore';
@@ -12,6 +13,7 @@ import { useAuthStore } from '../../store/useAuthStore';
 import { useCartStore } from '../../store/useCartStore';
 import { useCheckoutStore } from '../../store/useCheckoutStore';
 import {
+  cartQuote,
   checkoutResponse,
   errorBody,
   NOODLES,
@@ -29,17 +31,15 @@ import {
 import { payWith } from '../../test/pay-with';
 import { renderWithProviders } from '../../test/render';
 import { useTerritorySimulator } from '../territory/territory-simulator';
+import { usePaymentChoiceStore } from '../checkout/payment-choice';
 import type * as MockPromotionsModule from '../promo/mock-promotions';
-import { vendorExtras } from '../promo/mock-promotions';
 import type * as PromoModelModule from '../promo/promo-model';
-import { NO_VENDOR_EXTRAS } from '../promo/promo-model';
 
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), replace: jest.fn(), dismissTo: jest.fn() },
   Stack: { Screen: () => null },
 }));
-// The cart shows a mock "Shop Discount" for a shop with a mock offer. No offer unless a test says
-// so, so every other total in this file is the real one (subtotal + delivery fee).
+// The receipt's shop locality is still a mock extra: none here.
 jest.mock('../promo/mock-promotions', () => {
   const actual = jest.requireActual<typeof MockPromotionsModule>('../promo/mock-promotions');
   const model = jest.requireActual<typeof PromoModelModule>('../promo/promo-model');
@@ -65,7 +65,7 @@ describe('Cart screen', () => {
     expect(screen.getByText('Your cart is empty')).toBeOnTheScreen();
   });
 
-  it('summarises subtotal, delivery fee, platform fee and total', () => {
+  it('summarises subtotal, delivery fee, platform fee and total', async () => {
     useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 2);
     renderWithProviders(<CartScreen />);
 
@@ -75,7 +75,11 @@ describe('Cart screen', () => {
     expect(summaryRow('Rs. 50')).toBeOnTheScreen();
     expect(summaryRow('Platform fee')).toBeOnTheScreen();
     expect(summaryRow('Rs. 0')).toBeOnTheScreen();
-    expect(summaryRow('Total')).toBeOnTheScreen();
+    // An estimate until the server has priced the cart.
+    expect(summaryRow('Estimated total')).toBeOnTheScreen();
+    await waitFor(() => {
+      expect(summaryRow('Total')).toBeOnTheScreen();
+    });
     expect(summaryRow('Rs. 1250')).toBeOnTheScreen();
   });
 
@@ -121,7 +125,10 @@ describe('Cart screen', () => {
       'Near Kathmandu Guest House, Thamel, Kathmandu Metropolitan City-26, Kathmandu',
     );
     expect(screen.queryByText('Add a delivery address to continue.')).toBeNull();
-    expect(screen.getByRole('button', { name: /^Proceed to Pay/ })).toBeEnabled();
+    // With an address the server can price the cart; then the payment step opens.
+    await waitFor(() => {
+      expect(screen.getByTestId('proceed-to-pay')).toBeEnabled();
+    });
     expect(useAddressStore.getState().address?.ward_number).toBe(26);
   });
 
@@ -325,7 +332,7 @@ describe('Cart screen when signed out', () => {
     useAuthStore.setState({ accessToken: null });
     renderWithProviders(<CartScreen />);
 
-    expect(screen.getByRole('button', { name: /^Proceed to Pay/ })).toBeOnTheScreen();
+    expect(screen.getByTestId('proceed-to-pay')).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: 'Sign in to Checkout' })).toBeNull();
   });
 
@@ -408,7 +415,7 @@ describe('Cart screen: 409 INSUFFICIENT_STOCK (Phase 18)', () => {
     expect(bodies[1]?.idempotency_key).not.toBe(bodies[0]?.idempotency_key);
   });
 
-  it('keeps the line highlighted while it is stepped down, until it fits', () => {
+  it('keeps the line highlighted while it is stepped down, until it fits', async () => {
     useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 4);
     useCartStore.getState().syncStock([{ productId: RICE.id, available: 2 }]);
     renderWithProviders(<CartScreen />);
@@ -424,7 +431,9 @@ describe('Cart screen: 409 INSUFFICIENT_STOCK (Phase 18)', () => {
     fireEvent.press(screen.getByRole('button', { name: `Remove one ${RICE.name}` }));
     expect(screen.queryByTestId(`cart-line-stock-${RICE.id}`)).toBeNull();
     expect(screen.queryByTestId('stock-required')).toBeNull();
-    expect(screen.getByRole('button', { name: /^Proceed to Pay/ })).toBeEnabled();
+    await waitFor(() => {
+      expect(screen.getByTestId('proceed-to-pay')).toBeEnabled();
+    });
   });
 
   it('asks to remove a line whose product sold out', async () => {
@@ -442,7 +451,9 @@ describe('Cart screen: 409 INSUFFICIENT_STOCK (Phase 18)', () => {
     fireEvent.press(screen.getByRole('button', { name: `Remove ${NOODLES.name}` }));
 
     expect(useCartStore.getState().lines.map((line) => line.productId)).toEqual([RICE.id]);
-    expect(screen.getByRole('button', { name: /^Proceed to Pay/ })).toBeEnabled();
+    await waitFor(() => {
+      expect(screen.getByTestId('proceed-to-pay')).toBeEnabled();
+    });
   });
 
   it('highlights every short line the server names', async () => {
@@ -479,128 +490,400 @@ describe('Cart screen: 409 INSUFFICIENT_STOCK (Phase 18)', () => {
   });
 });
 
-describe('Cart screen: mock shop discount (display only, until POST /api/cart/quote exists)', () => {
-  const offer = (top_offer: string | null) => {
-    jest.mocked(vendorExtras).mockReturnValue({ ...NO_VENDOR_EXTRAS, top_offer });
+describe('Cart screen: the server’s quote (POST /api/cart/quote)', () => {
+  const OFFER_ID = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c51';
+  const CAMPAIGN_ID = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c52';
+  /** S 1000, shop offer 100, promo 10% of the remaining 900, delivery 50: SPEC verification 5. */
+  const stacked = () =>
+    cartQuote({
+      subtotal_npr: 1000,
+      vendor_offer: { id: OFFER_ID, label: 'Flat Rs. 100 OFF', discount_npr: 100 },
+      platform_promo: { id: CAMPAIGN_ID, label: 'Dashain 10%', discount_npr: 90 },
+      delivery_fee_npr: 50,
+      total_npr: 860,
+    });
+  const quoteWith = (body: () => object, status = 200) => {
+    const received: CapturedRequest[] = [];
+    server.use(
+      http.post(apiUrl(CART_QUOTE_PATH), async ({ request }) => {
+        received.push(await capture(request));
+        return HttpResponse.json(body(), { status });
+      }),
+    );
+    return received;
   };
-  afterEach(() => {
-    jest.mocked(vendorExtras).mockReturnValue(NO_VENDOR_EXTRAS);
-  });
-  const summary = () => within(screen.getByTestId('cart-summary'));
+  const TEN = { id: '7a2b3c40-0011-4000-8000-000000000009', name: 'Masoor Dal', unitPriceNpr: 500 };
 
-  it('shows a percentage offer as a green line between subtotal and delivery fee, and lowers the total', () => {
-    offer('10% OFF');
-    useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 1);
+  it('asks for the cart’s price with ids, quantities and the address, and no amounts', async () => {
+    const received = quoteWith(stacked);
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
+    renderWithProviders(<CartScreen />);
+    await screen.findByTestId('cart-shop-discount');
+
+    expect(received[0]?.headers.get('authorization')).toMatch(/^Bearer /);
+    expect(received[0]?.body).toEqual({
+      vendor_id: THAMEL_VENDOR.id,
+      items: [{ product_id: TEN.id, quantity: 2 }],
+      delivery_address: THAMEL_ADDRESS,
+    });
+  });
+
+  it('shows the shop’s offer and the platform promo as separate green lines, in the order applied', async () => {
+    quoteWith(stacked);
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
     renderWithProviders(<CartScreen />);
 
-    const line = within(screen.getByTestId('cart-shop-discount'));
-    expect(line.getByText('Shop Discount · 10% OFF')).toBeOnTheScreen();
-    expect(line.getByText('- Rs. 115')).toBeOnTheScreen();
-    // 1150 - 115 + 50.
-    expect(summary().getByText('Rs. 1085')).toBeOnTheScreen();
-    expect(summary().getByText('Rs. 1150')).toBeOnTheScreen();
+    const offer = await screen.findByTestId('cart-shop-discount');
+    expect(offer).toHaveTextContent('Shop Offer · Flat Rs. 100 OFF- Rs. 100');
+    expect(screen.getByTestId('cart-promo-discount')).toHaveTextContent(
+      'Hamro Pasal Promo · Dashain 10%- Rs. 90',
+    );
+    // The delivery fee is the server's and is never discounted.
+    expect(screen.getByTestId('cart-delivery-fee')).toHaveTextContent('Delivery feeRs. 50');
+    expect(screen.getByTestId('cart-total')).toHaveTextContent('TotalRs. 860');
+    expect(screen.getByTestId('cart-saved')).toHaveTextContent('You save Rs. 190 on this order');
+    expect(screen.getByTestId('proceed-to-pay')).toHaveTextContent('Proceed to Pay • Rs. 860');
 
-    const texts = summary()
-      .getAllByText(/Subtotal|Shop Discount|Delivery fee/)
-      .map((node) => String(node.props.children));
-    expect(texts.map((label) => label.split(' · ')[0])).toEqual([
+    // Subtotal, shop offer, promo, delivery fee: top to bottom.
+    const rows = within(screen.getByTestId('cart-summary'))
+      .getAllByText(/Subtotal|Shop Offer|Hamro Pasal Promo|Delivery fee/)
+      .map((row) => String(row.props.children));
+    expect(rows.map((row) => row.split(' · ')[0])).toEqual([
       'Subtotal',
-      'Shop Discount',
+      'Shop Offer',
+      'Hamro Pasal Promo',
       'Delivery fee',
     ]);
   });
 
-  it('follows the cart as quantities change', () => {
-    offer('10% OFF');
-    useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 1);
-    renderWithProviders(<CartScreen />);
-    expect(within(screen.getByTestId('cart-shop-discount')).getByText('- Rs. 60')).toBeTruthy();
-
-    fireEvent.press(screen.getByRole('button', { name: `Add one ${NOODLES.name}` }));
-
-    expect(within(screen.getByTestId('cart-shop-discount')).getByText('- Rs. 120')).toBeTruthy();
-    expect(summary().getByText('Rs. 1130')).toBeOnTheScreen();
-  });
-
-  it('takes a flat offer off as its amount, never more than the subtotal', () => {
-    offer('Flat Rs. 200 OFF');
-    useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 1);
-    const { unmount } = renderWithProviders(<CartScreen />);
-
-    expect(within(screen.getByTestId('cart-shop-discount')).getByText('- Rs. 200')).toBeTruthy();
-    expect(summary().getByText('Rs. 450')).toBeOnTheScreen();
-    unmount();
-
-    useCartStore.getState().clearCart();
-    useCartStore
-      .getState()
-      .addItem(THAMEL_VENDOR, { id: TEA.id, name: 'Lapsi Candy', unitPriceNpr: 150 }, 1);
-    renderWithProviders(<CartScreen />);
-    expect(within(screen.getByTestId('cart-shop-discount')).getByText('- Rs. 150')).toBeTruthy();
-    // Only the delivery fee is left.
-    expect(within(screen.getByTestId('cart-summary')).getAllByText('Rs. 50').length).toBe(2);
-  });
-
-  it.each([[null], ['Buy 1 Get 1'], ['Dashain Sale']])(
-    'adds no line and changes no total for %s',
-    (label) => {
-      offer(label);
-      useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 2);
-      renderWithProviders(<CartScreen />);
-
-      expect(screen.queryByTestId('cart-shop-discount')).toBeNull();
-      expect(summary().getByText('Rs. 1250')).toBeOnTheScreen();
-    },
-  );
-
-  it.each([['Free delivery'], ['FREE DELIVERY above Rs. 500']])(
-    'shows the delivery fee as free for "%s" and leaves it out of the total',
-    (label) => {
-      offer(label);
-      useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 2);
-      renderWithProviders(<CartScreen />);
-
-      const fee = within(screen.getByTestId('cart-delivery-fee'));
-      expect(fee.getByText('FREE')).toBeOnTheScreen();
-      expect(fee.getByText(`Delivery fee · ${label}`)).toBeOnTheScreen();
-      expect(fee.queryByText('Rs. 50')).toBeNull();
-      // Rs. 1200 of noodles and nothing else: the subtotal row and the total row.
-      expect(summary().getAllByText('Rs. 1200').length).toBe(2);
-      expect(screen.queryByTestId('cart-shop-discount')).toBeNull();
-      expect(screen.getByTestId('proceed-to-pay')).toHaveTextContent('Proceed to Pay • Rs. 1200');
-    },
-  );
-
-  it('charges the delivery fee in the bill when the offer does not waive it', () => {
-    offer('10% OFF');
-    useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 2);
+  it('shows no discount line the server did not send, and the server’s delivery charge', async () => {
+    // 2.4 km at Rs. 20 per started kilometre on top of the base 50: only the server knows.
+    quoteWith(() => cartQuote({ subtotal_npr: 1000, delivery_fee_npr: 110, total_npr: 1110 }));
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
     renderWithProviders(<CartScreen />);
 
-    const fee = within(screen.getByTestId('cart-delivery-fee'));
-    expect(fee.getByText('Rs. 50')).toBeOnTheScreen();
-    expect(fee.queryByText('FREE')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId('cart-total')).toHaveTextContent('TotalRs. 1110');
+    });
+    expect(screen.getByTestId('cart-delivery-fee')).toHaveTextContent('Delivery feeRs. 110');
+    expect(screen.queryByTestId('cart-shop-discount')).toBeNull();
+    expect(screen.queryByTestId('cart-promo-discount')).toBeNull();
+    expect(screen.queryByTestId('cart-saved')).toBeNull();
   });
 
-  it('still measures the minimum order on the subtotal before the discount', () => {
-    offer('10% OFF');
-    // Thamel's minimum is Rs. 500: Rs. 450 of tea is short by 50, discount or not.
+  it('prices the cart again when a quantity changes, and never shows the old quote for the new cart', async () => {
+    const received = quoteWith(() => {
+      const quantity = useCartStore.getState().lines[0]?.quantity ?? 0;
+      const subtotal = 500 * quantity;
+      return cartQuote({
+        subtotal_npr: subtotal,
+        vendor_offer: { id: OFFER_ID, label: '10% OFF', discount_npr: subtotal / 10 },
+        total_npr: subtotal - subtotal / 10 + 50,
+      });
+    });
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
+    renderWithProviders(<CartScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('cart-total')).toHaveTextContent('TotalRs. 950');
+    });
+
+    fireEvent.press(screen.getByRole('button', { name: `Add one ${TEN.name}` }));
+
+    // Until the new quote answers, the bill is an estimate without the old discount.
+    expect(screen.getByTestId('cart-total')).toHaveTextContent('Estimated totalRs. 1550');
+    expect(screen.queryByTestId('cart-shop-discount')).toBeNull();
+    expect(screen.getByTestId('proceed-to-pay')).toBeDisabled();
+    await waitFor(() => {
+      expect(screen.getByTestId('cart-total')).toHaveTextContent('TotalRs. 1400');
+    });
+    expect(screen.getByTestId('cart-shop-discount')).toHaveTextContent(
+      'Shop Offer · 10% OFF- Rs. 150',
+    );
+    expect(received).toHaveLength(2);
+  });
+
+  it('shows a guest an estimate and asks the server nothing', () => {
+    const received = quoteWith(stacked);
+    useAuthStore.getState().clearSession();
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
+    renderWithProviders(<CartScreen />);
+
+    expect(screen.getByTestId('cart-total')).toHaveTextContent('Estimated totalRs. 1050');
+    expect(received).toHaveLength(0);
+  });
+
+  it('asks for no quote below the shop’s minimum order, which is measured before any discount', () => {
+    const received = quoteWith(stacked);
+    // One unit of 450 against a minimum of 500.
     useCartStore.getState().addItem(THAMEL_VENDOR, TEA, 1);
     renderWithProviders(<CartScreen />);
 
-    expect(screen.getByTestId('cart-shop-discount')).toBeOnTheScreen();
-    expect(
-      screen.getByText("Add Rs. 50 more to reach this shop's minimum order."),
-    ).toBeOnTheScreen();
+    expect(screen.getByTestId('below-minimum')).toBeOnTheScreen();
+    expect(screen.getByTestId('proceed-to-pay')).toBeDisabled();
+    expect(received).toHaveLength(0);
   });
 
-  it('writes the line in Nepali with Devanagari digits', () => {
-    offer('10% OFF');
-    useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 1);
+  it('says delivery is unavailable and blocks the payment step (Emergency Stop)', async () => {
+    quoteWith(() =>
+      cartQuote({
+        subtotal_npr: 1000,
+        total_npr: 1050,
+        delivery_available: false,
+        payment_options: [
+          { method: 'ESEWA', available: false, reason: 'DELIVERY_UNAVAILABLE' },
+          { method: 'KHALTI', available: false, reason: 'DELIVERY_UNAVAILABLE' },
+          { method: 'COD', available: false, reason: 'DELIVERY_UNAVAILABLE' },
+        ],
+      }),
+    );
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
+    renderWithProviders(<CartScreen />);
+
+    expect(await screen.findByTestId('cart-delivery-unavailable')).toHaveTextContent(
+      'Delivery is unavailable right now. You can order when it is back.',
+    );
+    expect(screen.getByTestId('proceed-to-pay')).toBeDisabled();
+  });
+
+  it('explains a refused quote, keeps the estimate, and prices again on "Try again"', async () => {
+    let refuse = true;
+    quoteWith(() => (refuse ? errorBody('VENDOR_UNAVAILABLE') : stacked()));
+    server.use(
+      http.post(apiUrl(CART_QUOTE_PATH), () =>
+        refuse
+          ? HttpResponse.json(errorBody('VENDOR_UNAVAILABLE'), { status: 422 })
+          : HttpResponse.json(stacked()),
+      ),
+    );
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
+    renderWithProviders(<CartScreen />);
+
+    expect(await screen.findByTestId('checkout-error')).toHaveTextContent(
+      'This shop isn’t taking orders right now.'.replace('’', "'"),
+    );
+    expect(screen.getByTestId('cart-total')).toHaveTextContent('Estimated totalRs. 1050');
+    expect(screen.getByTestId('proceed-to-pay')).toBeDisabled();
+
+    refuse = false;
+    fireEvent.press(screen.getByTestId('quote-retry'));
+    await waitFor(() => {
+      expect(screen.getByTestId('cart-total')).toHaveTextContent('TotalRs. 860');
+    });
+    expect(screen.queryByTestId('checkout-error')).toBeNull();
+  });
+
+  it('highlights the lines a quote says are short of stock', async () => {
+    server.use(
+      http.post(apiUrl(CART_QUOTE_PATH), () =>
+        HttpResponse.json(
+          errorBody('INSUFFICIENT_STOCK', {
+            shortfalls: [{ productId: TEN.id, requested: 4, available: 1 }],
+          }),
+          { status: 409 },
+        ),
+      ),
+    );
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 4);
+    renderWithProviders(<CartScreen />);
+
+    expect(await screen.findByTestId(`cart-line-stock-${TEN.id}`)).toBeOnTheScreen();
+    expect(useCartStore.getState().lines[0]?.availableStock).toBe(1);
+  });
+
+  it('writes the lines in Nepali with Devanagari digits', async () => {
+    quoteWith(stacked);
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
     renderWithProviders(<CartScreen />, { locale: 'ne' });
 
-    const line = within(screen.getByTestId('cart-shop-discount'));
-    expect(line.getByText('- रु. ११५')).toBeOnTheScreen();
-    expect(line.getByText('पसलको छुट · 10% OFF')).toBeOnTheScreen();
+    expect(await screen.findByTestId('cart-shop-discount')).toHaveTextContent(
+      'पसलको अफर · Flat Rs. 100 OFF- रु. १००',
+    );
+    expect(screen.getByTestId('cart-promo-discount')).toHaveTextContent(
+      'हाम्रो पसल प्रोमो · Dashain 10%- रु. ९०',
+    );
+  });
+});
+
+describe('Cart screen: a checkout the server refuses with a dialog', () => {
+  const TEN = { id: '7a2b3c40-0011-4000-8000-000000000009', name: 'Masoor Dal', unitPriceNpr: 500 };
+  let alert: jest.SpiedFunction<typeof Alert.alert>;
+  const lastAlert = () => {
+    const call = alert.mock.calls.at(-1);
+    if (call === undefined) throw new Error('No alert was shown');
+    return { title: call[0], message: call[1] ?? '', buttons: call[2] ?? [] };
+  };
+  const pressAlert = (label: string): void => {
+    const button = lastAlert().buttons.find((each) => each.text === label);
+    if (button === undefined) throw new Error(`No alert button "${label}"`);
+    act(() => {
+      button.onPress?.();
+    });
+  };
+
+  beforeEach(() => {
+    jest.mocked(router.push).mockClear();
+    alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
+  });
+  afterEach(() => {
+    alert.mockRestore();
+  });
+
+  /** The first checkout is refused with `refusal`; the next one creates the order. */
+  function refuseOnce(code: string, details: unknown, status: number) {
+    const received: CapturedRequest[] = [];
+    server.use(
+      http.post(apiUrl(CHECKOUT_PATH), async ({ request }) => {
+        received.push(await capture(request));
+        return received.length === 1
+          ? HttpResponse.json(errorBody(code, details), { status })
+          : HttpResponse.json(
+              checkoutResponse({ order: { state: 'PLACED', payment_method: 'COD' } }),
+              { status: 201 },
+            );
+      }),
+    );
+    return received;
+  }
+  const ready = async () => {
+    renderWithProviders(<CartScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('proceed-to-pay')).toBeEnabled();
+    });
+  };
+  const confirmPayment = (method: 'COD' | 'ESEWA', expectedTotalNpr: number): void => {
+    act(() => {
+      usePaymentChoiceStore.getState().choose(method, expectedTotalNpr);
+    });
+  };
+
+  it('sends the total the customer agreed to with the order', async () => {
+    const received = refuseOnce('QUOTE_CHANGED', undefined, 409);
+    await ready();
+    confirmPayment('COD', 1050);
+
+    await waitFor(() => {
+      expect(received).toHaveLength(1);
+    });
+    expect(received[0]?.body).toMatchObject({ payment_method: 'COD', expected_total_npr: 1050 });
+  });
+
+  it('409 QUOTE_CHANGED: shows both totals, and places the order at the new one only when accepted', async () => {
+    const quote = {
+      subtotal_npr: 1000,
+      vendor_offer: null,
+      platform_promo: null,
+      delivery_fee_npr: 50,
+      total_npr: 1050,
+    };
+    const received = refuseOnce('QUOTE_CHANGED', { quote }, 409);
+    await ready();
+    confirmPayment('COD', 950);
+    await waitFor(() => {
+      expect(alert).toHaveBeenCalled();
+    });
+
+    expect(lastAlert().title).toBe('The price has changed');
+    expect(lastAlert().message).toBe(
+      'An offer on this cart has ended. The total is now Rs. 1050 (it was Rs. 950). Nothing has been charged.',
+    );
+    expect(lastAlert().buttons.map((button) => button.text)).toEqual([
+      'Review cart',
+      'Continue with Rs. 1050',
+    ]);
+    // Nothing was ordered, and no line of error text competes with the dialog.
+    expect(received).toHaveLength(1);
+    expect(screen.queryByTestId('checkout-error')).toBeNull();
+    expect(useCheckoutStore.getState().session).toBeNull();
+
+    pressAlert('Continue with Rs. 1050');
+    await waitFor(() => {
+      expect(received).toHaveLength(2);
+    });
+    expect(received[1]?.body).toMatchObject({ payment_method: 'COD', expected_total_npr: 1050 });
+    await waitFor(() => {
+      expect(useCheckoutStore.getState().session?.orderState).toBe('PLACED');
+    });
+  });
+
+  it('409 QUOTE_CHANGED: "Review cart" orders nothing and the bill is priced again', async () => {
+    let quotes = 0;
+    server.use(
+      http.post(apiUrl(CART_QUOTE_PATH), () => {
+        quotes += 1;
+        return HttpResponse.json(cartQuote({ subtotal_npr: 1000, total_npr: 1050 }));
+      }),
+    );
+    const received = refuseOnce(
+      'QUOTE_CHANGED',
+      {
+        quote: {
+          subtotal_npr: 1000,
+          vendor_offer: null,
+          platform_promo: null,
+          delivery_fee_npr: 50,
+          total_npr: 1050,
+        },
+      },
+      409,
+    );
+    await ready();
+    const before = quotes;
+    confirmPayment('COD', 950);
+    await waitFor(() => {
+      expect(alert).toHaveBeenCalled();
+    });
+    pressAlert('Review cart');
+
+    await waitFor(() => {
+      expect(quotes).toBeGreaterThan(before);
+    });
+    expect(received).toHaveLength(1);
+  });
+
+  it('409 QUOTE_CHANGED without the new quote: tells the customer to review the cart', async () => {
+    refuseOnce('QUOTE_CHANGED', undefined, 409);
+    await ready();
+    confirmPayment('COD', 950);
+    await waitFor(() => {
+      expect(alert).toHaveBeenCalled();
+    });
+
+    expect(lastAlert().message).toContain('has just ended');
+    expect(lastAlert().buttons.map((button) => button.text)).toEqual(['Review cart']);
+  });
+
+  it('422 PAYMENT_METHOD_UNAVAILABLE: names what the shop accepts and offers the payment step again', async () => {
+    refuseOnce(
+      'PAYMENT_METHOD_UNAVAILABLE',
+      { accepted: ['COD'], reason: 'SETTLEMENT_MODEL', settlement_model: 'COD_CREDIT' },
+      422,
+    );
+    await ready();
+    confirmPayment('ESEWA', 1050);
+    await waitFor(() => {
+      expect(alert).toHaveBeenCalled();
+    });
+
+    expect(lastAlert().title).toBe('Payment method not available');
+    expect(lastAlert().message).toBe(
+      "This shop can't take eSewa for this order. It accepts: Cash on delivery. Nothing has been charged.",
+    );
+    expect(screen.queryByTestId('checkout-error')).toBeNull();
+
+    pressAlert('Choose another method');
+    expect(jest.mocked(router.push)).toHaveBeenCalledWith('/checkout/payment-options');
+  });
+
+  it('422 PAYMENT_METHOD_UNAVAILABLE with nothing accepted: only "OK"', async () => {
+    refuseOnce('PAYMENT_METHOD_UNAVAILABLE', { accepted: [], reason: 'NOT_ACCEPTED_BY_SHOP' }, 422);
+    await ready();
+    confirmPayment('COD', 1050);
+    await waitFor(() => {
+      expect(alert).toHaveBeenCalled();
+    });
+
+    expect(lastAlert().buttons.map((button) => button.text)).toEqual(['OK']);
   });
 });
 
@@ -666,12 +949,17 @@ describe('Cart screen: two-step checkout', () => {
     jest.mocked(router.push).mockClear();
   });
 
-  it('shows one button with the amount to pay, which opens Payment Options', () => {
+  it('shows one button with the amount to pay, which opens Payment Options', async () => {
     useCartStore.getState().addItem(THAMEL_VENDOR, NOODLES, 2);
     renderWithProviders(<CartScreen />);
 
     const proceed = screen.getByTestId('proceed-to-pay');
-    expect(proceed).toHaveTextContent('Proceed to Pay • Rs. 1250');
+    // Nothing to agree to until the server has priced the cart.
+    expect(proceed).toHaveTextContent('Checking the price…');
+    expect(proceed).toBeDisabled();
+    await waitFor(() => {
+      expect(proceed).toHaveTextContent('Proceed to Pay • Rs. 1250');
+    });
     // No payment method is chosen in the cart any more.
     expect(screen.queryByText('Payment method')).toBeNull();
     fireEvent.press(proceed);
@@ -679,15 +967,30 @@ describe('Cart screen: two-step checkout', () => {
     expect(jest.mocked(router.push)).toHaveBeenCalledWith('/checkout/payment-options');
   });
 
-  it('carries the demo discount into the amount on the button', () => {
-    jest.mocked(vendorExtras).mockReturnValue({ ...NO_VENDOR_EXTRAS, top_offer: '10% OFF' });
+  it('puts the server’s discounted total on the button, the same figure as the bill', async () => {
+    server.use(
+      http.post(apiUrl(CART_QUOTE_PATH), () =>
+        HttpResponse.json(
+          cartQuote({
+            subtotal_npr: 1150,
+            vendor_offer: {
+              id: '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c51',
+              label: '10% OFF',
+              discount_npr: 115,
+            },
+            total_npr: 1085,
+          }),
+        ),
+      ),
+    );
     useCartStore.getState().addItem(THAMEL_VENDOR, RICE, 1);
     renderWithProviders(<CartScreen />);
 
-    // 1150 - 115 + 50: the same figure as the bill's Total.
-    expect(screen.getByTestId('proceed-to-pay')).toHaveTextContent('Proceed to Pay • Rs. 1085');
-    expect(within(screen.getByTestId('cart-summary')).getByText('Rs. 1085')).toBeOnTheScreen();
-    jest.mocked(vendorExtras).mockReturnValue(NO_VENDOR_EXTRAS);
+    // 1150 - 115 + 50.
+    await waitFor(() => {
+      expect(screen.getByTestId('proceed-to-pay')).toHaveTextContent('Proceed to Pay • Rs. 1085');
+    });
+    expect(screen.getByTestId('cart-total')).toHaveTextContent('TotalRs. 1085');
   });
 
   it('ignores a payment choice while the cart may not proceed', () => {

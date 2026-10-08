@@ -232,9 +232,14 @@ export const orderSchema = z.strictObject({
   subtotal: nonNegativeNprSchema,
   delivery_fee: nonNegativeNprSchema,
   platform_commission_amount: nonNegativeNprSchema,
+  /** The vendor's own offer the order was priced with (SPEC core 7); null without one. */
+  vendor_offer_id: z.uuid().nullable(),
+  /** What that offer took off the subtotal, funded by the vendor; 0 without one. */
+  vendor_offer_discount_npr: nonNegativeNprSchema,
   /**
-   * The platform campaign discount the customer got (SPEC core 9); 0 without one. The customer
-   * pays subtotal - this + delivery_fee.
+   * The platform campaign discount the customer got (SPEC core 9), calculated on the subtotal
+   * after the vendor offer; 0 without one. The customer pays
+   * subtotal - vendor_offer_discount_npr - this + delivery_fee.
    */
   platform_promo_discount_npr: nonNegativeNprSchema,
   /** The part of that discount the vendor bears, per the terms of its own opt-in. */

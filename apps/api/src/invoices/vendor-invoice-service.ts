@@ -8,6 +8,11 @@ import {
 import { and, desc, eq, sql } from 'drizzle-orm';
 
 import { VendorAccountNotFoundError } from '../orders/vendor-order-service';
+import {
+  DEFAULT_INVOICE_FONT_DIR,
+  InvoiceFontUnavailableError,
+  type InvoiceFonts,
+} from './invoice-fonts';
 import { renderInvoicePdf } from './invoice-pdf';
 
 export type InvoiceRow = typeof invoices.$inferSelect;
@@ -53,7 +58,16 @@ const PRINTS_OF_INVOICE = sql<number>`(
  * here writes `invoices`: the rows are sealed (migration 0029).
  */
 export class VendorInvoiceService {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    /** The Devanagari font of the printed invoice; null when its file is not installed. */
+    private readonly fonts: InvoiceFonts | null = null,
+    /**
+     * Refuse to print without the Devanagari font (production): an invoice whose Nepali names
+     * print as "?" is not an IRD document. Development prints Latin text only.
+     */
+    private readonly requireDevanagariFont = false,
+  ) {}
 
   /** Newest first, keyset on (issued_at, id). The list itself is not logged. */
   async list(
@@ -109,6 +123,10 @@ export class VendorInvoiceService {
     invoiceId: string,
     context: AuditContext,
   ): Promise<PrintedInvoice> {
+    // Before anything is locked or logged: a print that cannot be made takes no copy number.
+    if (this.fonts === null && this.requireDevanagariFont) {
+      return Promise.reject(new InvoiceFontUnavailableError(DEFAULT_INVOICE_FONT_DIR));
+    }
     return this.db.transaction(async (tx) => {
       const [invoice] = await tx
         .select({ invoice: invoices })
@@ -134,7 +152,7 @@ export class VendorInvoiceService {
         ip_address: context.ip_address,
         user_agent: context.user_agent,
       });
-      const pdf = await renderInvoicePdf(invoice.invoice, copyNumber);
+      const pdf = await renderInvoicePdf(invoice.invoice, copyNumber, { fonts: this.fonts });
       return { invoice: invoice.invoice, copyNumber, pdf };
     });
   }

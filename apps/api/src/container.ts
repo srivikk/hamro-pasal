@@ -43,6 +43,12 @@ import { SettlementService } from './ledger/settlement-service';
 import { AdProductService } from './marketing/ad-product-service';
 import { AdPurchaseService } from './marketing/ad-purchase-service';
 import { VendorOfferService } from './marketing/vendor-offer-service';
+import {
+  DEFAULT_INVOICE_FONT_DIR,
+  DEVANAGARI_REGULAR_FILE,
+  loadInvoiceFonts,
+  type InvoiceFonts,
+} from './invoices/invoice-fonts';
 import { VendorInvoiceService } from './invoices/vendor-invoice-service';
 import { CampaignService } from './marketing/campaign-service';
 import { SettlementModelRequestService } from './settlement/settlement-model-request-service';
@@ -105,6 +111,11 @@ export interface Infrastructure {
   readonly evidence: EvidenceStorage;
   /** Where product photos are stored (the same local directory until R2 is wired). */
   readonly productImages: ProductImageStorage;
+  /**
+   * The invoice PDF's Devanagari font. Left out: read from apps/api/assets/fonts. Null: none
+   * (invoices print Latin text only, and production refuses to print).
+   */
+  readonly invoiceFonts?: InvoiceFonts | null;
 }
 
 export interface ApiContainer extends ApiServices {
@@ -140,6 +151,12 @@ export function apiConfigFromEnv(env: ServerEnv): ApiConfig {
 
 /** Wires every service from explicit infrastructure (the composition root). */
 export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiContainer {
+  const invoiceFonts = infra.invoiceFonts === undefined ? loadInvoiceFonts() : infra.invoiceFonts;
+  if (invoiceFonts === null) {
+    console.warn(
+      `[api] ${DEVANAGARI_REGULAR_FILE} is not in ${DEFAULT_INVOICE_FONT_DIR}: invoice PDFs print Latin text only, and are refused in production`,
+    );
+  }
   const locks = new InventoryLockService(
     infra.redisPool,
     new DrizzleStockReader(infra.db),
@@ -211,7 +228,11 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     adPurchases: new AdPurchaseService(infra.db, ledger),
     promotions: new PromotionService(infra.db),
     vendorBankAccounts: new VendorBankAccountService(infra.db),
-    vendorInvoices: new VendorInvoiceService(infra.db),
+    vendorInvoices: new VendorInvoiceService(
+      infra.db,
+      invoiceFonts,
+      process.env.NODE_ENV === 'production',
+    ),
     vendorOffers: new VendorOfferService(infra.db),
     async close() {
       await infra.redisPool.close();

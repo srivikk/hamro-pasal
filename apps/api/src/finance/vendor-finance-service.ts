@@ -118,7 +118,9 @@ export class VendorFinanceService {
             subtotal: orders.subtotal,
             deliveryFee: orders.delivery_fee,
             commission: orders.platform_commission_amount,
-            vendorDiscount: orders.platform_promo_vendor_share_npr,
+            // What the vendor bears: its own offer and its share of a campaign discount.
+            vendorDiscount: sql<number>`"orders"."vendor_offer_discount_npr"
+                + "orders"."platform_promo_vendor_share_npr"`.mapWith(Number),
             deliveredAt: orders.delivered_at,
             reconciledAt: orders.reconciled_at,
             // Drizzle writes this single-table query's columns unqualified, so the subquery names

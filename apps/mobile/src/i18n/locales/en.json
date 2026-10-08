@@ -75,7 +75,7 @@
     "cancellingPayment": "Cancelling…",
     "paymentCancelled": "Payment cancelled. You can change your cart again.",
     "paymentAlreadyDone": "Your payment already went through. Opening your order…",
-    "shopDiscount": "Shop Discount",
+    "shopDiscount": "Shop Offer",
     "discountAmount": "- Rs. {{amount, localizedNumber}}",
     "clearTitle": "Clear Cart?",
     "clearMessage": "Are you sure you want to remove all items?",
@@ -83,7 +83,11 @@
     "clearConfirm": "Yes, Clear",
     "proceedToPay": "Proceed to Pay • Rs. {{amount, localizedNumber}}",
     "placingOrder": "Placing your order…",
-    "addMore": "Add more items"
+    "addMore": "Add more items",
+    "promoDiscount": "Hamro Pasal Promo",
+    "estimatedTotal": "Estimated total",
+    "pricing": "Checking the price…",
+    "deliveryUnavailable": "Delivery is unavailable right now. You can order when it is back."
   },
   "cartBanner": {
     "view": "View Cart",
@@ -175,7 +179,26 @@
       "PRODUCT_UNAVAILABLE": "Some items are no longer available. Remove them and try again.",
       "CHECKOUT_IN_PROGRESS": "Your checkout is still being processed. Try again in a moment.",
       "CHECKOUT_BUSY": "Checkout is busy right now. Try again in a moment.",
-      "generic": "Checkout failed. Please try again."
+      "generic": "Checkout failed. Please try again.",
+      "OUTSIDE_DELIVERY_AREA": "This shop does not deliver to your selected address. Change the address to continue.",
+      "DELIVERY_UNAVAILABLE": "Delivery is unavailable right now. Please try again later."
+    },
+    "quoteChanged": {
+      "title": "The price has changed",
+      "body": "An offer on this cart has ended. The total is now Rs. {{now, localizedNumber}} (it was Rs. {{was, localizedNumber}}). Nothing has been charged.",
+      "bodyNow": "An offer on this cart has ended. The total is now Rs. {{now, localizedNumber}}. Nothing has been charged.",
+      "bodyUnknown": "An offer on this cart has just ended. Nothing has been charged. Review the new total in your cart.",
+      "review": "Review cart",
+      "accept": "Continue with Rs. {{amount, localizedNumber}}"
+    },
+    "methodUnavailable": {
+      "title": "Payment method not available",
+      "body": "This shop doesn't accept {{method}}. It accepts: {{methods}}. Nothing has been charged.",
+      "cashOnly": "This shop can't take {{method}} for this order. It accepts: {{methods}}. Nothing has been charged.",
+      "none": "This shop can't take {{method}}, and has no other way to pay right now. Nothing has been charged.",
+      "choose": "Choose another method",
+      "cancel": "Cancel",
+      "ok": "OK"
     }
   },
   "devAuth": {
@@ -662,7 +685,17 @@
     "buying": "Buying…",
     "active": "Active",
     "adId": "Ad ID: {{id}}",
-    "adIdCopy": "Tap to copy"
+    "adIdCopy": "Tap to copy",
+    "offerStatus": {
+      "ACTIVE": "Active",
+      "ENDED": "Ended",
+      "CANCELLED": "Cancelled"
+    },
+    "runsUntil": "Runs until {{date}}",
+    "endedOn": "Ended on {{date}}",
+    "cancelledOn": "You ended it on {{date}}",
+    "offerLimit": "You already have the most offers a shop can run at once. End one first.",
+    "saving": "Saving…"
   },
   "vendorAnalytics": {
     "title": "Analytics",
@@ -691,39 +724,20 @@
     }
   },
   "invoice": {
-    "vatNumber": "VAT No: {{number}}",
-    "panNumber": "PAN: {{number}}",
-    "taxInvoice": "Tax Invoice",
-    "panInvoice": "Invoice",
-    "fiscalYear": "Fiscal Year (आर्थिक वर्ष)",
-    "billNumber": "Bill No. (बिजक नम्बर)",
-    "dateBs": "Date (BS)",
-    "dateAd": "Date and time (AD)",
-    "payment": "Payment method",
-    "buyer": "Buyer",
-    "buyerPan": "Buyer PAN",
-    "particulars": "Particulars",
-    "taxable": "Taxable",
-    "vat": "VAT {{rate}}%",
-    "amount": "Amount",
-    "quantityRate": "{{quantity}} × {{rate}}",
-    "hsCode": "HS Code: {{code}}",
-    "lineDiscount": "Discount: {{amount}}",
-    "subtotal": "Subtotal",
-    "discount": "Discount",
-    "taxableAmount": "Taxable amount",
-    "vatAmount": "VAT ({{rate}}%)",
-    "exempt": "Non-taxable amount",
-    "delivery": "Delivery charge",
-    "deliveryPlatform": "Delivery charge (Hamro Pasal delivery)",
-    "grandTotal": "Grand Total (Rs.)",
-    "inWords": "In words: {{words}}",
     "rowTitle": "Bill {{number}} · FY {{fiscalYear}}",
     "rowSubtitle": "Order #{{code}} · {{date}} BS · {{buyer}}",
-    "view": "View Invoice",
-    "close": "Close",
-    "sampleNote": "Sample invoices. Real ones appear here once your delivered orders are invoiced.",
-    "empty": "No invoices yet. One is issued for every delivered order."
+    "empty": "No invoices yet. One is issued for every delivered order.",
+    "download": "Download PDF",
+    "downloading": "Downloading…",
+    "notPrinted": "Not printed yet: the next download is the original.",
+    "printed": "Printed {{count, localizedNumber}} time(s): the next download is a copy.",
+    "printNote": "Each download is recorded as a print. The first is the original; every later one is marked \"Copy of Original\".",
+    "savedOriginal": "Invoice {{number}} saved (original).",
+    "savedCopy": "Invoice {{number}} saved (copy {{copy, localizedNumber}}).",
+    "downloadFailed": "Couldn't download the invoice. Check your connection and try again.",
+    "printUnavailable": "Invoices can't be printed right now. Please try again later.",
+    "notFound": "This invoice is no longer available.",
+    "loadError": "Couldn't load your invoices. Check your connection."
   },
   "driverDashboard": {
     "title": "Deliveries",
@@ -985,10 +999,11 @@
     "itemTotal": "Item Total",
     "deliveryFee": "Delivery Fee",
     "platformFee": "Platform Fee",
-    "shopDiscount": "Shop Discount",
+    "shopDiscount": "Shop Offer",
     "total": "Total",
     "paymentMethod": "Payment Method",
-    "deliveredTo": "Delivery address"
+    "deliveredTo": "Delivery address",
+    "promoDiscount": "Hamro Pasal Promo"
   },
   "paymentOptions": {
     "title": "Payment Options",
@@ -1003,6 +1018,13 @@
       "ESEWA": "Pay with your eSewa wallet",
       "KHALTI": "Pay with your Khalti wallet",
       "COD": "Pay in cash when your order arrives"
+    },
+    "noneAvailable": "This shop can't take a payment for this order right now.",
+    "reason": {
+      "NOT_ACCEPTED_BY_SHOP": "This shop doesn't accept it",
+      "COD_NOT_AVAILABLE": "Cash on delivery isn't available for your account",
+      "DELIVERY_UNAVAILABLE": "Delivery is unavailable right now",
+      "SETTLEMENT_MODEL": "This shop takes cash on delivery only"
     }
   },
   "favourites": {

@@ -4,6 +4,8 @@ import type { Order } from '@hamro-pasal/shared-types';
 
 import { toNpr, toPaisa } from './money';
 import {
+  orderDiscountPaisa,
+  orderTotalPaisa,
   planPaymentCapture,
   planSettlement,
   SettlementPlanError,
@@ -240,6 +242,90 @@ describe('settlement with a platform campaign discount (SPEC core 9)', () => {
     );
     expect(() => planSettlement(discounted({ platform_promo_discount_npr: 1000.01 }))).toThrow(
       SettlementPlanError,
+    );
+  });
+});
+
+describe('settlement with a vendor offer stacked on a campaign (SPEC verification 5)', () => {
+  // S 1000, Dv 100, Dp 90 of which the vendor bears 45, F 50, C 85.50 (10% of 855).
+  const stacked = (overrides: Partial<Order> = {}) =>
+    order({
+      vendor_offer_discount_npr: 100,
+      platform_promo_discount_npr: 90,
+      platform_promo_vendor_share_npr: 45,
+      platform_commission_amount: 85.5,
+      ...overrides,
+    });
+  const byType = (postings: readonly PlannedPosting[]) =>
+    postings.map((p) => [p.account.type, toNpr(p.amountPaisa)]);
+  const sum = (postings: readonly PlannedPosting[]) =>
+    postings.reduce((total, p) => total + p.amountPaisa, 0);
+
+  it('the customer pays 860: subtotal - vendor offer - campaign + delivery', () => {
+    expect(orderTotalPaisa(stacked())).toBe(86_000);
+    expect(orderDiscountPaisa(stacked())).toBe(19_000);
+    expect(byType(planPaymentCapture(stacked()))).toEqual([
+      ['GATEWAY_CLEARING', -860],
+      ['SYSTEM_ESCROW', 860],
+    ]);
+  });
+
+  it('prepaid: vendor 769.50 + its delivery fee, platform 85.50, promo cost 45', () => {
+    const plan = planSettlement(stacked());
+    expect(byType(plan)).toEqual([
+      ['SYSTEM_ESCROW', -860],
+      ['VENDOR_WALLET', 819.5], // 1000 - 100 - 45 - 85.50 + its own 50 delivery fee
+      ['PLATFORM_REVENUE', 85.5],
+      ['PROMO_EXPENSE', -45],
+    ]);
+    expect(sum(plan)).toBe(0);
+  });
+
+  it('cash, own delivery: the vendor offer is the vendor’s own, so only Dpp - C moves', () => {
+    const plan = planSettlement(stacked({ payment_method: 'COD' }));
+    expect(byType(plan)).toEqual([
+      ['VENDOR_WALLET', -40.5],
+      ['PLATFORM_REVENUE', 85.5],
+      ['PROMO_EXPENSE', -45],
+    ]);
+    expect(sum(plan)).toBe(0);
+  });
+
+  it('cash, fleet: the rider owes the 860 the customer handed over', () => {
+    const plan = planSettlement(
+      stacked({
+        payment_method: 'COD',
+        fulfillment_locked: 'PLATFORM_FLEET',
+        driver_user_id: driverId,
+      }),
+    );
+    expect(byType(plan)).toEqual([
+      ['DRIVER_WALLET', -860],
+      ['VENDOR_WALLET', 769.5],
+      ['PLATFORM_REVENUE', 85.5],
+      ['DRIVER_WALLET', 50],
+      ['PROMO_EXPENSE', -45],
+    ]);
+    expect(sum(plan)).toBe(0);
+  });
+
+  it('a vendor offer alone moves no promo money', () => {
+    const plan = planSettlement(
+      order({ vendor_offer_discount_npr: 100, platform_commission_amount: 90 }),
+    );
+    expect(byType(plan)).toEqual([
+      ['SYSTEM_ESCROW', -950],
+      ['VENDOR_WALLET', 860],
+      ['PLATFORM_REVENUE', 90],
+    ]);
+  });
+
+  it('refuses discounts above the goods and a commission above what the vendor sold for', () => {
+    expect(() => planSettlement(stacked({ vendor_offer_discount_npr: 910.01 }))).toThrow(
+      SettlementPlanError,
+    );
+    expect(() => planSettlement(stacked({ platform_commission_amount: 855.01 }))).toThrow(
+      'exceeds its subtotal',
     );
   });
 });

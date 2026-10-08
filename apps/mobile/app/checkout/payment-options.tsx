@@ -8,8 +8,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '../../src/components/Button';
 import { cartTotals } from '../../src/features/cart/cart-totals';
+import { useCartQuote } from '../../src/features/cart/useCartQuote';
 import {
-  mockPaymentOptions,
   usePaymentChoiceStore,
   type PaymentOption,
 } from '../../src/features/checkout/payment-choice';
@@ -35,8 +35,11 @@ const METHOD_ICON: Partial<Record<string, IconName>> = {
  * the Cart (usePaymentChoiceStore), which runs the checkout it already owns: the delivery-area
  * check, the order, the reservation countdown and the gateway's page.
  *
- * The list is data: whatever `payment_options` the quote returns is rendered, so a new method
- * (cards, bank transfer) needs no change here beyond its label and icon.
+ * The amount and the list are the server's quote (POST /api/cart/quote): the total after the
+ * shop's offer and the platform promotion, and the methods this shop takes for this customer
+ * (its settlement model, what it accepts, the customer's cash-on-delivery standing). A method
+ * that is not offered is shown disabled with the reason. The total confirmed here travels with
+ * the order, so a price that moved meanwhile is refused instead of charged.
  */
 export default function PaymentOptionsScreen() {
   const { t } = useTranslation();
@@ -45,11 +48,16 @@ export default function PaymentOptionsScreen() {
   const vendor = useCartStore((state) => state.vendor);
   const lines = useCartStore((state) => state.lines);
   const choose = usePaymentChoiceStore((state) => state.choose);
-  // TODO: Replace with backend /cart/quote response (payment_options).
-  const options = mockPaymentOptions();
-  const [selected, setSelected] = useState<PaymentMethod | null>(
-    () => options.find((option) => option.available)?.method ?? null,
-  );
+  // The cart asked for this quote a moment ago; the same query answers here.
+  const quote = useCartQuote({ frozen: false });
+  const options: readonly PaymentOption[] = quote.data?.payment_options ?? [];
+  const [picked, setPicked] = useState<PaymentMethod | null>(null);
+  // The customer's pick while it is still offered; otherwise the first method that is.
+  const selected =
+    options.find((option) => option.method === picked && option.available)?.method ??
+    options.find((option) => option.available)?.method ??
+    null;
+  const totalNpr = quote.data?.total_npr ?? null;
 
   // Confirming shows a full-screen veil for a moment, then hands the choice to the Cart, which is
   // still mounted underneath and runs the real checkout. Leaving the screen first cancels it.
@@ -57,18 +65,32 @@ export default function PaymentOptionsScreen() {
   useEffect(() => {
     if (!isProcessing || selected === null) return undefined;
     const timer = setTimeout(() => {
-      choose(selected);
+      choose(selected, totalNpr);
       router.back();
     }, PAYMENT_PROCESSING_MS);
     return () => {
       clearTimeout(timer);
     };
-  }, [isProcessing, selected, choose]);
+  }, [isProcessing, selected, totalNpr, choose]);
 
   // Nothing to pay for (the cart was emptied, or the screen was opened directly): back to the cart.
   if (vendor === null || lines.length === 0 || !signedIn) return <Redirect href="/cart" />;
 
-  const { displayedTotalNpr, savedNpr } = cartTotals(vendor, lines);
+  // No price to agree to (the quote was refused, or the cart may not be checked out as it is):
+  // the cart says why.
+  if (quote.isError || (quote.data === undefined && !quote.isFetching)) {
+    return <Redirect href="/cart" />;
+  }
+  if (quote.data === undefined) {
+    return (
+      <View className="flex-1 items-center justify-center bg-gray-50">
+        <Stack.Screen options={{ headerShown: true, title: t('paymentOptions.title') }} />
+        <ActivityIndicator testID="payment-options-loading" />
+      </View>
+    );
+  }
+
+  const { totalNpr: displayedTotalNpr, savedNpr } = cartTotals(vendor, lines, quote.data);
 
   const row = (option: PaymentOption) => {
     const chosen = option.method === selected;
@@ -84,7 +106,7 @@ export default function PaymentOptionsScreen() {
           chosen ? 'border-brand' : 'border-transparent'
         } ${option.available ? '' : 'opacity-50'}`}
         onPress={() => {
-          setSelected(option.method);
+          setPicked(option.method);
         }}
       >
         <View className="h-11 w-11 items-center justify-center rounded-xl bg-brand-light">
@@ -95,7 +117,9 @@ export default function PaymentOptionsScreen() {
           <Text className="text-sm text-gray-500">
             {option.available
               ? t(`paymentOptions.hint.${option.method}`)
-              : t('paymentOptions.unavailable')}
+              : option.reason === undefined
+                ? t('paymentOptions.unavailable')
+                : t(`paymentOptions.reason.${option.reason}`)}
           </Text>
         </View>
         <View
@@ -139,6 +163,15 @@ export default function PaymentOptionsScreen() {
         <View accessibilityRole="radiogroup" className="gap-3">
           {options.map(row)}
         </View>
+        {selected === null ? (
+          <Text className="text-sm text-amber-800" testID="payment-none-available">
+            {t(
+              quote.data.delivery_available
+                ? 'paymentOptions.noneAvailable'
+                : 'cart.deliveryUnavailable',
+            )}
+          </Text>
+        ) : null}
       </ScrollView>
 
       <View

@@ -8,6 +8,7 @@ import {
   platformSettings,
   products,
   reviews,
+  vendorOffers,
   vendors,
   type Database,
 } from '@hamro-pasal/db';
@@ -22,7 +23,7 @@ import {
   type Order,
   type SettlementModel,
 } from '@hamro-pasal/shared-types';
-import { and, avg, count, eq, gt, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, avg, count, eq, gt, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 
 import { deliveryFeePaisa, haversineKm, type DeliveryTerms } from './delivery-fee';
 import { isUniqueViolation } from '../infra/pg-errors';
@@ -32,12 +33,19 @@ import {
   ProductUnavailableError,
   ReservationExpiredError,
 } from '../inventory/errors';
-import { toNpr } from '../ledger/money';
+import { toNpr, toPaisa } from '../ledger/money';
 import { reviewIsPublic } from '../reviews/review-visibility';
 import { enqueueOrderStateChanged } from '../orders/order-events';
 import { generateDeliveryOtp, hashDeliveryOtp } from './delivery-otp';
 import { deliversTo, enabledModes } from '../catalog/catalog-service';
-import { CheckoutRejectedError, priceCart, type CampaignOffer, type PricedCart } from './pricing';
+import {
+  CheckoutRejectedError,
+  priceCart,
+  pricedCartView,
+  type CampaignOffer,
+  type PricedCart,
+  type VendorOfferRule,
+} from './pricing';
 import type {
   InventoryLockService,
   InventoryReservation,
@@ -151,6 +159,14 @@ export class CheckoutService {
     }
 
     const { vendor, items, priced } = await this.price(request);
+    // The customer agreed to a total; an offer or campaign that ended since then changes it. The
+    // amount sent is only compared, never used as a price.
+    if (
+      request.expected_total_npr !== undefined &&
+      toPaisa(request.expected_total_npr) !== priced.totalPaisa
+    ) {
+      throw quoteChanged(priced);
+    }
     assertPaymentMethodOffered(vendor, request.payment_method);
 
     if (request.payment_method === 'COD') {
@@ -178,10 +194,32 @@ export class CheckoutService {
           .for('key share');
         if (shop === undefined) throw new Error(`Vendor ${vendor.id} vanished during checkout`);
         assertPaymentMethodOffered(shop, request.payment_method);
-        // A discount is charged to the vendor only under its own live opt-in (SPEC core 7). The
-        // opt-in is read again under a lock: an opt-out or a change of the campaign's terms that
-        // committed since the cart was priced means the customer was quoted a total that no
-        // longer holds, and no order is created for it.
+        // Lock order of a checkout: vendor row (above), vendor offer row, opt-in row, each
+        // FOR SHARE or weaker, then the inserts.
+        //
+        // A vendor is charged for a discount only under a rule its own account switched on and
+        // has not switched off (SPEC core 7). Both rules are read again under a lock: one that
+        // ended since the cart was priced means the customer was quoted a total that no longer
+        // holds, and no order is created for it.
+        const vendorOffer = priced.vendorOffer;
+        if (vendorOffer !== null) {
+          // Ending an offer takes the vendor row FOR UPDATE first, so it either committed before
+          // the key-share lock above or waits for this order.
+          const [offer] = await tx
+            .select({
+              running: sql<boolean>`${vendorOffers.ended_at} IS NULL
+                AND (${vendorOffers.ends_at} IS NULL OR ${vendorOffers.ends_at} > now())`,
+            })
+            .from(vendorOffers)
+            .where(
+              and(
+                eq(vendorOffers.id, vendorOffer.offer.offerId),
+                eq(vendorOffers.vendor_id, vendor.id),
+              ),
+            )
+            .for('share');
+          if (offer?.running !== true) throw quoteChanged();
+        }
         const promo = priced.promo;
         if (promo !== null) {
           const [optIn] = await tx
@@ -189,14 +227,7 @@ export class CheckoutService {
             .from(campaignOptIns)
             .where(eq(campaignOptIns.id, promo.offer.optInId))
             .for('share');
-          if (optIn?.status !== 'ACTIVE') {
-            throw new CheckoutRejectedError(
-              'QUOTE_CHANGED',
-              'The offer on this cart has just ended. Review the new total.',
-              undefined,
-              409,
-            );
-          }
+          if (optIn?.status !== 'ACTIVE') throw quoteChanged();
         }
         const [created] = await tx
           .insert(orders)
@@ -208,6 +239,12 @@ export class CheckoutService {
             subtotal: toNpr(priced.subtotalPaisa),
             delivery_fee: toNpr(priced.deliveryFeePaisa),
             platform_commission_amount: toNpr(priced.commissionPaisa),
+            ...(vendorOffer === null
+              ? {}
+              : {
+                  vendor_offer_id: vendorOffer.offer.offerId,
+                  vendor_offer_discount_npr: toNpr(vendorOffer.discountPaisa),
+                }),
             ...(promo === null
               ? {}
               : {
@@ -443,6 +480,7 @@ export class CheckoutService {
       items,
       (subtotalPaisa) => deliveryFeePaisa(terms, subtotalPaisa, distanceKm),
       await this.runningCampaigns(vendor.id),
+      await this.runningVendorOffers(vendor.id),
     );
     return { vendor, items, priced, distanceKm, deliveryAvailable };
   }
@@ -476,6 +514,32 @@ export class CheckoutService {
           eq(platformCampaigns.is_active, true),
           lte(platformCampaigns.starts_at, sql`now()`),
           gt(platformCampaigns.ends_at, sql`now()`),
+        ),
+      );
+  }
+
+  /**
+   * The shop's own offers that apply now: not ended by the shop, and inside their dates on the
+   * database clock. At most MAX_LIVE_VENDOR_OFFERS rows (the limit is enforced at creation).
+   */
+  private async runningVendorOffers(vendorId: string): Promise<VendorOfferRule[]> {
+    return this.db
+      .select({
+        offerId: vendorOffers.id,
+        createdAt: vendorOffers.created_at,
+        label: vendorOffers.label,
+        kind: vendorOffers.kind,
+        value: vendorOffers.value,
+        maxDiscountNpr: vendorOffers.max_discount_npr,
+        minCartNpr: vendorOffers.min_cart_npr,
+      })
+      .from(vendorOffers)
+      .where(
+        and(
+          eq(vendorOffers.vendor_id, vendorId),
+          isNull(vendorOffers.ended_at),
+          lte(vendorOffers.starts_at, sql`now()`),
+          sql`(${vendorOffers.ends_at} IS NULL OR ${vendorOffers.ends_at} > now())`,
         ),
       );
   }
@@ -667,6 +731,19 @@ export class CheckoutService {
     await this.locks.release(input.vendorId, input.reservationId);
     return placed;
   }
+}
+
+/**
+ * 409 QUOTE_CHANGED: the total the customer saw no longer holds. With the cart as it is priced
+ * now when that is known (`details.quote`); the app asks for a new quote otherwise.
+ */
+function quoteChanged(priced?: PricedCart): CheckoutRejectedError {
+  return new CheckoutRejectedError(
+    'QUOTE_CHANGED',
+    'The offer on this cart has just ended. Review the new total.',
+    priced === undefined ? undefined : { quote: pricedCartView(priced) },
+    409,
+  );
 }
 
 /**

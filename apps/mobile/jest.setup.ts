@@ -36,6 +36,13 @@ jest.mock('expo-audio', () => jest.requireActual<Record<string, unknown>>('./src
 jest.mock('expo-notifications', () =>
   jest.requireActual<Record<string, unknown>>('./src/test/fake-notifications'),
 );
+// expo-file-system and expo-sharing are native: one in-memory stand-in for both.
+jest.mock('expo-file-system', () =>
+  jest.requireActual<Record<string, unknown>>('./src/test/fake-files'),
+);
+jest.mock('expo-sharing', () =>
+  jest.requireActual<Record<string, unknown>>('./src/test/fake-files'),
+);
 jest.mock('expo-task-manager', () =>
   jest.requireActual<Record<string, unknown>>('./src/test/fake-notifications'),
 );

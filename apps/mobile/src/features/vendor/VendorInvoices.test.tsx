@@ -1,296 +1,377 @@
-import { fireEvent, screen, within } from '@testing-library/react-native';
+import { vendorInvoiceSummarySchema, type VendorInvoiceSummary } from '@hamro-pasal/shared-types';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
+import { delay, http, HttpResponse } from 'msw';
 
 import VendorInvoicesScreen from '../../../app/(vendor)/invoices';
+import { INVOICE_COPY_NUMBER_HEADER, VENDOR_INVOICES_PATH } from '../../api/vendor-invoices';
 import { useAuthStore } from '../../store/useAuthStore';
-import { useVendorShopStore } from '../../store/useVendorShopStore';
-import { accessTokenFor } from '../../test/access-tokens';
-import { renderWithProviders } from '../../test/render';
+import { useToastStore } from '../../store/useToastStore';
+import { errorBody } from '../../test/api-fixtures';
+import { mockFiles } from '../../test/fake-files';
 import {
-  amountInWords,
-  buildInvoice,
-  formatNepalDateTime,
-  numberInWords,
-  splitVatPaisa,
-  spreadDiscountPaisa,
-  type InvoiceInput,
-} from './invoice-math';
-import { mockInvoices, SAMPLE_SELLER_TAX_ID } from './mock-invoices';
+  apiUrl,
+  capture,
+  server,
+  setupApiTestEnvironment,
+  TEST_ACCESS_TOKEN,
+  type CapturedRequest,
+} from '../../test/msw';
+import { renderWithProviders } from '../../test/render';
+import { invoiceFileName } from './invoice-files';
 
-const VENDOR_USER_ID = '9f1c2a10-0000-4000-8000-0000000000aa';
+setupApiTestEnvironment();
 
-const input = (overrides: Partial<InvoiceInput> = {}): InvoiceInput => ({
-  id: 'inv-1',
-  order_id: '7c1d2e3f-0000-4000-8000-0000004fa5b6',
-  fiscal_year: '2082/083',
-  bill_number: 7,
-  issued_at: '2025-10-07T08:12:00.000Z',
-  issued_date_bs: '2082-06-21',
-  payment_method: 'ESEWA',
-  seller: {
-    name: 'Thamel Kirana Pasal',
-    address: 'Thamel, Kathmandu',
-    phone: '+9779800000011',
-    tax_id: '301234567',
-    is_vat_registered: true,
-  },
-  buyer: { name: 'Sita Gurung', tax_id: null },
-  items: [{ product_name: 'Goods', hs_code: null, quantity: 1, unit_price_npr: 1130 }],
-  discount_npr: 0,
-  delivery_charge_npr: 0,
-  delivery_charged_by: 'VENDOR',
-  ...overrides,
+/**
+ * The vendor's Invoices screen over msw (SPEC core 10, vendor flow step 16): the list from
+ * GET /api/vendor/invoices and "Download PDF", which fetches GET …/:id/pdf, saves the bytes with
+ * expo-file-system and opens the share sheet with expo-sharing (both replaced by in-memory
+ * stand-ins here).
+ */
+
+const FIRST = '11111111-1111-4111-8111-111111111111';
+const SECOND = '11111111-1111-4111-8111-111111111112';
+const THIRD = '11111111-1111-4111-8111-111111111113';
+/** "%PDF-1.3" and a little more: what the server's document starts with. */
+const PDF_BYTES = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x33, 0x0a, 0x01]);
+
+const invoice = (overrides: Partial<VendorInvoiceSummary> = {}): VendorInvoiceSummary =>
+  vendorInvoiceSummarySchema.parse({
+    id: FIRST,
+    document_type: 'INVOICE',
+    order_id: '22222222-2222-4222-8222-2222224fa5b6',
+    fiscal_year: '2082/083',
+    bill_number: 142,
+    invoice_sequence: 'HP-2082-000142',
+    issued_at: '2025-10-08T06:00:00.000Z',
+    issued_date_bs: '2082-06-22',
+    buyer_name: 'सीता गुरुङ',
+    payment_method: 'COD',
+    grand_total_npr: 860,
+    print_count: 0,
+    ...overrides,
+  });
+
+const toast = () => useToastStore.getState().toast;
+
+/** The list endpoint with one page; the PDF endpoint numbering each print like the server. */
+function invoicesApi(invoices: VendorInvoiceSummary[]) {
+  const state = { prints: 0, pdfRequests: [] as CapturedRequest[] };
+  server.use(
+    http.get(apiUrl(VENDOR_INVOICES_PATH), () =>
+      HttpResponse.json({
+        invoices: invoices.map((each) =>
+          each.id === FIRST ? { ...each, print_count: each.print_count + state.prints } : each,
+        ),
+        next_cursor: null,
+      }),
+    ),
+    http.get(apiUrl(`${VENDOR_INVOICES_PATH}/:id/pdf`), async ({ request }) => {
+      state.pdfRequests.push(await capture(request));
+      const copy = state.prints;
+      state.prints += 1;
+      return new HttpResponse(PDF_BYTES, {
+        headers: {
+          'Content-Type': 'application/pdf',
+          [INVOICE_COPY_NUMBER_HEADER]: String(copy),
+        },
+      });
+    }),
+  );
+  return state;
+}
+
+beforeEach(() => {
+  mockFiles.reset();
+  useToastStore.setState({ toast: null });
 });
 
-const sum = (values: number[]): number => Math.round(values.reduce((a, b) => a + b, 0) * 100) / 100;
-
-describe('invoice arithmetic (SPEC Fiscal Invoicing)', () => {
-  it('splits a VAT-inclusive amount into taxable and 13% VAT, to the paisa', () => {
-    expect(splitVatPaisa(113_000)).toEqual({ taxable: 100_000, vat: 13_000 });
-    const odd = splitVatPaisa(10_000);
-    expect(odd).toEqual({ taxable: 8850, vat: 1150 });
-    expect(odd.taxable + odd.vat).toBe(10_000);
+describe('invoiceFileName', () => {
+  it('names the original after the invoice and each copy after its number', () => {
+    expect(invoiceFileName('HP-2082-000142', 0)).toBe('HP-2082-000142.pdf');
+    expect(invoiceFileName('HP-2082-000142', 2)).toBe('HP-2082-000142-copy-2.pdf');
   });
 
-  it('SPEC verification 12: 1130 of taxable goods is 1000.00 taxable and 130.00 VAT', () => {
-    const invoice = buildInvoice(input());
-    expect(invoice).toMatchObject({
-      subtotal_npr: 1130,
-      taxable_amount_npr: 1000,
-      vat_amount_npr: 130,
-      vat_rate_percent: 13,
-      exempt_amount_npr: 0,
-      grand_total_npr: 1130,
-    });
+  it('never lets an unexpected sequence reach a path', () => {
+    expect(invoiceFileName('../../etc/passwd', 0)).toBe('______etc_passwd.pdf');
+  });
+});
+
+describe('Vendor invoices: the list (GET /api/vendor/invoices)', () => {
+  it('lists each invoice with its number, bill, order, BS date, buyer, total and print state', async () => {
+    invoicesApi([
+      invoice(),
+      invoice({ id: SECOND, invoice_sequence: 'HP-2082-000141', bill_number: 141, print_count: 2 }),
+    ]);
+    renderWithProviders(<VendorInvoicesScreen />);
+
+    const row = within(await screen.findByTestId(`invoice-row-${FIRST}`));
+    expect(row.getByText('HP-2082-000142')).toBeOnTheScreen();
+    expect(row.getByText('Rs. 860')).toBeOnTheScreen();
+    expect(row.getByText('Bill 000142 · FY 2082/083')).toBeOnTheScreen();
+    // A Nepali buyer name is shown as stored.
+    expect(row.getByText('Order #4FA5B6 · 2082-06-22 BS · सीता गुरुङ')).toBeOnTheScreen();
+    expect(screen.getByTestId(`invoice-prints-${FIRST}`)).toHaveTextContent(
+      'Not printed yet: the next download is the original.',
+    );
+    expect(screen.getByTestId(`invoice-prints-${SECOND}`)).toHaveTextContent(
+      'Printed 2 time(s): the next download is a copy.',
+    );
+    // Every download is a numbered print: the screen says so before any is made.
+    expect(screen.getByTestId('invoice-print-note')).toBeOnTheScreen();
   });
 
-  it('spreads a discount over the lines in whole paisa that add up exactly', () => {
-    expect(spreadDiscountPaisa([100_000, 50_000], 15_000)).toEqual([10_000, 5000]);
-    const uneven = spreadDiscountPaisa([3333, 3333, 3334], 1000);
-    expect(uneven.reduce((a, b) => a + b, 0)).toBe(1000);
-    expect(spreadDiscountPaisa([5000], 0)).toEqual([0]);
+  it('shows the empty state for a shop without invoices', async () => {
+    invoicesApi([]);
+    renderWithProviders(<VendorInvoicesScreen />);
+
+    expect(await screen.findByTestId('invoice-list-empty')).toBeOnTheScreen();
+    expect(screen.queryByTestId('invoice-print-note')).toBeNull();
   });
 
-  it('every discount lowers the taxable amount, and the grand total is what the customer paid', () => {
-    // SPEC verification 5: goods 1000, discounts 100 + 90 (the platform share included), delivery 50.
-    const invoice = buildInvoice(
-      input({
-        items: [{ product_name: 'Goods', hs_code: null, quantity: 1, unit_price_npr: 1000 }],
-        discount_npr: 190,
-        delivery_charge_npr: 50,
+  it('loads the next page with the cursor when the list is scrolled to its end', async () => {
+    const cursors: (string | null)[] = [];
+    server.use(
+      http.get(apiUrl(VENDOR_INVOICES_PATH), ({ request }) => {
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        cursors.push(cursor);
+        return HttpResponse.json(
+          cursor === null
+            ? {
+                invoices: [invoice(), invoice({ id: SECOND, bill_number: 141 })],
+                next_cursor: SECOND,
+              }
+            : { invoices: [invoice({ id: THIRD, bill_number: 140 })], next_cursor: null },
+        );
       }),
     );
+    renderWithProviders(<VendorInvoicesScreen />);
+    await screen.findByTestId(`invoice-row-${SECOND}`);
 
-    expect(invoice.grand_total_npr).toBe(860);
-    expect(sum([invoice.taxable_amount_npr, invoice.vat_amount_npr])).toBe(860);
-    expect(invoice.lines[0]).toMatchObject({ line_discount_npr: 190, line_total_npr: 810 });
-    expect(sum(invoice.lines.map((line) => line.line_total_npr))).toBe(860);
-  });
-
-  it("taxes the shop's own delivery charge as a line, and keeps a fleet charge out of its sales", () => {
-    const own = buildInvoice(input({ delivery_charge_npr: 113 }));
-    expect(own.lines.at(-1)).toMatchObject({
-      line_type: 'DELIVERY',
-      taxable_amount_npr: 100,
-      vat_amount_npr: 13,
-    });
-    expect(own.grand_total_npr).toBe(1243);
-
-    const fleet = buildInvoice(input({ delivery_charge_npr: 50, delivery_charged_by: 'PLATFORM' }));
-    expect(fleet.lines).toHaveLength(1);
-    expect(fleet).toMatchObject({ taxable_amount_npr: 1000, vat_amount_npr: 130 });
-    expect(fleet.grand_total_npr).toBe(1180);
-    expect(sum([fleet.taxable_amount_npr, fleet.vat_amount_npr, fleet.delivery_charge_npr])).toBe(
-      1180,
-    );
-  });
-
-  it('shows no VAT for a seller that is not VAT registered, or for an exempt product', () => {
-    const pan = buildInvoice(input({ seller: { ...input().seller, is_vat_registered: false } }));
-    expect(pan).toMatchObject({
-      taxable_amount_npr: 0,
-      vat_amount_npr: 0,
-      vat_rate_percent: 0,
-      exempt_amount_npr: 1130,
-      grand_total_npr: 1130,
+    act(() => {
+      (screen.getByTestId('invoice-list').props as { onEndReached: () => void }).onEndReached();
     });
 
-    const mixed = buildInvoice(
-      input({
-        items: [
-          { product_name: 'Taxed', hs_code: null, quantity: 1, unit_price_npr: 113 },
-          {
-            product_name: 'Exempt',
-            hs_code: null,
-            quantity: 2,
-            unit_price_npr: 60,
-            vat_exempt: true,
-          },
-        ],
+    expect(await screen.findByTestId(`invoice-row-${THIRD}`)).toBeOnTheScreen();
+    expect(cursors).toEqual([null, SECOND]);
+  });
+
+  it('keeps the invoices already listed when a later page fails, and retries it from below', async () => {
+    let failNext = true;
+    server.use(
+      http.get(apiUrl(VENDOR_INVOICES_PATH), ({ request }) => {
+        if (new URL(request.url).searchParams.get('cursor') === null) {
+          return HttpResponse.json({ invoices: [invoice()], next_cursor: FIRST });
+        }
+        return failNext
+          ? HttpResponse.json(errorBody('INVALID_CURSOR'), { status: 400 })
+          : HttpResponse.json({ invoices: [invoice({ id: SECOND })], next_cursor: null });
       }),
     );
-    expect(mixed).toMatchObject({
-      taxable_amount_npr: 100,
-      vat_amount_npr: 13,
-      exempt_amount_npr: 120,
-      grand_total_npr: 233,
+    renderWithProviders(<VendorInvoicesScreen />);
+    await screen.findByTestId(`invoice-row-${FIRST}`);
+    act(() => {
+      (screen.getByTestId('invoice-list').props as { onEndReached: () => void }).onEndReached();
     });
+
+    const retry = await screen.findByTestId('invoices-load-more');
+    expect(screen.getByTestId(`invoice-row-${FIRST}`)).toBeOnTheScreen();
+    failNext = false;
+    fireEvent.press(retry);
+    expect(await screen.findByTestId(`invoice-row-${SECOND}`)).toBeOnTheScreen();
   });
 
-  it('writes amounts in words with the Nepali grouping', () => {
-    expect(numberInWords(0)).toBe('Zero');
-    expect(numberInWords(19)).toBe('Nineteen');
-    expect(numberInWords(860)).toBe('Eight Hundred Sixty');
-    expect(numberInWords(12_345_678)).toBe(
-      'One Crore Twenty Three Lakh Forty Five Thousand Six Hundred Seventy Eight',
+  it('offers a retry when the list cannot be loaded', async () => {
+    let fail = true;
+    server.use(
+      http.get(apiUrl(VENDOR_INVOICES_PATH), () =>
+        fail
+          ? HttpResponse.json(errorBody('VENDOR_NOT_FOUND'), { status: 404 })
+          : HttpResponse.json({ invoices: [invoice()], next_cursor: null }),
+      ),
     );
-    expect(amountInWords(860)).toBe('Rupees Eight Hundred Sixty Only');
-    expect(amountInWords(102_500.5)).toBe(
-      'Rupees One Lakh Two Thousand Five Hundred and Paisa Fifty Only',
-    );
-    expect(amountInWords(0.05)).toBe('Rupees Zero and Paisa Five Only');
-  });
+    renderWithProviders(<VendorInvoicesScreen />);
 
-  it('shows the issue time in Nepal Time, whatever the device zone', () => {
-    expect(formatNepalDateTime('2025-10-07T08:12:00.000Z')).toBe('2025-10-07 13:57');
-    expect(formatNepalDateTime('2025-10-07T19:00:00.000Z')).toBe('2025-10-08 00:45');
+    await screen.findByTestId('invoices-error');
+    fail = false;
+    fireEvent.press(screen.getByText('Try again'));
+    expect(await screen.findByTestId(`invoice-row-${FIRST}`)).toBeOnTheScreen();
   });
 });
 
-describe('sample invoices', () => {
-  it('are in fiscal year 2082/083 with consecutive bill numbers, newest first', () => {
-    const invoices = mockInvoices(null);
-    expect(invoices.map((invoice) => invoice.bill_number)).toEqual([43, 42, 41]);
-    expect(new Set(invoices.map((invoice) => invoice.fiscal_year))).toEqual(new Set(['2082/083']));
-    expect(invoices.every((invoice) => invoice.seller_tax_id === SAMPLE_SELLER_TAX_ID)).toBe(true);
-  });
+describe('Vendor invoices: Download PDF (GET /api/vendor/invoices/:id/pdf)', () => {
+  it('fetches the server’s PDF with the session, saves its bytes and opens the share sheet', async () => {
+    const api = invoicesApi([invoice()]);
+    renderWithProviders(<VendorInvoicesScreen />);
+    fireEvent.press(await screen.findByTestId(`download-invoice-${FIRST}`));
 
-  it('each add up: goods - discount + delivery, and taxable + VAT (+ a fleet charge)', () => {
-    for (const invoice of mockInvoices(null)) {
-      expect(invoice.grand_total_npr).toBe(
-        sum([invoice.subtotal_npr, -invoice.discount_npr, invoice.delivery_charge_npr]),
-      );
-      const platformDelivery =
-        invoice.delivery_charged_by === 'PLATFORM' ? invoice.delivery_charge_npr : 0;
-      expect(
-        sum([
-          invoice.taxable_amount_npr,
-          invoice.vat_amount_npr,
-          invoice.exempt_amount_npr,
-          platformDelivery,
-        ]),
-      ).toBe(invoice.grand_total_npr);
-    }
-  });
-});
-
-describe('Invoices screen', () => {
-  beforeEach(() => {
-    useAuthStore.getState().setLocale('en');
-    useAuthStore.getState().setSession({
-      accessToken: accessTokenFor('VENDOR', VENDOR_USER_ID),
-      refreshToken: 'r.jwt',
+    await waitFor(() => {
+      expect(mockFiles.shared).toHaveLength(1);
     });
-    useVendorShopStore.setState({ online: true, stored: null });
+    expect(api.pdfRequests).toHaveLength(1);
+    expect(api.pdfRequests[0]?.url.pathname).toBe(`${VENDOR_INVOICES_PATH}/${FIRST}/pdf`);
+    expect(api.pdfRequests[0]?.headers.get('authorization')).toBe(`Bearer ${TEST_ACCESS_TOKEN}`);
+    expect(api.pdfRequests[0]?.headers.get('accept')).toContain('application/pdf');
+
+    // The file is the document byte for byte, in the app's cache, named after the invoice.
+    const uri = 'file:///cache/HP-2082-000142.pdf';
+    expect([...(mockFiles.written.get(uri) ?? [])]).toEqual([...PDF_BYTES]);
+    expect(mockFiles.shared[0]).toEqual({
+      uri,
+      options: { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: 'HP-2082-000142' },
+    });
+    await waitFor(() => {
+      expect(toast()?.message).toBe('Invoice HP-2082-000142 saved (original).');
+    });
   });
 
-  it('lists the delivered orders that were invoiced, each with View Invoice', () => {
+  it('saves a second download as copy 1 under its own name, and shows the new print count', async () => {
+    invoicesApi([invoice()]);
     renderWithProviders(<VendorInvoicesScreen />);
+    fireEvent.press(await screen.findByTestId(`download-invoice-${FIRST}`));
+    await waitFor(() => {
+      expect(screen.getByTestId(`invoice-prints-${FIRST}`)).toHaveTextContent(/Printed 1 time/);
+    });
 
-    const row = within(screen.getByTestId('invoice-row-sample-invoice-43'));
-    expect(row.getByText('Bill 000043 · FY 2082/083')).toBeOnTheScreen();
-    expect(row.getByText('Order #4FA5B6 · 2082-06-21 BS · Sita Gurung')).toBeOnTheScreen();
-    expect(row.getByText('View Invoice')).toBeOnTheScreen();
-    expect(screen.getByTestId('view-invoice-sample-invoice-42')).toBeOnTheScreen();
-    expect(screen.getByTestId('view-invoice-sample-invoice-41')).toBeOnTheScreen();
-    expect(screen.queryByTestId('invoice-title')).not.toBeOnTheScreen();
+    fireEvent.press(screen.getByTestId(`download-invoice-${FIRST}`));
+
+    await waitFor(() => {
+      expect(mockFiles.shared).toHaveLength(2);
+    });
+    expect([...mockFiles.written.keys()]).toEqual([
+      'file:///cache/HP-2082-000142.pdf',
+      'file:///cache/HP-2082-000142-copy-1.pdf',
+    ]);
+    await waitFor(() => {
+      expect(toast()?.message).toBe('Invoice HP-2082-000142 saved (copy 1).');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId(`invoice-prints-${FIRST}`)).toHaveTextContent(/Printed 2 time/);
+    });
   });
 
-  it('opens the invoice as a fiscal document: header, metadata, VAT lines, totals, disclaimer', () => {
-    renderWithProviders(<VendorInvoicesScreen />);
-
-    fireEvent.press(screen.getByTestId('view-invoice-sample-invoice-43'));
-
-    expect(screen.getByTestId('invoice-seller-name')).toHaveTextContent('Thamel Kirana Pasal');
-    expect(screen.getByTestId('invoice-seller-tax-id')).toHaveTextContent('VAT No: 301234567');
-    expect(screen.getByTestId('invoice-title')).toHaveTextContent('Tax Invoice');
-    expect(screen.getByText('Fiscal Year (आर्थिक वर्ष)')).toBeOnTheScreen();
-    expect(screen.getByTestId('invoice-fiscal-year')).toHaveTextContent('2082/083');
-    expect(screen.getByText('Bill No. (बिजक नम्बर)')).toBeOnTheScreen();
-    expect(screen.getByTestId('invoice-bill-number')).toHaveTextContent('000043');
-    expect(screen.getByTestId('invoice-date-bs')).toHaveTextContent('2082-06-21');
-    expect(screen.getByTestId('invoice-date-ad')).toHaveTextContent('2025-10-07 13:57');
-    expect(screen.getByTestId('invoice-payment')).toHaveTextContent('eSewa');
-    expect(screen.getByTestId('invoice-buyer')).toHaveTextContent('Sita Gurung');
-
-    // Goods 1150 + 2 × 220 = 1590, discount 100, own delivery 50: the customer paid 1540.
-    const rice = within(screen.getByTestId('invoice-line-1'));
-    expect(rice.getByText('Basmati Rice 5kg')).toBeOnTheScreen();
-    expect(rice.getByText('HS Code: 10063000')).toBeOnTheScreen();
-    expect(rice.getByText('1 × 1150.00')).toBeOnTheScreen();
-    expect(
-      within(screen.getByTestId('invoice-line-3')).getByText('Delivery charge'),
-    ).toBeOnTheScreen();
-    expect(screen.getByText('VAT 13%')).toBeOnTheScreen();
-    expect(screen.getByTestId('invoice-subtotal')).toHaveTextContent('1590.00');
-    expect(screen.getByTestId('invoice-discount')).toHaveTextContent('- 100.00');
-    expect(screen.getByTestId('invoice-taxable')).toHaveTextContent('1362.83');
-    expect(screen.getByTestId('invoice-vat')).toHaveTextContent('177.17');
-    expect(screen.getByTestId('invoice-delivery')).toHaveTextContent('50.00');
-    expect(screen.getByTestId('invoice-grand-total')).toHaveTextContent('1540.00');
-    expect(screen.getByTestId('invoice-in-words')).toHaveTextContent(
-      'In words: Rupees One Thousand Five Hundred Forty Only',
-    );
-    expect(screen.getByTestId('invoice-disclaimer')).toHaveTextContent(
-      'Generated via Hamro Pasal on behalf of the seller.',
-    );
-  });
-
-  it('is monochrome: the document uses black on white only', () => {
-    renderWithProviders(<VendorInvoicesScreen />);
-    fireEvent.press(screen.getByTestId('view-invoice-sample-invoice-43'));
-
-    const classes = screen
-      .getByTestId('invoice-sample-invoice-43')
-      .findAll((node) => typeof node.props.className === 'string')
-      .map((node) => String(node.props.className))
-      .join(' ');
-
-    expect(classes).not.toMatch(/(red|green|emerald|amber|blue|brand|violet)-|bg-gray/);
-    expect(classes).toContain('text-black');
-  });
-
-  it("names a fleet delivery charge as Hamro Pasal's, and shows a buyer's PAN when there is one", () => {
-    renderWithProviders(<VendorInvoicesScreen />);
-
-    fireEvent.press(screen.getByTestId('view-invoice-sample-invoice-42'));
-    expect(screen.getByText('Delivery charge (Hamro Pasal delivery)')).toBeOnTheScreen();
-    expect(screen.queryByTestId('invoice-discount')).not.toBeOnTheScreen();
-    expect(screen.queryByTestId('invoice-buyer-tax-id')).not.toBeOnTheScreen();
-    fireEvent.press(screen.getByTestId('invoice-close'));
-    expect(screen.queryByTestId('invoice-title')).not.toBeOnTheScreen();
-
-    fireEvent.press(screen.getByTestId('view-invoice-sample-invoice-41'));
-    expect(screen.getByTestId('invoice-buyer-tax-id')).toHaveTextContent('609876543');
-  });
-
-  it("prints the shop's own PAN once it is saved in Shop settings", () => {
-    useVendorShopStore.getState().saveSettings(
-      {
-        taxId: '612345678',
-        fulfillmentMode: 'SELF_DELIVERY',
-        deliveryScope: 'NATION_WIDE',
-        radiusKm: null,
-        serviceablePalikas: [],
-        baseDeliveryFeeNpr: 0,
-        perKmFeeNpr: 0,
-        freeDeliveryAboveNpr: null,
-      },
-      VENDOR_USER_ID,
+  it('downloads one invoice at a time: every button waits while a print is being made', async () => {
+    const api = invoicesApi([
+      invoice(),
+      invoice({ id: SECOND, invoice_sequence: 'HP-2082-000141' }),
+    ]);
+    server.use(
+      http.get(apiUrl(`${VENDOR_INVOICES_PATH}/:id/pdf`), async ({ request }) => {
+        api.pdfRequests.push(await capture(request));
+        await delay(150);
+        return new HttpResponse(PDF_BYTES, {
+          headers: { 'Content-Type': 'application/pdf', [INVOICE_COPY_NUMBER_HEADER]: '0' },
+        });
+      }),
     );
     renderWithProviders(<VendorInvoicesScreen />);
+    const first = await screen.findByTestId(`download-invoice-${FIRST}`);
 
-    fireEvent.press(screen.getByTestId('view-invoice-sample-invoice-43'));
+    fireEvent.press(first);
+    expect(first).toHaveTextContent('Downloading…');
+    expect(first).toBeDisabled();
+    expect(screen.getByTestId(`download-invoice-${SECOND}`)).toBeDisabled();
+    // A second tap makes no second print.
+    fireEvent.press(first);
 
-    expect(screen.getByTestId('invoice-seller-tax-id')).toHaveTextContent('VAT No: 612345678');
+    await waitFor(() => {
+      expect(first).toHaveTextContent('Download PDF');
+    });
+    expect(api.pdfRequests).toHaveLength(1);
+  });
+
+  it('saves the file without opening anything on a device with no share sheet', async () => {
+    invoicesApi([invoice()]);
+    mockFiles.sharingAvailable = false;
+    renderWithProviders(<VendorInvoicesScreen />);
+    fireEvent.press(await screen.findByTestId(`download-invoice-${FIRST}`));
+
+    await waitFor(() => {
+      expect(mockFiles.written.size).toBe(1);
+    });
+    expect(mockFiles.shared).toHaveLength(0);
+  });
+
+  it.each([
+    [
+      'INVOICE_PRINT_UNAVAILABLE',
+      503,
+      "Invoices can't be printed right now. Please try again later.",
+    ],
+    ['INVOICE_NOT_FOUND', 404, 'This invoice is no longer available.'],
+    [
+      'INTERNAL_SERVER_ERROR',
+      500,
+      "Couldn't download the invoice. Check your connection and try again.",
+    ],
+  ])('explains %s, saves nothing and never retries by itself', async (code, status, message) => {
+    let requests = 0;
+    invoicesApi([invoice()]);
+    server.use(
+      http.get(apiUrl(`${VENDOR_INVOICES_PATH}/:id/pdf`), () => {
+        requests += 1;
+        return HttpResponse.json(errorBody(code), { status });
+      }),
+    );
+    renderWithProviders(<VendorInvoicesScreen />);
+    fireEvent.press(await screen.findByTestId(`download-invoice-${FIRST}`));
+
+    await waitFor(() => {
+      expect(toast()?.message).toBe(message);
+    });
+    // A retried print would be a second numbered copy.
+    expect(requests).toBe(1);
+    expect(mockFiles.written.size).toBe(0);
+    expect(mockFiles.shared).toHaveLength(0);
+  });
+
+  it('refuses an answer that is not a PDF', async () => {
+    invoicesApi([invoice()]);
+    server.use(
+      http.get(apiUrl(`${VENDOR_INVOICES_PATH}/:id/pdf`), () =>
+        HttpResponse.text('<html>gateway timeout</html>', {
+          headers: { [INVOICE_COPY_NUMBER_HEADER]: '0' },
+        }),
+      ),
+    );
+    renderWithProviders(<VendorInvoicesScreen />);
+    fireEvent.press(await screen.findByTestId(`download-invoice-${FIRST}`));
+
+    await waitFor(() => {
+      expect(toast()?.tone).toBe('error');
+    });
+    expect(mockFiles.written.size).toBe(0);
+  });
+
+  it('renews an expired session once, then downloads: the refused request printed nothing', async () => {
+    const api = invoicesApi([invoice()]);
+    let attempts = 0;
+    server.use(
+      http.get(apiUrl(`${VENDOR_INVOICES_PATH}/:id/pdf`), async ({ request }) => {
+        attempts += 1;
+        if (attempts === 1) {
+          return HttpResponse.json(errorBody('UNAUTHENTICATED'), { status: 401 });
+        }
+        api.pdfRequests.push(await capture(request));
+        return new HttpResponse(PDF_BYTES, {
+          headers: { 'Content-Type': 'application/pdf', [INVOICE_COPY_NUMBER_HEADER]: '0' },
+        });
+      }),
+      http.post(apiUrl('/api/auth/token/refresh'), () =>
+        HttpResponse.json({
+          token_type: 'Bearer',
+          access_token: 'new.access.token',
+          access_token_expires_in: 900,
+        }),
+      ),
+    );
+    useAuthStore.getState().setSession({ accessToken: TEST_ACCESS_TOKEN, refreshToken: 'r.e.f' });
+    renderWithProviders(<VendorInvoicesScreen />);
+    fireEvent.press(await screen.findByTestId(`download-invoice-${FIRST}`));
+
+    await waitFor(() => {
+      expect(mockFiles.shared).toHaveLength(1);
+    });
+    expect(attempts).toBe(2);
+    expect(api.pdfRequests[0]?.headers.get('authorization')).toBe('Bearer new.access.token');
   });
 });

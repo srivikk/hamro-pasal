@@ -172,7 +172,8 @@ describe('vendor-only route group app/(vendor)', () => {
     renderWithProviders(<VendorMarketingScreen />);
 
     expect(screen.getByTestId('marketing-section-OFFERS')).toBeSelected();
-    expect(screen.getByTestId('marketing-offers')).toBeOnTheScreen();
+    // The offers themselves come from the API (VendorMarketing.test.tsx).
+    expect(screen.getByTestId('offers-loading')).toBeOnTheScreen();
   });
 });
 

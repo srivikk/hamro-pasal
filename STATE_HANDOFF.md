@@ -1,4 +1,4 @@
-# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery; Phase 32 retroactive invoices, the invoice PDF, vendor offers CRUD)
+# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery; Phase 32 retroactive invoices, the invoice PDF, vendor offers CRUD; Phase 33 discount stacking in checkout, Devanagari in the PDF, vendor invoices / offers and the customer quote wired)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
 work without re-deriving it. It describes the tree at the end of **Phase 23 (End-to-End System Audit & Failure Mode Hardening)**, the last planned development phase, on top of Phase 22 (Financial Reconciliation & Payouts), 21 (Rider Dispatch &
@@ -1100,7 +1100,246 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.34 Phase 33: discount stacking in checkout, Devanagari in the invoice PDF, Vendor App invoices and offers wired, customer checkout on the real quote (2026-10-09)
+
+`packages/shared-types`, `packages/db`, `packages/ledger`, `apps/api`, `apps/mobile`. Migration
+**0035**. New dependencies: `fontkit` (API, already present through pdfkit; now direct),
+`expo-file-system` and `expo-sharing` (mobile, both native: **the development client must be
+rebuilt**). SPEC.md was not changed. **Not run on a device or against a live API**; the dev
+database needs `pnpm db:migrate`.
+
+### Decisions (user, 2026-10-09)
+
+| Topic                 | Decision                                                                                                   |
+| --------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Devanagari in the PDF | Required for IRD compliance. `NotoSansDevanagari-Regular.ttf` (OFL) is a server asset; pdfkit registers it |
+| Offer status          | The derived status and `POST /api/vendor/offers/:id/end` stay exactly as built (§8Z.33)                    |
+| Scheduled offers      | None. An offer starts when it is created; no `starts_at` in the body                                       |
+
+### Asked vs built
+
+| Asked                                                | Built                                                                                                                                                   | Why                                                                                                                                                                                               |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "use this font for all text"                         | Devanagari runs are drawn with Noto Sans Devanagari; **Latin runs stay in the built-in Helvetica**, on one shared baseline                              | **Noto Sans Devanagari contains no Latin letters** (checked with fontkit: A–Z, a–z and `·` have no glyph). Drawn alone, every English word on the invoice would be empty boxes                    |
+| lock order "Vendor Row -> Opt-in Row FOR SHARE"      | vendor row `FOR KEY SHARE` → **vendor offer row `FOR SHARE`** → opt-in row `FOR SHARE` → the inserts                                                    | The offer is re-read under a lock for the same reason the opt-in is. Ending an offer takes vendor row `FOR UPDATE` then the offer row: the same order, so the two cannot deadlock                 |
+| store `vendor_offer_id`, `vendor_offer_discount_npr` | as asked. **No copy of the offer rule** is stored (§8Z.5 sketched one in `discount_snapshot`)                                                           | A `vendor_offers` row is immutable (trigger of 0034), so the id is the rule exactly as applied. `discount_snapshot` stays the campaign's                                                          |
+| "enforcing its own thresholds" for the campaign      | the campaign's `min_cart_npr` is judged on **what is left after the vendor offer**, like its percentage                                                 | The request's wording ("apply to the remaining subtotal, enforcing its own thresholds"). §8Z.5 can be read as "on the subtotal". **To confirm**; it is one argument in `priceCart`                |
+| handle `409 QUOTE_CHANGED` in the app                | also built `expected_total_npr` on `POST /api/cart/checkout` (optional; §8Z.5's contract) and `details.quote` on the 409                                | Without it the 409 fired only in a millisecond race: an offer that ended a minute after the quote was silently charged at the higher price. The amount is compared, never used as a price         |
+| "Download PDF … save / display the PDF buffer"       | `fetch` with the session → bytes → `File.write` (expo-file-system) in the cache → `Sharing.shareAsync`                                                  | The share sheet is how a phone views, prints or saves a PDF. `File.downloadFileAsync` was not used: it exposes neither the status nor `X-Invoice-Copy-Number`                                     |
+| "eradicate … legacy mock promo logic"                | every mock that touched **money** is gone (list below). The development-only shop extras on cards (rating, cover, `top_offer` label, locality) are kept | They are §8Z.3's Home mocks, used by the feed, shop header and promotion filters and their tests. **A dev build can therefore still show a mock "10% OFF" label on a card that no order honours** |
+
+### 1. Stacking (SPEC core 7 and 9; verification 5)
+
+```
+S   = sum(price x quantity)                      database prices
+Dv  = best of the shop's running offers on S     FLAT: value; PERCENTAGE: min(S x value%, cap); 0 below its min cart
+Dp  = best campaign on (S - Dv)                  same rule, min cart judged on S - Dv; 0 without the shop's ACTIVE opt-in
+Dpv = round_half_up(Dp x vendor_share_percent)   Dpp = Dp - Dpv
+F   = delivery charge                            never discounted; free-above threshold judged on S
+T   = S - Dv - Dp + F
+C   = round_half_up(rate x (S - Dv - Dpv))       0 on SUBSCRIPTION
+```
+
+- `pricing.ts`: `VendorOfferRule`, `bestVendorOffer` (the larger discount; between equal ones
+  the older offer), `priceCart(…, campaigns, vendorOffers)`, `pricedCartView` (the amounts as the
+  quote and the 409 carry them). The minimum order value is still judged on S.
+- `CheckoutService.runningVendorOffers`: the shop's offers with `ended_at IS NULL`, started, and
+  `ends_at` null or in the future, on the database clock. At most 10 rows (the creation limit).
+- **Quote:** `vendor_offer: { id: <offer id>, label: <the offer's stored label>, discount_npr }`.
+- **Checkout**, inside the order's transaction: the offer row is re-read `FOR SHARE` (`ended_at
+IS NULL` and not past `ends_at`, in SQL); ended since the cart was priced → `409 QUOTE_CHANGED`,
+  no order, the Redis hold released.
+- **`expected_total_npr`** (optional, `>= 0`): compared in paisa with the server's total before
+  anything is reserved; different → `409 QUOTE_CHANGED` with
+  `details.quote { subtotal_npr, vendor_offer, platform_promo, delivery_fee_npr, total_npr }`.
+  The 409 from the in-transaction re-check carries no `details`.
+- **Migration 0035:** `orders.vendor_offer_id` → `vendor_offers` (RESTRICT, partial index),
+  `orders.vendor_offer_discount_npr` (default 0); CHECK `orders_vendor_offer_check`: discount ≥ 0,
+  a discount exactly with its offer, and `vendor offer + campaign discount <= subtotal`. In
+  `orderSchema` and `contract.ts`. Existing orders carry 0.
+- **`OrderView`** gained `vendor_offer_discount_npr` and `platform_promo_discount_npr` (both
+  default 0 in the schema, so an app build reads an older API as "no discount").
+
+**Settlement** (`planSettlement`; `orderTotalPaisa` and the new `orderDiscountPaisa`):
+
+| Order              | Postings                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------- |
+| prepaid            | escrow −(S−Dv−Dp+F), vendor +(S−Dv−Dpv−C) [+F own delivery], rider [+F], revenue +C, PROMO_EXPENSE −Dpp |
+| cash, own delivery | vendor +(Dpp−C), revenue +C, PROMO_EXPENSE −Dpp (unchanged: Dv is the vendor's own)                     |
+| cash, fleet        | rider −(S−Dv−Dp+F), vendor +(S−Dv−Dpv−C), revenue +C, rider +F, PROMO_EXPENSE −Dpp                      |
+
+- The vendor funds all of Dv: it comes off what the customer pays and off what the vendor earns,
+  and no other account moves for it.
+- Read from the same columns: the eSewa `amount` (goods = total − delivery), the Khalti amount
+  and both confirmation checks (through `orderTotalPaisa`), pending escrow, the vendor's "cut" in
+  the finance ledger, the refund-due amount, and the invoice.
+- **Invoice:** `discount_npr` = Dv + Dp; every discount lowers the taxable amount; the grand
+  total still must equal the order total or the delivery aborts.
+
+**Verification 5, measured end to end** (`discount-stacking.int.test.ts`): S 1000, FLAT 100,
+campaign 10% at 50% vendor share, F 50, rate 10% → Dv 100, Dp 90 (45 / 45), **T 860**,
+**C 85.50 on a base of 855**, eSewa signed for `860` (goods `810`), pending escrow 819.50,
+wallet +819.50, revenue +85.50, PROMO_EXPENSE −45, escrow back to its start, invoice discount
+190 and grand total 860.
+
+### 2. Devanagari in the invoice PDF
+
+- **Assets:** `apps/api/assets/fonts/NotoSansDevanagari-Regular.ttf` (required),
+  `NotoSansDevanagari-Bold.ttf` (optional; headings fall back to the regular weight), `OFL.txt`,
+  `README.md`. **The two font files and the licence were downloaded from the Noto project during
+  this work so the tests could run; they are untracked. Commit them or replace them with your own
+  copy.** A container image must copy `apps/api/assets` beside `dist`.
+- `invoices/invoice-fonts.ts`: `loadInvoiceFonts(dir)` (null without the regular file; reads
+  metrics and coverage with fontkit), `splitByScript(text, face)`, `InvoiceFontUnavailableError`.
+- `invoice-pdf.ts`: `renderInvoicePdf(row, copy, { fonts })`. A small layout engine (`mixedText`)
+  replaces pdfkit's own wrapping:
+  - text is cut into runs per script; Latin-1 goes to Helvetica, anything else the Devanagari
+    face covers goes to it, and a character neither covers is `?` (never dropped);
+  - words wrap at spaces; a word wider than its column is cut between grapheme clusters
+    (`Intl.Segmenter`), never inside a conjunct; a space is drawn in the font of the word before
+    it, so a Nepali phrase is one run;
+  - every run of a line is drawn on one baseline, and a line holding Devanagari is taller;
+  - shaping (conjuncts, reph, matra reordering) is fontkit's, through pdfkit.
+- **With the font:** the IRD's Nepali field names are printed beside the English ones
+  (`Bill No. / बिजक नम्बर`, `Fiscal Year / आर्थिक वर्ष`, `Date (BS) / मिति`; SPEC Nepal section 5).
+- **Without it:** a non-production API prints Latin only (as before) and warns at startup;
+  **production refuses to print** (`503 INVOICE_PRINT_UNAVAILABLE`, before any copy number is
+  taken). Decided here, not asked: an invoice whose names print as `?` is not an IRD document.
+- Deterministic as before: the same row, copy number and fonts give the same bytes.
+- **Not seen.** No PDF rasteriser is installed on this machine, so no rendered page was looked
+  at. Verified instead: glyph-level shaping of the installed font, and which font every string
+  is drawn with. **Print one invoice and read it before relying on it** (line heights, the
+  bilingual labels' column width, Devanagari in the bold heading).
+- Devanagari numerals for amounts (SPEC Nepal section 5, "under the `ne` locale") are not
+  printed: the invoice has no locale.
+
+### 3. Vendor App
+
+| Screen                 | Data                                                           | Files                                                                                     |
+| ---------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Invoices (`/invoices`) | `GET /api/vendor/invoices` (infinite, cursor), `GET …/:id/pdf` | `app/(vendor)/invoices.tsx`, `api/vendor-invoices.ts`, `features/vendor/invoice-files.ts` |
+| Marketing → My Offers  | `GET / POST /api/vendor/offers`, `POST …/:id/end`              | `features/vendor/MarketingSections.tsx`, `app/(vendor)/offer.tsx`, `api/vendor-offers.ts` |
+
+- **Download PDF.** `apiDownload` (new in `api/http.ts`: an authenticated binary GET with the
+  same token renewal as `apiRequest`) → the bytes are checked to start with `%PDF` →
+  `new File(Paths.cache, name).write(bytes)` → `Sharing.shareAsync(uri, { mimeType:
+'application/pdf', UTI: 'com.adobe.pdf' })`. The file is `HP-2082-000142.pdf` for the original
+  and `…-copy-<n>.pdf` for copy n (from `X-Invoice-Copy-Number`).
+- **Every download is a numbered print on the server.** The screen says so above the list, shows
+  "Not printed yet" / "Printed n time(s)" per invoice, allows one download at a time, and never
+  retries by itself. A replay after `401 UNAUTHENTICATED` is safe (the token is refused before
+  anything is printed).
+- The on-device invoice document (`InvoiceDocument.tsx`) and the sample invoices are deleted:
+  the PDF is the only document.
+- **My Offers** lists every offer with the server's `label` and a status badge (Active / Ended /
+  Cancelled) and, where it applies, "Runs until", "Ended on" or "You ended it on". End (behind
+  the confirmation) only on an Active offer. The form posts `{ kind, value, min_cart_npr }`;
+  `422 OFFER_LIMIT_REACHED` is worded. `useVendorMarketingStore` is deleted; a production build
+  no longer shows a placeholder there.
+- The form still has no field for a percentage cap or an end date (the API takes both), so an
+  offer made in the app runs until the shop ends it.
+
+### 4. Customer app: the cart on the real quote
+
+- `api/cart-quote.ts`, `features/cart/useCartQuote.ts`: `POST /api/cart/quote`, one query per
+  cart contents and delivery address (`staleTime` 0, not kept after unmount). Asked only when
+  checkout could go ahead: signed in, an address, at or above the minimum, no line over known
+  stock, no reservation waiting. A quote refused with `409 INSUFFICIENT_STOCK` marks the short
+  lines, as a refused checkout does.
+- `cartTotals(vendor, lines, quote)`: with a quote every figure is the server's (subtotal, the
+  two discounts, delivery charge, total); without one it is the device's estimate, labelled
+  **"Estimated total"**, with no discount line. The app computes no discount.
+- **Cart bill:** Subtotal, `Shop Offer · <label>`, `Hamro Pasal Promo · <label>` (each its own
+  green line, in the order applied), Delivery fee (the server's, per-km included), Platform fee,
+  Total, "You save Rs. …". "Delivery is unavailable right now" when the quote says so.
+- **Proceed to Pay** is disabled until the cart has a quote ("Checking the price…").
+- **Payment Options** renders the quote's `payment_options`: an unavailable method is disabled
+  with its reason (cash only, not accepted by the shop, COD not available, delivery off). The
+  total confirmed there travels to checkout as `expected_total_npr`.
+- **`409 QUOTE_CHANGED`** → a dialog: "The price has changed … now Rs. X (it was Rs. Y). Nothing
+  has been charged." with **Review cart** and **Continue with Rs. X** (which places the order at
+  the new total). Without `details.quote`: only Review cart. The quote is refetched either way.
+- **`422 PAYMENT_METHOD_UNAVAILABLE`** → a dialog naming what the shop accepts, with **Choose
+  another method** (back to Payment Options, whose list is refetched) and Cancel; only OK when
+  the shop accepts nothing.
+- `OUTSIDE_DELIVERY_AREA` and `DELIVERY_UNAVAILABLE` now have their own messages.
+- **Removed:** `mockShopDiscountPaisa`, `mockFreeDelivery`, `features/promo/demo-pricing.ts`,
+  `mockPaymentOptions`, and the receipt's `shopDiscountNpr` / `shopOfferLabel` /
+  `deliveryDiscountNpr`. Receipts now keep the order's own `vendorOfferDiscountNpr` /
+  `platformPromoDiscountNpr` with the quote's labels; an older receipt loads with none. Bill
+  Details, Your Orders and the order screen show the server's `total_npr` only. §8Z.6's removal
+  checklist is complete.
+
+### Open
+
+- The campaign's minimum cart is judged after the vendor offer (above): confirm.
+- `GET /api/vendor/invoices/:id` (JSON, VIEW), the customer's and admin's invoice reads,
+  Credit / Debit Notes: unchanged from §8Z.33.
+- `payment_session` in the checkout response is still not built (the app calls `initiate`).
+- The quote is asked on every cart change (no debounce): one request per tap on + / −.
+- The delivery-area pre-check (`GET /api/vendors/:id/products`) still runs before checkout
+  although the quote already answers `422 OUTSIDE_DELIVERY_AREA`; it can go.
+- The Home feed still has no "Delivery Unavailable" banner (only the cart and Payment Options).
+- The order detail read (`GET /api/orders/:id`) carries the two discounts through `OrderView`,
+  but the order screen takes its discount lines from the phone's receipt: an order placed on
+  another phone shows the total only.
+- New Nepali strings are unreviewed.
+
+### Tests
+
+- **API integration, one full run: 870 in 53 suites, 869 passed.** The failure,
+  `deliveries-api` "accepts the right code again once the lockout has run out", is the known
+  timing flake (five bcrypt checks must fit inside a 400 ms lockout); alone it passed 1 of 4 runs
+  on this machine during this work. Its code path has no change. New
+  `discount-stacking.int.test.ts` (14, real PostgreSQL + Redis): the quote with the shop's own
+  offer and none of another shop's; percentage cap and minimum cart; the larger of several, the
+  older between equals; ended and expired offers ignored; **the campaign on what is left** and its
+  minimum cart judged there; **SPEC verification 5 end to end** (above); the cash settlement
+  (−40.50); a vendor offer alone (commission on S − Dv, PROMO_EXPENSE untouched);
+  **`409 QUOTE_CHANGED` for an offer ended while a checkout waits on its row**, with nothing
+  created and the hold released; **the quoted total compared** (409 with the new quote, then
+  accepted at the new total; a sent total of 1 never becomes a price); an order keeping its
+  discount after its offer ended; the CHECK.
+- `discounts-and-invoicing.int` (11) and the three invoice suites pass unchanged. Worker
+  integration `order-reconciliation`, `settlement-payout-run`, `compliance-and-billing`: 46 of 46. The Kafka suites were not run.
+- db integration **170** (migrations 0000–0035 from scratch, the contract, the foreign-key index
+  audit). `drizzle-kit generate` reports no schema changes.
+- Unit, one full run on the finished tree: shared-types **348** (+10,
+  `api/discount-stacking.test.ts`), ledger **34** (+6), api **158** (+23: stacking in
+  `pricing.test.ts`, `invoice-fonts.test.ts`), worker 142, admin 292, sms 21, kafka 7, db 7,
+  ivr 7. Mobile **1499** in 100 suites: 1497 passed; the two failures are
+  `ReviewPrompt.test.tsx`, the known flake under the parallel run (14 of 14 alone).
+  - Mobile, rewritten: `CartScreen.test.tsx` (the quote block and the refusal dialogs),
+    `two-step-checkout.test.tsx`, `VendorMarketing.test.tsx`, `VendorInvoices.test.tsx`,
+    `order-history.test.tsx`. Deleted with their code: `demo-pricing.test.tsx`,
+    `free-delivery.test.tsx`. The msw server has a standing `POST /api/cart/quote` that answers
+    what the cart on the device adds up to, so tests about something else see their old totals.
+  - `invoice-fonts.test.ts`: the Devanagari cases run only when the font file is installed
+    (`describe.skip` otherwise). They assert which font each string is drawn with by spying on
+    pdfkit, because an embedded font's text is stored as subset glyph ids and cannot be read
+    back from the file.
+- `pnpm typecheck` and `pnpm lint` 16 of 16; `prettier --check` clean.
+- **Mutation-checked, 21 of 21 killed:** commission on S − Dpv (4 fail), the campaign on S
+  instead of S − Dv (5), the total ignoring the offer (6), the newer of equal offers (1); the
+  vendor paid without its own offer taken off (3), `orderTotalPaisa` ignoring it (1); no offer
+  re-check under the lock (1), the quoted total not compared (2), ended (3) and expired (1)
+  offers applied, the offer not stored (5), the invoice discount without it (4); Latin letters
+  sent to the Devanagari font (8), production printing without the font (1); the cart showing
+  its own sum (8), checkout not sending the quoted total (3), an old quote for a changed cart
+  (1), `QUOTE_CHANGED` accepted at the old total (1), a non-PDF saved (1), every download named
+  as the original (2), End shown on a cancelled offer (2).
+- **A bug the tests caught:** the invoices screen first treated any query error as "nothing
+  loaded". With TanStack's infinite query a failed **later** page also sets `isError`, so one
+  failed scroll would have replaced the whole list with the error screen. It now keeps the list
+  and offers the retry below it (tested).
+- **A hang worth knowing:** a regex with nested quantifiers
+  (`/\[((?:<[0-9a-f]*>|[-0-9. ]+)+)\] TJ/`, fine on a built-in-font PDF) backtracks without end on
+  a PDF holding an embedded font's bytes. `invoice-pdf.test.ts` still uses it, on PDFs without an
+  embedded font only: do not point it at one with the Devanagari font.
+
 ## 8Z.33 Phase 32: retroactive invoices on PAN save, the invoice list and server-rendered PDF, vendor offers (table and CRUD) (2026-10-08)
+
+> **Updated by §8Z.34 (2026-10-09):** orders are priced with vendor offers; the PDF draws Devanagari; the Vendor App's Invoices and My Offers screens run on these routes.
 
 `packages/shared-types`, `packages/db`, `packages/ledger`, `apps/api`. Migrations **0033** and
 **0034**. One new dependency: **`pdfkit`** (API only). SPEC.md was not changed. **Not run against
@@ -5062,6 +5301,8 @@ sending no discount. Updated for the new behaviour: `VendorMenuScreen.test.tsx`,
 the Android bundle exports. **Not seen on a device.** The new Nepali strings are unreviewed.
 
 ## 8Z.6 TEMPORARY demo pricing in the customer app: must be removed in Phase 2 (2026-10-07)
+
+> **Removed 2026-10-09 (§8Z.34).** The cart reads `POST /api/cart/quote`; every file and call site listed below is deleted. This section is history.
 
 > **Updated by §8Z.7:** `useDemoPricingStore` no longer exists. The mock discount is kept on the order's local receipt (`useOrderReceiptStore`: `shopDiscountNpr`, `shopOfferLabel`) and is also shown in the order's Bill Details. Everything else below still holds.
 

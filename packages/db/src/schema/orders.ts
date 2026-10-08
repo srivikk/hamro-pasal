@@ -28,7 +28,7 @@ import {
   paymentStatusEnum,
   settlementModelEnum,
 } from './enums';
-import { campaignOptIns } from './marketing';
+import { campaignOptIns, vendorOffers } from './marketing';
 import { users } from './users';
 import { products, vendors } from './vendors';
 
@@ -51,8 +51,16 @@ export const orders = pgTable(
     delivery_fee: npr().notNull(),
     platform_commission_amount: npr().notNull(),
     /**
-     * The platform campaign discount (SPEC core 9): the customer pays subtotal − this + delivery
-     * fee. 0 without a campaign. Written once, at checkout, with the order.
+     * The vendor's own offer the order was priced with (SPEC core 7). The row is immutable (a
+     * trigger of migration 0034), so the id is the rule exactly as applied.
+     */
+    vendor_offer_id: uuid().references(() => vendorOffers.id, { onDelete: 'restrict' }),
+    /** What that offer took off the subtotal; the vendor funds all of it. 0 without an offer. */
+    vendor_offer_discount_npr: npr().notNull().default(0),
+    /**
+     * The platform campaign discount (SPEC core 9), calculated on the subtotal after the vendor
+     * offer: the customer pays subtotal − vendor offer − this + delivery fee. 0 without a
+     * campaign. Written once, at checkout, with the order.
      */
     platform_promo_discount_npr: npr().notNull().default(0),
     /** The part of the discount the vendor bears (its opt-in's `vendor_share_percent`). */
@@ -108,6 +116,17 @@ export const orders = pgTable(
     index('orders_campaign_opt_in_id_idx')
       .on(t.campaign_opt_in_id)
       .where(sql`${t.campaign_opt_in_id} IS NOT NULL`),
+    index('orders_vendor_offer_id_idx')
+      .on(t.vendor_offer_id)
+      .where(sql`${t.vendor_offer_id} IS NOT NULL`),
+    // No vendor offer discount without the offer it came from, and the two discounts together
+    // never exceed the goods.
+    check(
+      'orders_vendor_offer_check',
+      sql`${t.vendor_offer_discount_npr} >= 0
+            AND (${t.vendor_offer_discount_npr} > 0) = (${t.vendor_offer_id} IS NOT NULL)
+            AND ${t.vendor_offer_discount_npr} + ${t.platform_promo_discount_npr} <= ${t.subtotal}`,
+    ),
     // A discount never exceeds the goods, and the vendor never bears more than the discount.
     check(
       'orders_platform_promo_check',

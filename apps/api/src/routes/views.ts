@@ -42,6 +42,8 @@ export function orderView(order: Order): OrderView {
     payment_status: order.payment_status,
     fulfillment: order.fulfillment_locked,
     subtotal_npr: order.subtotal,
+    vendor_offer_discount_npr: order.vendor_offer_discount_npr,
+    platform_promo_discount_npr: order.platform_promo_discount_npr,
     delivery_fee_npr: order.delivery_fee,
     total_npr: toNpr(orderTotalPaisa(order)),
     created_at: order.created_at.toISOString(),

@@ -3,7 +3,6 @@ import { Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import type { OrderReceipt } from '../../store/useOrderReceiptStore';
-import { demoTotalNpr, receiptMockSavingsNpr } from '../promo/demo-pricing';
 
 function Row({
   label,
@@ -30,13 +29,17 @@ function Row({
   );
 }
 
+const withLabel = (title: string, label: string | null): string =>
+  label === null ? title : `${title} · ${label}`;
+
 /**
- * "Bill Details" of an order: item total, delivery fee, platform fee, shop discount, the final
- * total and how it was paid. The layout is the one the discount engine will fill
- * (SPEC "Checkout and Cart Math Protocol": total = subtotal - discounts + delivery fee).
+ * "Bill Details" of an order (SPEC "Checkout and Cart Math Protocol"): item total, the shop's own
+ * offer, the platform promotion, delivery fee, platform fee, the total and how it was paid.
+ * total = item total - shop offer - promotion + delivery fee.
  *
- * The amounts come from the receipt this phone kept at checkout. An order without one (placed on
- * another phone) shows the total and the payment method only.
+ * Every amount is the server's. The lines come from the receipt this phone kept at checkout (the
+ * order as the server priced it); an order without one (placed on another phone) shows the total
+ * and the payment method only. The total is always the order's own `total_npr`.
  */
 export function BillDetails({
   receipt,
@@ -49,17 +52,6 @@ export function BillDetails({
   paymentMethod: PaymentMethod;
 }) {
   const { t } = useTranslation();
-  // TODO: Remove mock pricing when /cart/quote is ready.
-  // The Shop Discount row and the total below it use the MOCK discount the cart displayed (demo
-  // only; the server charged `serverTotalNpr`). Replace both with the order's own discount lines
-  // (vendor_offer_discount, platform_promo_discount) and total once the API returns them.
-  // The same holds for a delivery fee the cart showed as free ("Free delivery" label).
-  const discountNpr = receipt?.shopDiscountNpr ?? 0;
-  const finalTotalNpr = demoTotalNpr(serverTotalNpr, receiptMockSavingsNpr(receipt));
-  // Shown only where the mock pricing is on (development builds): elsewhere the total is the server's.
-  const discountShown = demoTotalNpr(serverTotalNpr, discountNpr) !== serverTotalNpr;
-  const deliveryFree =
-    demoTotalNpr(serverTotalNpr, receipt?.deliveryDiscountNpr) !== serverTotalNpr;
 
   return (
     <View className="gap-2 rounded-2xl bg-white p-4 shadow-sm" testID="bill-details">
@@ -71,12 +63,25 @@ export function BillDetails({
             value={t('common.price', { amount: receipt.subtotalNpr })}
             testID="bill-item-total"
           />
+          {receipt.vendorOfferDiscountNpr > 0 ? (
+            <Row
+              tone="discount"
+              label={withLabel(t('bill.shopDiscount'), receipt.vendorOfferLabel)}
+              value={t('cart.discountAmount', { amount: receipt.vendorOfferDiscountNpr })}
+              testID="bill-shop-discount"
+            />
+          ) : null}
+          {receipt.platformPromoDiscountNpr > 0 ? (
+            <Row
+              tone="discount"
+              label={withLabel(t('bill.promoDiscount'), receipt.platformPromoLabel)}
+              value={t('cart.discountAmount', { amount: receipt.platformPromoDiscountNpr })}
+              testID="bill-promo-discount"
+            />
+          ) : null}
           <Row
-            tone={deliveryFree ? 'discount' : 'plain'}
             label={t('bill.deliveryFee')}
-            value={
-              deliveryFree ? t('cart.free') : t('common.price', { amount: receipt.deliveryFeeNpr })
-            }
+            value={t('common.price', { amount: receipt.deliveryFeeNpr })}
             testID="bill-delivery-fee"
           />
           <Row
@@ -84,25 +89,13 @@ export function BillDetails({
             value={t('common.price', { amount: receipt.platformFeeNpr })}
             testID="bill-platform-fee"
           />
-          {discountShown ? (
-            <Row
-              tone="discount"
-              label={
-                receipt.shopOfferLabel === null
-                  ? t('bill.shopDiscount')
-                  : `${t('bill.shopDiscount')} · ${receipt.shopOfferLabel}`
-              }
-              value={t('cart.discountAmount', { amount: discountNpr })}
-              testID="bill-shop-discount"
-            />
-          ) : null}
           <View className="my-1 h-px bg-gray-200" />
         </>
       )}
       <Row
         tone="total"
         label={t('bill.total')}
-        value={t('common.price', { amount: finalTotalNpr })}
+        value={t('common.price', { amount: serverTotalNpr })}
         testID="bill-total"
       />
       <Row

@@ -1,11 +1,13 @@
 import {
   bestCampaign,
+  bestVendorOffer,
   campaignDiscountPaisa,
   CheckoutRejectedError,
   priceCart,
   type CampaignOffer,
   type PricingProduct,
   type PricingVendor,
+  type VendorOfferRule,
 } from './pricing';
 
 const vendor: PricingVendor = {
@@ -165,5 +167,132 @@ describe('platform campaign discounts (SPEC core 9)', () => {
     ]);
     expect(priced).toMatchObject({ totalPaisa: 5000, commissionPaisa: 0 });
     expect(priceCart(vendor, cart, [{ productId: 'x', quantity: 1 }]).promo).toBeNull();
+  });
+});
+
+describe('stacking a vendor offer and a platform campaign (SPEC core 7 and 9)', () => {
+  const vendorOffer = (overrides: Partial<VendorOfferRule> = {}): VendorOfferRule => ({
+    offerId: 'offer',
+    createdAt: new Date('2026-10-01T00:00:00Z'),
+    label: 'Flat Rs. 100 OFF',
+    kind: 'FLAT',
+    value: 100,
+    maxDiscountNpr: null,
+    minCartNpr: 100,
+    ...overrides,
+  });
+  const campaign = (overrides: Partial<CampaignOffer> = {}): CampaignOffer => ({
+    campaignId: 'campaign',
+    optInId: 'opt-in',
+    optedInAt: new Date('2026-10-01T00:00:00Z'),
+    name: 'Dashain 10%',
+    kind: 'PERCENTAGE',
+    value: 10,
+    maxDiscountNpr: null,
+    minCartNpr: 0,
+    vendorSharePercent: 50,
+    termsVersion: 1,
+    ...overrides,
+  });
+  const cart = new Map<string, PricingProduct>([['x', { id: 'x', name: 'X', price_npr: 500 }]]);
+  const price = (
+    offers: readonly VendorOfferRule[],
+    campaigns: readonly CampaignOffer[],
+    seller: PricingVendor = vendor,
+    quantity = 2,
+  ) => priceCart(seller, cart, [{ productId: 'x', quantity }], undefined, campaigns, offers);
+
+  it('prices SPEC verification 5: total 860, commission 85.50 on a base of 855', () => {
+    const priced = price([vendorOffer()], [campaign()]);
+
+    expect(priced).toMatchObject({
+      subtotalPaisa: 100_000,
+      vendorOffer: { discountPaisa: 10_000 },
+      // 10% of the 900 left after the vendor offer; the vendor bears half.
+      promo: { discountPaisa: 9000, vendorSharePaisa: 4500 },
+      deliveryFeePaisa: 5000,
+      totalPaisa: 86_000,
+      // 10% of S - Dv - Dpv = 1000 - 100 - 45.
+      commissionPaisa: 8550,
+    });
+  });
+
+  it('charges commission on S - Dv - Dpv for every split of the campaign', () => {
+    for (const share of [0, 25, 33.33, 50, 100]) {
+      for (const rate of [0.05, 0.1, 0.0725]) {
+        const priced = price(
+          [vendorOffer({ kind: 'PERCENTAGE', value: 12.5, minCartNpr: 0 })],
+          [campaign({ value: 7.5, vendorSharePercent: share })],
+          { ...vendor, commission_rate: rate },
+          3,
+        );
+        const dv = priced.vendorOffer?.discountPaisa ?? 0;
+        const dp = priced.promo?.discountPaisa ?? 0;
+        const dpv = priced.promo?.vendorSharePaisa ?? 0;
+        const base = priced.subtotalPaisa - dv - dpv;
+
+        expect(dv).toBe(18_750); // 12.5% of 1500
+        expect(dp).toBe(Math.round((priced.subtotalPaisa - dv) * 0.075));
+        expect(priced.commissionPaisa).toBe(
+          Math.round((base * Math.round(rate * 10_000)) / 10_000),
+        );
+        expect(priced.totalPaisa).toBe(priced.subtotalPaisa - dv - dp + priced.deliveryFeePaisa);
+      }
+    }
+  });
+
+  it('applies the vendor offer first: the campaign sees what is left, for its minimum cart too', () => {
+    // 1000 reaches a campaign from 950; after 100 off, 900 does not.
+    expect(price([], [campaign({ minCartNpr: 950 })]).promo?.discountPaisa).toBe(10_000);
+    const stacked = price([vendorOffer()], [campaign({ minCartNpr: 950 })]);
+    expect(stacked.promo).toBeNull();
+    expect(stacked.totalPaisa).toBe(95_000);
+    // The vendor offer's own minimum is judged on the whole subtotal.
+    expect(price([vendorOffer({ minCartNpr: 1000.01 })], []).vendorOffer).toBeNull();
+  });
+
+  it('takes a vendor offer alone: commission on S - Dv, no promo', () => {
+    expect(price([vendorOffer()], [])).toMatchObject({
+      promo: null,
+      totalPaisa: 95_000,
+      commissionPaisa: 9000,
+    });
+  });
+
+  it('picks the larger vendor offer; between equal ones, the older', () => {
+    const older = vendorOffer({ offerId: 'a', createdAt: new Date('2026-09-01T00:00:00Z') });
+    const same = vendorOffer({ offerId: 'b', kind: 'PERCENTAGE', value: 10, minCartNpr: 0 });
+    const larger = vendorOffer({ offerId: 'c', kind: 'PERCENTAGE', value: 15, minCartNpr: 0 });
+
+    expect(bestVendorOffer([same, older], 100_000)?.offer.offerId).toBe('a');
+    expect(bestVendorOffer([older, same, larger], 100_000)).toMatchObject({
+      offer: { offerId: 'c' },
+      discountPaisa: 15_000,
+    });
+    expect(bestVendorOffer([], 100_000)).toBeNull();
+  });
+
+  it('caps a percentage offer, and never discounts more than the goods or the delivery fee', () => {
+    expect(
+      price(
+        [vendorOffer({ kind: 'PERCENTAGE', value: 20, maxDiscountNpr: 150, minCartNpr: 0 })],
+        [],
+      ).vendorOffer?.discountPaisa,
+    ).toBe(15_000);
+    // Everything off the goods: the campaign has nothing left, and delivery is still charged.
+    const free = price(
+      [vendorOffer({ kind: 'PERCENTAGE', value: 100, minCartNpr: 0 })],
+      [campaign({ kind: 'FLAT', value: 50 })],
+    );
+    expect(free).toMatchObject({ promo: null, totalPaisa: 5000, commissionPaisa: 0 });
+  });
+
+  it('charges a subscription vendor no commission on a stacked cart', () => {
+    const priced = price([vendorOffer()], [campaign()], {
+      ...vendor,
+      pricing_model: 'SUBSCRIPTION',
+      commission_rate: 0,
+    });
+    expect(priced).toMatchObject({ commissionPaisa: 0, totalPaisa: 86_000 });
   });
 });

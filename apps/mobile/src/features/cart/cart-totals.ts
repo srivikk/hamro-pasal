@@ -1,59 +1,72 @@
+import type { CartQuoteResponseBody } from '@hamro-pasal/shared-types';
+
 import { toNpr, toPaisa } from '../../lib/money';
 import type { CartLine, CartVendor } from '../../store/useCartStore';
-import { mockFreeDelivery, mockShopDiscountPaisa, vendorExtras } from '../promo/mock-promotions';
-import type { VendorExtras } from '../promo/promo-model';
 import { computeCartSummary, type CartSummary } from './cart-summary';
 
+/** One discount line of the bill, as the server applied it. */
+export interface BillDiscount {
+  label: string;
+  discountNpr: number;
+}
+
 export interface CartTotals {
+  /** The device's own sums: used for the minimum-order check, which needs no server. */
   summary: CartSummary;
-  /** The shop's mock extras (offer label, neighbourhood). */
-  shopExtras: VendorExtras;
-  shopOffer: string | null;
-  /** MOCK: what the "Shop Discount" line shows. 0 outside development builds. */
-  shopDiscountNpr: number;
-  /** MOCK: the delivery fee waived by a "Free delivery" offer label. 0 without one. */
-  deliveryDiscountNpr: number;
-  /** The delivery fee the bill shows: the shop's, or 0 when the mock offer waives it. */
-  displayedDeliveryFeeNpr: number;
-  /** Everything the mock pricing takes off: the shop discount plus a waived delivery fee. */
+  /** True once the figures below are the server's quote; false while they are an estimate. */
+  quoted: boolean;
+  subtotalNpr: number;
+  /** The shop's own offer, applied to the subtotal first. Null without one (or without a quote). */
+  vendorOffer: BillDiscount | null;
+  /** The platform campaign, applied to what is left after the shop's offer. */
+  platformPromo: BillDiscount | null;
+  /** Never discounted. The shop's base fee until the server has priced the distance. */
+  deliveryFeeNpr: number;
+  /** Both discounts together. */
   savedNpr: number;
-  /** What the customer is shown as the amount to pay: the estimate minus the mock savings. */
-  displayedTotalNpr: number;
+  /** What the customer pays: subtotal - shop offer - campaign + delivery fee. */
+  totalNpr: number;
 }
 
 /**
  * The figures both checkout steps show: the Cart's bill and "Proceed to Pay • Rs. …", and the
  * Payment Options screen's amount. One function, so the two can never disagree.
+ *
+ * With a quote (POST /api/cart/quote) every figure is the server's: the app computes no discount.
+ * Without one (a guest, no address yet, or the quote still loading) it is the device's estimate
+ * of subtotal + the shop's base delivery fee, with no discount lines.
  */
 export function cartTotals(
   vendor: CartVendor,
   lines: readonly Pick<CartLine, 'unitPriceNpr' | 'quantity'>[],
+  quote: CartQuoteResponseBody | null | undefined,
 ): CartTotals {
   const summary = computeCartSummary(vendor, lines);
-
-  // TODO: Replace with backend /cart/quote response.
-  // MOCK MATH, FOR DISPLAY ONLY (development builds): the shop's mock offer label is turned into
-  // a "Shop Discount" line and taken off the total shown to the customer, and a "Free delivery"
-  // label shows the delivery fee as free. The server does not
-  // know about it: POST /api/cart/checkout still charges subtotal + delivery fee, so the amount
-  // on the gateway's page is the full one. When the quote endpoint exists (STATE_HANDOFF §8Z.5),
-  // return its vendor_offer / platform_promo / total_npr from here instead and delete
-  // mockShopDiscountPaisa.
-  const shopExtras = vendorExtras({ id: vendor.id, business_name: vendor.name });
-  const shopOffer = shopExtras.top_offer;
-  const shopDiscountNpr = toNpr(mockShopDiscountPaisa(shopOffer, toPaisa(summary.subtotalNpr)));
-  const deliveryDiscountNpr = mockFreeDelivery(shopOffer) ? summary.deliveryFeeNpr : 0;
-  const savedPaisa = toPaisa(shopDiscountNpr) + toPaisa(deliveryDiscountNpr);
-  const displayedTotalNpr = toNpr(toPaisa(summary.totalNpr) - savedPaisa);
-
+  if (quote === null || quote === undefined) {
+    return {
+      summary,
+      quoted: false,
+      subtotalNpr: summary.subtotalNpr,
+      vendorOffer: null,
+      platformPromo: null,
+      deliveryFeeNpr: summary.deliveryFeeNpr,
+      savedNpr: 0,
+      totalNpr: summary.totalNpr,
+    };
+  }
+  const line = (discount: CartQuoteResponseBody['vendor_offer']): BillDiscount | null =>
+    discount === null ? null : { label: discount.label, discountNpr: discount.discount_npr };
   return {
     summary,
-    shopExtras,
-    shopOffer,
-    shopDiscountNpr,
-    deliveryDiscountNpr,
-    displayedDeliveryFeeNpr: toNpr(toPaisa(summary.deliveryFeeNpr) - toPaisa(deliveryDiscountNpr)),
-    savedNpr: toNpr(savedPaisa),
-    displayedTotalNpr,
+    quoted: true,
+    subtotalNpr: quote.subtotal_npr,
+    vendorOffer: line(quote.vendor_offer),
+    platformPromo: line(quote.platform_promo),
+    deliveryFeeNpr: quote.delivery_fee_npr,
+    savedNpr: toNpr(
+      toPaisa(quote.vendor_offer?.discount_npr ?? 0) +
+        toPaisa(quote.platform_promo?.discount_npr ?? 0),
+    ),
+    totalNpr: quote.total_npr,
   };
 }

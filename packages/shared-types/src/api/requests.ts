@@ -41,6 +41,12 @@ export const checkoutRequestSchema = z.strictObject({
     .max(MAX_CART_LINES),
   /** Where to deliver (Nepal hierarchy + dropped pin), stored with the order. */
   delivery_address: nepalAddressInputSchema,
+  /**
+   * The total the customer was last quoted (POST /api/cart/quote). Optional, and never a price:
+   * the server prices the order itself. When sent and the server's total differs (an offer ended
+   * since the quote), checkout answers 409 QUOTE_CHANGED with the new quote and creates nothing.
+   */
+  expected_total_npr: z.number().min(0).optional(),
 });
 export type CheckoutRequest = z.infer<typeof checkoutRequestSchema>;
 export type CheckoutRequestInput = z.input<typeof checkoutRequestSchema>;

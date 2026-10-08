@@ -9,7 +9,8 @@ import { useProfileStore } from '../store/useProfileStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { useCartStore } from '../store/useCartStore';
 import { useCheckoutStore } from '../store/useCheckoutStore';
-import { THAMEL_ADDRESS, vendorMenu } from './api-fixtures';
+import { toNpr, toPaisa } from '../lib/money';
+import { cartQuote, THAMEL_ADDRESS, vendorMenu } from './api-fixtures';
 
 export const apiUrl = (path: string): string => `${API_URL}${path}`;
 
@@ -20,6 +21,9 @@ export const apiUrl = (path: string): string => `${API_URL}${path}`;
  *   its tests are about something else;
  * - a serviceable vendor menu: "Proceed to Checkout" first asks whether the shop delivers to the
  *   delivery address, and most checkout tests are about what happens after that;
+ * - the cart's quote: a signed-in cart with an address always asks the server for its price.
+ *   By default the answer is what the cart on the device adds up to, with no discount and every
+ *   payment method, so a test about something else sees the totals it always did;
  * - the account endpoints (PATCH /api/me, deletion): signing in copies the language to the
  *   account, so every sign-in test would otherwise need its own handler. The same handlers a
  *   development build can run on the device (src/mocks).
@@ -29,6 +33,21 @@ export const server = setupServer(
   // Home always asks for the admin's promotions; none by default.
   http.get(apiUrl('/api/home/promotions'), () => HttpResponse.json({ banners: [], offers: [] })),
   http.get(apiUrl('/api/vendors/:id/products'), () => HttpResponse.json(vendorMenu())),
+  http.post(apiUrl('/api/cart/quote'), () => {
+    const { vendor, lines } = useCartStore.getState();
+    const subtotal = lines.reduce(
+      (sum, line) => sum + toPaisa(line.unitPriceNpr) * line.quantity,
+      0,
+    );
+    const fee = toPaisa(vendor?.deliveryFeeNpr ?? 0);
+    return HttpResponse.json(
+      cartQuote({
+        subtotal_npr: toNpr(subtotal),
+        delivery_fee_npr: toNpr(fee),
+        total_npr: toNpr(subtotal + fee),
+      }),
+    );
+  }),
   // The shop page reads its products' categories from the public list; none by default.
   http.get(apiUrl('/api/products'), () => HttpResponse.json({ products: [], next_cursor: null })),
   ...accountMockHandlers({ baseUrl: API_URL }),

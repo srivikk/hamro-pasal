@@ -84,7 +84,7 @@ export class EsewaService {
       paymentUrl: this.config.paymentUrl,
       fields: {
         // eSewa checks total_amount = amount + tax + service charge + delivery charge.
-        amount: formatNpr(toPaisa(order.subtotal) - toPaisa(order.platform_promo_discount_npr)),
+        amount: formatNpr(orderTotalPaisa(order) - toPaisa(order.delivery_fee)),
         tax_amount: '0',
         product_service_charge: '0',
         product_delivery_charge: formatNpr(toPaisa(order.delivery_fee)),

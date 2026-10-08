@@ -70,6 +70,8 @@ export function buildMockOrder(
       payment_status: paymentMethod === 'COD' ? 'PENDING' : 'PAID',
       fulfillment: sequence % 3 === 2 ? 'PLATFORM_FLEET' : 'SELF_DELIVERY',
       subtotal_npr: subtotal,
+      vendor_offer_discount_npr: 0,
+      platform_promo_discount_npr: 0,
       delivery_fee_npr: deliveryFee,
       total_npr: subtotal + deliveryFee,
       created_at: placedAt,

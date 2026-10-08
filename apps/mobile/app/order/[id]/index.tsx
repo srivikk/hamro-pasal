@@ -22,7 +22,6 @@ import { ORDER_STATE_TONE, orderCode } from '../../../src/features/order/order-h
 import { isTerminalOrderState } from '../../../src/features/order/order-tracker';
 import { OrderTracker } from '../../../src/features/order/OrderTracker';
 import { useOrderRealtime } from '../../../src/features/order/useOrderRealtime';
-import { demoTotalNpr, receiptMockSavingsNpr } from '../../../src/features/promo/demo-pricing';
 import { toNpr, toPaisa } from '../../../src/lib/money';
 import { useBeforeDeadline } from '../../../src/lib/useBeforeDeadline';
 import { useAuthStore } from '../../../src/store/useAuthStore';
@@ -127,11 +126,7 @@ export default function OrderTrackingScreen() {
             {t('order.code', { code: orderCode(order.orderId) })}
           </Text>
           <Text className="mt-1 text-sm text-gray-500">
-            {/* TODO: Remove mock pricing when /cart/quote is ready. (demoTotalNpr) */}
-            {t('order.total', {
-              amount: demoTotalNpr(order.totalNpr, receiptMockSavingsNpr(receipt)),
-            })}{' '}
-            · {t(`payment.${order.paymentMethod}`)}
+            {t('order.total', { amount: order.totalNpr })} · {t(`payment.${order.paymentMethod}`)}
           </Text>
         </View>
         <Text

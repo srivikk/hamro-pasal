@@ -1,23 +1,17 @@
-import { paymentMethods, type PaymentMethod } from '@hamro-pasal/shared-types';
+import type { CartQuoteResponseBody, PaymentMethod } from '@hamro-pasal/shared-types';
 import { create } from 'zustand';
 
-/** One way to pay, as `POST /api/cart/quote` will list it (`payment_options`, §8Z.5). */
-export interface PaymentOption {
-  method: PaymentMethod;
-  available: boolean;
-  /** Why it is not offered ("COD_NOT_AVAILABLE", "SETTLEMENT_MODEL", "PREPAID_BALANCE"). */
-  reason?: string;
-}
+/** One way to pay, as `POST /api/cart/quote` lists it (`payment_options`). */
+export type PaymentOption = CartQuoteResponseBody['payment_options'][number];
 
-/**
- * TODO: Replace with backend /cart/quote response (`payment_options`).
- * MOCK QUOTE: every method the API accepts today is offered. The real answer will depend on the
- * shop's settlement model and ledger and on the customer's COD eligibility (SPEC "Checkout and
- * Cart Math Protocol": Model A is cash only, and so on), and may list methods this build has
- * never heard of; the Payment Options screen renders whatever list it is given.
- */
-export function mockPaymentOptions(): PaymentOption[] {
-  return paymentMethods.map((method) => ({ method, available: true }));
+/** What the customer confirmed on the Payment Options screen. */
+export interface PaymentChoice {
+  method: PaymentMethod;
+  /**
+   * The total the customer saw and agreed to pay. Sent with checkout, which refuses the order
+   * (409 QUOTE_CHANGED) if the server's total has moved since. Null: no total was shown.
+   */
+  expectedTotalNpr: number | null;
 }
 
 /**
@@ -27,15 +21,15 @@ export function mockPaymentOptions(): PaymentOption[] {
  * is forgotten with the app.
  */
 interface PaymentChoiceState {
-  chosen: PaymentMethod | null;
-  choose: (method: PaymentMethod) => void;
+  chosen: PaymentChoice | null;
+  choose: (method: PaymentMethod, expectedTotalNpr?: number | null) => void;
   clear: () => void;
 }
 
 export const usePaymentChoiceStore = create<PaymentChoiceState>()((set) => ({
   chosen: null,
-  choose: (method) => {
-    set({ chosen: method });
+  choose: (method, expectedTotalNpr = null) => {
+    set({ chosen: { method, expectedTotalNpr } });
   },
   clear: () => {
     set({ chosen: null });

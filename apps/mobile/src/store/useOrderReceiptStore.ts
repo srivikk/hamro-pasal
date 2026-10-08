@@ -45,19 +45,15 @@ const receiptSchema = z.object({
   deliveryFeeNpr: z.number().nonnegative(),
   platformFeeNpr: z.number().nonnegative(),
   /**
-   * TODO: Remove mock pricing when /cart/quote is ready.
-   * DEMO ONLY: the mock "Shop Discount" the cart displayed (0 outside development builds, and for
-   * a shop without a mock offer). The server did not apply it. Once checkout returns real
-   * discounts, store those lines here instead and drop the mock.
+   * The discounts the server applied to the order (its `vendor_offer_discount_npr` and
+   * `platform_promo_discount_npr`), with the labels the quote showed for them. 0 / null on an
+   * order without one, and on receipts saved before the server priced discounts (those carried a
+   * development-only mock figure, which is dropped on load).
    */
-  shopDiscountNpr: z.number().nonnegative(),
-  shopOfferLabel: z.string().min(1).nullable(),
-  /**
-   * TODO: Remove mock pricing when /cart/quote is ready.
-   * DEMO ONLY: the delivery fee the cart showed as free for a "Free delivery" offer label. The
-   * server charged it (`deliveryFeeNpr` above is the server's). 0 on receipts saved before it existed.
-   */
-  deliveryDiscountNpr: z.number().nonnegative().default(0),
+  vendorOfferDiscountNpr: z.number().nonnegative().default(0),
+  vendorOfferLabel: z.string().min(1).nullable().default(null),
+  platformPromoDiscountNpr: z.number().nonnegative().default(0),
+  platformPromoLabel: z.string().min(1).nullable().default(null),
   /** Where it was delivered, as one line ("Near …, Thamel, Kathmandu Metropolitan City-26, Kathmandu"). */
   deliveryAddress: z.string().min(1).nullable(),
 });

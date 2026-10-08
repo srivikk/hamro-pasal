@@ -43,17 +43,35 @@ type SettlementOrder = Pick<
   | 'payment_method'
 > &
   // Absent on an order read before the discount columns existed: no discount.
-  Partial<Pick<Order, 'platform_promo_discount_npr' | 'platform_promo_vendor_share_npr'>>;
+  Partial<
+    Pick<
+      Order,
+      | 'vendor_offer_discount_npr'
+      | 'platform_promo_discount_npr'
+      | 'platform_promo_vendor_share_npr'
+    >
+  >;
 
-/** What the customer pays for an order, in paisa: subtotal − campaign discount + delivery fee. */
-export function orderTotalPaisa(
-  order: Pick<SettlementOrder, 'subtotal' | 'delivery_fee' | 'platform_promo_discount_npr'>,
+/** Both discounts on an order's goods, in paisa: the vendor's own offer and the campaign. */
+export function orderDiscountPaisa(
+  order: Pick<SettlementOrder, 'vendor_offer_discount_npr' | 'platform_promo_discount_npr'>,
 ): number {
   return (
-    toPaisa(order.subtotal) -
-    toPaisa(order.platform_promo_discount_npr ?? 0) +
-    toPaisa(order.delivery_fee)
+    toPaisa(order.vendor_offer_discount_npr ?? 0) + toPaisa(order.platform_promo_discount_npr ?? 0)
   );
+}
+
+/**
+ * What the customer pays for an order, in paisa:
+ * subtotal − vendor offer − campaign discount + delivery fee (SPEC core 9).
+ */
+export function orderTotalPaisa(
+  order: Pick<
+    SettlementOrder,
+    'subtotal' | 'delivery_fee' | 'vendor_offer_discount_npr' | 'platform_promo_discount_npr'
+  >,
+): number {
+  return toPaisa(order.subtotal) - orderDiscountPaisa(order) + toPaisa(order.delivery_fee);
 }
 
 const ESCROW: AccountRef = { type: 'SYSTEM_ESCROW' };
@@ -96,6 +114,14 @@ export function planPaymentCapture(order: SettlementOrder): PlannedPosting[] {
  *                 (the platform owes the vendor its share of the discount, less the commission)
  *   COD fleet:    driver -(S-Dp+F), vendor +(S-Dpv-C), platform +C, driver +F, promo -Dpp
  *
+ * With the vendor's own offer Dv as well (it is applied first; Dp is on S - Dv, and C was charged
+ * on S - Dv - Dpv): the vendor funds all of Dv, so it comes off both what the customer paid and
+ * what the vendor earns, and no other account moves for it.
+ *
+ *   Prepaid:      escrow -(S-Dv-Dp+F) -> vendor +(S-Dv-Dpv-C) [+F], driver [+F], platform +C, promo -Dpp
+ *   COD self:     the vendor holds S-Dv-Dp+F in cash and is owed S-Dv-Dpv-C+F -> vendor +(Dpp-C)
+ *   COD fleet:    driver -(S-Dv-Dp+F), vendor +(S-Dv-Dpv-C), platform +C, driver +F, promo -Dpp
+ *
  * Zero-amount lines are dropped (e.g. 0% subscription commission). An empty plan means nothing
  * moves.
  */
@@ -108,11 +134,18 @@ export function planSettlement(order: SettlementOrder): PlannedPosting[] {
   }
   const discount = toPaisa(order.platform_promo_discount_npr ?? 0);
   const vendorDiscount = toPaisa(order.platform_promo_vendor_share_npr ?? 0);
-  if (discount < 0 || vendorDiscount < 0 || vendorDiscount > discount || discount > subtotal) {
+  const offerDiscount = toPaisa(order.vendor_offer_discount_npr ?? 0);
+  if (
+    discount < 0 ||
+    offerDiscount < 0 ||
+    vendorDiscount < 0 ||
+    vendorDiscount > discount ||
+    offerDiscount + discount > subtotal
+  ) {
     throw new SettlementPlanError(`Order ${order.id} has an impossible discount`);
   }
   const platformDiscount = discount - vendorDiscount;
-  if (commission > subtotal - vendorDiscount) {
+  if (commission > subtotal - offerDiscount - vendorDiscount) {
     throw new SettlementPlanError(
       `Order ${order.id} commission exceeds its subtotal (net of the discount the vendor bears)`,
     );
@@ -127,8 +160,8 @@ export function planSettlement(order: SettlementOrder): PlannedPosting[] {
     }
     driver = { type: 'DRIVER_WALLET', driverUserId: order.driver_user_id };
   }
-  const vendorShare = subtotal - vendorDiscount - commission;
-  const paid = subtotal - discount + fee;
+  const vendorShare = subtotal - offerDiscount - vendorDiscount - commission;
+  const paid = subtotal - offerDiscount - discount + fee;
 
   if (order.payment_method !== 'COD') {
     return balanced([

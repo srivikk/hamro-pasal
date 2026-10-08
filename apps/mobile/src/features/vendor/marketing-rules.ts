@@ -7,18 +7,13 @@ export type DiscountKind = (typeof DISCOUNT_KINDS)[number];
 
 export const MAX_OFFER_VALUE_NPR = 100_000;
 
-/** A vendor's own offer (`vendor_offers`): funded by the vendor, never edited, only ended. */
-export interface VendorOffer {
-  id: string;
+/** What the vendor fills in for a new offer (`vendor_offers`): never edited, only ended. */
+export interface OfferDetails {
   kind: DiscountKind;
   /** NPR for FLAT, percent for PERCENTAGE. */
   value: number;
   minCartNpr: number;
-  startsAt: string;
 }
-
-/** What the vendor fills in for a new offer. */
-export type OfferDetails = Pick<VendorOffer, 'kind' | 'value' | 'minCartNpr'>;
 
 export interface OfferForm {
   kind: DiscountKind;

@@ -2,12 +2,12 @@ import type { PaymentMethod } from '@hamro-pasal/shared-types';
 import { router, Stack } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useEffect, useEffectEvent, useState } from 'react';
-import { FlatList, Pressable, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAbandonCheckout } from '../src/api/abandon-checkout';
-import type { ApiError } from '../src/api/http';
+import { ApiError } from '../src/api/http';
 import { useCheckout } from '../src/api/mutations';
 import { Button } from '../src/components/Button';
 import { ConfirmModal } from '../src/components/ConfirmModal';
@@ -18,12 +18,15 @@ import { useDeliveryAreaCheck } from '../src/features/checkout/delivery-area';
 import { DeliveryAreaModal } from '../src/features/checkout/DeliveryAreaModal';
 import { CUSTOMER_PLATFORM_FEE_NPR } from '../src/features/cart/cart-summary';
 import { cartTotals } from '../src/features/cart/cart-totals';
+import { useCartQuote } from '../src/features/cart/useCartQuote';
+import { checkoutRefusalDialog, isDialogRefusal } from '../src/features/checkout/checkout-refusals';
+import { vendorExtras } from '../src/features/promo/mock-promotions';
 import {
   CheckoutOutcome,
   ReservationCountdown,
   SessionExpiredNotice,
 } from '../src/features/checkout/CheckoutStatus';
-import { usePaymentChoiceStore } from '../src/features/checkout/payment-choice';
+import { usePaymentChoiceStore, type PaymentChoice } from '../src/features/checkout/payment-choice';
 import { usePaymentFlow } from '../src/features/payment/usePaymentFlow';
 import { useCurrentProfile } from '../src/features/profile/profile-form';
 import { formatLocalizedNumber } from '../src/i18n/format-number';
@@ -53,6 +56,8 @@ const KNOWN_CHECKOUT_ERRORS = [
   'PRODUCT_UNAVAILABLE',
   'CHECKOUT_IN_PROGRESS',
   'CHECKOUT_BUSY',
+  'OUTSIDE_DELIVERY_AREA',
+  'DELIVERY_UNAVAILABLE',
 ] as const;
 type KnownCheckoutError = (typeof KNOWN_CHECKOUT_ERRORS)[number];
 
@@ -96,7 +101,7 @@ function SummaryRow({
  * Picks up the payment method chosen on the Payment Options screen and hands it to the cart,
  * once. A component of its own because the cart can only start a checkout while it has items.
  */
-function PaymentChoiceRunner({ onChosen }: { onChosen: (method: PaymentMethod) => void }) {
+function PaymentChoiceRunner({ onChosen }: { onChosen: (choice: PaymentChoice) => void }) {
   const chosen = usePaymentChoiceStore((state) => state.chosen);
   const clear = usePaymentChoiceStore((state) => state.clear);
   const run = useEffectEvent(onChosen);
@@ -135,6 +140,8 @@ export default function CartScreen() {
   const [areaCheckFailed, setAreaCheckFailed] = useState(false);
   const [addressBookOpen, setAddressBookOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
+  // The server's price for this cart: its discounts, delivery charge, total and payment methods.
+  const quote = useCartQuote({ frozen: checkoutPending || checkout.isPending });
 
   const header = (
     <Stack.Screen
@@ -150,8 +157,11 @@ export default function CartScreen() {
   );
 
   const errorMessage = (error: ApiError | null): string | null => {
-    // A lapsed reservation is reported by the Session Expired notice instead.
-    if (error === null || error.code === 'RESERVATION_EXPIRED') return null;
+    // A lapsed reservation is reported by the Session Expired notice instead; a changed quote
+    // and a refused payment method by their own dialogs.
+    if (error === null || error.code === 'RESERVATION_EXPIRED' || isDialogRefusal(error.code)) {
+      return null;
+    }
     return isKnownCheckoutError(error.code)
       ? t(`checkout.errors.${error.code}`)
       : t('checkout.errors.generic');
@@ -171,67 +181,85 @@ export default function CartScreen() {
     );
   }
 
-  // The bill, including the demo-only mock "Shop Discount" (see cart-totals.ts and its TODO).
-  const {
-    summary,
-    shopExtras,
-    shopOffer,
-    shopDiscountNpr,
-    deliveryDiscountNpr,
-    displayedTotalNpr,
-  } = cartTotals(vendor, lines);
+  // The bill: the server's quote once it has answered, the device's estimate until then.
+  const bill = cartTotals(vendor, lines, quote.data);
+  const { summary } = bill;
   // While a reservation waits for payment (or the checkout call is in flight), the cart is frozen.
   const locked = checkoutPending || checkout.isPending || areaCheck.isPending;
-  const error = areaCheckFailed ? t('checkout.errors.NETWORK_ERROR') : errorMessage(checkout.error);
+  const error = areaCheckFailed
+    ? t('checkout.errors.NETWORK_ERROR')
+    : (errorMessage(checkout.error) ??
+      errorMessage(quote.error instanceof ApiError ? quote.error : null));
 
-  const placeOrder = (method: PaymentMethod): void => {
-    checkout.mutate(method, {
-      // Prepaid orders wait in PENDING_PAYMENT: open the gateway straight away.
-      onSuccess: ({ order }) => {
-        // Keep what this cart held as the order's receipt: the order history, the bill and
-        // "Reorder" read it (the API's order carries no shop name and has no list endpoint).
-        const address = useAddressStore.getState().address;
-        useOrderReceiptStore.getState().saveReceipt({
-          orderId: order.id,
-          placedAtMs: Date.now(),
-          vendor,
-          vendorLocation: shopExtras.locality,
-          items: lines.map((line) => ({
-            productId: line.productId,
-            name: line.name,
-            unitPriceNpr: line.unitPriceNpr,
-            quantity: line.quantity,
-          })),
-          subtotalNpr: order.subtotal_npr,
-          deliveryFeeNpr: order.delivery_fee_npr,
-          platformFeeNpr: CUSTOMER_PLATFORM_FEE_NPR,
-          // TODO: Remove mock pricing when /cart/quote is ready.
-          // The server priced this order without the mock Shop Discount shown above. It is kept
-          // on the receipt so the customer's order screens show the same total as this cart
-          // (display only).
-          shopDiscountNpr,
-          shopOfferLabel: shopDiscountNpr > 0 ? shopOffer : null,
-          deliveryDiscountNpr,
-          deliveryAddress:
-            address === null
-              ? null
-              : `${address.landmark}, ${formatAddressLine(address, String(address.ward_number))}`,
-        });
-        if (order.state === 'PENDING_PAYMENT' && order.payment_method !== 'COD') {
-          payment.start(order.id, order.payment_method);
-        }
+  const placeOrder = (method: PaymentMethod, expectedTotalNpr: number | null): void => {
+    checkout.mutate(
+      { paymentMethod: method, expectedTotalNpr },
+      {
+        // An offer that ended, or a payment method the shop no longer takes: say so in a dialog
+        // that offers the way forward. No order was created, and the quote is being fetched again.
+        onError: (refusal) => {
+          const dialog = checkoutRefusalDialog(
+            t,
+            refusal,
+            { paymentMethod: method, expectedTotalNpr },
+            {
+              acceptTotal: (totalNpr) => {
+                placeOrder(method, totalNpr);
+              },
+              chooseAnotherMethod: () => {
+                router.push('/checkout/payment-options');
+              },
+            },
+          );
+          if (dialog !== null) Alert.alert(dialog.title, dialog.message, dialog.buttons);
+        },
+        // Prepaid orders wait in PENDING_PAYMENT: open the gateway straight away.
+        onSuccess: ({ order }) => {
+          // Keep what this cart held as the order's receipt: the order history, the bill and
+          // "Reorder" read it (the API's order carries no shop name and has no list endpoint).
+          const address = useAddressStore.getState().address;
+          useOrderReceiptStore.getState().saveReceipt({
+            orderId: order.id,
+            placedAtMs: Date.now(),
+            vendor,
+            vendorLocation: vendorExtras({ id: vendor.id, business_name: vendor.name }).locality,
+            items: lines.map((line) => ({
+              productId: line.productId,
+              name: line.name,
+              unitPriceNpr: line.unitPriceNpr,
+              quantity: line.quantity,
+            })),
+            subtotalNpr: order.subtotal_npr,
+            deliveryFeeNpr: order.delivery_fee_npr,
+            platformFeeNpr: CUSTOMER_PLATFORM_FEE_NPR,
+            // The discounts as the server applied them to this order, with the quote's labels.
+            vendorOfferDiscountNpr: order.vendor_offer_discount_npr,
+            vendorOfferLabel:
+              order.vendor_offer_discount_npr > 0 ? (bill.vendorOffer?.label ?? null) : null,
+            platformPromoDiscountNpr: order.platform_promo_discount_npr,
+            platformPromoLabel:
+              order.platform_promo_discount_npr > 0 ? (bill.platformPromo?.label ?? null) : null,
+            deliveryAddress:
+              address === null
+                ? null
+                : `${address.landmark}, ${formatAddressLine(address, String(address.ward_number))}`,
+          });
+          if (order.state === 'PENDING_PAYMENT' && order.payment_method !== 'COD') {
+            payment.start(order.id, order.payment_method);
+          }
+        },
       },
-    });
+    );
   };
   // SPEC §2: the shop must deliver to the delivery address (not merely to where the customer was
   // browsing). The server's own serviceability answer for that address decides.
-  const proceed = (method: PaymentMethod): void => {
+  const proceed = ({ method, expectedTotalNpr }: PaymentChoice): void => {
     setAreaCheckFailed(false);
     areaCheck.mutate(vendor.id, {
       onSuccess: (verdict) => {
         if (verdict === 'not_serviceable') setOutOfArea(true);
         else if (verdict === 'unknown') setAreaCheckFailed(true);
-        else placeOrder(method);
+        else placeOrder(method, expectedTotalNpr);
       },
     });
   };
@@ -245,6 +273,9 @@ export default function CartScreen() {
     summary.shortOfMinimumNpr === 0 &&
     hasAddress &&
     !hasOverStock;
+  // Step two needs a price to agree to and a way to pay: the quote, with delivery available.
+  const deliveryOff = quote.data?.delivery_available === false;
+  const canPay = canProceed && quote.data !== undefined && !deliveryOff;
   // Editing the cart answers the last refusal (stock, minimum order...): its message goes away.
   const changeQuantity = (productId: string, quantity: number): void => {
     setQuantity(productId, quantity);
@@ -257,40 +288,51 @@ export default function CartScreen() {
         <Text className="text-base font-bold text-gray-900">{t('bill.title')}</Text>
         <SummaryRow
           label={`${t('cart.subtotal')} · ${t('cart.itemCount', { count: itemCount })}`}
-          value={t('common.price', { amount: summary.subtotalNpr })}
+          value={t('common.price', { amount: bill.subtotalNpr })}
         />
-        {shopDiscountNpr > 0 ? (
+        {/* The server's discounts, in the order it applied them: the shop's own offer on the
+            subtotal, then the platform promotion on what is left. Each on its own line. */}
+        {bill.vendorOffer === null ? null : (
           <SummaryRow
             discount
             testID="cart-shop-discount"
-            label={`${t('cart.shopDiscount')} · ${shopOffer ?? ''}`}
-            value={t('cart.discountAmount', { amount: shopDiscountNpr })}
-          />
-        ) : null}
-        {deliveryDiscountNpr > 0 ? (
-          // MOCK (see cart-totals.ts): a "Free delivery" offer label shows the fee as waived.
-          <SummaryRow
-            discount
-            testID="cart-delivery-fee"
-            label={`${t('cart.deliveryFee')} · ${shopOffer ?? ''}`}
-            value={t('cart.free')}
-          />
-        ) : (
-          <SummaryRow
-            testID="cart-delivery-fee"
-            label={t('cart.deliveryFee')}
-            value={t('common.price', { amount: summary.deliveryFeeNpr })}
+            label={`${t('cart.shopDiscount')} · ${bill.vendorOffer.label}`}
+            value={t('cart.discountAmount', { amount: bill.vendorOffer.discountNpr })}
           />
         )}
+        {bill.platformPromo === null ? null : (
+          <SummaryRow
+            discount
+            testID="cart-promo-discount"
+            label={`${t('cart.promoDiscount')} · ${bill.platformPromo.label}`}
+            value={t('cart.discountAmount', { amount: bill.platformPromo.discountNpr })}
+          />
+        )}
+        <SummaryRow
+          testID="cart-delivery-fee"
+          label={t('cart.deliveryFee')}
+          value={t('common.price', { amount: bill.deliveryFeeNpr })}
+        />
         <SummaryRow
           label={t('cart.platformFee')}
           value={t('common.price', { amount: summary.platformFeeNpr })}
         />
         <SummaryRow
           strong
-          label={t('cart.total')}
-          value={t('common.price', { amount: displayedTotalNpr })}
+          testID="cart-total"
+          label={t(bill.quoted ? 'cart.total' : 'cart.estimatedTotal')}
+          value={t('common.price', { amount: bill.totalNpr })}
         />
+        {bill.savedNpr > 0 ? (
+          <Text className="text-sm font-semibold text-green-700" testID="cart-saved">
+            {t('paymentOptions.saved', { amount: bill.savedNpr })}
+          </Text>
+        ) : null}
+        {deliveryOff ? (
+          <Text className="text-sm font-semibold text-red-700" testID="cart-delivery-unavailable">
+            {t('cart.deliveryUnavailable')}
+          </Text>
+        ) : null}
 
         {summary.shortOfMinimumNpr > 0 ? (
           <Text className="text-sm text-amber-800" testID="below-minimum">
@@ -486,6 +528,15 @@ export default function CartScreen() {
                 {error}
               </Text>
             )}
+            {quote.isError && checkout.error === null && !areaCheckFailed ? (
+              <Button
+                testID="quote-retry"
+                label={t('common.retry')}
+                variant="secondary"
+                size="sm"
+                onPress={() => void quote.refetch()}
+              />
+            ) : null}
             {hasOverStock && error === null ? (
               <Text className="text-sm text-red-700" testID="stock-required">
                 {t('cart.fixStock')}
@@ -505,16 +556,18 @@ export default function CartScreen() {
                 />
               </>
             ) : signedIn ? (
-              // Step one of checkout. The amount is the bill's total (with the demo-only mock
-              // discount, so both steps show the same figure); how to pay is chosen next.
+              // Step one of checkout. The amount is the server's quoted total, the same figure
+              // step two shows; how to pay is chosen there. No quote yet: nothing to agree to.
               <Button
                 testID="proceed-to-pay"
                 label={
                   checkout.isPending || areaCheck.isPending
                     ? t('cart.placingOrder')
-                    : t('cart.proceedToPay', { amount: displayedTotalNpr })
+                    : canProceed && quote.isFetching && quote.data === undefined
+                      ? t('cart.pricing')
+                      : t('cart.proceedToPay', { amount: bill.totalNpr })
                 }
-                disabled={!canProceed}
+                disabled={!canPay}
                 onPress={() => {
                   router.push('/checkout/payment-options');
                 }}
@@ -533,8 +586,8 @@ export default function CartScreen() {
       </View>
       {/* Step two hands the chosen method back; the cart checks it may still proceed. */}
       <PaymentChoiceRunner
-        onChosen={(method) => {
-          if (canProceed) proceed(method);
+        onChosen={(choice) => {
+          if (canProceed) proceed(choice);
         }}
       />
       <ConfirmModal

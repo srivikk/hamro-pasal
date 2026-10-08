@@ -246,9 +246,10 @@ export async function pendingEscrowOf(
 ): Promise<{ readonly totalNpr: number; readonly orderCount: number }> {
   const [escrow] = await tx
     .select({
-      // What settlement will credit: subtotal − the vendor's share of a campaign discount −
-      // commission, plus the fee when the shop delivers.
-      total: sql<number>`coalesce(sum(${orders.subtotal} - ${orders.platform_promo_vendor_share_npr}
+      // What settlement will credit: subtotal − the vendor's own offer − its share of a campaign
+      // discount − commission, plus the fee when the shop delivers.
+      total: sql<number>`coalesce(sum(${orders.subtotal} - ${orders.vendor_offer_discount_npr}
+          - ${orders.platform_promo_vendor_share_npr}
           - ${orders.platform_commission_amount}
           + CASE WHEN ${orders.fulfillment_locked} = 'SELF_DELIVERY'
                  THEN ${orders.delivery_fee} ELSE 0 END), 0)`.mapWith(Number),
@@ -275,7 +276,8 @@ export async function pendingEscrowByVendor(
   const rows = await tx
     .select({
       vendorId: orders.vendor_id,
-      total: sql<number>`coalesce(sum(${orders.subtotal} - ${orders.platform_promo_vendor_share_npr}
+      total: sql<number>`coalesce(sum(${orders.subtotal} - ${orders.vendor_offer_discount_npr}
+          - ${orders.platform_promo_vendor_share_npr}
           - ${orders.platform_commission_amount}
           + CASE WHEN ${orders.fulfillment_locked} = 'SELF_DELIVERY'
                  THEN ${orders.delivery_fee} ELSE 0 END), 0)`.mapWith(Number),

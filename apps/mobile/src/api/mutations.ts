@@ -8,6 +8,7 @@ import {
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { stockLevelsFromDetails } from '../features/cart/stock-shortfalls';
+import { CART_QUOTE_QUERY_KEY } from '../features/cart/useCartQuote';
 import { PRODUCTS_QUERY_KEY } from '../features/discovery/useProductSearch';
 import { useAddressStore } from '../store/useAddressStore';
 import { useCartStore } from '../store/useCartStore';
@@ -25,7 +26,11 @@ export const NO_DELIVERY_ADDRESS = 'NO_DELIVERY_ADDRESS';
  * product IDs and quantities are sent: the server prices every line from its own database and
  * never trusts client prices.
  */
-export function buildCheckoutRequest(paymentMethod: PaymentMethod): CheckoutRequest {
+export function buildCheckoutRequest(
+  paymentMethod: PaymentMethod,
+  /** The total the customer was quoted; the server compares it and never takes it as a price. */
+  expectedTotalNpr?: number | null,
+): CheckoutRequest {
   const { vendor, lines } = useCartStore.getState();
   if (vendor === null || lines.length === 0) {
     throw new ApiError(400, 'INVALID_CART', 'The cart is empty');
@@ -47,6 +52,9 @@ export function buildCheckoutRequest(paymentMethod: PaymentMethod): CheckoutRequ
     payment_method: paymentMethod,
     items,
     delivery_address: deliveryAddress,
+    ...(expectedTotalNpr === undefined || expectedTotalNpr === null
+      ? {}
+      : { expected_total_npr: expectedTotalNpr }),
   });
   if (!parsed.success) {
     throw new ApiError(
@@ -58,12 +66,17 @@ export function buildCheckoutRequest(paymentMethod: PaymentMethod): CheckoutRequ
   return parsed.data;
 }
 
+/** A checkout attempt: the method alone, or with the total the customer was quoted. */
+export type CheckoutInput =
+  PaymentMethod | { paymentMethod: PaymentMethod; expectedTotalNpr?: number | null };
+
 /** POST /api/cart/checkout: locks the cart's stock for 600 s and creates the order (SPEC §3). */
-export function submitCheckout(paymentMethod: PaymentMethod): Promise<CheckoutResponseBody> {
+export function submitCheckout(input: CheckoutInput): Promise<CheckoutResponseBody> {
+  const attempt = typeof input === 'string' ? { paymentMethod: input } : input;
   return apiRequest({
     method: 'POST',
     path: CHECKOUT_PATH,
-    body: buildCheckoutRequest(paymentMethod),
+    body: buildCheckoutRequest(attempt.paymentMethod, attempt.expectedTotalNpr),
     schema: checkoutResponseSchema,
   });
 }
@@ -83,6 +96,12 @@ function onCheckoutError(error: ApiError, queryClient: QueryClient): void {
       // SPEC §3: the lock lapsed; purge the cart and show "Session Expired".
       checkout.expireSession();
       break;
+    case 'QUOTE_CHANGED':
+    case 'PAYMENT_METHOD_UNAVAILABLE':
+      // The quote on screen no longer holds (an offer ended; the shop changed what it accepts).
+      // No order was created: fetch the cart's price and payment methods again.
+      void queryClient.invalidateQueries({ queryKey: CART_QUOTE_QUERY_KEY });
+      break;
     case 'IDEMPOTENCY_KEY_REUSED':
       // The key was already used for a different cart; the next attempt must get a new one.
       checkout.discardAttempt();
@@ -96,7 +115,7 @@ function onCheckoutError(error: ApiError, queryClient: QueryClient): void {
 
 export function useCheckout() {
   const queryClient = useQueryClient();
-  return useMutation<CheckoutResponseBody, ApiError, PaymentMethod>({
+  return useMutation<CheckoutResponseBody, ApiError, CheckoutInput>({
     mutationKey: ['checkout'],
     mutationFn: submitCheckout,
     onSuccess: (response) => {

@@ -10,7 +10,6 @@ import {
   orderCode,
   reorder,
 } from '../src/features/order/order-history';
-import { demoTotalNpr, receiptMockSavingsNpr } from '../src/features/promo/demo-pricing';
 import { selectHasSession, useAuthStore } from '../src/store/useAuthStore';
 import { useCartStore } from '../src/store/useCartStore';
 import { selectIsCheckoutPending, useCheckoutStore } from '../src/store/useCheckoutStore';
@@ -148,14 +147,11 @@ export default function OrdersScreen() {
               <View className="mx-4 h-px bg-gray-100" />
               <View className="flex-row items-center justify-between p-4">
                 <View>
-                  {/* TODO: Remove mock pricing when /cart/quote is ready. (demoTotalNpr) */}
                   <Text
                     className="text-base font-bold text-gray-900"
                     testID={`order-total-${order.orderId}`}
                   >
-                    {t('order.total', {
-                      amount: demoTotalNpr(order.totalNpr, receiptMockSavingsNpr(receipt)),
-                    })}
+                    {t('order.total', { amount: order.totalNpr })}
                   </Text>
                   <Text className="text-xs text-gray-500">
                     {t(`payment.${order.paymentMethod}`)}

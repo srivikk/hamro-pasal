@@ -303,30 +303,3 @@ export function homePromotions(feed: FeedResponse | undefined): HomePromotions {
     offers: MOCK_OFFERS.map((mock) => resolve(mock, shopIds)).filter(present),
   };
 }
-
-/**
- * DISPLAY ONLY. What a mock offer label would take off a cart subtotal, in paisa: "10% OFF" is
- * that share of the subtotal, "Flat Rs. 200 OFF" that amount (never more than the subtotal). Any
- * other label ("Free delivery", "Buy 1 Get 1", "Dashain Sale") takes nothing off the subtotal
- * ("Free delivery" waives the delivery fee instead, see mockFreeDelivery). The server knows
- * nothing of this: checkout still charges the full subtotal (STATE_HANDOFF §8Z.5).
- */
-export function mockShopDiscountPaisa(offer: string | null, subtotalPaisa: number): number {
-  if (!PROMO_MOCKS_ENABLED || offer === null || subtotalPaisa <= 0) return 0;
-  const percent = /^(\d{1,3})% OFF\b/i.exec(offer);
-  if (percent !== null) {
-    return Math.round((subtotalPaisa * Math.min(Number(percent[1]), 100)) / 100);
-  }
-  const flat = /^Flat Rs\. (\d+) OFF\b/i.exec(offer);
-  if (flat !== null) return Math.min(Number(flat[1]) * 100, subtotalPaisa);
-  return 0;
-}
-
-/**
- * DISPLAY ONLY. Whether a mock offer label waives the delivery fee in the cart's bill: any label
- * containing "free delivery", whatever its case. Like the discount above, the server knows
- * nothing of it and still charges the shop's delivery fee.
- */
-export function mockFreeDelivery(offer: string | null): boolean {
-  return PROMO_MOCKS_ENABLED && (offer?.toLowerCase().includes('free delivery') ?? false);
-}

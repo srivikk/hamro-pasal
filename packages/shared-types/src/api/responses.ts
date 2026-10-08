@@ -46,7 +46,12 @@ export const orderViewSchema = z.strictObject({
   payment_status: paymentStatusSchema,
   fulfillment: fulfillmentModeSchema,
   subtotal_npr: z.number(),
+  /** The vendor's own offer on this order; 0 without one (and for an API from before the field). */
+  vendor_offer_discount_npr: z.number().min(0).default(0),
+  /** The platform campaign discount, on the subtotal after the vendor offer; 0 without one. */
+  platform_promo_discount_npr: z.number().min(0).default(0),
   delivery_fee_npr: z.number(),
+  /** subtotal - vendor offer - campaign discount + delivery fee: what the customer pays. */
   total_npr: z.number(),
   created_at: z.iso.datetime(),
 });
@@ -601,7 +606,7 @@ export const walletTopUpResponseSchema = z.strictObject({
 });
 export type WalletTopUpResponseBody = z.infer<typeof walletTopUpResponseSchema>;
 
-const quoteDiscountSchema = z.strictObject({
+export const quoteDiscountSchema = z.strictObject({
   id: z.uuid(),
   label: z.string().min(1),
   discount_npr: z.number().positive(),
@@ -613,8 +618,9 @@ const quoteDiscountSchema = z.strictObject({
  */
 export const cartQuoteResponseSchema = z.strictObject({
   subtotal_npr: z.number().min(0),
-  /** Null until vendor offers and platform campaigns exist (no discount is applied today). */
+  /** The shop's own offer, applied to the subtotal first (id = the offer); null when none applies. */
   vendor_offer: quoteDiscountSchema.nullable(),
+  /** The campaign, applied to what is left after the vendor offer (id = the campaign). */
   platform_promo: quoteDiscountSchema.nullable(),
   delivery_fee_npr: z.number().min(0),
   /** Shop to delivery pin, great-circle, rounded to the metre. */
@@ -643,3 +649,25 @@ export const cartQuoteResponseSchema = z.strictObject({
   ),
 });
 export type CartQuoteResponseBody = z.infer<typeof cartQuoteResponseSchema>;
+
+/**
+ * `details` of 409 QUOTE_CHANGED: the cart as the server prices it now. Tolerant of extra keys,
+ * like every error detail.
+ */
+export const quoteChangedDetailsSchema = z.object({
+  quote: z.object({
+    subtotal_npr: z.number().min(0),
+    vendor_offer: quoteDiscountSchema.nullable(),
+    platform_promo: quoteDiscountSchema.nullable(),
+    delivery_fee_npr: z.number().min(0),
+    total_npr: z.number().min(0),
+  }),
+});
+export type QuoteChangedDetails = z.infer<typeof quoteChangedDetailsSchema>;
+
+/** `details` of 422 PAYMENT_METHOD_UNAVAILABLE: what the shop does take. */
+export const paymentMethodUnavailableDetailsSchema = z.object({
+  accepted: z.array(paymentMethodSchema),
+  reason: z.enum(['NOT_ACCEPTED_BY_SHOP', 'SETTLEMENT_MODEL']),
+});
+export type PaymentMethodUnavailableDetails = z.infer<typeof paymentMethodUnavailableDetailsSchema>;

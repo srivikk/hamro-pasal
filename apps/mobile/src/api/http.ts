@@ -49,6 +49,12 @@ interface ApiRequest<T> {
   schema: z.ZodType<T>;
 }
 
+/** A binary response body with the headers it came with. */
+export interface ApiDownload {
+  readonly bytes: Uint8Array;
+  readonly headers: Headers;
+}
+
 async function readJson(response: Response): Promise<unknown> {
   const text = await response.text();
   if (text === '') return undefined;
@@ -118,6 +124,32 @@ async function send<T>(
     );
   }
   return parsed.data;
+}
+
+/** One GET of a binary body (a PDF). Error answers are the API's JSON envelope, as for `send`. */
+async function sendDownload(path: string, accept: string, token: string): Promise<ApiDownload> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: 'GET',
+      headers: { Accept: `${accept}, application/json`, Authorization: `Bearer ${token}` },
+    });
+  } catch (cause) {
+    throw new ApiError(0, CLIENT_ERROR_CODES.network, `GET ${path} failed: ${String(cause)}`);
+  }
+  if (!response.ok) {
+    const parsed = errorBodySchema.safeParse(await readJson(response));
+    if (parsed.success) {
+      const { code, message, details } = parsed.data.error;
+      throw new ApiError(response.status, code, message, details);
+    }
+    throw new ApiError(
+      response.status,
+      CLIENT_ERROR_CODES.badResponse,
+      `GET ${path} returned HTTP ${String(response.status)} without an error body`,
+    );
+  }
+  return { bytes: new Uint8Array(await response.arrayBuffer()), headers: response.headers };
 }
 
 /* ---------- Session renewal (SPEC implicit requirement 3) ---------- */
@@ -213,5 +245,28 @@ export async function apiRequest<T>(request: ApiRequest<T>): Promise<T> {
     token = current !== null && current !== token ? current : await refreshAccessToken();
     if (token === null) throw error;
     return send(request, token);
+  }
+}
+
+/**
+ * Authenticated GET of a binary body, with the same token renewal as `apiRequest`: refresh first
+ * when only a refresh token exists, and one replay after a 401 UNAUTHENTICATED (the server refuses
+ * the token before it does anything, so a replay never repeats an effect). Nothing else is retried.
+ */
+export async function apiDownload(path: string, accept: string): Promise<ApiDownload> {
+  let token = useAuthStore.getState().accessToken ?? (await refreshAccessToken());
+  if (token === null) {
+    throw new ApiError(401, CLIENT_ERROR_CODES.notSignedIn, 'No access token; sign in first');
+  }
+  try {
+    return await sendDownload(path, accept, token);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 401 || error.code !== TOKEN_REFUSED_CODE) {
+      throw error;
+    }
+    const current = useAuthStore.getState().accessToken;
+    token = current !== null && current !== token ? current : await refreshAccessToken();
+    if (token === null) throw error;
+    return sendDownload(path, accept, token);
   }
 }

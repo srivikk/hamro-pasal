@@ -45,7 +45,11 @@ const BOUDHA = {
   minOrderValueNpr: 300,
 };
 
-/** Rice x1 and noodles x2 from Thamel: 2350 + 50 delivery, with a mock 10% (235) shown at checkout. */
+/**
+ * Rice x1 and noodles x2 from Thamel: 2350 + 50 delivery, less the shop's own offer (100) and a
+ * platform promo (135), as the server priced the order: 2165.
+ */
+const DISCOUNTED_TOTAL = 2165;
 function receipt(overrides: Partial<OrderReceipt> = {}): OrderReceipt {
   return {
     orderId: ORDER,
@@ -59,14 +63,22 @@ function receipt(overrides: Partial<OrderReceipt> = {}): OrderReceipt {
     subtotalNpr: 2350,
     deliveryFeeNpr: 50,
     platformFeeNpr: 0,
-    shopDiscountNpr: 235,
-    shopOfferLabel: '10% OFF',
-    deliveryDiscountNpr: 0,
+    vendorOfferDiscountNpr: 100,
+    vendorOfferLabel: 'Flat Rs. 100 OFF',
+    platformPromoDiscountNpr: 135,
+    platformPromoLabel: 'Dashain 6%',
     deliveryAddress:
       'Near Kathmandu Guest House, Thamel, Kathmandu Metropolitan City-26, Kathmandu',
     ...overrides,
   };
 }
+
+const NO_DISCOUNT = {
+  vendorOfferDiscountNpr: 0,
+  vendorOfferLabel: null,
+  platformPromoDiscountNpr: 0,
+  platformPromoLabel: null,
+} as const;
 
 function track(orderId: string, state: 'PLACED' | 'DELIVERED' | 'CANCELED', totalNpr = 2400) {
   useOrderStore
@@ -122,7 +134,7 @@ describe('order receipts (the phone’s own record of an order)', () => {
       saveReceipt(receipt({ items: [] }));
     }).toThrow();
     expect(() => {
-      saveReceipt(receipt({ shopDiscountNpr: -1 }));
+      saveReceipt(receipt({ vendorOfferDiscountNpr: -1 }));
     }).toThrow();
     expect(useOrderReceiptStore.getState().receipts).toEqual({});
   });
@@ -176,7 +188,7 @@ describe('order history helpers', () => {
 
 describe('Your Orders: order cards', () => {
   it('shows the shop, its location, the status, the items, the total and Reorder', () => {
-    track(ORDER, 'DELIVERED');
+    track(ORDER, 'DELIVERED', DISCOUNTED_TOTAL);
     useOrderReceiptStore.getState().saveReceipt(receipt());
     renderWithProviders(<OrdersScreen />);
 
@@ -188,7 +200,7 @@ describe('Your Orders: order cards', () => {
     expect(card.getByTestId(`order-items-${ORDER}`)).toHaveTextContent(
       '1x Basmati Rice 5kg & 1 more',
     );
-    // The server charged 2400; the cart had shown a mock discount of 235 (demo only).
+    // The order's own total, as the server charged it.
     expect(card.getByTestId(`order-total-${ORDER}`)).toHaveTextContent('Rs. 2165');
     expect(card.getByText('Cash on delivery')).toBeOnTheScreen();
     expect(card.getByRole('button', { name: 'Reorder from Thamel Kirana Pasal' })).toBeTruthy();
@@ -196,9 +208,7 @@ describe('Your Orders: order cards', () => {
 
   it('shows a cancelled order as cancelled, and the server total when nothing was discounted', () => {
     track(ORDER, 'CANCELED');
-    useOrderReceiptStore
-      .getState()
-      .saveReceipt(receipt({ shopDiscountNpr: 0, shopOfferLabel: null, vendorLocation: null }));
+    useOrderReceiptStore.getState().saveReceipt(receipt({ ...NO_DISCOUNT, vendorLocation: null }));
     renderWithProviders(<OrdersScreen />);
 
     const card = within(screen.getByTestId(`order-card-${ORDER}`));
@@ -219,7 +229,7 @@ describe('Your Orders: order cards', () => {
   });
 
   it('opens the order from its card', () => {
-    track(ORDER, 'DELIVERED');
+    track(ORDER, 'DELIVERED', DISCOUNTED_TOTAL);
     useOrderReceiptStore.getState().saveReceipt(receipt());
     renderWithProviders(<OrdersScreen />);
 
@@ -234,7 +244,7 @@ describe('Your Orders: order cards', () => {
 
 describe('Reorder', () => {
   beforeEach(() => {
-    track(ORDER, 'DELIVERED');
+    track(ORDER, 'DELIVERED', DISCOUNTED_TOTAL);
     useOrderReceiptStore.getState().saveReceipt(receipt());
   });
   const pressReorder = () => {
@@ -331,7 +341,7 @@ describe('Reorder', () => {
 
 describe('Order detail: receipt', () => {
   it('shows the shop, the status, the items, the bill and the delivery address', () => {
-    track(ORDER, 'DELIVERED');
+    track(ORDER, 'DELIVERED', DISCOUNTED_TOTAL);
     useOrderReceiptStore.getState().saveReceipt(receipt());
     renderWithProviders(<OrderDetailScreen />);
 
@@ -349,8 +359,8 @@ describe('Order detail: receipt', () => {
     expect(within(screen.getByTestId('order-address')).getByText(/Thamel, Kathmandu/)).toBeTruthy();
   });
 
-  it('lays the bill out as item total, delivery fee, platform fee, shop discount, total, payment', () => {
-    track(ORDER, 'DELIVERED');
+  it('lays the bill out as item total, shop offer, promo, delivery fee, platform fee, total, payment', () => {
+    track(ORDER, 'DELIVERED', DISCOUNTED_TOTAL);
     useOrderReceiptStore.getState().saveReceipt(receipt());
     renderWithProviders(<OrderDetailScreen />);
 
@@ -360,9 +370,12 @@ describe('Order detail: receipt', () => {
     expect(bill.getByTestId('bill-delivery-fee')).toHaveTextContent('Delivery FeeRs. 50');
     expect(bill.getByTestId('bill-platform-fee')).toHaveTextContent('Platform FeeRs. 0');
     expect(bill.getByTestId('bill-shop-discount')).toHaveTextContent(
-      'Shop Discount · 10% OFF- Rs. 235',
+      'Shop Offer · Flat Rs. 100 OFF- Rs. 100',
     );
-    // 2350 - 235 + 50 + 0.
+    expect(bill.getByTestId('bill-promo-discount')).toHaveTextContent(
+      'Hamro Pasal Promo · Dashain 6%- Rs. 135',
+    );
+    // 2350 - 100 - 135 + 50 + 0: the server's total, not a sum made here.
     expect(bill.getByTestId('bill-total')).toHaveTextContent('TotalRs. 2165');
     expect(bill.getByTestId('bill-payment-method')).toHaveTextContent(
       'Payment MethodCash on delivery',
@@ -371,9 +384,7 @@ describe('Order detail: receipt', () => {
 
   it('has no discount line, and the server’s total, for an order that had none', () => {
     track(ORDER, 'DELIVERED');
-    useOrderReceiptStore
-      .getState()
-      .saveReceipt(receipt({ shopDiscountNpr: 0, shopOfferLabel: null }));
+    useOrderReceiptStore.getState().saveReceipt(receipt(NO_DISCOUNT));
     renderWithProviders(<OrderDetailScreen />);
 
     const bill = within(screen.getByTestId('bill-details'));
@@ -396,7 +407,7 @@ describe('Order detail: receipt', () => {
   });
 
   it('writes the bill in Nepali with Devanagari digits', () => {
-    track(ORDER, 'DELIVERED');
+    track(ORDER, 'DELIVERED', DISCOUNTED_TOTAL);
     useOrderReceiptStore.getState().saveReceipt(receipt());
     renderWithProviders(<OrderDetailScreen />, { locale: 'ne' });
 
@@ -404,7 +415,7 @@ describe('Order detail: receipt', () => {
     expect(bill.getByText('बिल विवरण')).toBeOnTheScreen();
     expect(bill.getByTestId('bill-total')).toHaveTextContent('जम्मारु. २१६५');
     expect(bill.getByTestId('bill-shop-discount')).toHaveTextContent(
-      'पसलको छुट · 10% OFF- रु. २३५',
+      'पसलको अफर · Flat Rs. 100 OFF- रु. १००',
     );
   });
 });

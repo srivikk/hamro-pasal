@@ -1,5 +1,8 @@
 import {
   authTokensResponseSchema,
+  cartQuoteResponseSchema,
+  paymentMethods,
+  type CartQuoteResponseBody,
   categoryListResponseSchema,
   productListResponseSchema,
   type CategoryListResponseBody,
@@ -90,6 +93,8 @@ export function orderView(overrides: Partial<OrderView> = {}): OrderView {
     payment_status: 'PENDING',
     fulfillment: 'SELF_DELIVERY',
     subtotal_npr: 2350,
+    vendor_offer_discount_npr: 0,
+    platform_promo_discount_npr: 0,
     delivery_fee_npr: 50,
     total_npr: 2400,
     created_at: '2026-09-29T10:00:00.000Z',
@@ -589,4 +594,24 @@ export function productList(
   nextCursor: string | null = null,
 ): ProductListResponseBody {
   return productListResponseSchema.parse({ products, next_cursor: nextCursor });
+}
+
+/**
+ * POST /api/cart/quote for the two-product Thamel cart: no discount, every payment method.
+ * Built through the contract, like every fixture here.
+ */
+export function cartQuote(
+  overrides: Partial<z.input<typeof cartQuoteResponseSchema>> = {},
+): CartQuoteResponseBody {
+  return cartQuoteResponseSchema.parse({
+    subtotal_npr: 2350,
+    vendor_offer: null,
+    platform_promo: null,
+    delivery_fee_npr: 50,
+    distance_km: 1.2,
+    total_npr: 2400,
+    delivery_available: true,
+    payment_options: paymentMethods.map((method) => ({ method, available: true })),
+    ...overrides,
+  });
 }

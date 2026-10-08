@@ -11,7 +11,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { bsDateOf, fiscalYearOf, type BsDate } from './bs-calendar';
 import { toNpr, toPaisa } from './money';
-import { orderTotalPaisa } from './settlement-plan';
+import { orderDiscountPaisa, orderTotalPaisa } from './settlement-plan';
 
 export type InvoiceRow = typeof invoices.$inferSelect;
 
@@ -153,6 +153,9 @@ export async function generateFiscalInvoice(
 
   // The shop's own delivery is its sale (a taxed line); a fleet delivery is the platform's.
   const deliveryChargedBy = order.fulfillment_locked === 'SELF_DELIVERY' ? 'VENDOR' : 'PLATFORM';
+  // Every discount lowers the taxable amount (decided 2026-10-07): the vendor's own offer and the
+  // whole campaign discount.
+  const discountNpr = toNpr(orderDiscountPaisa(order));
   const amounts = computeInvoiceAmounts({
     seller_is_vat_registered: seller.is_vat_registered,
     items: items.map((item) => ({
@@ -161,7 +164,7 @@ export async function generateFiscalInvoice(
       quantity: item.quantity,
       unit_price_npr: item.unit_price_npr,
     })),
-    discount_npr: order.platform_promo_discount_npr,
+    discount_npr: discountNpr,
     delivery_charge_npr: order.delivery_fee,
     delivery_charged_by: deliveryChargedBy,
   });
@@ -200,7 +203,7 @@ export async function generateFiscalInvoice(
       issued_at: at,
       issued_date_bs: formatBsDate(bsDateOf(at)),
       subtotal_npr: amounts.subtotal_npr,
-      discount_npr: order.platform_promo_discount_npr,
+      discount_npr: discountNpr,
       delivery_charge_npr: order.delivery_fee,
       grand_total_npr: amounts.grand_total_npr,
       seller_name: seller.legal_name ?? seller.business_name,

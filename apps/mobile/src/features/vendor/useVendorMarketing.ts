@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { retryTransientFailures } from '../../api/query-client';
 import {
@@ -12,11 +12,71 @@ import {
   optInToCampaign,
   optOutOfCampaign,
 } from '../../api/vendor-campaigns';
+import { fetchVendorInvoices } from '../../api/vendor-invoices';
+import { createVendorOffer, endVendorOffer, fetchVendorOffers } from '../../api/vendor-offers';
+import { downloadInvoicePdf } from './invoice-files';
 import { vendorWalletBalanceQueryKey, vendorWalletLedgerQueryKey } from './useVendorWallet';
 
 export const vendorAdProductsQueryKey = ['vendor', 'ads', 'products'] as const;
 export const vendorAdPurchasesQueryKey = ['vendor', 'ads', 'purchases'] as const;
 export const vendorCampaignsQueryKey = ['vendor', 'campaigns'] as const;
+export const vendorOffersQueryKey = ['vendor', 'offers'] as const;
+export const vendorInvoicesQueryKey = ['vendor', 'invoices'] as const;
+
+/** The shop's own offers with the server's status for each (GET /api/vendor/offers). */
+export function useVendorOffersQuery() {
+  return useQuery({
+    queryKey: vendorOffersQueryKey,
+    queryFn: fetchVendorOffers,
+    staleTime: 0,
+    retry: retryTransientFailures,
+  });
+}
+
+/** Both refetch the list whatever the answer: the cards always show the server's offers. */
+export function useCreateVendorOffer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: createVendorOffer,
+    retry: false,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: vendorOffersQueryKey }),
+  });
+}
+
+export function useEndVendorOffer() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: endVendorOffer,
+    retry: false,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: vendorOffersQueryKey }),
+  });
+}
+
+/** The shop's fiscal invoices, newest first, a page at a time (GET /api/vendor/invoices). */
+export function useVendorInvoicesQuery() {
+  return useInfiniteQuery({
+    queryKey: vendorInvoicesQueryKey,
+    queryFn: ({ pageParam }) => fetchVendorInvoices(pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) => page.next_cursor,
+    staleTime: 0,
+    retry: retryTransientFailures,
+  });
+}
+
+/**
+ * One download = one numbered print on the server, so it is never retried automatically. The list
+ * is refetched afterwards (also after a failure: the print may have been recorded) for its count.
+ */
+export function useDownloadInvoicePdf() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, invoiceSequence }: { id: string; invoiceSequence: string }) =>
+      downloadInvoicePdf(id, invoiceSequence),
+    retry: false,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: vendorInvoicesQueryKey }),
+  });
+}
 
 /** What is on sale and what the shop can spend. Money figures are never served stale. */
 export function useVendorAdProductsQuery() {

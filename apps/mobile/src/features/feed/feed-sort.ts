@@ -63,6 +63,7 @@ export function sortFeed(
   if (sort === 'relevance') return feed;
   const key = SORT_KEYS[sort];
   return {
+    ...feed,
     serviceable: sortEntries(feed.serviceable, key, extrasOf),
     explore_further: sortEntries(feed.explore_further, key, extrasOf),
   };

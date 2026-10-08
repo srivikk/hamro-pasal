@@ -50,7 +50,10 @@ describe('VendorCard', () => {
   it('shows vendor details and responds to taps when serviceable', () => {
     const onPress = jest.fn();
     renderWithProviders(
-      <VendorCard entry={{ vendor, distance_km: 1.26, serviceable: true }} onPress={onPress} />,
+      <VendorCard
+        entry={{ vendor, distance_km: 1.26, serviceable: true, delivery_available: true }}
+        onPress={onPress}
+      />,
     );
 
     expect(screen.getByText('Thamel Kirana Pasal')).toBeOnTheScreen();
@@ -67,7 +70,10 @@ describe('VendorCard', () => {
   it('is disabled and badged in Explore Further', () => {
     const onPress = jest.fn();
     renderWithProviders(
-      <VendorCard entry={{ vendor, distance_km: 9, serviceable: false }} onPress={onPress} />,
+      <VendorCard
+        entry={{ vendor, distance_km: 9, serviceable: false, delivery_available: true }}
+        onPress={onPress}
+      />,
     );
 
     const card = screen.getByTestId('vendor-card-vendor-1');
@@ -79,9 +85,14 @@ describe('VendorCard', () => {
   });
 
   it('renders every number in Devanagari under ne', () => {
-    renderWithProviders(<VendorCard entry={{ vendor, distance_km: 2.04, serviceable: true }} />, {
-      locale: 'ne',
-    });
+    renderWithProviders(
+      <VendorCard
+        entry={{ vendor, distance_km: 2.04, serviceable: true, delivery_available: true }}
+      />,
+      {
+        locale: 'ne',
+      },
+    );
 
     expect(screen.getByText('२ कि.मी. टाढा')).toBeOnTheScreen();
     expect(screen.getByText('५ कि.मी. भित्र डेलिभरी')).toBeOnTheScreen();
@@ -95,7 +106,12 @@ describe('VendorCard', () => {
   ] as const)('describes the %s scope', (scope, label) => {
     renderWithProviders(
       <VendorCard
-        entry={{ vendor: { ...vendor, delivery_scope: scope }, distance_km: 1, serviceable: true }}
+        entry={{
+          vendor: { ...vendor, delivery_scope: scope },
+          distance_km: 1,
+          serviceable: true,
+          delivery_available: true,
+        }}
       />,
     );
 

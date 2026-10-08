@@ -1,0 +1,138 @@
+import {
+  billingChangeRequestSchema,
+  deliverySettingsRequestSchema,
+  idParamSchema,
+  taxIdentityRequestSchema,
+  type AuditActor,
+  type BillingChangeResponseBody,
+  type DeliverySettingsResponseBody,
+  type TaxIdentityResponseBody,
+} from '@hamro-pasal/shared-types';
+import { Router, type Request } from 'express';
+
+import { auditActorOf, auditContextOf } from '../http/request-context';
+import { parseInput } from '../http/validate';
+import type { VendorBillingService } from '../vendor/vendor-billing-service';
+import type { VendorComplianceService } from '../vendor/vendor-compliance-service';
+import {
+  modeEnabled,
+  type DeliverySettings,
+  type VendorDeliverySettingsService,
+} from '../vendor/vendor-delivery-settings-service';
+
+export interface VendorSettingsServices {
+  readonly billing: VendorBillingService;
+  readonly compliance: VendorComplianceService;
+  readonly deliverySettings: VendorDeliverySettingsService;
+}
+
+function deliverySettingsView({
+  vendor,
+  platform,
+}: DeliverySettings): DeliverySettingsResponseBody {
+  return {
+    vendor_id: vendor.id,
+    fulfillment_mode: vendor.fulfillment_mode,
+    delivery_scope: vendor.delivery_scope,
+    radius_km: vendor.radius_km,
+    serviceable_palikas: vendor.serviceable_palikas,
+    municipality_palika_string: vendor.municipality_palika_string,
+    base_delivery_fee_npr: vendor.base_delivery_fee_npr,
+    delivery_fee_per_km_npr: vendor.delivery_fee_per_km_npr,
+    free_delivery_above_npr: vendor.free_delivery_above_npr,
+    platform: {
+      self_delivery_enabled: platform.selfDeliveryEnabled,
+      platform_fleet_enabled: platform.platformFleetEnabled,
+      platform_delivery_fee_npr: platform.platformDeliveryFeeNpr,
+    },
+    fulfillment_mode_enabled: modeEnabled(platform, vendor.fulfillment_mode),
+  };
+}
+
+/** The signed-in vendor as the actor of an audited change (the router sits behind requireAuth). */
+function vendorActor(req: Request): AuditActor & { kind: 'USER' } {
+  const actor = auditActorOf(req);
+  if (actor.kind !== 'USER') throw new Error('A signed-in caller is always a user');
+  return actor;
+}
+
+/**
+ * Mounted at /api/vendor behind requireAuth(VENDOR) (Phase 25): the shop's own settings. Any
+ * vendor status may use it: a shop suspended for compliance must be able to save its PAN, and a
+ * sandboxed one configures delivery before it goes live.
+ */
+export function vendorSettingsRouter({
+  billing,
+  compliance,
+  deliverySettings,
+}: VendorSettingsServices): Router {
+  const router = Router();
+  router.use((_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
+
+  /** Saving the PAN lifts a compliance suspension in the same transaction (SPEC core 10). */
+  router.put('/tax-identity', async (req, res) => {
+    const input = parseInput(taxIdentityRequestSchema, req.body);
+    const { vendor, complianceSuspensionLifted } = await compliance.saveTaxIdentity(
+      vendorActor(req),
+      input,
+      auditContextOf(req, res),
+    );
+    const body: TaxIdentityResponseBody = {
+      vendor_id: vendor.id,
+      tax_id: input.tax_id,
+      is_vat_registered: vendor.is_vat_registered,
+      legal_name: vendor.legal_name,
+      registered_address: vendor.registered_address,
+      status: vendor.status,
+      compliance_suspension_lifted: complianceSuspensionLifted,
+      pan_verified_at: vendor.pan_verified_at?.toISOString() ?? null,
+    };
+    res.json(body);
+  });
+
+  router.get('/delivery-settings', async (req, res) => {
+    res.json(deliverySettingsView(await deliverySettings.get(vendorActor(req).user_id)));
+  });
+
+  router.put('/delivery-settings', async (req, res) => {
+    const input = parseInput(deliverySettingsRequestSchema, req.body);
+    const settings = await deliverySettings.update(
+      vendorActor(req),
+      input,
+      auditContextOf(req, res),
+    );
+    res.json(deliverySettingsView(settings));
+  });
+
+  /** Queued, not applied: it takes effect when the Billing Cycle renews (SPEC core 4). */
+  router.post('/billing/changes', async (req, res) => {
+    const input = parseInput(billingChangeRequestSchema, req.body);
+    const change = await billing.requestChange(vendorActor(req), input, auditContextOf(req, res));
+    const body: BillingChangeResponseBody = {
+      change:
+        change === null
+          ? null
+          : {
+              id: change.id,
+              setting: change.setting,
+              current_value: change.current_value,
+              requested_value: change.requested_value,
+              status: change.status,
+              requested_at: change.requested_at.toISOString(),
+              effective_from: change.effective_from.toISOString(),
+            },
+    };
+    res.status(change === null ? 200 : 202).json(body);
+  });
+
+  router.delete('/billing/changes/:id', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    await billing.withdrawChange(vendorActor(req), id, auditContextOf(req, res));
+    res.status(204).end();
+  });
+
+  return router;
+}

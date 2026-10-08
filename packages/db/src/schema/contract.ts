@@ -1,4 +1,5 @@
 import type {
+  AuditLog,
   Category,
   ChatMessageRow,
   CustomerAddress,
@@ -14,8 +15,11 @@ import type {
   Review,
   User,
   Vendor,
+  VendorBankAccount,
 } from '@hamro-pasal/shared-types';
 
+import type { auditLogs } from './audit';
+import type { vendorBankAccounts } from './banking';
 import type { categories } from './categories';
 import type { chatMessages, disputes, reviews } from './disputes';
 import type { ledgerAccounts, ledgerEntries, ledgerTransactions } from './ledger';
@@ -53,4 +57,6 @@ export type SchemaContract = [
   Assert<Equals<typeof reviews.$inferSelect, Review>>,
   Assert<Equals<typeof chatMessages.$inferSelect, ChatMessageRow>>,
   Assert<Equals<typeof platformSettings.$inferSelect, PlatformSettings>>,
+  Assert<Equals<typeof auditLogs.$inferSelect, AuditLog>>,
+  Assert<Equals<typeof vendorBankAccounts.$inferSelect, VendorBankAccount>>,
 ];

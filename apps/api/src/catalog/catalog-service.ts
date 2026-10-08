@@ -1,4 +1,4 @@
-import { products, vendors, type Database } from '@hamro-pasal/db';
+import { platformSettings, products, vendors, type Database, type Executor } from '@hamro-pasal/db';
 import {
   DELIVERY_RADIUS_GPS_DRIFT_MULTIPLIER,
   GEO_SRID,
@@ -6,7 +6,7 @@ import {
   type VendorFeedQuery,
   type VendorFulfillmentMode,
 } from '@hamro-pasal/shared-types';
-import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql, type SQL } from 'drizzle-orm';
 
 /**
  * Upper bound per feed section. A NATION_WIDE catalogue can grow without limit, and the mobile
@@ -34,11 +34,15 @@ export interface CatalogVendor {
   /** Geodesic distance from the customer (WGS 84 spheroid), in metres. */
   readonly distanceM: number;
   readonly serviceable: boolean;
+  /** The shop's delivery mode is one the Super Admin has switched on (else it is forced Offline). */
+  readonly deliveryAvailable: boolean;
 }
 
 export interface VendorFeed {
   readonly serviceable: readonly CatalogVendor[];
   readonly unserviceable: readonly CatalogVendor[];
+  /** False during the global Emergency Stop: both delivery modes are switched off. */
+  readonly deliveryAvailable: boolean;
 }
 
 export interface MenuProduct {
@@ -68,8 +72,11 @@ export class CatalogService {
 
   /** GET /api/vendors: every LIVE vendor, split into serviceable / unserviceable, nearest first. */
   async listFeed(customer: VendorFeedQuery): Promise<VendorFeed> {
+    const modes = await enabledModes(this.db);
+    // The Emergency Stop: with both delivery modes off there is no shop to list.
+    if (modes.length === 0) return { serviceable: [], unserviceable: [], deliveryAvailable: false };
     const rows = await this.db
-      .select(this.vendorColumns(customer))
+      .select(this.vendorColumns(customer, modes))
       .from(vendors)
       .where(eq(vendors.status, 'LIVE'))
       .orderBy(sql`distance_m`, asc(vendors.id));
@@ -78,13 +85,14 @@ export class CatalogService {
     return {
       serviceable: all.filter((v) => v.serviceable).slice(0, FEED_SECTION_LIMIT),
       unserviceable: all.filter((v) => !v.serviceable).slice(0, FEED_SECTION_LIMIT),
+      deliveryAvailable: true,
     };
   }
 
   /** GET /api/vendors/:id/products: a LIVE vendor's active catalogue with real product ids. */
   async getMenu(vendorId: string, customer: VendorFeedQuery): Promise<VendorMenu> {
     const [row] = await this.db
-      .select(this.vendorColumns(customer))
+      .select(this.vendorColumns(customer, await enabledModes(this.db)))
       .from(vendors)
       .where(and(eq(vendors.id, vendorId), eq(vendors.status, 'LIVE')));
     if (row === undefined) {
@@ -115,8 +123,7 @@ export class CatalogService {
     };
   }
 
-  private vendorColumns(customer: VendorFeedQuery) {
-    const point = sql`ST_SetSRID(ST_MakePoint(${customer.lng}::float8, ${customer.lat}::float8), ${sql.raw(String(GEO_SRID))})::geography`;
+  private vendorColumns(customer: VendorFeedQuery, modes: readonly VendorFulfillmentMode[]) {
     return {
       id: vendors.id,
       business_name: vendors.business_name,
@@ -127,29 +134,74 @@ export class CatalogService {
       base_delivery_fee_npr: vendors.base_delivery_fee_npr,
       fulfillment_mode: vendors.fulfillment_mode,
       location: vendors.location,
-      distance_m: sql<number>`ST_Distance(${vendors.location}::geography, ${point})`
-        .mapWith(Number)
-        .as('distance_m'),
-      serviceable: sql<boolean>`CASE ${vendors.delivery_scope}
-          WHEN 'NATION_WIDE' THEN true
-          WHEN 'CITY_WIDE' THEN ${cityMatch(customer.municipality_palika_string)}
-          ELSE ST_DWithin(
-            ${vendors.location}::geography,
-            ${point},
-            ${vendors.radius_km} * 1000 * ${sql.raw(String(DELIVERY_RADIUS_GPS_DRIFT_MULTIPLIER))}
-          )
-        END`
-        .mapWith(Boolean)
-        .as('serviceable'),
+      distance_m:
+        sql<number>`ST_Distance(${vendors.location}::geography, ${customerPoint(customer)})`
+          .mapWith(Number)
+          .as('distance_m'),
+      serviceable: deliversTo(customer, modes).mapWith(Boolean).as('serviceable'),
+      delivery_available: modeEnabled(modes).mapWith(Boolean).as('delivery_available'),
     };
   }
 }
 
-/** CITY_WIDE: exact Palika match, as stored on both sides. No Palika given: never serviceable. */
-function cityMatch(palika: string | undefined): SQL {
-  return palika === undefined
-    ? sql`false`
-    : sql`${vendors.municipality_palika_string} = ${palika}::text`;
+export interface DeliveryPoint {
+  readonly lat: number;
+  readonly lng: number;
+  readonly municipality_palika_string?: string | undefined;
+}
+
+function customerPoint(customer: DeliveryPoint): SQL {
+  return sql`ST_SetSRID(ST_MakePoint(${customer.lng}::float8, ${customer.lat}::float8), ${sql.raw(String(GEO_SRID))})::geography`;
+}
+
+/**
+ * Whether a vendor's own delivery mode is switched on, as one SQL expression over `vendors`.
+ * Derived on every read: nothing is stored per vendor for a switched-off mode.
+ */
+export function modeEnabled(modes: readonly VendorFulfillmentMode[]): SQL<boolean> {
+  if (modes.length === 0) return sql<boolean>`false`;
+  return sql<boolean>`(${inArray(vendors.fulfillment_mode, [...modes])})`;
+}
+
+/**
+ * Whether a vendor delivers to a point (SPEC §2, Delivery Modularity), as one SQL expression over
+ * `vendors`. The feed, the menu and checkout all use it, so they cannot disagree:
+ *
+ *   the shop's delivery mode is one the Super Admin has enabled (else it is forced Offline), and
+ *   NATION_WIDE   anywhere
+ *   CITY_WIDE     the customer's Palika is one the shop lists (no Palika given: never)
+ *   RADIUS_BOUND  within radius_km x 1.1 (the GPS drift buffer), metre-accurate
+ */
+export function deliversTo(
+  customer: DeliveryPoint,
+  modes: readonly VendorFulfillmentMode[],
+): SQL<boolean> {
+  if (modes.length === 0) return sql<boolean>`false`;
+  const palika = customer.municipality_palika_string;
+  return sql<boolean>`(${inArray(vendors.fulfillment_mode, [...modes])} AND CASE ${vendors.delivery_scope}
+          WHEN 'NATION_WIDE' THEN true
+          WHEN 'CITY_WIDE' THEN ${palika === undefined ? sql`false` : sql`${palika}::text = ANY (${vendors.serviceable_palikas})`}
+          ELSE ST_DWithin(
+            ${vendors.location}::geography,
+            ${customerPoint(customer)},
+            ${vendors.radius_km} * 1000 * ${sql.raw(String(DELIVERY_RADIUS_GPS_DRIFT_MULTIPLIER))}
+          )
+        END)`;
+}
+
+/** The delivery modes the Super Admin has switched on. Empty: the global Emergency Stop. */
+export async function enabledModes(db: Executor): Promise<VendorFulfillmentMode[]> {
+  const [settings] = await db
+    .select({
+      self: platformSettings.self_delivery_enabled,
+      fleet: platformSettings.platform_fleet_enabled,
+    })
+    .from(platformSettings);
+  if (settings === undefined) throw new Error('platform_settings row is missing');
+  return [
+    ...(settings.self ? (['SELF_DELIVERY'] as const) : []),
+    ...(settings.fleet ? (['PLATFORM_FLEET'] as const) : []),
+  ];
 }
 
 function toCatalogVendor(row: {
@@ -164,6 +216,7 @@ function toCatalogVendor(row: {
   location: GeoPoint;
   distance_m: number;
   serviceable: boolean;
+  delivery_available: boolean;
 }): CatalogVendor {
   return {
     id: row.id,
@@ -177,5 +230,6 @@ function toCatalogVendor(row: {
     location: row.location,
     distanceM: row.distance_m,
     serviceable: row.serviceable,
+    deliveryAvailable: row.delivery_available,
   };
 }

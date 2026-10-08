@@ -49,6 +49,8 @@ import {
   type VendorWalletLedgerResponseBody,
 } from '@hamro-pasal/shared-types';
 
+import type { z } from 'zod';
+
 import type { CartProduct, CartVendor } from '../store/useCartStore';
 
 /*
@@ -178,7 +180,9 @@ export const NEW_ROAD_VENDOR = feedVendor({
 });
 
 /** What the server answers from Thamel: two vendors deliver, Patan (Lalitpur) is browse-only. */
-export function feedResponse(overrides: Partial<FeedResponse> = {}): FeedResponse {
+export function feedResponse(
+  overrides: Partial<z.input<typeof feedResponseSchema>> = {},
+): FeedResponse {
   return feedResponseSchema.parse({
     serviceable: [
       { vendor: feedVendor(), distance_km: 0, serviceable: true },

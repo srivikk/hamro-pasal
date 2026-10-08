@@ -36,6 +36,15 @@ export const midnightTasks = [
    * (posting it if it is missing) and stamp `orders.reconciled_at`.
    */
   'ORDER_RECONCILIATION',
+  /**
+   * SPEC core 10 (Phase 25): move every LIVE vendor without a PAN to SUSPENDED_COMPLIANCE.
+   */
+  'VENDOR_COMPLIANCE_SWEEP',
+  /**
+   * SPEC core 4 (Phase 25): start the Billing Cycle of newly LIVE vendors, apply the queued
+   * changes of every cycle that has ended, and open the next BS month.
+   */
+  'BILLING_CYCLE_RENEWAL',
 ] as const;
 export const midnightTaskSchema = z.enum(midnightTasks);
 export type MidnightTask = z.infer<typeof midnightTaskSchema>;

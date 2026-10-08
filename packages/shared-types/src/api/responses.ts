@@ -153,6 +153,11 @@ export const feedEntrySchema = z.strictObject({
   /** Geodesic (WGS 84 spheroid) distance from the customer's position. */
   distance_km: z.number().nonnegative(),
   serviceable: z.boolean(),
+  /**
+   * False while the Super Admin has this shop's delivery mode switched off: the shop is forced
+   * Offline (closed, carts disabled) whatever the customer's location. Derived on every read.
+   */
+  delivery_available: z.boolean().default(true),
 });
 export type FeedEntry = z.infer<typeof feedEntrySchema>;
 
@@ -165,6 +170,11 @@ export const feedResponseSchema = z.strictObject({
    * shows them desaturated under "Explore Further" with carts disabled.
    */
   explore_further: z.array(feedEntrySchema),
+  /**
+   * False during the global Emergency Stop (both delivery modes switched off): no shop can take
+   * an order and the app shows "Delivery Unavailable". Both sections are then empty.
+   */
+  delivery_available: z.boolean().default(true),
 });
 export type FeedResponse = z.infer<typeof feedResponseSchema>;
 
@@ -187,6 +197,11 @@ export const vendorMenuSchema = z.strictObject({
   vendor: feedVendorSchema,
   /** Whether the vendor delivers to the customer. False: browsing only, carts disabled. */
   serviceable: z.boolean(),
+  /**
+   * False while this shop's delivery mode is switched off by the Super Admin (always, during
+   * the Emergency Stop). The menu can be browsed; nothing can be ordered.
+   */
+  delivery_available: z.boolean().default(true),
   products: z.array(menuProductSchema),
 });
 export type VendorMenu = z.infer<typeof vendorMenuSchema>;
@@ -575,3 +590,40 @@ export const walletTopUpResponseSchema = z.strictObject({
   replayed: z.boolean(),
 });
 export type WalletTopUpResponseBody = z.infer<typeof walletTopUpResponseSchema>;
+
+const quoteDiscountSchema = z.strictObject({
+  id: z.uuid(),
+  label: z.string().min(1),
+  discount_npr: z.number().positive(),
+});
+
+/**
+ * POST /api/cart/quote (SPEC core 9): the cart as checkout will price it, and the payment methods
+ * checkout will accept. `total = subtotal - vendor_offer - platform_promo + delivery_fee`.
+ */
+export const cartQuoteResponseSchema = z.strictObject({
+  subtotal_npr: z.number().min(0),
+  /** Null until vendor offers and platform campaigns exist (no discount is applied today). */
+  vendor_offer: quoteDiscountSchema.nullable(),
+  platform_promo: quoteDiscountSchema.nullable(),
+  delivery_fee_npr: z.number().min(0),
+  /** Shop to delivery pin, great-circle, rounded to the metre. */
+  distance_km: z.number().min(0),
+  total_npr: z.number().min(0),
+  /**
+   * False when the order cannot be placed because delivery is switched off: the Emergency Stop,
+   * or this shop's own delivery mode. The cart is still priced; every payment option is then
+   * unavailable and checkout answers 422.
+   */
+  delivery_available: z.boolean().default(true),
+  payment_options: z.array(
+    z.strictObject({
+      method: paymentMethodSchema,
+      available: z.boolean(),
+      reason: z
+        .enum(['NOT_ACCEPTED_BY_SHOP', 'COD_NOT_AVAILABLE', 'DELIVERY_UNAVAILABLE'])
+        .optional(),
+    }),
+  ),
+});
+export type CartQuoteResponseBody = z.infer<typeof cartQuoteResponseSchema>;

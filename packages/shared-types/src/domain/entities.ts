@@ -18,6 +18,7 @@ import {
   paymentMethodSchema,
   paymentStatusSchema,
   pricingModelSchema,
+  settlementModelSchema,
   reviewDirectionSchema,
   userRoleSchema,
   vendorFulfillmentModeSchema,
@@ -115,10 +116,65 @@ export const vendorSchema = z.strictObject({
    * returns the vendor to. Never set together with `status_before_debt_suspension`.
    */
   status_before_admin_suspension: vendorStatusSchema.exclude(['SUSPENDED']).nullable(),
+  /**
+   * Phase 25: the status a saved PAN returns the shop to. Set while SUSPENDED_COMPLIANCE (and kept
+   * if a debt or admin suspension is laid on top of it).
+   */
+  status_before_compliance_suspension: vendorStatusSchema
+    .exclude(['SUSPENDED', 'SUSPENDED_COMPLIANCE'])
+    .nullable(),
+  /** The seller's name and address as printed on its invoices; the business name until given. */
+  legal_name: nonEmptyTextSchema.nullable(),
+  registered_address: nonEmptyTextSchema.nullable(),
+  /** The 9-digit PAN (a VAT-registered seller's VAT number is its PAN). */
+  tax_id: z
+    .string()
+    .regex(/^[0-9]{9}$/)
+    .nullable(),
+  is_vat_registered: z.boolean(),
+  /** A Super Admin's check of the PAN document. Null freezes payouts, never trading. */
+  pan_verified_at: z.date().nullable(),
+  pan_verified_by_user_id: z.uuid().nullable(),
+  /** The municipalities a CITY_WIDE shop serves; always contains its own Palika. */
+  serviceable_palikas: z.array(nonEmptyTextSchema).min(1),
+  /** SELF_DELIVERY only: per kilometre (RADIUS_BOUND), and the subtotal that makes delivery free. */
+  delivery_fee_per_km_npr: nonNegativeNprSchema,
+  free_delivery_above_npr: nprAmountSchema.positive().nullable(),
+  /** Phase 25, Billing Cycle Lock: the active plan and methods are constant for a whole cycle. */
+  pricing_plan_id: z.uuid().nullable(),
+  accepted_payment_methods: z.array(paymentMethodSchema).min(1),
+  /** How the shop's money is settled (SPEC core 5). PLATFORM_ESCROW (Model B) by default. */
+  settlement_model: settlementModelSchema,
+  /** Null until LIVE. The cycle ends at the first instant of the next BS month (Nepal Time). */
+  billing_cycle_started_at: z.date().nullable(),
+  billing_cycle_ends_at: z.date().nullable(),
   created_at: z.date(),
   updated_at: z.date(),
 });
 export type Vendor = z.infer<typeof vendorSchema>;
+
+/**
+ * Phase 25: where a vendor's payouts are sent. One account per vendor is the primary one. The
+ * account number is stored as given; it is masked in every audit entry.
+ */
+export const vendorBankAccountSchema = z.strictObject({
+  id: z.uuid(),
+  vendor_id: z.uuid(),
+  bank_name: nonEmptyTextSchema,
+  branch_name: nonEmptyTextSchema,
+  /** The account holder's name, as the bank has it. */
+  account_name: nonEmptyTextSchema,
+  account_number: z.string().regex(/^[A-Za-z0-9]{4,34}$/),
+  /** The bank's routing (NCHL) or SWIFT code, when the transfer needs one. */
+  routing_or_swift_code: z
+    .string()
+    .regex(/^[A-Za-z0-9]{4,20}$/)
+    .nullable(),
+  is_primary: z.boolean(),
+  created_at: z.date(),
+  updated_at: z.date(),
+});
+export type VendorBankAccount = z.infer<typeof vendorBankAccountSchema>;
 
 /**
  * Phase 17: one node of the Super Admin's Master Category Taxonomy (SPEC Super Admin flow 2).
@@ -331,6 +387,11 @@ export const platformSettingsSchema = z.strictObject({
   id: z.literal(true),
   /** Suspension triggers when a wallet drops strictly below this. Range: [-2000, 0]. */
   vendor_wallet_suspension_limit_npr: nprAmountSchema.min(VENDOR_WALLET_HARD_FLOOR_NPR).max(0),
+  /** Phase 25: the delivery modes vendors may use. Both false is the global Emergency Stop. */
+  self_delivery_enabled: z.boolean(),
+  platform_fleet_enabled: z.boolean(),
+  /** What a customer pays for a platform fleet delivery. */
+  platform_delivery_fee_npr: nonNegativeNprSchema,
   updated_at: z.date(),
 });
 export type PlatformSettings = z.infer<typeof platformSettingsSchema>;

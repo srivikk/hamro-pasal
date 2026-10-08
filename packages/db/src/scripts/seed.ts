@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { createDatabase, type Database } from '../client';
 import { categories, customerAddresses, products, users, vendors } from '../schema';
@@ -105,6 +105,7 @@ async function main(): Promise<void> {
       await seedThamelCatalogue(db);
       await seedTaxonomy(db);
       await seedShowcase(db);
+      await seedTaxIdentities(db);
       console.info(
         `[db] ${describeDatabaseUrl(url)} already seeded; taxonomy, the Thamel catalogue and the showcase shops ensured, nothing else to do`,
       );
@@ -236,6 +237,7 @@ async function main(): Promise<void> {
     await seedThamelCatalogue(db);
     await seedTaxonomy(db);
     await seedShowcase(db);
+    await seedTaxIdentities(db);
     console.info(`[db] seeded development fixtures into ${describeDatabaseUrl(url)}`);
   } finally {
     await db.$client.end();
@@ -246,3 +248,22 @@ main().catch((error: unknown) => {
   console.error(error);
   process.exit(1);
 });
+
+/**
+ * Phase 25: every seeded LIVE shop gets a dummy PAN, verified by the seeded Super Admin, so the
+ * nightly VENDOR_COMPLIANCE_SWEEP leaves it LIVE and it can receive payouts. Idempotent: only a
+ * LIVE vendor without a PAN is touched (so a PAN typed in the app is never overwritten), and it
+ * runs on an already seeded database too. The PAN is "9" + the last eight digits of the shop's
+ * phone: nine digits, unique per seeded shop, and obviously not a real number.
+ */
+async function seedTaxIdentities(db: Database): Promise<void> {
+  await db.execute(sql`
+    UPDATE vendors
+       SET tax_id = '9' || right(vendors.phone, 8),
+           pan_verified_at = now(),
+           pan_verified_by_user_id = admin.id
+      FROM users AS admin
+     WHERE admin.phone = '+9779800000099'
+       AND vendors.status = 'LIVE'
+       AND vendors.tax_id IS NULL`);
+}

@@ -37,6 +37,7 @@ export function filterFeedByVendors(
   if (vendorIds === null) return feed;
   const keep = new Set(vendorIds);
   return {
+    ...feed,
     serviceable: feed.serviceable.filter((entry) => keep.has(entry.vendor.id)),
     explore_further: feed.explore_further.filter((entry) => keep.has(entry.vendor.id)),
   };

@@ -88,6 +88,7 @@ export function feedEntryView(vendor: CatalogVendor): FeedEntry {
     vendor: feedVendorView(vendor),
     distance_km: toKm(vendor.distanceM),
     serviceable: vendor.serviceable,
+    delivery_available: vendor.deliveryAvailable,
   };
 }
 
@@ -95,6 +96,7 @@ export function feedView(feed: VendorFeed): FeedResponse {
   return {
     serviceable: feed.serviceable.map(feedEntryView),
     explore_further: feed.unserviceable.map(feedEntryView),
+    delivery_available: feed.deliveryAvailable,
   };
 }
 
@@ -102,6 +104,7 @@ export function menuView(menu: CatalogMenu): VendorMenu {
   return {
     vendor: feedVendorView(menu.vendor),
     serviceable: menu.vendor.serviceable,
+    delivery_available: menu.vendor.deliveryAvailable,
     products: menu.products.map((p) => ({
       id: p.id,
       name: p.name,

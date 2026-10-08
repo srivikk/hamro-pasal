@@ -1,3 +1,5 @@
+import type { BillingCycleRenewalService } from '../billing/billing-cycle-renewal';
+import type { ComplianceSweepService } from '../compliance/compliance-sweep';
 import {
   ghostCustomerTimerJobSchema,
   midnightMaintenanceJobSchema,
@@ -100,6 +102,9 @@ export function createTimerHandlers(deps: {
   readonly escalation: Pick<VendorEscalationService, 'escalateIfUnanswered'>;
   readonly debtReconciliation: Pick<VendorDebtReconciliationService, 'suspendIndebtedVendors'>;
   readonly orderReconciliation: Pick<OrderReconciliationService, 'reconcileDeliveredOrders'>;
+  /** Phase 25. Optional so a worker built without them logs the task instead of failing it. */
+  readonly complianceSweep?: Pick<ComplianceSweepService, 'suspendVendorsWithoutPan'>;
+  readonly billingRenewal?: Pick<BillingCycleRenewalService, 'renewDueCycles'>;
 }): TimerHandlers {
   return {
     ...pendingImplementationHandlers,
@@ -115,6 +120,26 @@ export function createTimerHandlers(deps: {
         }
         case 'ORDER_RECONCILIATION':
           return runOrderReconciliation(deps.orderReconciliation);
+        case 'VENDOR_COMPLIANCE_SWEEP': {
+          if (deps.complianceSweep === undefined) {
+            return pendingImplementationHandlers.runMidnightTask(task);
+          }
+          const suspended = await deps.complianceSweep.suspendVendorsWithoutPan();
+          console.info(
+            `[worker] compliance sweep: ${String(suspended.length)} vendor(s) without a PAN suspended`,
+          );
+          return;
+        }
+        case 'BILLING_CYCLE_RENEWAL': {
+          if (deps.billingRenewal === undefined) {
+            return pendingImplementationHandlers.runMidnightTask(task);
+          }
+          const summary = await deps.billingRenewal.renewDueCycles();
+          console.info(
+            `[worker] billing cycles: ${String(summary.started)} started, ${String(summary.renewed)} renewed, ${String(summary.applied)} queued change(s) applied`,
+          );
+          return;
+        }
         case 'SUBSCRIPTION_DOWNGRADE':
           return pendingImplementationHandlers.runMidnightTask(task);
       }

@@ -3,6 +3,7 @@ import {
   orderAddresses,
   orderItems,
   orders,
+  platformSettings,
   products,
   reviews,
   vendors,
@@ -10,12 +11,16 @@ import {
 } from '@hamro-pasal/db';
 import {
   COD_MIN_CUSTOMER_RATING,
+  paymentMethods,
+  type CartQuoteRequest,
   type CheckoutRequest,
+  type PaymentMethod,
   type DomainEvent,
   type Order,
 } from '@hamro-pasal/shared-types';
 import { and, avg, count, eq, gte, inArray, sql } from 'drizzle-orm';
 
+import { deliveryFeePaisa, haversineKm, type DeliveryTerms } from './delivery-fee';
 import { isUniqueViolation } from '../infra/pg-errors';
 import type { RedisKeyedMutex } from '../infra/redis-mutex';
 import {
@@ -27,7 +32,8 @@ import { toNpr } from '../ledger/money';
 import { reviewIsPublic } from '../reviews/review-visibility';
 import { enqueueOrderStateChanged } from '../orders/order-events';
 import { generateDeliveryOtp, hashDeliveryOtp } from './delivery-otp';
-import { CheckoutRejectedError, priceCart } from './pricing';
+import { deliversTo, enabledModes } from '../catalog/catalog-service';
+import { CheckoutRejectedError, priceCart, type PricedCart } from './pricing';
 import type {
   InventoryLockService,
   InventoryReservation,
@@ -96,6 +102,19 @@ export interface PlacedOrder {
  *             all in one DB transaction, then the Redis lock is deleted
  *   release - customer abandons checkout: lock deleted, quantities available immediately
  */
+/** A priced cart and what the customer may pay it with (POST /api/cart/quote). */
+export interface CartQuote {
+  readonly priced: PricedCart;
+  readonly distanceKm: number;
+  /** False when delivery is switched off, for everyone or for this shop: checkout would refuse. */
+  readonly deliveryAvailable: boolean;
+  readonly paymentOptions: readonly {
+    readonly method: PaymentMethod;
+    readonly available: boolean;
+    readonly reason?: 'NOT_ACCEPTED_BY_SHOP' | 'COD_NOT_AVAILABLE' | 'DELIVERY_UNAVAILABLE';
+  }[];
+}
+
 export class CheckoutService {
   constructor(
     private readonly db: Database,
@@ -126,37 +145,14 @@ export class CheckoutService {
       return this.replay(customerId, existing);
     }
 
-    const [vendor] = await this.db.select().from(vendors).where(eq(vendors.id, request.vendor_id));
-    if (vendor?.status !== 'LIVE') {
-      throw new CheckoutRejectedError('VENDOR_UNAVAILABLE', 'This vendor is not accepting orders');
-    }
-
-    const items = mergeLines(request.items);
-    const catalogue = await this.db
-      .select({
-        id: products.id,
-        name: products.name,
-        price_npr: products.price_npr,
-        stock_quantity: products.stock_quantity,
-      })
-      .from(products)
-      .where(
-        and(
-          eq(products.vendor_id, vendor.id),
-          eq(products.is_active, true),
-          inArray(
-            products.id,
-            items.map((i) => i.productId),
-          ),
-        ),
+    const { vendor, items, priced } = await this.price(request);
+    if (!vendor.accepted_payment_methods.includes(request.payment_method)) {
+      throw new CheckoutRejectedError(
+        'PAYMENT_METHOD_UNAVAILABLE',
+        'This shop does not accept that payment method',
+        { accepted: vendor.accepted_payment_methods },
       );
-    const byId = new Map(catalogue.map((p) => [p.id, p]));
-    const missing = items.filter((i) => !byId.has(i.productId)).map((i) => i.productId);
-    if (missing.length > 0) {
-      throw new ProductUnavailableError(missing);
     }
-    assertInStock(byId, items);
-    const priced = priceCart(vendor, byId, items);
 
     if (request.payment_method === 'COD') {
       await this.assertCodEligible(customerId);
@@ -265,6 +261,132 @@ export class CheckoutService {
           ? { status: 'EXPIRED' }
           : { status: 'ACTIVE', ttlMs: status.ttlMs, expiresAt: status.reservation.expiresAt },
     };
+  }
+
+  /**
+   * POST /api/cart/quote: the cart exactly as checkout will price it, and the payment methods
+   * checkout will accept. It takes no lock, creates no order and changes nothing.
+   *
+   * With delivery switched off (the Emergency Stop, or this shop's own mode) it still answers,
+   * with `deliveryAvailable: false` and no payment method available, so the app can say
+   * "Delivery Unavailable" beside the cart. Checkout refuses such an order (422).
+   */
+  async quote(customerId: string, request: CartQuoteRequest): Promise<CartQuote> {
+    const { vendor, priced, distanceKm, deliveryAvailable } = await this.price(request, true);
+    let codEligible = true;
+    try {
+      await this.assertCodEligible(customerId);
+    } catch (error) {
+      if (!(error instanceof CheckoutRejectedError)) throw error;
+      codEligible = false;
+    }
+    return {
+      priced,
+      distanceKm,
+      deliveryAvailable,
+      paymentOptions: paymentMethods.map((method) => {
+        if (!deliveryAvailable) {
+          return { method, available: false, reason: 'DELIVERY_UNAVAILABLE' as const };
+        }
+        if (!vendor.accepted_payment_methods.includes(method)) {
+          return { method, available: false, reason: 'NOT_ACCEPTED_BY_SHOP' as const };
+        }
+        if (method === 'COD' && !codEligible) {
+          return { method, available: false, reason: 'COD_NOT_AVAILABLE' as const };
+        }
+        return { method, available: true };
+      }),
+    };
+  }
+
+  /**
+   * The one pricing path (SPEC core 9, "The server prices the order"): the quote and checkout both
+   * run it, so a quoted total is the total checkout charges. In order: the shop is LIVE; delivery
+   * is available and the shop's mode enabled; the address is inside its delivery area; every item
+   * is its own, active and in stock; then database prices, the minimum order value and the
+   * delivery charge of the shop's settings.
+   */
+  private async price(request: CartQuoteRequest, tolerateDeliveryOff = false) {
+    const [vendor] = await this.db.select().from(vendors).where(eq(vendors.id, request.vendor_id));
+    if (vendor?.status !== 'LIVE') {
+      throw new CheckoutRejectedError('VENDOR_UNAVAILABLE', 'This vendor is not accepting orders');
+    }
+    const modes = await enabledModes(this.db);
+    const deliveryAvailable = modes.includes(vendor.fulfillment_mode);
+    if (!deliveryAvailable && !tolerateDeliveryOff) {
+      if (modes.length === 0) {
+        throw new CheckoutRejectedError(
+          'DELIVERY_UNAVAILABLE',
+          'Delivery is unavailable at the moment. Please try again later.',
+        );
+      }
+      throw new CheckoutRejectedError('VENDOR_UNAVAILABLE', 'This vendor is not accepting orders');
+    }
+    const address = request.delivery_address;
+    const [area] = await this.db
+      .select({
+        delivers: deliversTo(
+          {
+            lat: address.exact_lat,
+            lng: address.exact_lng,
+            municipality_palika_string: address.municipality_palika_string,
+          },
+          // A quote with delivery switched off still checks the shop's own scope, under its mode.
+          deliveryAvailable ? modes : [vendor.fulfillment_mode],
+        ),
+      })
+      .from(vendors)
+      .where(eq(vendors.id, vendor.id));
+    if (area?.delivers !== true) {
+      throw new CheckoutRejectedError(
+        'OUTSIDE_DELIVERY_AREA',
+        'This shop does not deliver to your selected address',
+      );
+    }
+
+    const items = mergeLines(request.items);
+    const catalogue = await this.db
+      .select({
+        id: products.id,
+        name: products.name,
+        price_npr: products.price_npr,
+        stock_quantity: products.stock_quantity,
+      })
+      .from(products)
+      .where(
+        and(
+          eq(products.vendor_id, vendor.id),
+          eq(products.is_active, true),
+          inArray(
+            products.id,
+            items.map((i) => i.productId),
+          ),
+        ),
+      );
+    const byId = new Map(catalogue.map((p) => [p.id, p]));
+    const missing = items.filter((i) => !byId.has(i.productId)).map((i) => i.productId);
+    if (missing.length > 0) {
+      throw new ProductUnavailableError(missing);
+    }
+    assertInStock(byId, items);
+
+    const [settings] = await this.db
+      .select({ platformFeeNpr: platformSettings.platform_delivery_fee_npr })
+      .from(platformSettings);
+    if (settings === undefined) throw new Error('platform_settings row is missing');
+    const distanceKm = haversineKm(vendor.location, { x: address.exact_lng, y: address.exact_lat });
+    const terms: DeliveryTerms = {
+      fulfillmentMode: vendor.fulfillment_mode,
+      deliveryScope: vendor.delivery_scope,
+      baseFeeNpr: vendor.base_delivery_fee_npr,
+      perKmFeeNpr: vendor.delivery_fee_per_km_npr,
+      freeAboveNpr: vendor.free_delivery_above_npr,
+      platformFeeNpr: settings.platformFeeNpr,
+    };
+    const priced = priceCart(vendor, byId, items, (subtotalPaisa) =>
+      deliveryFeePaisa(terms, subtotalPaisa, distanceKm),
+    );
+    return { vendor, items, priced, distanceKm, deliveryAvailable };
   }
 
   private async findByIdempotencyKey(key: string): Promise<Order | undefined> {

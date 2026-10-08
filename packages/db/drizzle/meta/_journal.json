@@ -148,6 +148,48 @@
       "when": 1791047530270,
       "tag": "0020_audit_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791396410613,
+      "tag": "0021_audit_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791397750105,
+      "tag": "0022_vendor_compliance_delivery_banking",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791425227445,
+      "tag": "0023_billing_cycle_queue",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791429347202,
+      "tag": "0024_campaigns_and_ads",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791437872570,
+      "tag": "0025_settlement_model_and_promotions",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791453810061,
+      "tag": "0026_vendor_requests_and_ads",
+      "breakpoints": true
     }
   ]
 }

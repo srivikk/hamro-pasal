@@ -269,7 +269,9 @@ describe('vendors API', () => {
           vendor_id: vendorId,
           payment_method: 'COD',
           items: [{ product_id: product?.id, quantity: 2 }],
-          delivery_address: DELIVERY_ADDRESS,
+          // Phase 25: checkout refuses an address outside the shop's delivery area, so the order
+          // is delivered to the customer's own position (1.5 km from this 5 km shop).
+          delivery_address: { ...DELIVERY_ADDRESS, exact_lat: CUSTOMER.y, exact_lng: CUSTOMER.x },
         });
 
       expect(res.status).toBe(201);

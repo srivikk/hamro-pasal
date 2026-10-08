@@ -1,3 +1,5 @@
+import { BillingCycleRenewalService } from './billing/billing-cycle-renewal';
+import { ComplianceSweepService } from './compliance/compliance-sweep';
 import { createDatabase } from '@hamro-pasal/db';
 import { ivrGatewayFromEnv } from '@hamro-pasal/ivr';
 import { createIdempotentProducer, createKafka, DomainEventPublisher } from '@hamro-pasal/kafka';
@@ -54,6 +56,8 @@ async function main(): Promise<void> {
     createTimerHandlers({
       escalation: new VendorEscalationService(db),
       debtReconciliation: new VendorDebtReconciliationService(db),
+      complianceSweep: new ComplianceSweepService(db),
+      billingRenewal: new BillingCycleRenewalService(db),
       // Phase 22: verifies (and, if missing, posts) the settlement of every DELIVERED order.
       orderReconciliation: new OrderReconciliationService(
         db,

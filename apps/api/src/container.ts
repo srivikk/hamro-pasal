@@ -10,8 +10,12 @@ import {
 import { smsGatewayFromEnv, type SmsGateway } from '@hamro-pasal/sms';
 import { Redis } from 'ioredis';
 
+import { AdminComplianceService } from './admin/admin-compliance-service';
 import { AdminVendorService } from './admin/admin-vendor-service';
+import { AuditLogService } from './admin/audit-log-service';
 import { DeadLetterService } from './admin/dead-letter-service';
+import { LogisticsSettingsService } from './admin/logistics-settings-service';
+import { PricingPlanService } from './admin/pricing-plan-service';
 import type { ApiServices } from './app';
 import { OtpAuthService } from './auth/otp-auth-service';
 import { OtpStore, type OtpStoreOptions } from './auth/otp-store';
@@ -21,7 +25,12 @@ import { ProductService } from './catalog/product-service';
 import { CheckoutService } from './checkout/checkout-service';
 import { DisputeService } from './disputes/dispute-service';
 import { AdminPayoutService } from './finance/admin-payout-service';
+import { AdminSettlementService } from './finance/admin-settlement-service';
 import { VendorFinanceService } from './finance/vendor-finance-service';
+import { VendorBankAccountService } from './vendor/vendor-bank-account-service';
+import { VendorBillingService } from './vendor/vendor-billing-service';
+import { VendorComplianceService } from './vendor/vendor-compliance-service';
+import { VendorDeliverySettingsService } from './vendor/vendor-delivery-settings-service';
 import { RedisKeyedMutex } from './infra/redis-mutex';
 import { RedisConnectionPool } from './infra/redis-pool';
 import {
@@ -31,6 +40,10 @@ import {
 import { DrizzleStockReader } from './inventory/stock-reader';
 import { LedgerService } from './ledger/ledger-service';
 import { SettlementService } from './ledger/settlement-service';
+import { AdProductService } from './marketing/ad-product-service';
+import { CampaignService } from './marketing/campaign-service';
+import { SettlementModelRequestService } from './settlement/settlement-model-request-service';
+import { PromotionService } from './marketing/promotion-service';
 import { DeviceTokenService } from './notifications/device-token-service';
 import { VendorTopUpService } from './wallet/vendor-top-up-service';
 import { VendorWalletService } from './wallet/vendor-wallet-service';
@@ -180,6 +193,19 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     deviceTokens: new DeviceTokenService(infra.db),
     vendorFinance: new VendorFinanceService(infra.db, ledger),
     adminPayouts: new AdminPayoutService(infra.db, ledger),
+    vendorBilling: new VendorBillingService(infra.db),
+    vendorCompliance: new VendorComplianceService(infra.db),
+    vendorDeliverySettings: new VendorDeliverySettingsService(infra.db),
+    adminAuditLogs: new AuditLogService(infra.db),
+    adminLogistics: new LogisticsSettingsService(infra.db),
+    adminCompliance: new AdminComplianceService(infra.db),
+    adminSettlements: new AdminSettlementService(infra.db, ledger),
+    adminPricingPlans: new PricingPlanService(infra.db),
+    campaigns: new CampaignService(infra.db),
+    settlementModelRequests: new SettlementModelRequestService(infra.db),
+    adProducts: new AdProductService(infra.db),
+    promotions: new PromotionService(infra.db),
+    vendorBankAccounts: new VendorBankAccountService(infra.db),
     async close() {
       await infra.redisPool.close();
       await infra.db.$client.end();

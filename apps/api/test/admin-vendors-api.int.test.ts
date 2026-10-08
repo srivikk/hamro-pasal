@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { outboxEvents, vendors, type Database } from '@hamro-pasal/db';
+import { auditLogs, outboxEvents, vendors, type Database } from '@hamro-pasal/db';
 import {
   adminVendorListResponseSchema,
   adminVendorOverrideResponseSchema,
@@ -9,7 +9,7 @@ import {
   type AdminVendorView,
   type VendorStatus,
 } from '@hamro-pasal/shared-types';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import request from 'supertest';
 
 import { WalletService } from '../src/wallet/wallet-service';
@@ -55,6 +55,14 @@ describe('Admin vendor management API', () => {
   afterAll(async () => {
     await testApp.container.close();
   });
+
+  /** The shop's audit trail, oldest first. */
+  const auditEntries = (vendorId: string) =>
+    db
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.entity_id, vendorId))
+      .orderBy(asc(auditLogs.occurred_at));
 
   async function vendorRow(vendorId: string) {
     const [row] = await db.select().from(vendors).where(eq(vendors.id, vendorId));
@@ -181,7 +189,7 @@ describe('Admin vendor management API', () => {
   });
 
   describe('POST /api/admin/vendors/:id/suspend', () => {
-    it('suspends a LIVE vendor, remembers LIVE, writes the audit event and log line', async () => {
+    it('suspends a LIVE vendor, remembers LIVE, writes the outbox event and the audit entry', async () => {
       const vendorId = await createVendor(db);
 
       const res = await suspend(vendorId);
@@ -209,15 +217,40 @@ describe('Admin vendor management API', () => {
           admin_user_id: adminId,
         }),
       ]);
-      const audit = auditLines.map((line) => JSON.parse(line) as Record<string, unknown>);
-      expect(audit).toEqual([
-        expect.objectContaining({
-          audit: 'vendor.status_overridden',
-          vendor_id: vendorId,
-          action: 'SUSPEND',
-          admin_user_id: adminId,
-        }),
+      // Phase 25: the override is in audit_logs, written in its own transaction, not on the console.
+      const entries = await auditEntries(vendorId);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        action: 'VENDOR_SUSPENDED_BY_ADMIN',
+        actor_user_id: adminId,
+        actor_role: 'SUPER_ADMIN',
+        system_actor: null,
+        entity_type: 'vendor',
+        vendor_id: vendorId,
+        before_state: { status: 'LIVE' },
+        after_state: { status: 'SUSPENDED', wallet_balance_npr: 0 },
+      });
+      expect(entries[0]?.request_id).toBe(res.headers['x-request-id']);
+      expect(auditLines).toEqual([]);
+    });
+
+    it('audits a restore after the suspension, and nothing for a refused override', async () => {
+      const vendorId = await createVendor(db);
+      expect((await suspend(vendorId)).status).toBe(200);
+      expect((await suspend(vendorId)).status).toBe(409);
+      expect((await restore(vendorId)).status).toBe(200);
+      expect((await restore(vendorId)).status).toBe(409);
+
+      const entries = await auditEntries(vendorId);
+      expect(entries.map((entry) => entry.action)).toEqual([
+        'VENDOR_SUSPENDED_BY_ADMIN',
+        'VENDOR_RESTORED_BY_ADMIN',
       ]);
+      expect(entries[1]).toMatchObject({
+        actor_user_id: adminId,
+        before_state: { status: 'SUSPENDED' },
+        after_state: { status: 'LIVE' },
+      });
     });
 
     it('refuses a vendor that is already suspended, for debt or by an admin', async () => {

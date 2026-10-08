@@ -1,6 +1,8 @@
 import {
+  cartQuoteRequestSchema,
   checkoutRequestSchema,
   lockStatusQuerySchema,
+  type CartQuoteResponseBody,
   type CheckoutResponseBody,
   type LockStatusResponseBody,
 } from '@hamro-pasal/shared-types';
@@ -8,12 +10,30 @@ import { Router } from 'express';
 
 import type { CheckoutService } from '../checkout/checkout-service';
 import { authOf } from '../http/auth';
+import { toNpr } from '../ledger/money';
 import { parseInput } from '../http/validate';
 import { lockView, orderView } from './views';
 
 /** Mounted at /api/cart behind requireAuth(CUSTOMER). */
 export function cartRouter(checkout: CheckoutService): Router {
   const router = Router();
+
+  /** SPEC core 9: the cart as checkout will price it. No lock, no order. */
+  router.post('/quote', async (req, res) => {
+    const request = parseInput(cartQuoteRequestSchema, req.body);
+    const quote = await checkout.quote(authOf(req).userId, request);
+    const body: CartQuoteResponseBody = {
+      subtotal_npr: toNpr(quote.priced.subtotalPaisa),
+      vendor_offer: null,
+      platform_promo: null,
+      delivery_fee_npr: toNpr(quote.priced.deliveryFeePaisa),
+      distance_km: Math.round(quote.distanceKm * 1000) / 1000,
+      total_npr: toNpr(quote.priced.totalPaisa),
+      delivery_available: quote.deliveryAvailable,
+      payment_options: [...quote.paymentOptions],
+    };
+    res.json(body);
+  });
 
   /** SPEC §3 / journey 6: lock the cart for 600 s and create the order. */
   router.post('/checkout', async (req, res) => {

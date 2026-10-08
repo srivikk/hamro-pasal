@@ -61,6 +61,24 @@ export function parseKafkaEnv(source: Readonly<Record<string, string | undefined
   return result.data;
 }
 
+/** An exact browser origin: scheme, host and optional port, nothing after it. */
+export const corsOriginSchema = z.string().refine(
+  (value) => {
+    try {
+      const url = new URL(value);
+      // The URL parser accepts a literal * as a host name: an allowlist entry is never a pattern.
+      return (
+        !value.includes('*') &&
+        (url.protocol === 'https:' || url.protocol === 'http:') &&
+        url.origin === value
+      );
+    } catch {
+      return false;
+    }
+  },
+  { message: 'Must be an origin such as https://admin.hamropasal.np (no path, no wildcard)' },
+);
+
 /**
  * Runtime configuration shared by `apps/api` and `apps/worker`.
  * Every variable here is declared in the root `.env.example`.
@@ -128,6 +146,20 @@ export const serverEnvSchema = z
     // Vendor wallet top-ups (Phase 12.5).
     WALLET_TOP_UP_MODE: z.enum(walletTopUpModes).default('DISABLED'),
 
+    // Browser origins other than the API's own that may call it (comma-separated, exact
+    // origins, never a wildcard). Empty by default: the admin dashboard is served from the
+    // API's origin and the mobile apps are not browsers, so nothing needs CORS.
+    CORS_ALLOWED_ORIGINS: z
+      .string()
+      .default('')
+      .transform((list) =>
+        list
+          .split(',')
+          .map((origin) => origin.trim())
+          .filter((origin) => origin !== ''),
+      )
+      .pipe(z.array(corsOriginSchema)),
+
     // Local end-to-end runs: one switch that keeps every third-party call on this machine. SMS and
     // IVR become their MOCK adapters, the worker logs "[MOCK PUSH] …" instead of calling Expo, and
     // the API serves POST /api/test/mock-payment. Refused in production.
@@ -175,6 +207,16 @@ export const serverEnvSchema = z
       });
     }
 
+    if (
+      env.NODE_ENV === 'production' &&
+      env.CORS_ALLOWED_ORIGINS.some((origin) => !origin.startsWith('https://'))
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['CORS_ALLOWED_ORIGINS'],
+        message: 'Only https origins may call the API in production',
+      });
+    }
     if (env.WALLET_TOP_UP_MODE === 'MOCK' && env.NODE_ENV === 'production') {
       ctx.addIssue({
         code: 'custom',

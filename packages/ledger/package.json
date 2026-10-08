@@ -25,7 +25,8 @@
   "dependencies": {
     "@hamro-pasal/db": "workspace:*",
     "@hamro-pasal/shared-types": "workspace:*",
-    "drizzle-orm": "^0.45.3"
+    "drizzle-orm": "^0.45.3",
+    "nepali-date-converter": "^3.4.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

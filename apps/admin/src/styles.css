@@ -201,6 +201,7 @@ h2 {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   flex: 1;
 }
@@ -709,4 +710,286 @@ select.search {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg);
+}
+
+/* Compliance and Campaigns */
+.notice {
+  background: var(--queued-bg);
+  color: var(--queued-text);
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  margin: 0 0 16px;
+}
+
+.pan-suspended,
+.pan-missing,
+.campaign-ended {
+  background: var(--pending-bg);
+  color: var(--pending-text);
+}
+
+.pan-unverified,
+.campaign-scheduled {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.pan-verified,
+.campaign-open {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.facts > div {
+  min-width: 0;
+}
+
+.modal input[type='radio'] {
+  width: auto;
+  padding: 0;
+  border: none;
+}
+
+.choice {
+  border: none;
+  padding: 0;
+  margin: 6px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+}
+
+.choice legend {
+  font-size: 0.85rem;
+  color: var(--muted);
+  padding: 0;
+}
+
+.modal .choice label.check {
+  margin-top: 4px;
+}
+
+.guardrail {
+  border-left: 3px solid var(--accent);
+  background: var(--surface-2);
+  padding: 8px 10px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin: 12px 0 0;
+  font-size: 0.9rem;
+}
+
+.modal .warning {
+  margin: 12px 0 0;
+}
+
+/* Pricing plans and Settlement approvals */
+.plan-offered,
+.plan-default {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.plan-default {
+  background: var(--queued-bg);
+  color: var(--queued-text);
+}
+
+.plan-withdrawn {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.modal input:disabled,
+.modal select:disabled {
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.tooltip-anchor {
+  display: inline-block;
+}
+
+.tooltip-anchor[title] {
+  cursor: not-allowed;
+}
+
+/* The wrapper shows the tooltip: let the pointer reach it through the disabled button. */
+.tooltip-anchor[title] .button:disabled {
+  pointer-events: none;
+}
+
+.subhead {
+  font-size: 1rem;
+  margin: 24px 0 8px;
+}
+
+/* Logistics panel and Vendor requests */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 16px 16px;
+  max-width: 640px;
+}
+
+.setting {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  margin: 0;
+  padding: 14px 0;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.setting legend,
+.setting > label {
+  font-weight: 600;
+  padding: 0;
+}
+
+.setting label.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400;
+  margin-top: 6px;
+}
+
+.setting-help {
+  margin: 0;
+  max-width: 60ch;
+}
+
+.setting .stock-input {
+  width: 14ch;
+}
+
+.panel .warning {
+  margin: 14px 0 0;
+}
+
+.panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.decision {
+  display: grid;
+  gap: 6px;
+  max-width: 320px;
+}
+
+.decision .search {
+  margin-bottom: 0;
+}
+
+.request-approved {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.request-rejected {
+  background: var(--pending-bg);
+  color: var(--pending-text);
+}
+
+/* Promotions and the Audit log */
+.promo-ad {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.promo-live {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.promo-scheduled {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.promo-ended {
+  background: var(--pending-bg);
+  color: var(--pending-text);
+}
+
+.target-cell {
+  overflow-wrap: anywhere;
+  max-width: 28ch;
+}
+
+.filters .filter-select {
+  width: auto;
+  min-width: 200px;
+  margin-bottom: 0;
+}
+
+.modal.modal-audit {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.diff-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 4px 0 10px;
+}
+
+.modal .diff-head label.check {
+  margin-top: 0;
+}
+
+.table.diff {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.table.diff th[scope='row'] {
+  color: var(--text);
+  font-weight: 400;
+}
+
+.diff-changed .diff-before,
+.diff-removed .diff-before {
+  background: var(--pending-bg);
+  color: var(--pending-text);
+}
+
+.diff-changed .diff-after,
+.diff-added .diff-after {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.diff-unchanged {
+  color: var(--muted);
+}
+
+.raw-states {
+  margin-top: 8px;
+}
+
+.raw-states pre {
+  max-height: 260px;
+}
+
+@media (max-width: 640px) {
+  .field-pair.raw-states {
+    grid-template-columns: 1fr;
+  }
+}
+
+.emergency {
+  background: var(--pending-bg);
+  color: var(--pending-text);
+  margin: 0 0 16px;
+  max-width: 640px;
 }

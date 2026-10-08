@@ -9,7 +9,9 @@ import { attachRealtime } from './realtime/orders-namespace';
 
 const env = loadEnv();
 const container = buildContainerFromEnv(env);
-const httpServer = createServer(createApp(container));
+const httpServer = createServer(
+  createApp(container, { corsAllowedOrigins: env.CORS_ALLOWED_ORIGINS }),
+);
 
 // Socket.io /orders (real-time order state, rider telemetry) and /chat (dispute chat). The adapter needs its own
 // pub and sub connections.

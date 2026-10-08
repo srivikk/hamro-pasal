@@ -27,7 +27,9 @@ import { createdAt, geoPoint, npr, primaryId, updatedAt } from './columns';
 import {
   deliveryScopeEnum,
   fulfillmentModeEnum,
+  paymentMethodEnum,
   pricingModelEnum,
+  settlementModelEnum,
   vendorStatusEnum,
 } from './enums';
 import { users } from './users';
@@ -55,13 +57,46 @@ export const vendors = pgTable(
     // Matches customer_addresses.municipality_palika_string for CITY_WIDE delivery (SPEC §2).
     municipality_palika_string: text().notNull(),
     min_order_value: npr().notNull(),
-    base_delivery_fee_npr: npr().notNull(),
+    base_delivery_fee_npr: npr().notNull().default(0),
     location: geoPoint().notNull(),
     wallet_balance_npr: npr().notNull().default(0),
     // Phase 12.5: the status a debt suspension lifts back to (SPEC §5). Null unless SUSPENDED for debt.
     status_before_debt_suspension: vendorStatusEnum().$type<Exclude<VendorStatus, 'SUSPENDED'>>(),
     // Phase 15: the status a Super Admin Restore returns to. Null unless suspended by an admin.
     status_before_admin_suspension: vendorStatusEnum().$type<Exclude<VendorStatus, 'SUSPENDED'>>(),
+    // Phase 25: the status a saved PAN returns the shop to (SPEC core 10). Set while
+    // SUSPENDED_COMPLIANCE, and kept if a debt or admin suspension is laid on top of it.
+    status_before_compliance_suspension:
+      vendorStatusEnum().$type<Exclude<VendorStatus, 'SUSPENDED' | 'SUSPENDED_COMPLIANCE'>>(),
+    // Phase 25: the seller's tax identity, copied onto every invoice at issue.
+    legal_name: text(),
+    registered_address: text(),
+    tax_id: text(),
+    is_vat_registered: boolean().notNull().default(false),
+    // A Super Admin's check of the PAN document. Null freezes payouts, never trading; cleared
+    // in the transaction that saves a different PAN.
+    pan_verified_at: timestamp({ withTimezone: true, mode: 'date' }),
+    pan_verified_by_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
+    // Phase 25, Delivery Modularity (SPEC §2). The CITY_WIDE tier: Palika names, the shop's own
+    // always among them (the vendors_default_serviceable_palikas trigger fills an empty list).
+    serviceable_palikas: text()
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    delivery_fee_per_km_npr: npr().notNull().default(0),
+    free_delivery_above_npr: npr(),
+    // Phase 25, Billing Cycle Lock (SPEC core 4). No FK on the plan here: billing.ts imports
+    // this file. The renewal job is the only writer and takes the id from pricing_plans.
+    pricing_plan_id: uuid(),
+    accepted_payment_methods: paymentMethodEnum()
+      .array()
+      .notNull()
+      .default(sql`'{ESEWA,KHALTI,COD}'::payment_method[]`),
+    // Phase 26 (SPEC core 5): Model A COD_CREDIT, Model B PLATFORM_ESCROW, Model C DIRECT_PREPAID.
+    // Every shop is Model B until a model change is requested and approved.
+    settlement_model: settlementModelEnum().notNull().default('PLATFORM_ESCROW'),
+    billing_cycle_started_at: timestamp({ withTimezone: true, mode: 'date' }),
+    billing_cycle_ends_at: timestamp({ withTimezone: true, mode: 'date' }),
     created_at: createdAt(),
     updated_at: updatedAt(),
   },
@@ -70,6 +105,16 @@ export const vendors = pgTable(
     // Metre-accurate radius queries cast to geography; this index serves ST_DWithin on that cast.
     index('vendors_location_geography_gist').using('gist', sql`(${t.location}::geography)`),
     index('vendors_status_idx').on(t.status),
+    // The renewal job's queue.
+    index('vendors_billing_cycle_ends_at_idx')
+      .on(t.billing_cycle_ends_at)
+      .where(sql`${t.billing_cycle_ends_at} IS NOT NULL`),
+    // The CITY_WIDE serviceability test: `:palika = ANY (serviceable_palikas)`.
+    index('vendors_serviceable_palikas_idx').using('gin', t.serviceable_palikas),
+    // Serves the users FK check; only a verified vendor names an admin.
+    index('vendors_pan_verified_by_user_id_idx')
+      .on(t.pan_verified_by_user_id)
+      .where(sql`${t.pan_verified_by_user_id} IS NOT NULL`),
     check('vendors_phone_np_check', sql`${t.phone} ~ '${sql.raw(NEPAL_PHONE_PATTERN)}'`),
     check('vendors_business_name_check', sql`btrim(${t.business_name}) <> ''`),
     check(
@@ -106,6 +151,48 @@ export const vendors = pgTable(
     check(
       'vendors_admin_suspension_check',
       sql`${t.status_before_admin_suspension} IS NULL OR (${t.status} = 'SUSPENDED' AND ${t.status_before_admin_suspension} <> 'SUSPENDED' AND ${t.status_before_debt_suspension} IS NULL)`,
+    ),
+    // The status is compared as text: migration 0022 adds the enum value and PostgreSQL does not
+    // let a new enum value be used, even in a CHECK, before the transaction that added it commits.
+    check(
+      'vendors_compliance_suspension_check',
+      sql`${t.status}::text <> 'SUSPENDED_COMPLIANCE' OR ${t.status_before_compliance_suspension} IS NOT NULL`,
+    ),
+    check(
+      'vendors_compliance_restore_status_check',
+      sql`${t.status_before_compliance_suspension} IS NULL OR ${t.status_before_compliance_suspension}::text NOT IN ('SUSPENDED', 'SUSPENDED_COMPLIANCE')`,
+    ),
+    check('vendors_tax_id_check', sql`${t.tax_id} IS NULL OR ${t.tax_id} ~ '^[0-9]{9}$'`),
+    check('vendors_legal_name_check', sql`${t.legal_name} IS NULL OR btrim(${t.legal_name}) <> ''`),
+    check(
+      'vendors_registered_address_check',
+      sql`${t.registered_address} IS NULL OR btrim(${t.registered_address}) <> ''`,
+    ),
+    // Verified by someone, at some time, and only a PAN on file can be verified.
+    check(
+      'vendors_pan_verification_check',
+      sql`(${t.pan_verified_at} IS NULL) = (${t.pan_verified_by_user_id} IS NULL) AND (${t.pan_verified_at} IS NULL OR ${t.tax_id} IS NOT NULL)`,
+    ),
+    check(
+      'vendors_serviceable_palikas_size_check',
+      sql`cardinality(${t.serviceable_palikas}) BETWEEN 1 AND 30`,
+    ),
+    check(
+      'vendors_own_palika_served_check',
+      sql`${t.municipality_palika_string} = ANY (${t.serviceable_palikas})`,
+    ),
+    check(
+      'vendors_accepted_payment_methods_check',
+      sql`cardinality(${t.accepted_payment_methods}) >= 1`,
+    ),
+    check(
+      'vendors_billing_cycle_check',
+      sql`(${t.billing_cycle_started_at} IS NULL) = (${t.billing_cycle_ends_at} IS NULL) AND (${t.billing_cycle_ends_at} IS NULL OR ${t.billing_cycle_ends_at} > ${t.billing_cycle_started_at})`,
+    ),
+    check('vendors_delivery_fee_per_km_check', sql`${t.delivery_fee_per_km_npr} >= 0`),
+    check(
+      'vendors_free_delivery_above_check',
+      sql`${t.free_delivery_above_npr} IS NULL OR ${t.free_delivery_above_npr} > 0`,
     ),
     check(
       'vendors_wallet_balance_floor_check',

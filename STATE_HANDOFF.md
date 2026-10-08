@@ -1,4 +1,4 @@
-# Hamro Pasal: State Handoff (Phases 0–23 complete, feature development closed; Phase 24 local test harness)
+# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
 work without re-deriving it. It describes the tree at the end of **Phase 23 (End-to-End System Audit & Failure Mode Hardening)**, the last planned development phase, on top of Phase 22 (Financial Reconciliation & Payouts), 21 (Rider Dispatch &
@@ -1100,6 +1100,1675 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.26 Phase 27: vendor requests (settlement model changes), the ad purchases table, vendor campaign routes (2026-10-08)
+
+Backend (`packages/shared-types`, `packages/db`, `apps/api`) and the last admin tab. SPEC.md was
+not changed. **With this, no admin screen runs on sample data.** Nothing here was run in a browser
+or against a live API; the dev database needs `pnpm db:migrate` (0026).
+
+### Asked vs built (documented contracts kept)
+
+| Asked                                             | Built                                                                                                                    | Why                                                                                                                                                                |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| request column `current_model`                    | `from_model`; `current_model` is in the API view (the shop's model now)                                                  | The admin contract (BACKEND_CHECKLIST step 4) has both: after an approval they differ                                                                              |
+| request column `reason`                           | `rejection_reason`                                                                                                       | The same contract; only a rejection has one (CHECK)                                                                                                                |
+| (not asked) who asked, and when                   | `requested_by_user_id`, `requested_at`; a trigger refuses any requester but the shop's                                   | SPEC core 5: the vendor requests; an admin decides and cannot file one                                                                                             |
+| ad purchase status `ACTIVE, COMPLETED, CANCELLED` | `ACTIVE, PAUSED, ENDED, CANCELLED`                                                                                       | §8Z.5 and SPEC edge case 8 (a per-order ad pauses when its budget is used up). COMPLETED is ENDED                                                                  |
+| ad purchase column `amount_npr_paid`              | `amount_paid_npr`                                                                                                        | Money columns end in `_npr`                                                                                                                                        |
+| ad purchase columns as listed                     | plus `billing_model`, `price_npr`, `budget_npr`, `settlement_model`, `agreed_by_user_id`, `agreed_at`, `idempotency_key` | SPEC core 8: the row is the vendor's own agreement to a price; a trigger refuses any other buyer and any later change of those terms. No `hold_transaction_id` yet |
+| "open orders" block an approval                   | PLACED, PREPARING, OUT_FOR_DELIVERY, DISPUTED, and PENDING_PAYMENT **younger than 600 s**                                | An unpaid checkout whose lock expired can never be placed and nothing moves it out of PENDING_PAYMENT (no abandon route): counting it would block a shop forever   |
+
+### Migration 0026 (`0026_vendor_requests_and_ads.sql`)
+
+- `settlement_model_request_status` enum and **`settlement_model_change_requests`**: one PENDING
+  row per vendor (partial unique index); CHECKs: a different model, a decision exactly with its
+  time and admin, a reason only on a rejection. Hand-added trigger
+  `settlement_model_change_requests_guard`.
+- `ad_purchase_status` enum and **`ad_purchases`** (columns above; unique
+  `(vendor_id, idempotency_key)`). Hand-added trigger `ad_purchases_guard`. **Schema only: no
+  route writes it.**
+- `home_promotions`: `home_promotions_ad_purchase_pending_check` dropped, foreign key
+  `ad_purchase_id → ad_purchases` (RESTRICT) with its partial index.
+- Neither table is in the Zod entity contract (like `deliveries`).
+
+### Routes
+
+```jsonc
+// POST /api/vendor/ledger/settlement-model { "model": "COD_CREDIT" }     VENDOR, own shop → 201 { request }
+//   409 SETTLEMENT_MODEL_REQUEST_PENDING (details.request_id) · 422 SETTLEMENT_MODEL_UNAVAILABLE (Model C)
+//   422 SETTLEMENT_MODEL_UNCHANGED · 404 VENDOR_NOT_FOUND · 400 VALIDATION_FAILED
+// GET  /api/admin/settlement-model-requests?status=                      SUPER_ADMIN → { requests }
+// POST /api/admin/settlement-model-requests/:id/approve   (no body)      → 200 { request }, also on repeat
+// POST /api/admin/settlement-model-requests/:id/reject { reason? }       → 200 { request }, also on repeat
+//   409 SETTLEMENT_CHANGE_BLOCKED (details.blockers) · 422 SETTLEMENT_MODEL_UNAVAILABLE
+//   409 REQUEST_ALREADY_DECIDED (details.status) · 404 SETTLEMENT_MODEL_REQUEST_NOT_FOUND
+// GET  /api/vendor/campaigns                                             VENDOR → { campaigns }
+// POST /api/vendor/campaigns/:id/opt-out                                 → 200 { opt_in }, also on repeat
+//   409 CAMPAIGN_NOT_OPTED_IN · 404 CAMPAIGN_NOT_FOUND
+```
+
+- **Approve** (`settlement/settlement-model-request-service.ts`), one transaction: the vendor row
+  `FOR UPDATE`, then the request row `FOR UPDATE`; the guardrails read under both (open orders,
+  `wallet_balance_npr < 0`, ad purchases ACTIVE or PAUSED); `vendors.settlement_model` set, the
+  request closed, audit `SETTLEMENT_MODEL_CHANGED` (`entity_id` = the vendor). No body is read, so
+  an admin cannot name a model.
+- **Reject** takes the same two locks in the same order (its audit entry's foreign key reads the
+  vendor row an approval holds: without the vendor lock the two deadlocked, found by the race
+  test). Audit `SETTLEMENT_MODEL_CHANGE_REJECTED`.
+- **Vendor campaigns.** The list is campaigns that have not ended and are published, plus an
+  unpublished one the shop still has an ACTIVE opt-in to (unpublishing voids nothing, so the shop
+  must be able to see it and leave). Opt-out closes the ACTIVE opt-in as `OPTED_OUT` under the
+  vendor row lock, audited `CAMPAIGN_OPTED_OUT`; the database refuses anyone but the shop's user.
+- Contracts: shared-types `api/settlement-model-requests.ts` (the admin app's schemas moved there).
+
+### Admin app
+
+`#/approvals` reads and decides through the three routes. Approve is disabled, with the reason,
+from the row's `open_order_count`, `ledger_balance_npr` and `active_ad_count`, and for Model C;
+`409 SETTLEMENT_CHANGE_BLOCKED` names what the server found and refetches. `approval-samples.ts`
+and `lib/sample-data.ts` are deleted.
+
+### Open
+
+- **Existing orders keep no model.** `orders.settlement_model_locked` does not exist, so nothing
+  yet makes an order settle under the model it was placed with; today nothing reads the model
+  except the settlement list and payout (Model B only). A shop approved to Model A drops out of
+  the Settlements list at once, with whatever wallet balance it has.
+- Model A's behaviour (cash only, the credit rule) is not built: an approved shop is only labelled.
+- The Vendor App has no screen for the request or for the real campaign routes.
+- A vendor cannot withdraw a PENDING request; no notification tells it the decision.
+- `active_purchase_count` on the admin ad price list is still the constant 0.
+
+### Tests
+
+- shared-types **284** (+7), db integration **140** (+11, the foreign-key index audit included),
+  api integration **711** in 42 suites (+27), admin **285** (+2). `tsc`, ESLint and Prettier clean
+  in every touched workspace; `drizzle-kit generate` reports no schema changes.
+- New: `packages/db/test/vendor-requests-and-ads.int.test.ts`,
+  `apps/api/test/settlement-model-requests-api.int.test.ts` (each guardrail alone and together,
+  five simultaneous requests and approvals, approve racing reject, Model C, no admin route that
+  files a request, the stale unpaid checkout; the campaign list for invited, joined, voided,
+  unpublished and ended; opt-out once under five presses, never another shop's).
+- Not run: the worker and kafka integration suites (no worker code changed; the worker
+  type-checks). No mutation checks were run.
+
+## 8Z.25 Phase 27: the Super Admin dashboard wired to the Phase 26 routes (2026-10-08)
+
+Admin web app (`apps/admin`) only. **No API, shared-types, database or SPEC.md change.** Eight of
+the nine screens that ran on sample data (§8Z.15–8Z.17) now read and write their real routes with
+TanStack Query. **Vendor requests (`#/approvals`) was the one screen still on samples; it was wired
+later the same day (§8Z.26).**
+
+**Not seen running.** The wiring is verified by `tsc`, ESLint, Prettier, `vite build` and unit
+tests of the rules modules and the API client. No wired screen has been opened in a browser, and
+none has been run against a live API. The dev database needs `pnpm db:migrate` (0021–0025) first.
+
+### What each tab calls
+
+| Tab (`#/…`)     | Reads                                  | Writes                                              | Query key                              |
+| --------------- | -------------------------------------- | --------------------------------------------------- | -------------------------------------- |
+| `compliance`    | `GET /api/admin/compliance/vendors`    | `POST /api/admin/vendors/:id/pan-verification`      | `['admin','compliance']`               |
+| `logistics`     | `GET /api/admin/settings/logistics`    | `PUT` the same                                      | `['admin','logistics']`                |
+| `pricing-plans` | `GET /api/admin/pricing-plans`         | `POST`, `PATCH …/:id`                               | `['admin','pricing-plans']`            |
+| `settlements`   | `GET /api/admin/finance/settlements`   | `POST …/:vendor_id/payout`                          | `['admin','settlements']`              |
+| `campaigns`     | `GET /api/admin/campaigns`             | `POST`, `PUT …/:id`                                 | `['admin','campaigns']`                |
+| `ad-products`   | `GET /api/admin/ads/products`          | `POST`, `PATCH …/:id`                               | `['admin','ad-products']`              |
+| `promotions`    | `GET /api/admin/promotions`            | `POST`, `PUT …/:id`, `DELETE …/:id`                 | `['admin','promotions']`               |
+| `audit-log`     | `GET /api/admin/audit-logs` (infinite) | none (the client has no audit write method; tested) | `['admin','audit-logs', action, type]` |
+
+- **`src/api/admin-api.ts`** gained 24 methods; every response is parsed with its shared-types
+  schema, so a contract break is `UNEXPECTED_RESPONSE`.
+- **The pattern, the same on every tab:** `useQuery` for the list ("Loading…", a load error with
+  "Try again"); the modal owns its `useMutation`; a refused save is mapped by the rules module
+  (`planSaveError`, `payoutSaveError`, `promotionSaveError`, …) to a field or to the form; every
+  write, refused or not, invalidates the list.
+- **Rules modules** re-export their contracts from shared-types. The sample reducers
+  (`applyPlanCreate`, `applyPayout`, `applyCampaignWrite`, `markPanVerified`, …) and all eight
+  `*-samples.ts` files are deleted.
+- New test support: `src/api/fake-admin-api.ts` (`fakeAdminApi`, `refusalOf`).
+
+### Behaviour to know, per tab
+
+- **Compliance.** The local schema (which refused a LIVE vendor without a PAN) is gone; the shared
+  one accepts such a row and `panStandingOf` shows it as MISSING with the note "The nightly
+  compliance sweep takes this shop offline until it saves one." Verify is enabled only for
+  UNVERIFIED and while no verification is in flight. `409 PAN_MISSING` is worded and the list
+  refetched.
+- **Logistics.** Both modes off shows the Emergency Stop warning and needs a second press on the
+  same values. The counts are labelled "live shops" (the API counts LIVE shops). A background
+  refetch updates the warnings and counts but not what the admin has typed.
+- **Pricing plans.** On edit the model and terms inputs are disabled and the PATCH body is exactly
+  `{ name, is_offered, is_default }`. `PRICING_PLAN_NAME_TAKEN` → the name field;
+  `DEFAULT_PLAN_REQUIRED` and `DEFAULT_PLAN_NOT_COMMISSION` → the default toggle. "A first plan
+  must be the default" is left to the server (the form does not pre-check it).
+- **Settlements.**
+  - Process Payout is disabled, with a warning line per gate, when `pan_verified_at` or
+    `primary_bank_account` is null (`payoutBlockers`: PAN first, as the server checks).
+  - The row and the payout window show the primary account in full (the admin makes the
+    transfer first).
+  - **Idempotency:** one `crypto.randomUUID()` per opening of the payout window, reused for
+    every retry inside it. A retry after a lost answer gets the stored payout (`replayed`).
+    Changing the amount or reference after such a lost answer is `409 IDEMPOTENCY_KEY_REUSED`:
+    the form says to close the window and check the balance.
+  - `PAN_NOT_VERIFIED`, `BANK_ACCOUNT_MISSING` → the form; `INSUFFICIENT_BALANCE` → the amount
+    field with `details.available_balance_npr`.
+  - "Recorded in this sitting" lists the payouts the server answered; it resets on reload.
+- **Campaigns.** The request never carries `terms_version`. After a create or a PUT the window
+  stays open ("Saving…") until the list has been refetched, so the card shows the server's raised
+  version and its emptied `opt_in_count`. Publish / Unpublish from a card is a PUT of the same
+  terms. The terms warning counts the opt-ins of the list as loaded when the window opened.
+- **Ad products.** The placement list is `adSlots` from shared-types: `CAROUSEL` and
+  `FEED_LISTING` only; a list carrying `FEATURED` is refused as `UNEXPECTED_RESPONSE`. On edit
+  only `{ name, is_active }` is sent.
+- **Promotions.**
+  - **No sponsorship input.** `SPONSORSHIP_AVAILABLE = false` in `promotion-rules.ts`: the
+    "Ad purchase ID" field is not rendered, so every promotion the form builds has
+    `is_sponsored: false, ad_purchase_id: null` and the 422 `AD_PURCHASE_MISMATCH` cannot be
+    triggered from the screen. The form rules still handle a purchase id: switch the constant on
+    when `ad_purchases` exists.
+  - The image is a pasted URL. **Delete is new** (two-step, per row).
+  - `422 PROMOTION_TARGET_NOT_FOUND` → the target field, worded by target type.
+- **Audit log.** The action and record type dropdowns are sent as `action` / `entity_type`
+  (each combination is its own cached list); "Load older" passes `next_cursor`. **The search box
+  filters only the entries already loaded** (the route has no text search), and says so. The
+  dropdown options are the audit contract's own actions and record types plus any others the
+  loaded entries carry.
+
+### Tests
+
+Admin **283** in 9 suites (was 263); `tsc --noEmit`, `eslint`, `prettier --check` clean;
+`vite build` succeeds.
+
+- Removed: every assertion on a sample row or a sample reducer.
+- Added, per tab: the exact method, path and body of each call (PATCH and PUT bodies in
+  particular: no terms on a plan or ad product edit, no version on a campaign, the vendor only in
+  the payout's path, the idempotency key repeated on a retry); a response the contract does not
+  describe refused; the server's refusal codes passed through and worded.
+- Compliance: a LIVE vendor without a PAN parses and is MISSING.
+- **Rewritten from scratch:** the three promotion display tests (phase, target label, row order).
+  The originals were cut by mistake during this work and the directory was untracked, so they
+  could not be restored; the new ones cover the same three functions.
+- The React screens still have no component tests. No mutation checks were run.
+
+### Open
+
+- Vendor requests: routes, then wiring (BACKEND_CHECKLIST section 5 step 4).
+- The legacy Payouts tab and the Vendor Portal's payout request form are still there (6.11).
+- `ad_purchases` and everything that hangs on it (sponsored promotions, the vendor marketplace).
+- Scheduled jobs: the settlement payout run, the Free-plan reversion and notice.
+- The Settlements tab shows no `next_run_at` / `cutoff_at` (the API does not send them yet).
+- A first, non-default pricing plan and a stale campaign opt-in count are caught by the server,
+  not the form.
+
+## 8Z.24 Phase 26: Admin APIs part 3. Settlement model, vendor banking and the final payout gate, campaigns with opt-in, ad products, Home promotions (2026-10-08)
+
+Backend (`packages/shared-types`, `packages/db`, `apps/api`), plus the admin app's campaign, ad
+product and promotion rule modules, which now import their contracts from shared-types. With
+this, **every admin sample screen's contract lives in shared-types and has its routes**, except
+Vendor requests (settlement model changes). No screen was switched to `useQuery` (done in §8Z.25). SPEC.md was
+not changed.
+
+### Confirmed by the user (2026-10-08), and one standing rule
+
+`/api/admin/finance/settlements` stays; Escrow → Wallet → Payout Clearing is the flow; the quote
+answers with `delivery_available: false` instead of a 422; compliance is listed worst first;
+`settlement_model` goes on `vendors` now.
+
+**Rule: a documented contract is never broken for a prompt's wording.** Applied here:
+
+| Asked                              | Built (the documented contract)                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------------- |
+| `/api/admin/marketing/campaigns`   | `/api/admin/campaigns` (BACKEND_CHECKLIST section 5 step 3; the Campaigns tab)    |
+| `/api/admin/marketing/ad-products` | `/api/admin/ads/products` (step 5; the Ad products tab)                           |
+| `/api/admin/marketing/promotions`  | `/api/admin/promotions` (section 4; the Promotions tab)                           |
+| campaign "PATCH"                   | `PUT /api/admin/campaigns/:id`, replacing every field (the admin form's contract) |
+| promotion `target_id`              | `target_value` (§8Z.4; the customer app reads it)                                 |
+| opt-in body `opt_in_terms_version` | `{ terms_version }` (§8Z.5); the stored column is `opt_in_terms_version`          |
+| `PUT /api/vendor/bank-accounts`    | `PUT /api/vendor/bank-accounts/:id`                                               |
+
+The one place the request's wording was taken over the file: **`422 BANK_ACCOUNT_MISSING`**
+(BACKEND_CHECKLIST had `409 BANK_ACCOUNT_REQUIRED`; no screen was built on that code).
+
+### Migration 0025 (`0025_settlement_model_and_promotions.sql`)
+
+| Object                     | Content                                                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `settlement_model` enum    | `COD_CREDIT`, `PLATFORM_ESCROW`, `DIRECT_PREPAID` (shared-types `settlementModels`)                                                                                                                                                                                                                                                                                     |
+| `vendors.settlement_model` | NOT NULL DEFAULT `PLATFORM_ESCROW`: every existing, seeded and new shop is Model B. In `vendorSchema` and `contract.ts`                                                                                                                                                                                                                                                 |
+| `home_promotions`          | `id`, `placement` (CAROUSEL, FEATURED), `image_url`, `title`, `subtitle`, `target_type` (SHOP, CATEGORY, DISCOUNT_TAG, null), `target_value`, `display_order`, `is_active`, `starts_at`, `ends_at`, `is_sponsored`, `ad_purchase_id`, `created_by_user_id` → users (RESTRICT), `created_at`, `updated_at` (hand-added `set_updated_at` trigger). Schema `promotions.ts` |
+
+- `home_promotions` CHECKs: an image for a banner, a title for a tile, non-blank text, a target
+  type and value together or neither, `starts_at < ends_at`, `is_sponsored = (ad_purchase_id IS
+NOT NULL)`, and **`home_promotions_ad_purchase_pending_check` (`ad_purchase_id IS NULL`)**.
+- **Why that last CHECK.** SPEC edge case 6: the database refuses a sponsored promotion without
+  an `ad_purchases` row. That table does not exist, so today the only honest rule is "no
+  promotion is sponsored". The migration that creates `ad_purchases` drops this CHECK and adds
+  the foreign key.
+- `target_value` is text, so no foreign key guards a shop or category target: the write checks
+  it. Nothing can change `settlement_model` yet (no model change flow).
+- **Apply it:** `pnpm db:migrate` (0024 and 0025 are pending on the dev database).
+  `drizzle-kit generate` reports "No schema changes".
+
+### Routes
+
+```jsonc
+// Vendor banking (requireAuth VENDOR, own shop, any status)
+// GET  /api/vendor/bank-accounts            → { "bank_accounts": [ BankAccountView ] }   primary first
+// POST /api/vendor/bank-accounts            → 201 { "bank_account" }
+// PUT  /api/vendor/bank-accounts/:id        → 200 { "bank_account" }                     replaces every field
+//   body: { bank_name, branch_name, account_name, account_number, routing_or_swift_code | null, is_primary }
+//   409 BANK_ACCOUNT_EXISTS · 422 BANK_ACCOUNT_LIMIT_REACHED (details.max 5) · 409 PRIMARY_BANK_ACCOUNT_REQUIRED
+//   404 BANK_ACCOUNT_NOT_FOUND (also another shop's) · 404 VENDOR_NOT_FOUND · 400 VALIDATION_FAILED
+// Vendor opt-in (requireAuth VENDOR)
+// POST /api/vendor/campaigns/:id/opt-in { "terms_version": 2 } → 201 { "opt_in" } (200 when already opted in)
+//   409 CAMPAIGN_TERMS_CHANGED (details.terms_version = the current one) · 404 CAMPAIGN_NOT_FOUND · 422 CAMPAIGN_ENDED
+// Admin (requireAuth SUPER_ADMIN)
+// GET / POST /api/admin/campaigns, PUT /api/admin/campaigns/:id           404 CAMPAIGN_NOT_FOUND
+// GET / POST /api/admin/ads/products, PATCH /api/admin/ads/products/:id { name, is_active }   404 AD_PRODUCT_NOT_FOUND
+// GET / POST /api/admin/promotions, PUT / DELETE /api/admin/promotions/:id
+//   422 PROMOTION_TARGET_NOT_FOUND (details.target_type) · 422 AD_PURCHASE_MISMATCH · 404 PROMOTION_NOT_FOUND
+// POST /api/admin/finance/settlements/:vendor_id/payout  now also:
+//   422 BANK_ACCOUNT_MISSING (details.vendor_id) · 422 SETTLEMENT_MODEL_NOT_ESCROW (details.settlement_model)
+```
+
+Mounted: `routes/vendor-account.ts` at `/api/vendor/bank-accounts` and `/api/vendor/campaigns`
+(before the generic `/api/vendor` settings router); `routes/admin-marketing.ts#mountAdminMarketing`
+on the `/api/admin` router.
+
+### Vendor bank accounts (`vendor/vendor-bank-account-service.ts`)
+
+- The shop is the caller's (`vendors.user_id`); another shop's account id is 404 and untouched.
+- **A shop with accounts has exactly one primary account.** The first account is primary
+  whatever the body says; `is_primary: true` on a create or a PUT takes the mark from the
+  previous primary in the same transaction (with that account's own audit entry); the primary
+  cannot be un-marked directly (`409`). At most 5 accounts; the same bank and number twice is
+  `409`. **No delete** (a payout record must stay traceable to its account).
+- Every write runs under the **vendor row lock** (`FOR UPDATE`), the lock the settlement payout
+  takes, so a payout reads a settled primary account.
+- Audit `BANK_ACCOUNT_ADDED` / `BANK_ACCOUNT_UPDATED` (new record type `vendor_bank_account`),
+  actor = the vendor's own account. **The account number is never written to the trail**: the
+  state holds `account_number_masked` (`****9012`, `maskAccountNumber` in shared-types). The
+  vendor sees its own number in full; so does the admin on the settlement row, who needs it to
+  make the transfer.
+
+### The final payout gate (`finance/admin-settlement-service.ts`)
+
+Order inside the payout's transaction, under the vendor row lock: unknown vendor → 404; a
+replayed key → the stored payout; `settlement_model` not `PLATFORM_ESCROW` → `422
+SETTLEMENT_MODEL_NOT_ESCROW`; **PAN unverified → `422 PAN_NOT_VERIFIED`; no primary bank account →
+`422 BANK_ACCOUNT_MISSING`**; amount above the balance → `422 INSUFFICIENT_BALANCE`; then the
+journal, the record and the audit entry, whose `payout.bank_account` names the account paid
+(id, bank, holder, masked number) as it stood.
+
+- The list filters on `PLATFORM_ESCROW` and each row carries `primary_bank_account` (in full) or
+  null.
+- The retiring `POST /api/admin/finance/payouts/:id/approve` has the PAN gate (§8Z.23) but **not**
+  the bank gate: only the manual settlement payout was asked for.
+
+### Campaigns (`marketing/campaign-service.ts`)
+
+- **Create / update.** `PUT` locks the campaign row and compares the seven terms (the two dates
+  as instants). A changed term raises `terms_version` by one **in the same UPDATE**; the trigger
+  of migration 0024 voids every ACTIVE opt-in in that transaction. The version is never read
+  from a request (the strict body has no such key). Audit: `CAMPAIGN_TERMS_CHANGED` with
+  `voided_opt_in_count`, or `CAMPAIGN_UPDATED` for a rename or publish; an unchanged save
+  records nothing. The response's `opt_in_count` is 0 after a terms change.
+- **Opt-in**, one transaction: the vendor row `FOR UPDATE` (a shop's opt-ins run one after
+  another), then the campaign row `FOR SHARE` (a terms change waits for it, or it waits for the
+  change). Unknown or unpublished → 404; ended (database clock) → 422; **`terms_version` not the
+  current one → `409 CAMPAIGN_TERMS_CHANGED`**; already opted in → 200 with the same row;
+  otherwise the row is inserted with `terms_snapshot` (the seven terms as they stand) and audited
+  `CAMPAIGN_OPTED_IN` by the vendor's own account.
+- **No admin route creates an opt-in** (tested: three guessed paths are 404, an admin token on
+  the vendor route is 403), and the database refuses a row the shop's own account did not create.
+- An opt-in is allowed before the campaign starts. A shop of any status may opt in.
+
+### Ad products (`marketing/ad-product-service.ts`)
+
+`PATCH` takes `{ name, is_active }` only; a slot, billing model, price or duration is a 400 from
+the strict schema (and the 0024 trigger refuses it underneath). No PUT, no DELETE.
+`active_purchase_count` is 0: no vendor can buy an ad yet.
+
+### Home promotions (`marketing/promotion-service.ts`)
+
+- The shape of `target_value` is the schema's: SHOP a uuid, CATEGORY a slug, DISCOUNT_TAG a
+  label of 1–40 characters (stored trimmed). The service checks what a shape cannot: the shop
+  is **LIVE**, the category is **active with every ancestor active** (`422
+PROMOTION_TARGET_NOT_FOUND`). Re-checked on every PUT.
+- **Sponsorship.** The contract makes `is_sponsored` true exactly when a purchase is named (a
+  400 otherwise). Naming one is `422 AD_PURCHASE_MISMATCH`: no purchase exists. The documented
+  `422 AD_PURCHASE_REQUIRED` cannot occur while the schema catches that case first.
+- `DELETE` removes the row; its audit entry (`PROMOTION_DELETED`) keeps what it was.
+
+### Contracts in shared-types
+
+`api/admin-marketing.ts` (campaign, opt-in, ad product and promotion schemas, moved verbatim
+from the admin app), `api/vendor-banking.ts`, `api/finance.ts` (`primary_bank_account` on the
+settlement row), `domain/enums.ts` (`promotionPlacements`, `promotionTargetTypes`),
+`domain/entities.ts` (`settlement_model`), `audit/audit-log.ts` (two actions, one record type).
+The admin modules `campaign-rules.ts`, `ad-product-rules.ts` and `promotion-rules.ts` re-export
+them; **`FEATURED` is gone from the admin's ad slots** (the database has two), and the
+settlement samples gained a sample bank account.
+
+### Edge cases found
+
+- **A changed bank account is not re-verified.** Anyone signed in as the vendor can point the
+  next payout at another account; the change is audited (masked), nothing else. Consider a
+  hold on payouts for a period after the primary account changes, or an admin check like the
+  PAN's.
+- **A vendor can opt in, but cannot see what to opt in to.** `GET /api/vendor/campaigns` (the
+  invites) and the opt-out route are not built.
+- **A voided shop is not told.** A terms change voids opt-ins silently: no event, SMS or push.
+- **Promotions can go stale after they are saved.** A shop that stops being LIVE, or a category
+  hidden later, leaves its promotion in place; the public read (not built) must drop it, as
+  §8Z.4 says. Renaming a category slug orphans promotions that use it.
+- **`AD_PURCHASE_REQUIRED` is unreachable** (above). Either keep the schema's 400 or loosen the
+  schema and let the service answer 422; the admin form already satisfies the schema.
+- **`settlement_model` has no writer.** It can only be changed by SQL until the model change
+  request flow exists; a shop set to another model drops out of the settlement list at once,
+  even with a positive wallet.
+- **The opt-in checks only "ended"**, by the database clock; a campaign unpublished after a shop
+  opted in keeps that opt-in ACTIVE (unpublishing is not a terms change, as decided).
+- The public customer read `GET /api/home/promotions` and the promotion image upload are not
+  built; the customer app still shows its mock promotions.
+
+### Tests
+
+- shared-types **277** (+14): `api/admin-part3.test.ts` (the settlement model on every vendor
+  row; the bank account body, its mask and its record type; the settlement row's account; the
+  campaign body with no vendor, opt-in or version; the opt-in body; the ad product with no terms
+  in an edit; the promotion target per type, sponsorship, no price key).
+- db integration **129** (+8), real PostgreSQL: `test/settlement-model-and-promotions.int.test.ts`
+  (the default model and the three values; the promotion CHECKs; **no sponsored promotion can be
+  stored**; RESTRICT on its author; `updated_at`). The contract test and the foreign-key index
+  audit pass with the new column and table.
+- api integration **684** (+51) in 41 suites, one full run, all passing:
+  - `vendor-bank-accounts-api.int.test.ts` (15): the first account primary and audited with the
+    number masked; the primary moved by a create and by a PUT; never un-marked; five primary
+    creates at once → one primary; duplicates, the limit of 5, twelve invalid bodies; another
+    shop's account 404 and untouched; no DELETE; **`422 BANK_ACCOUNT_MISSING` until an account
+    exists, then paid, with the account in the audit entry**; the admin row's account; the PAN
+    gate named before the bank gate; roles and a shopless vendor.
+  - `admin-marketing-api.int.test.ts` (35): campaign create and audit, thirteen refused bodies,
+    **no admin enrolment route**; the shop's own opt-in with its snapshot and audit, idempotent;
+    **a stale `terms_version` is 409 with the current one**; **each of the seven terms raises
+    the version and voids every opt-in** (and the shop can rejoin on version 2); a rename or
+    unpublish keeps both; a request cannot set the version; unpublished 404 and ended 422; five
+    simultaneous opt-ins → one row; **an opt-in racing a terms change never leaves a live
+    opt-in on old terms** (5 rounds); ad products created and audited, **each term a 400 on
+    PATCH**, rename and retire, no DELETE or PUT; promotions for each target type, eleven
+    ill-fitting targets, **a non-LIVE shop and a category under a hidden parent refused**,
+    sponsorship refused, PUT replace with the target re-checked, list order, DELETE with its
+    audit; roles on all twelve routes.
+  - `admin-settlements-api.int.test.ts` (+1): only Model B shops listed and paid. Its fixture
+    shop now has a primary bank account.
+- admin **263** (the campaign, ad product and promotion rule tests run against the shared
+  schemas, unchanged), api unit **114**, mobile untouched. `pnpm typecheck` and `pnpm lint`: all
+  16 tasks pass.
+- **Mutation-checked, 16 of 16 killed:** no bank gate, any model paid, every model listed; the
+  first account not primary, the primary un-marked, no vendor row lock, the full number in the
+  audit trail, another shop's account reachable; a stale version accepted, an unpublished
+  campaign visible, an ended one accepted, dates not terms, a rename raising the version; a
+  non-LIVE shop target, hidden ancestors ignored, an admin naming any purchase.
+- Not run: the worker and kafka integration suites (no worker code changed; the worker
+  type-checks against the new vendor column), `vite build`, and the API was not started live.
+
+## 8Z.23 Phase 26: Admin APIs part 2. Settlement payouts behind the PAN gate, compliance list, pricing plans, `delivery_available` (2026-10-08)
+
+Backend (`packages/shared-types`, `apps/api`), plus the admin app's pricing and settlement rule
+modules, which now import their contracts from shared-types. **No migration.** No admin or
+customer screen was changed: the admin tabs still render samples, and the customer app does not
+read `delivery_available` yet. SPEC.md was not changed.
+
+### Confirmed by the user (2026-10-08)
+
+The three-state opt-in (`ACTIVE | OPTED_OUT | VOIDED`) and the SPEC column names of migration
+0024; the canonical column name `entity_id` for the audit filter; the logistics counts being
+LIVE shops only; and leaving the admin compliance schema alone until the database guarantees
+its refinements.
+
+### Routes (all under `/api/admin`, `requireAuth(SUPER_ADMIN)`, `no-store`)
+
+```jsonc
+// GET /api/admin/finance/settlements
+{ "vendors": [ { "vendor_id": "uuid", "business_name": "…", "phone": "+977…",
+                 "settlement_model": "PLATFORM_ESCROW",
+                 "available_for_payout_npr": 8450, "pending_escrow_npr": 3200,
+                 "tax_id": "302118845" | null, "pan_verified_at": "…" | null } ] }
+
+// POST /api/admin/finance/settlements/:vendor_id/payout
+//      { "amount_npr": 8450, "bank_reference": "NIC-ASIA-778812", "idempotency_key": "…" }
+// 201 (200 for a replay of the same key)
+{ "payout": { "id", "amount_npr", "status": "APPROVED", "bank_reference", "rejection_reason": null,
+              "requested_at", "decided_at" },
+  "vendor": { /* the row above, after the payout */ }, "replayed": false }
+// 422 PAN_NOT_VERIFIED (details.vendor_id) · 422 INSUFFICIENT_BALANCE (details.requested_npr, available_balance_npr)
+// 409 IDEMPOTENCY_KEY_REUSED · 404 VENDOR_NOT_FOUND · 400 VALIDATION_FAILED
+
+// GET /api/admin/compliance/vendors
+{ "vendors": [ /* complianceVendorViewSchema, grouped by PAN standing, worst first */ ] }
+
+// GET /api/admin/pricing-plans → { "plans": [ PricingPlanView ] }
+// POST /api/admin/pricing-plans { name, model, commission_rate, monthly_fee_npr, duration_cycles, is_offered, is_default } → 201 { "plan" }
+// PATCH /api/admin/pricing-plans/:id { name, is_offered, is_default } → 200 { "plan" }
+// 409 PRICING_PLAN_NAME_TAKEN · 409 DEFAULT_PLAN_REQUIRED · 422 DEFAULT_PLAN_NOT_COMMISSION
+// 404 PRICING_PLAN_NOT_FOUND · 400 VALIDATION_FAILED (also a model, rate, fee or duration in a PATCH)
+```
+
+### Settlement payouts and the PAN payout gate (`finance/admin-settlement-service.ts`)
+
+- **List.** One REPEATABLE READ snapshot: vendors with `wallet_balance_npr > 0`, by business
+  name, at most 500, each with its escrow still pending (`pendingEscrowByVendor`, one grouped
+  query) and its `pan_verified_at`. An unverified shop is listed, so the screen can show why its
+  payout is held.
+- **"Model B" today is every vendor.** `vendors.settlement_model` and `vendor_ledgers` do not
+  exist (BACKEND_CHECKLIST section 5 step 1), so the view says `PLATFORM_ESCROW` for all and
+  available = `max(0, wallet balance)` (no ad fees to subtract yet).
+- **Payout**, one transaction under the vendor row lock (`FOR UPDATE`, the lock a PAN change, a
+  PAN verification and every wallet journal take), in this order:
+  1. unknown vendor → 404;
+  2. the idempotency key already used for this vendor → the stored payout, `replayed: true`,
+     nothing posted (another amount or reference under the same key → 409);
+  3. **the gate: `pan_verified_at` null → `422 PAN_NOT_VERIFIED`**, before anything is posted;
+  4. amount above what is available → `422 INSUFFICIENT_BALANCE`;
+  5. the Phase 22 `VENDOR_PAYOUT` journal through `LedgerService` (VENDOR_WALLET −X,
+     PAYOUT_CLEARING +X, balanced), a `payout_requests` row written directly as **APPROVED** with
+     the bank reference and the admin, and the audit entry `PAYOUT_PROCESSED` (record type
+     `vendor_ledger`, `entity_id` = the vendor: wallet before and after, the payout's id, amount,
+     reference and journal id).
+- **Which account the money leaves.** The request said "moving funds out of Escrow". In this
+  ledger SYSTEM_ESCROW is emptied into the vendor's wallet at delivery (Phase 11); the payout is
+  the next step, out of the wallet into PAYOUT_CLEARING. No new account type or journal kind.
+- **No minimum** (decided 2026-10-08: the 1000 NPR minimum is the automated run's).
+- **Keys.** The stored key is `admin-settlement:<key>`: `payout_requests` keys are unique per
+  vendor and vendors' own (retiring) requests share the table, so an admin's key can never
+  resolve to a vendor's request (tested).
+- **The same gate on the retiring approve route.** `POST /api/admin/finance/payouts/:id/approve`
+  reads `pan_verified_at` under the vendor row lock and answers `422 PAN_NOT_VERIFIED`; the
+  request stays PENDING and Reject is not gated (it returns money to the wallet).
+- **Status code.** BACKEND_CHECKLIST had `409`; the request offered 403 or 422, and 422 was
+  taken (403 means "this caller may not", and a Super Admin may; the shop is not payable yet).
+
+### Compliance list (`AdminComplianceService.list`)
+
+One statement: every vendor with `compliance_suspended_at` as a correlated subquery on its
+latest `VENDOR_SUSPENDED_FOR_COMPLIANCE` audit entry. The route sorts the views by
+`panStandingOf` (shared-types): SUSPENDED, MISSING, UNVERIFIED, VERIFIED; suspended shops the
+longest offline first; otherwise by name. This is the Compliance screen's own order (worst
+first), not the order the four standings were listed in the request.
+
+### Pricing plans (`admin/pricing-plan-service.ts`)
+
+- **Immutable terms.** `update` has no parameter for the model, rate, fee or duration, and the
+  strict PATCH schema makes any of them a 400. There is no PUT and no DELETE (tested: 404).
+- **Exactly one default, an offered Commission plan.** Every write takes
+  `pg_advisory_xact_lock(2600026)` first, because the rule is over the whole table:
+  - creating or patching a plan to `is_default: true` clears the previous default in the same
+    transaction (with that plan's own `PRICING_PLAN_UPDATED` entry), so the partial unique index
+    never sees two;
+  - the default cannot be switched off or withdrawn directly (`409 DEFAULT_PLAN_REQUIRED`;
+    withdrawing it while still default is a 400 from the contract);
+  - a non-Commission plan cannot become it (`422 DEFAULT_PLAN_NOT_COMMISSION`);
+  - **a first plan must be the default**: creating a non-default plan while the table has no
+    default is `409 DEFAULT_PLAN_REQUIRED`. Not asked for; it is what "never none" needs.
+- Names are unique without regard to case (`409 PRICING_PLAN_NAME_TAKEN`). A PATCH sends all
+  three fields (the admin form's contract); saving what is stored records nothing.
+- `vendor_count` = vendors whose `pricing_plan_id` is the plan.
+- Plans inserted by SQL (other test suites, a manual fix) bypass the service's rules; the
+  database still holds "at most one default" and "the default is an offered Commission plan".
+
+### `delivery_available` (feed, menu, quote)
+
+| Where                             | False when                                                           |
+| --------------------------------- | -------------------------------------------------------------------- |
+| `GET /api/vendors` (the response) | both delivery modes are off: the Emergency Stop (sections are empty) |
+| `GET /api/vendors` (each entry)   | that shop's own `fulfillment_mode` is switched off                   |
+| `GET /api/vendors/:id/products`   | that shop's own mode is switched off (always, in the Emergency Stop) |
+| `POST /api/cart/quote`            | either of the two, for the cart's shop                               |
+
+- Derived on every read from `platform_settings` (`catalog-service.ts#modeEnabled`); nothing is
+  stored per vendor, so it is true again the moment a mode is switched on (tested).
+- It is not `serviceable`: a shop 20 km away on a 5 km radius is `serviceable: false,
+delivery_available: true` (tested).
+- **Behaviour change: the quote no longer refuses a delivery stop.** Before, it answered
+  `422 DELIVERY_UNAVAILABLE` / `VENDOR_UNAVAILABLE` like checkout, so there was no payload to
+  carry a flag. Now it prices the cart, sets `delivery_available: false` and marks every payment
+  option `available: false, reason: "DELIVERY_UNAVAILABLE"`. The delivery area is still checked
+  (under the shop's own mode) and its other refusals are unchanged. **Checkout still answers
+  422**, so nothing can be ordered.
+- **The fields default to `true` in the response schemas.** They are strict schemas shared with
+  the mobile app; with a default, an app build that meets an API from before the field parses
+  the response as "available" (what that API meant) and no existing mobile fixture breaks. The
+  API always sends the field.
+- Not built: the customer app's "Delivery Unavailable" banner, and
+  `forced_offline_reason` on the vendor profile.
+
+### Contracts in shared-types
+
+`api/admin-pricing.ts` (new), `api/finance.ts` (`settlementVendorViewSchema`,
+`adminSettlementListResponseSchema`, `settlementPayoutRequestSchema`,
+`settlementPayoutResponseSchema`), `api/admin-governance.ts` (`PAN_STANDINGS`, `panStandingOf`,
+`adminComplianceVendorListResponseSchema`), `domain/enums.ts` (`settlementModels`),
+`api/responses.ts` (`delivery_available`). The admin app's `pricing-rules.ts` and
+`settlement-rules.ts` re-export the moved schemas under their old names; their tests pass
+unchanged.
+
+### Open
+
+- The Settlements, Compliance and Pricing plans tabs still use samples; wiring them is app work.
+  The payout mutation must send an `idempotency_key` per attempt.
+- The vendor's own payout request route and the legacy admin tab are still there (retired with
+  the app changes, BACKEND_CHECKLIST 6.11); `GET /api/vendor/finance/ledger` has no
+  `pan_verified` yet.
+- No bank account is required for a payout (no bank account routes exist), and no scheduled run.
+- A Free plan's reversion to the default plan (the renewal job) is still unbuilt; the default
+  now always exists for it once any plan was created through the API.
+
+### Tests
+
+- shared-types **263** (+12): `api/admin-part2.test.ts` (each plan model with its own terms and
+  no other, the default only as an offered Commission plan, **no terms key in an edit**; the
+  settlement view and request, no minimum, no vendor or status key; `panStandingOf`;
+  `delivery_available` carried by the four responses, **defaulted for a response from before the
+  field**, strict otherwise). One feed assertion in `responses.test.ts` updated.
+- api integration **633** (+40) in 39 suites, one full run, all passing:
+  - `admin-settlements-api.int.test.ts` (12): the list (payable, held, escrow apart, empty and
+    indebted shops absent); **a verified shop paid: wallet down, PAYOUT_CLEARING up, a balanced
+    two-posting journal, an APPROVED record, the audit entry, the vendor's own history**;
+    **`422 PAN_NOT_VERIFIED` with nothing moved**, for an unverified PAN and for none; verifying
+    opens the gate and **a changed PAN closes it again** without reversing the earlier payout;
+    **a payout racing a PAN change, held on the row lock, is refused**; exactly the balance vs
+    one paisa more, and 1 rupee (no minimum); six simultaneous payouts of 300 on 1000 → three;
+    a retried key (alone and three at once) paid once; an admin key equal to a vendor's own
+    request key; thirteen invalid bodies; 401 / 403, a vendor cannot pay itself.
+  - `admin-pricing-plans-api.int.test.ts` (20): the first plan must be the default; each model
+    stored and audited; the default moved by a create and by a patch, with the losing plan's
+    entry; **a model, rate, fee or duration in a PATCH is 400 and changes nothing**; the default
+    never switched off or withdrawn; only an offered Commission plan as default; **five default
+    creates and four default patches at once leave exactly one**; an unchanged save; names
+    without case; `vendor_count`; no DELETE or PUT; roles.
+  - `admin-governance-api.int.test.ts` (+2): the compliance list in standing order with the
+    longest-suspended first, and a shop moving to Verified.
+  - `admin-payouts-api.int.test.ts` (+2): the gate on the retiring approve route (the request
+    stays PENDING; a rejection is not gated). Its fixture shop now has a verified PAN.
+  - `cart-quote-api.int.test.ts` (+3) and `billing-and-delivery-rules.int.test.ts` (+1): the
+    quote flagged during the Emergency Stop and for one shop's switched-off mode (priced, no
+    payment option, checkout still 422, the address still checked, back at once); the feed's
+    flag, each entry's and the menu's; **not serviceable is not the same as not available**.
+- mobile **1490** (+3): `features/feed/delivery-available.test.ts` (the default for an older
+  API; the flag surviving `sortFeed` and `filterFeedByVendors`, which now spread the feed they
+  rebuild). Four mobile files changed in all; no screen. The full suite passed except one known
+  timing flake (`demo-pricing.test.tsx`), which passes alone.
+- api unit **114**, admin **263** (the pricing and settlement rule tests run against the shared
+  schemas, unchanged), db integration **121** (no migration). `pnpm typecheck` and `pnpm lint`:
+  all 16 tasks pass.
+- **Mutation-checked, 12 of 12 killed:** no PAN gate on the settlement payout (3 tests fail), no
+  vendor row lock (2), no balance check (2), the key not kept apart (1); no gate on the legacy
+  approve (1); the default switched off (1), any model as default (1), a first plan not default
+  (1), no table lock (2); the quote always "available" (2), the entry flag copied from
+  `serviceable` (1), the Emergency Stop not flagged (1).
+- Not run: the worker and kafka integration suites (no worker code changed), `vite build`, and
+  the API was not started live.
+
+## 8Z.22 Phase 26: Admin APIs part 1. Migration 0024, the audit log, logistics settings and PAN verification (2026-10-08)
+
+Backend (`packages/shared-types`, `packages/db`, `apps/api`), plus the admin app's audit and
+logistics rule modules, which now import their contracts from shared-types. **The admin screens
+themselves still render sample data**: no screen was switched to `useQuery` in this part.
+SPEC.md was not changed.
+
+### Migration 0024 (`0024_campaigns_and_ads.sql`)
+
+Tables, CHECKs and triggers only. No route, service or shared-types entity reads or writes them
+yet (BACKEND_CHECKLIST section 5 steps 3 and 5). Schema: `packages/db/src/schema/marketing.ts`.
+
+| Object               | Content                                                                                                                                                                                                                                                                                                         |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| enums                | `discount_kind` (FLAT, PERCENTAGE), `campaign_opt_in_status` (ACTIVE, OPTED_OUT, VOIDED), `ad_slot` (CAROUSEL, FEED_LISTING), `ad_billing_model` (FLAT_RATE, PER_ORDER_PREMIUM). Tuples in shared-types `domain/enums.ts`                                                                                       |
+| `platform_campaigns` | `id`, `name`, `kind`, `value`, `max_discount_npr` (PERCENTAGE only), `min_cart_npr` (the minimum order value), `vendor_share_percent` 0–100, `terms_version` (starts at 1), `starts_at`, `ends_at`, `is_active`, `created_by_user_id` → users (RESTRICT), `created_at`, `updated_at`                            |
+| `campaign_opt_ins`   | `id`, `campaign_id` → platform_campaigns, `vendor_id` → vendors, `opt_in_terms_version`, `terms_snapshot` jsonb, `status` (default ACTIVE), `opted_in_by_user_id` → users, `opted_in_at`, `closed_at`, `closed_by_user_id` → users. All RESTRICT. One ACTIVE row per campaign and vendor (partial unique index) |
+| `ad_products`        | `id`, `name`, `slot`, `billing_model`, `price_npr` > 0, `duration_days` 1–90, `is_active`, `created_by_user_id` → users (RESTRICT), `created_at`. It names no vendor                                                                                                                                            |
+
+**Hand-added triggers (the rules no CHECK can express).** Each raises SQLSTATE 23000.
+
+| Trigger                                                     | Rule                                                                                                                                                                                                                                                                                     |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `platform_campaigns_terms_version` (BEFORE INSERT / UPDATE) | A campaign starts at version 1. A change to any of the seven terms (`kind`, `value`, `max_discount_npr`, `min_cart_npr`, `vendor_share_percent`, `starts_at`, `ends_at`) needs `terms_version + 1` in the same statement, and the version moves for no other reason                      |
+| `platform_campaigns_void_opt_ins` (AFTER UPDATE)            | A raised version sets every ACTIVE opt-in of the campaign to VOIDED, in the same transaction (it rolls back with the change)                                                                                                                                                             |
+| `campaign_opt_ins_guard` (BEFORE INSERT / UPDATE / DELETE)  | INSERT: status ACTIVE; `opted_in_by_user_id` = the vendor's own `user_id` (**an admin's id is refused by the database**); `opt_in_terms_version` = the campaign's current version. UPDATE: only an ACTIVE row, only to close it; an opt-out only by the shop's own user. DELETE: refused |
+| `ad_products_immutable_terms` (BEFORE UPDATE)               | `slot`, `billing_model`, `price_npr` and `duration_days` never change. `name` and `is_active` may                                                                                                                                                                                        |
+
+- **Opt-in vs terms change race:** the insert trigger reads the campaign's version `FOR SHARE`,
+  so a terms change running at the same moment waits for the opt-in (and then voids it), or the
+  opt-in waits for the change (and is then refused as stale). Tested with an open transaction.
+- `platform_campaigns` has the `set_updated_at` trigger.
+- **Apply it:** `pnpm db:migrate`. `drizzle-kit generate` reports "No schema changes".
+
+**Where the migration differs from the request (to confirm).**
+
+| Asked                                  | Built                                                              | Why                                                                                                                                                                                               |
+| -------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| opt-in `status (ACTIVE/VOIDED)`        | `ACTIVE`, `OPTED_OUT`, `VOIDED`                                    | SPEC core 7 has two different ends: the vendor opts out, or the terms change. In a dispute they must not look the same. `OPTED_OUT` records the vendor's user; `VOIDED` is the trigger's          |
+| campaign "Discount Type" and min order | plus `value` and `max_discount_npr`; the minimum is `min_cart_npr` | A discount needs its amount; the names are those of §8Z.5 and of the admin Campaigns tab's contract                                                                                               |
+| opt-in columns as listed               | plus `terms_snapshot`, `opted_in_by_user_id`, the closing columns  | SPEC core 7: the opt-in "stores the terms exactly as they were shown" and is created by "that vendor's own account"                                                                               |
+| Placement `CAROUSEL`, `FEED_LISTING`   | as asked; the column is `slot` (type `ad_slot`)                    | §8Z.5's column name, used by the admin contract. §8Z.5 also listed `FEATURED`: left out as asked; the admin app's proposed `adSlots` still lists it and must drop it when the ad routes are built |
+| (not asked) `created_by_user_id`       | on campaigns and ad products                                       | §8Z.5; every FK has its index (the Phase 23 audit test)                                                                                                                                           |
+
+### Contracts moved to shared-types (`api/admin-governance.ts`)
+
+| Schema                                                            | Notes                                                                                                                                                                                     |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auditLogViewSchema`                                              | Changed from the admin's proposal: `actor_user_id` and `actor_role` are nullable and `system_actor` is new (a job's entry), with exactly one kind of actor. States use `auditStateSchema` |
+| `adminAuditLogListQuerySchema`, `adminAuditLogListResponseSchema` | Filters `vendor_id`, `actor_user_id`, `entity_type`, `entity_id`, `action`; `limit` 1–100 as text or number; `cursor`                                                                     |
+| `logisticsSettingsWriteSchema`, `logisticsSettingsViewSchema`     | Unchanged from the admin's. `PLATFORM_SETTINGS_ENTITY_ID` is the `entity_id` of the settings' audit entries (the table's key is a boolean)                                                |
+| `complianceVendorViewSchema`, `panVerificationResponseSchema`     | New here. Refinements are only what the database guarantees: a verification needs a PAN; `SUSPENDED_COMPLIANCE` remembers a status                                                        |
+
+- `apps/admin/src/features/audit/audit-rules.ts` and `logistics/logistics-rules.ts` re-export
+  these under the names their screens and tests already used. `actorLabel` shows a job as
+  "NAME (System)". The audit samples gained `system_actor: null`.
+- **Not moved: the compliance module.** `apps/admin/.../compliance-rules.ts` keeps its own
+  proposed schema, whose refinements ("no vendor is LIVE without a PAN", the suspension
+  equivalences) are **not** true of the database today (every seeded test vendor is LIVE without
+  a PAN; `vendors_live_tax_identity_check` does not exist). Replace it with the shared schema
+  when `GET /api/admin/compliance/vendors` is built, and relax its tests then.
+
+### Routes (all under `/api/admin`, behind `requireAuth(SUPER_ADMIN)`, `Cache-Control: no-store`)
+
+```jsonc
+// GET /api/admin/audit-logs?vendor_id=&actor_user_id=&entity_type=&entity_id=&action=&limit=&cursor=
+{ "entries": [ { "id": "uuid", "occurred_at": "…",
+                 "actor_user_id": "uuid" | null, "actor_role": "SUPER_ADMIN" | null,
+                 "system_actor": null | "VENDOR_COMPLIANCE_SWEEP", "actor_name": "Sarita",
+                 "action": "PAN_VERIFIED", "vendor_id": "uuid" | null, "vendor_name": "…" | null,
+                 "entity_type": "vendor", "entity_id": "uuid",
+                 "before_state": { … } | null, "after_state": { … },
+                 "request_id": "…" | null, "ip_address": "…" | null, "user_agent": "…" | null } ],
+  "next_cursor": "uuid" | null }
+// 400 INVALID_CURSOR · 400 VALIDATION_FAILED (also an unknown filter)
+
+// GET /api/admin/settings/logistics   ·   PUT (the first three keys, strict) → 200, the same body
+{ "self_delivery_enabled": true, "platform_fleet_enabled": true, "platform_delivery_fee_npr": 50,
+  "self_delivery_vendor_count": 5, "platform_fleet_vendor_count": 4, "updated_at": "…" }
+
+// POST /api/admin/vendors/:id/pan-verification      no body → 200 (also on repeat)
+{ "vendor": { "id", "business_name", "phone", "municipality_palika_string", "status",
+              "restore_status", "compliance_suspended_at", "legal_name", "tax_id",
+              "is_vat_registered", "pan_verified_at" } }
+// 409 PAN_MISSING · 404 VENDOR_NOT_FOUND · 400 VALIDATION_FAILED
+```
+
+| Route            | Service (`apps/api/src/admin/`)                                | Behaviour                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| audit log        | `audit-log-service.ts#AuditLogService.list`                    | Newest first, keyset on `(occurred_at, id)` compared in SQL; default 50. `actor_name`: the job, else the VENDOR actor's shop (`vendors.user_id`), else the user's first name, else their phone. **Read only: the service has one method and it selects.** `POST / PUT / PATCH / DELETE` on the path are the ordinary 404 (tested)                                   |
+| logistics GET    | `logistics-settings-service.ts#get`                            | One REPEATABLE READ snapshot. The two counts are **LIVE** shops per `fulfillment_mode` (the shops a switched-off mode takes offline)                                                                                                                                                                                                                                |
+| logistics PUT    | `…#update`                                                     | One transaction under the settings row lock: update, `updated_at = now()`, audit `LOGISTICS_SETTINGS_CHANGED` with the three settings before and after. Saving what is stored changes and records nothing. Both modes off is accepted (the Emergency Stop); the feed and checkout already read these columns (§8Z.20)                                               |
+| PAN verification | `admin-compliance-service.ts#AdminComplianceService.verifyPan` | One transaction under the vendor row lock (the lock `PUT /api/vendor/tax-identity` takes): stamps `pan_verified_at = now()` and `pan_verified_by_user_id`, audit `PAN_VERIFIED`. Never touches `status`. A repeat, also by another admin, keeps the first stamp and records nothing. No PAN → `409 PAN_MISSING`, so a compliance suspension cannot be verified away |
+
+- The request's "filtering by `actor_user_id` or `target_id`": the target is the column
+  **`entity_id`**, and that is the parameter's name (a `target_id` key is a 400).
+- `compliance_suspended_at` has no column: it is the time of the shop's latest
+  `VENDOR_SUSPENDED_FOR_COMPLIANCE` audit entry, read only while
+  `status_before_compliance_suspension` is set. A shop put into that status without the sweep
+  (a manual update) reports null.
+- Nothing gates payouts on `pan_verified_at` yet (BACKEND_CHECKLIST 6.11): the stamp is
+  recorded, the legacy approve route does not read it.
+- Not built in this part: `GET /api/admin/compliance/vendors`; `delivery_available` on the feed
+  and quote; pricing plans, campaigns, ad products, promotions, settlements and model-request
+  routes; wiring any admin screen to these three routes.
+
+### Tests
+
+- shared-types **251** (+12): `api/admin-governance.test.ts` (the audit view with a user, a
+  creation and a job, exactly one kind of actor; the query's filters, limit as text or number,
+  unknown filters refused; the logistics fee range, the Emergency Stop, unknown settings; the
+  compliance view's two database-true refinements).
+- db integration **121** (+27), real PostgreSQL: `test/campaigns-and-ads.int.test.ts` (campaign
+  CHECKs; version 1 at creation; **each of the seven terms refused without `terms_version + 1`**;
+  a rename or unpublish keeping the version; an opt-in created only by the shop's own account,
+  only for the current version, once per campaign and shop; **every live opt-in voided by a
+  changed term, and by a campaign shortened by one day**; the void rolled back with its change;
+  **an opt-in written during a terms change is voided, not missed**; opt-out by the shop only,
+  final; no other column changed, no row deleted; ad product CHECKs and **its four terms
+  immutable**). The foreign-key index audit passes with the three tables. Migrations 0000-0024
+  apply in one transaction on a fresh database.
+- api integration **593** (+24) in 37 suites, one full run, all passing:
+  `test/admin-governance-api.int.test.ts` (audit log: names for an admin, a vendor and a job,
+  states equal to the stored JSON, each filter and their combination, paging 2 / 2 / 1, default
+  and maximum limit, bad cursor and queries, **no write route**; logistics: LIVE counts, the save
+  with its audit entry and request id, an unchanged save, **the Emergency Stop emptying the feed
+  and its recovery**, five simultaneous saves, a save waiting on the row lock, nine invalid
+  bodies; PAN verification: stamp + audit with the status untouched, repeat by the same and
+  another admin, five at once, a verification waiting on the row lock, **never on a PAN replaced
+  first**, `PAN_MISSING`, a compliance suspension not lifted, a changed PAN clearing it, the
+  derived suspension time, 404 / 400; every route 401 without a token and 403 for CUSTOMER,
+  VENDOR and DRIVER).
+- api unit **114**, admin **263** (the audit and logistics rule tests now run against the shared
+  schemas; two assertions added for a job's entry). `pnpm typecheck` and `pnpm lint`: all 16
+  tasks pass.
+- **Mutation-checked** (each fails at least one test): no vendor row lock in `verifyPan` (3), no
+  settings row lock (1), a repeat re-stamping (2), an inclusive cursor (1), the actor filter
+  dropped (1).
+- Not run: the worker and kafka integration suites (no worker code changed), `vite build`, and
+  the API was not started live. Migration 0024 is not applied to the dev database.
+
+## 8Z.21 Phase 25: the cart quote engine, dynamic delivery charge, seed PANs (2026-10-08)
+
+Backend only. No migration.
+
+- **`POST /api/cart/quote`** (CUSTOMER; `cartQuoteRequestSchema` = checkout's `vendor_id`, `items`,
+  `delivery_address`; strict, so a client amount is a 400) → `cartQuoteResponseSchema`
+  `{ subtotal_npr, vendor_offer: null, platform_promo: null, delivery_fee_npr, distance_km,
+total_npr, payment_options[{ method, available, reason? }] }`. No lock, no order.
+- **One pricing path.** `CheckoutService.price(request)` (private) is run by both `quote` and
+  `checkoutExclusive`: LIVE shop, Emergency Stop and mode checks, delivery area, own active
+  in-stock items, database prices, minimum order value, delivery charge. A quoted total is what
+  checkout charges (tested end to end).
+- **Delivery charge** (`checkout/delivery-fee.ts`, pure): `PLATFORM_FLEET` = the platform fee;
+  `SELF_DELIVERY` = 0 at or above `free_delivery_above_npr`, else base + per-km x started
+  kilometres (`RADIUS_BOUND` only). Distance = `haversineKm(shop, pin)`. `priceCart` takes it as
+  an optional fourth argument.
+- **Payment options** = `vendors.accepted_payment_methods`, with COD also needing the customer's
+  eligibility. Checkout now refuses a method the shop does not accept:
+  `422 PAYMENT_METHOD_UNAVAILABLE` (`details.accepted`).
+- **Seed** (`seed.ts#seedTaxIdentities`): every seeded LIVE shop gets PAN `'9' + last 8 phone
+digits`, verified by the seeded Super Admin, on fresh and existing databases; a PAN already set
+  is never overwritten. Run `pnpm db:migrate && pnpm db:seed`.
+- **To confirm / not built:** the per-km fee is charged per _started_ kilometre and only for the
+  radius tier (§8Z.11's accepted rule; the request said `distance_km x fee`); a fleet shop's own
+  base fee is now ignored in favour of the platform fee; `vendor_offer` and `platform_promo` are
+  always null (no offers or campaigns tables yet); the quote requires sign-in and a full address
+  (§8Z.5 sketched it public with an optional address); the customer app still uses its demo
+  discount and does not call the quote; no `payment_session` in the checkout response.
+- **Tests:** api unit **114** (+6, `delivery-fee.test.ts`); api integration **569** in 36 suites,
+  all passing in one run (+7, `cart-quote-api.int.test.ts`: the priced cart, per-km and
+  free-above, the fleet fee, **quote = checkout**, accepted methods, the shared refusals, no
+  client amounts). The seed was type-checked, not run.
+
+## 8Z.20 Phase 25: billing cycle queue and renewal, delivery rules and Emergency Stop, compliance sweep (2026-10-08)
+
+Backend only. Migration **0023**. New dependency: **`nepali-date-converter`** (in `@hamro-pasal/ledger`).
+
+### Decisions (user, 2026-10-08)
+
+- **BS calendar from a maintained library**, not a hand-kept table. `packages/ledger/src/bs-calendar.ts`
+  wraps it: `bsDateOf(instant)`, `bsMonthStart(year, month)`, `nextBsMonthStart(instant)`, all in
+  Nepal Time (UTC+05:45) whatever the machine's zone. Pinned by test: 7 October 2025 = 21 Ashwin
+  2082; 1 Kartik 2082 = 18 October 2025; 1 Shrawan 2082 = 17 July 2025.
+- **A stand-in Palika list**: `packages/shared-types/src/constants/palikas.ts` (`PALIKAS`, 20
+  municipalities, with the TODO for the full 753). `deliverySettingsRequestSchema` refuses a
+  municipality that is not on it (**`400 VALIDATION_FAILED`**, not the earlier `422
+PALIKA_UNKNOWN`: it is a schema refinement now) and stores names in the list's spelling.
+- **The PAN is the 9-digit string**; document upload is a later infrastructure phase.
+
+### What was built
+
+| Piece            | Where                                                                                     | Behaviour                                                                                                                                                                                                                                                                                                                               |
+| ---------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Migration 0023   | `packages/db/src/schema/billing.ts`, `vendors.ts`                                         | `pricing_plans` (one default, name unique without case, model / rate / fee / duration CHECKs with fees strictly above 0), `vendor_setting_changes` (one PENDING row per vendor and setting), `vendors.pricing_plan_id`, `accepted_payment_methods`, `billing_cycle_started_at`, `billing_cycle_ends_at`; `pricing_model` gains `FREE`   |
+| Queue a change   | `POST /api/vendor/billing/changes` (`VendorBillingService.requestChange`)                 | 202 with the PENDING row, `effective_from` = the cycle's end. Replaces a waiting change of the same setting (SUPERSEDED). Asking for the active value withdraws the waiting one (200, `change: null`). `409 BILLING_CYCLE_NOT_STARTED`, `422 PRICING_PLAN_NOT_OFFERED`, `409 LOCK_IN_ACTIVE`. Audited. Nothing on the vendor changes    |
+| Withdraw         | `DELETE /api/vendor/billing/changes/:id`                                                  | 204, also on repeat; `409 SETTING_CHANGE_CLOSED`; another shop's is `404 SETTING_CHANGE_NOT_FOUND`. Audited                                                                                                                                                                                                                             |
+| Renewal job      | `apps/worker/src/billing/billing-cycle-renewal.ts`, midnight task `BILLING_CYCLE_RENEWAL` | Starts the first cycle of every LIVE vendor without one (to the end of the current BS month); for every ended cycle applies the due PENDING changes (plan: id, model, rate, 90-day lock-in for a subscription; methods), then opens the next BS month, catching up if months were missed. One transaction per vendor under the row lock |
+| Compliance sweep | `apps/worker/src/compliance/compliance-sweep.ts`, midnight task `VENDOR_COMPLIANCE_SWEEP` | Every LIVE vendor with `tax_id IS NULL` → `SUSPENDED_COMPLIANCE`, remembering LIVE. One transaction per vendor under the row lock the PAN save takes                                                                                                                                                                                    |
+| Delivery rules   | `catalog-service.ts#deliversTo`, `enabledModes`; used by the feed, the menu and checkout  | One SQL expression: the shop's mode is enabled, and NATION_WIDE anywhere / CITY_WIDE `palika = ANY (serviceable_palikas)` / RADIUS_BOUND within radius x 1.1                                                                                                                                                                            |
+| Checkout         | `checkout-service.ts`, before the stock guard                                             | `422 DELIVERY_UNAVAILABLE` (Emergency Stop), `422 VENDOR_UNAVAILABLE` (the shop's mode is switched off), **`422 OUTSIDE_DELIVERY_AREA`** (the address is outside the shop's scope: the server-side check BACKEND_CHECKLIST section 2 asked for)                                                                                         |
+| Emergency Stop   | feed                                                                                      | Both modes off: `GET /api/vendors` answers two empty sections; a menu still opens with `serviceable: false`. Shops return by themselves when a mode is enabled (derived, nothing written)                                                                                                                                               |
+
+- **Every job audits with the system actor**: `system_actor` = `BILLING_CYCLE_RENEWAL` or
+  `VENDOR_COMPLIANCE_SWEEP`, `actor_user_id` null. Actions `BILLING_CYCLE_STARTED`,
+  `VENDOR_SETTING_CHANGE_APPLIED`, `VENDOR_SUSPENDED_FOR_COMPLIANCE`; the vendor's own
+  `VENDOR_SETTING_CHANGE_REQUESTED` / `…_WITHDRAWN`. The contract has 37 actions.
+- **Renewal and request share the vendor row lock** (SPEC edge case 9): a change committed before
+  the renewal is applied by it; a rerun or four concurrent runs apply it once and renew once.
+- A queued plan that was withdrawn before renewal is closed as SUPERSEDED and the vendor keeps
+  its plan.
+- The sweep tests the PAN, not its verification (an unverified PAN freezes payouts, never trading).
+- `createTimerHandlers` takes the two services as optional dependencies; `main.ts` passes them.
+  `registerMidnightJobs` schedules all five midnight tasks.
+
+### Behaviour to know
+
+- **The sweep runs every midnight (Nepal Time) from now on.** Every seeded vendor is LIVE without
+  a PAN, so a dev database with the worker running loses all its shops from the feed at the next
+  00:00 NPT until each saves a PAN (`PUT /api/vendor/tax-identity`). The seed should give the
+  seeded shops a PAN; it was not changed.
+- `POST /api/cart/quote` does not exist: the delivery rules are in `POST /api/cart/checkout`.
+- The customer app does not know the two new checkout codes (`OUTSIDE_DELIVERY_AREA`,
+  `DELIVERY_UNAVAILABLE`): it shows its generic checkout error. Its own pre-check still shows the
+  "does not deliver" dialog first. The feed carries no `delivery_available` flag yet, so no
+  "Delivery Unavailable" banner (the strict feed schema must change with an app build).
+- No admin routes for `pricing_plans` yet: plans exist only by SQL or tests. `vendors.pricing_plan_id`
+  has no foreign key (a module cycle between the two schema files; the renewal job is its only writer).
+- **Not built:** the first cycle's prorated fee, a FREE plan's expiry and 7-day notice, payment
+  methods narrowed by settlement model, `accepted_payment_methods` read at checkout, the per-km
+  and free-above delivery charges, `vendor.suspended_for_compliance` SMS / push, the
+  `vendors_live_tax_identity_check`, and the "one gate for LIVE" in `WalletService`.
+- `vendors.scheduled_downgrade` and the `SUBSCRIPTION_DOWNGRADE` placeholder task are still there.
+
+### Tests
+
+- ledger unit **16** (+5): `bs-calendar.test.ts` (the pinned pair, the Nepal Time day boundary,
+  month starts, the cycle end at the boundary instant, the year rollover, 24 months of 29-32 days).
+- shared-types **239**; db integration **94** (migrations 0000-0023 apply in one transaction).
+- api unit **108**. api integration **562** in 35 suites: 560 passed in the full run. The two
+  failures were re-run and pass: `vendors-api` checked out to a Kathmandu address from a Pokhara
+  shop, which the new `OUTSIDE_DELIVERY_AREA` rule correctly refuses (the test now delivers to the
+  customer's own position), and `vendor-delivery-api`'s lockout-expiry case is a timing flake
+  (passes alone and with its file). New: `billing-and-delivery-rules.int.test.ts` (13: the queue,
+  the lock, replace / withdraw, five simultaneous requests, plan and lock-in refusals, validation;
+  CITY_WIDE by listed Palika in the feed and at checkout; the radius buffer at 5.4 vs 5.6 km and
+  the national tier; a switched-off mode forcing a shop Offline and back; **the Emergency Stop:
+  empty feed, 422, and recovery**).
+- worker unit **142**. worker integration **79 of 79** in 10 suites. New:
+  `compliance-and-billing.int.test.ts` (13: the sweep suspending, leaving PAN holders and non-LIVE
+  vendors, once under a rerun and four concurrent runs, as the midnight task; the renewal starting
+  a first cycle, applying a plan, a subscription with its lock-in, payment methods, nothing
+  mid-cycle, never a withdrawn change, a withdrawn plan dropped, **exactly once under five runs**,
+  catching up missed months). `queues.int.test` expects five schedulers.
+- No mutation checks were run. Neither job was run through a live worker.
+
+## 8Z.19 Phase 25: vendor banking, tax identity and delivery settings endpoints, audit lines migrated (2026-10-08)
+
+Backend only (`packages/shared-types`, `packages/db`, `apps/api`), plus one line in the admin
+app's compliance contract. SPEC.md and BACKEND_CHECKLIST.md were amended for two decisions.
+
+### Decisions (user, 2026-10-08)
+
+| #   | Decision                                                                                                         | Effect                                                                                                                                                                  |
+| --- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **The 1000 NPR minimum applies to the automated Tuesday run only.** A Super Admin's manual payout has no minimum | Reverses §8Z.18's interpretation. SPEC core 5 and BACKEND_CHECKLIST 6.11 amended. The admin app's payout form already takes any positive amount                         |
+| 2   | **"Forced Offline" is strictly derived**                                                                         | Confirms §8Z.18. Nothing is written per vendor for a disabled mode or the Emergency Stop; `fulfillment_mode_enabled` on the delivery settings response is the first use |
+| 3   | **The two console audit lines move into `audit_logs` now**                                                       | Done (below)                                                                                                                                                            |
+| 4   | **Vendor bank accounts get a table now**                                                                         | Done (schema only; no routes yet)                                                                                                                                       |
+
+### Where the build follows the documented contract instead of the request (to confirm)
+
+| Asked                                                                         | Built                                                                                                  | Why                                                                                                                                                                                                         |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PATCH /api/vendor/kyc`                                                       | **`PUT /api/vendor/tax-identity`**                                                                     | BACKEND_CHECKLIST 6.2 and §8Z.11 name it, and the Vendor App's settings screen carries a TODO for that path                                                                                                 |
+| `PATCH /api/vendor/settings` for delivery mode, scope **and** billing changes | **`GET / PUT /api/vendor/delivery-settings`**; billing changes stay `POST /api/vendor/billing/changes` | Same documents. They are also different kinds of write: delivery settings apply at once (200), a billing change is queued for the cycle's end (202, withdrawable). One PATCH would have to answer both ways |
+| "queue the Billing Cycle changes"                                             | **not built**                                                                                          | A hard blocker, below                                                                                                                                                                                       |
+| "upload … the PAN"                                                            | the 9-digit number is saved; no document upload                                                        | No KYC document storage exists (R2 is unbuilt). The number is what lifts the suspension                                                                                                                     |
+
+**Billing queue: blocked on the BS calendar (BACKEND_CHECKLIST 6.1).** A queued change takes
+effect at `billing_cycle_ends_at`, the first instant of the next Bikram Sambat month. BS month
+lengths follow no formula: they are a published table, and nothing in the repository holds one.
+Guessing them would put wrong dates into billing and, later, into IRD invoices. It needs the
+table from a verified source, or an approved, maintained library. The pricing plans table and
+admin routes (6.5) are also prerequisites: there is no plan to select yet.
+
+### Migration 0022 (`0022_vendor_compliance_delivery_banking.sql`)
+
+| Object                     | Change                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `vendor_status`            | + `SUSPENDED_COMPLIANCE` (also in shared-types `vendorStatuses`)                                                                                                                                                                                                                                                                                                         |
+| `vendors`                  | + `status_before_compliance_suspension`, `legal_name`, `registered_address`, `tax_id` (`^[0-9]{9}$`), `is_vat_registered` (default false), `pan_verified_at`, `pan_verified_by_user_id` → users (RESTRICT, partial index), `serviceable_palikas text[]` (GIN index), `delivery_fee_per_km_npr` (default 0), `free_delivery_above_npr`; `base_delivery_fee_npr` default 0 |
+| `vendors` CHECKs           | `vendors_compliance_suspension_check`, `vendors_compliance_restore_status_check`, `vendors_tax_id_check`, `vendors_legal_name_check`, `vendors_registered_address_check`, `vendors_pan_verification_check`, `vendors_serviceable_palikas_size_check` (1–30), `vendors_own_palika_served_check`, `vendors_delivery_fee_per_km_check`, `vendors_free_delivery_above_check` |
+| `vendors` trigger          | hand-added `vendors_default_serviceable_palikas` (BEFORE INSERT): an empty list becomes the shop's own Palika. Hand-added backfill for existing rows                                                                                                                                                                                                                     |
+| `platform_settings`        | + `self_delivery_enabled`, `platform_fleet_enabled` (both default true), `platform_delivery_fee_npr` (default 50, ≥ 0)                                                                                                                                                                                                                                                   |
+| **`vendor_bank_accounts`** | new: `id`, `vendor_id` → vendors (**RESTRICT**), `bank_name`, `branch_name`, `account_name`, `account_number` (`^[A-Za-z0-9]{4,34}$`), `routing_or_swift_code` (nullable, `^[A-Za-z0-9]{4,20}$`), `is_primary` (default false), `created_at`, `updated_at` (hand-added `set_updated_at` trigger)                                                                         |
+
+- **`vendor_bank_accounts` invariants:** one primary account per vendor (partial unique index
+  `vendor_bank_accounts_primary_uidx … WHERE is_primary`); the same account is not listed twice
+  for a vendor (`(vendor_id, bank_name, account_number)` unique); non-blank names; index
+  `(vendor_id, created_at)`. Zod: `vendorBankAccountSchema`, in the compile-time contract.
+  **No route reads or writes it yet**, and the account number is stored as given (unencrypted,
+  like `tax_id`); it must be masked in audit states when its routes are built.
+- **The enum value and its CHECKs share one migration.** PostgreSQL refuses to _use_ a new enum
+  value before the transaction that added it commits, and Drizzle runs all pending migrations in
+  one transaction. Nothing in 0022 uses the value as an enum: the two CHECKs compare
+  `status::text`. (The earlier plan of "its own migration first" would not have helped: both
+  files run in the same transaction on a fresh database.)
+- **The compliance CHECK is one-way** (`SUSPENDED_COMPLIANCE` needs a remembered status; a
+  remembered status may outlive the status). §8Z.11 sketched it as an equivalence, which would
+  make a database error out of a legitimate sequence: a shop swept for compliance still delivers
+  its open cash orders, one of them takes its wallet below the limit, and `WalletService` sets
+  `SUSPENDED`. With the one-way CHECK that works, the debt suspension remembers
+  `SUSPENDED_COMPLIANCE`, and clearing the dues returns the shop there (SPEC edge case 14).
+- **Not added: `vendors_live_tax_identity_check`.** It can only follow the compliance sweep
+  (every seeded and test vendor is LIVE without a PAN).
+- `platform_settings` is in the Zod entity and the contract with its three new columns.
+- **Apply it:** `pnpm db:migrate` (0021 and 0022 are both pending on the dev database).
+
+### `PUT /api/vendor/tax-identity` (VENDOR, own shop, any status)
+
+```jsonc
+// request (taxIdentityRequestSchema, strict)
+{ "tax_id": "302118845", "is_vat_registered": true,
+  "legal_name": "Thamel Kirana Pasal Pvt. Ltd.", "registered_address": "Thamel Marg, Kathmandu-26" }
+//   legal_name / registered_address: omitted = kept, null = cleared
+// 200 (taxIdentityResponseSchema), Cache-Control: no-store
+{ "vendor_id": "uuid", "tax_id": "302118845", "is_vat_registered": true,
+  "legal_name": "…" | null, "registered_address": "…" | null,
+  "status": "LIVE", "compliance_suspension_lifted": true, "pan_verified_at": null }
+// 400 VALIDATION_FAILED (anything but nine digits; an unknown key such as status) · 404 VENDOR_NOT_FOUND · 401 / 403
+```
+
+`VendorComplianceService.saveTaxIdentity`, one transaction under the vendor row lock
+(`SELECT … FOR UPDATE`, the lock wallet journals and admin overrides take):
+
+1. **Compliance lift.** `SUSPENDED_COMPLIANCE` → the remembered status, column cleared. This is
+   the only code that leaves that status: the admin Restore answers `409 VENDOR_STATUS_CONFLICT`
+   for such a shop (tested).
+2. **A suspension on top stays.** If the shop is `SUSPENDED` (debt or admin) over a compliance
+   suspension, it stays `SUSPENDED` (a PAN never lifts those), but the status that suspension
+   will restore is rewritten from `SUSPENDED_COMPLIANCE` to the real one, so the later restore
+   does not strand a shop that now has a PAN (tested with an admin suspension).
+3. **A different PAN clears the verification** (`pan_verified_at`, `pan_verified_by_user_id`):
+   payouts are frozen until it is verified again; the shop stays LIVE. The same PAN keeps it.
+4. **Audit:** `TAX_IDENTITY_SAVED` (before / after: PAN, VAT flag, names, status, verification
+   time), plus `PAN_VERIFICATION_CLEARED` when step 3 applied. Actor = the vendor's own account.
+5. A repeat with the same values changes and records nothing; five simultaneous saves lift the
+   suspension once and write one entry (tested).
+
+Not done with it: the `vendor.restored` event (no SMS / push tells the vendor), and issuing
+waiting invoices (6.4 is unbuilt). **Nothing puts a shop into `SUSPENDED_COMPLIANCE` yet**: the
+sweep and the "one gate for LIVE" of 6.2 are unbuilt, so today only a test or a manual update does.
+
+### `GET / PUT /api/vendor/delivery-settings` (VENDOR, own shop, any status)
+
+```jsonc
+// PUT request (deliverySettingsRequestSchema, strict): replaces all seven
+{ "fulfillment_mode": "SELF_DELIVERY" | "PLATFORM_FLEET",
+  "delivery_scope": "RADIUS_BOUND" | "CITY_WIDE" | "NATION_WIDE",
+  "radius_km": 7.5 | null,                        // required for RADIUS_BOUND, null otherwise (stored radius kept)
+  "serviceable_palikas": ["Lalitpur Metropolitan City"],   // CITY_WIDE only, ≤ 30 with the shop's own
+  "base_delivery_fee_npr": 40, "delivery_fee_per_km_npr": 10, "free_delivery_above_npr": 1500 | null }
+// 200 (deliverySettingsResponseSchema): the seven, plus
+{ "vendor_id": "uuid", "municipality_palika_string": "Kathmandu Metropolitan City",
+  "platform": { "self_delivery_enabled": true, "platform_fleet_enabled": true, "platform_delivery_fee_npr": 50 },
+  "fulfillment_mode_enabled": true }
+// 422 DELIVERY_MODE_DISABLED (details.fulfillment_mode) · 400 VALIDATION_FAILED · 404 VENDOR_NOT_FOUND
+```
+
+- **Mode.** A vendor always has exactly one (the schema has no "none"). Choosing a mode the
+  Super Admin has switched off is 422. A shop already on a switched-off mode may still save its
+  other settings (it is not choosing that mode), and may move to an enabled one. During the
+  Emergency Stop no mode can be chosen.
+- **Forced Offline is derived:** `fulfillment_mode_enabled` is computed from the platform
+  switches on every read. The shop's `status` and (future) `accepting_orders` are not written.
+- **Scope.** Radius: `radius_km` required, at most 100. City: the list is stored with the shop's
+  own Palika first, added if missing and never duplicated (any letter case); more than 30 with
+  its own is 400. Leaving the city tier resets the list to the shop's own Palika.
+- **Charges.** Under `PLATFORM_FLEET` all three must be 0 / 0 / null (the platform sets the fee).
+- **Audit:** `DELIVERY_SETTINGS_CHANGED` with the seven settings before and after. Saving what
+  is stored changes and records nothing.
+- **Stored, not yet used.** The feed and checkout still match a CITY_WIDE shop by its own Palika
+  and charge the base fee only; the platform switches are not read by the feed or checkout yet
+  (so the Emergency Stop does not stop orders yet). Those are the next items of 6.3.
+- **Palika names are not checked against a canonical list** (none exists): only their shape.
+
+Both routes are `routes/vendor-settings.ts`, mounted at `/api/vendor` behind
+`requireAuth(VENDOR)` **after** `/api/vendor/products` and `/api/vendor/finance`.
+
+### Audit lines migrated
+
+| Was (`console.warn`, after the commit)         | Now (`audit_logs`, in the change's transaction)                                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `vendor.status_overridden` (SUSPEND / RESTORE) | `VENDOR_SUSPENDED_BY_ADMIN` / `VENDOR_RESTORED_BY_ADMIN`: before `{ status }`, after `{ status, wallet_balance_npr, overridden_at }` |
+| `payout.approved` / `payout.rejected`          | `PAYOUT_APPROVED` / `PAYOUT_REJECTED` on `payout_request`: before `{ status: PENDING, amount_npr }`, after the decision's fields     |
+
+- `AdminVendorService` and `AdminPayoutService` lost their `audit` constructor argument; their
+  methods take an optional `AuditContext`, which the admin routes pass (`auditContextOf`), so
+  each entry carries the request id of the response's `X-Request-Id`.
+- A refused or repeated decision still records nothing. The `vendor.status_overridden` outbox
+  event is unchanged.
+- The contract now has **35 actions and 13 record types** (`payout_request` is new).
+
+### Admin app
+
+`features/compliance/compliance-rules.ts` uses shared-types' `vendorStatuses` directly (it had
+appended `SUSPENDED_COMPLIANCE` itself). No behaviour change.
+
+### Tests
+
+- shared-types **239** (+10): `api/vendor-settings.test.ts` (the status list; the PAN of nine
+  digits, the optional name and address, no status or verification key; each scope tier, the
+  radius rule, the municipality list, charges under each mode, no "none" mode; the bank account).
+- db integration **94** (+13), real PostgreSQL: `test/vendor-compliance-banking.int.test.ts`
+  (a new shop serving its own Palika; the Palika, PAN, compliance and verification CHECKs; the
+  platform defaults; bank accounts: the contract, one primary per vendor, no duplicate, the
+  format CHECKs, RESTRICT, `updated_at`). Migrations 0000-0022 apply in one transaction on a
+  fresh database, the enum value included.
+- api integration **549** (+25), one full run, 34 suites: `test/vendor-settings-api.int.test.ts`
+  (24: the PAN saved and audited; **the compliance suspension lifted in the same transaction**,
+  for LIVE and APPROVED; the admin Restore refused for it; a suspension on top kept and
+  re-pointed; the verification cleared on a changed PAN and kept for the same one; the repeat;
+  **five simultaneous saves, one lift, one entry**; validation storing nothing; another shop
+  untouched; roles; the delivery settings read with the platform switches; each tier saved; the
+  disabled mode refused; the shop on a disabled mode; the Emergency Stop; the repeat; twelve
+  invalid bodies; the 30-Palika limit at the boundary; the older `/api/vendor/*` routes intact).
+  `admin-vendors-api` (+1) and `admin-payouts-api` now assert `audit_logs` rows and that no
+  console line is written.
+- api unit **108**, worker unit **142**, admin **263**: unchanged and passing. Every workspace
+  type-checks against the new status and columns.
+- worker integration: **65 of 66**. The one failure, `vendor-notifications.int` "dead-letters a
+  poison pill at once", is the known environmental one (§1): a dev worker was running on the
+  same Kafka broker during the run (`pnpm dev`), so the poison message was dead-lettered by both
+  consumers and the test saw two copies where it expects one (both copies were read back from
+  the topic, 2 ms apart, same source offset). Stop the dev worker and rerun to confirm 66.
+
+No mutation checks were run. The API was not started live.
+
+## 8Z.18 Phase 25: backend resumes. The audit trail, strict CORS, request ids; three decisions (2026-10-07)
+
+> **Updated by §8Z.19 (2026-10-08):** the manual payout has no minimum; the two console audit lines are migrated; `audit_logs` has callers; 34 actions and 13 record types.
+
+The frontends are frozen (§8Z.17) and backend work resumes on the server that already exists.
+**No new server was scaffolded:** `apps/api` (Express 5), `apps/worker` (BullMQ + Kafka) and
+`packages/db` (Drizzle ORM on PostgreSQL 16 + PostGIS) are the backend, as §2 describes. This
+section adds the first item of `BACKEND_CHECKLIST.md` section 5 step 1 and two pieces of HTTP
+plumbing. SPEC.md and BACKEND_CHECKLIST.md were amended for three decisions.
+
+### Decisions (user, 2026-10-07)
+
+| #   | Decision                                                                                                                                             | What it means for the build                                                                                                                                                                                                                                                                                                                |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | **Payout schedule:** the automated run is every **Tuesday 02:00 NPT**; the cut-off is **Sunday 23:59 NPT**; the **minimum disbursement is 1000 NPR** | BACKEND_CHECKLIST 6.11: cron `0 2 * * 2` Asia/Kathmandu; the cut-off is read as the end of Sunday (Monday 00:00 NPT, exclusive); the amount is `min(available at the cut-off, available now)`; under the minimum nothing is paid and it carries over. **Not buildable yet:** vendor bank details and a transfer rail do not exist          |
+| 2   | **Plan fees:** a `COMMISSION` rate and a `SUBSCRIPTION` fee are strictly above 0; only `FREE` is 0                                                   | Already what the admin app enforces (§8Z.15). Two CHECKs for the `pricing_plans` migration                                                                                                                                                                                                                                                 |
+| 3   | **Delivery modes off.** The Admin may switch both off: the global **Emergency Stop**. A vendor can never be without a delivery mode                  | **Reverses §8Z.16's "at least one mode stays on".** Admin app changed (below). Server: `delivery_available: false` on the feed and quote, every shop forced Offline as a derived state (nothing written per vendor), a customer "Delivery Unavailable" banner (one change to the frozen customer app, with the API). BACKEND_CHECKLIST 6.3 |
+
+Interpretations made while writing these down (to confirm): the 1000 NPR minimum also applies to
+a Super Admin's manual payout; "forced Offline" is derived and never writes the vendor's own
+Online switch or `status`, so shops return by themselves after a bandh.
+
+### Admin app change (the one exception to the freeze)
+
+`features/logistics/logistics-rules.ts`: the write schema no longer refuses both modes off.
+Saving them shows the Emergency Stop warning and needs a second press (`isEmergencyStop`,
+`EMERGENCY_STOP_WARNING`; `modeDisableWarning` returns it first); while it is on, the panel shows
+a red "Emergency stop is on" notice. Admin tests **263** (+1).
+
+### ORM strategy: Drizzle stays (confirmed)
+
+SPEC infrastructure §2 names Drizzle, and it is what 21 migrations and the ledger already use.
+It fits the immutability constraints because the constraints are not in the ORM at all: they are
+PostgreSQL triggers and CHECKs in hand-reviewed SQL migrations (the balanced-journal and
+append-only triggers of 0006, now 0021), which Drizzle migrations carry verbatim, and Drizzle
+runs the raw `SELECT … FOR UPDATE` the money paths need. Prisma would hide those statements
+behind its own migration engine and has no row-locking API; raw SQL alone would lose the
+compile-time contract (`contract.ts`: every table's row type must equal its shared-types Zod
+type, or `tsc` fails).
+
+### The audit trail
+
+| Piece            | Where                                                 | What                                                                                                                                                                                                                                                                                                               |
+| ---------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Contract         | `packages/shared-types/src/audit/audit-log.ts`        | `AUDIT_ACTION_ENTITY_TYPES` (29 actions → 12 record types), `auditActorSchema`, `auditContextSchema`, `auditLogEntrySchema` (what a service hands the writer), `auditLogSchema` (the stored row), `forbiddenAuditKeys`                                                                                             |
+| Table            | `packages/db/src/schema/audit.ts`, migration **0021** | `audit_logs`: `id`, `occurred_at` (default `clock_timestamp()`), `actor_user_id` → users, `actor_role`, `system_actor`, `action`, `vendor_id` → vendors, `entity_type`, `entity_id`, `before_state` jsonb, `after_state` jsonb, `request_id`, `ip_address` inet, `user_agent`. Both FKs RESTRICT. In `contract.ts` |
+| Append-only      | migration 0021 (hand-added)                           | `reject_audit_log_mutation()`: a row trigger `BEFORE UPDATE OR DELETE` and a statement trigger `BEFORE TRUNCATE`. Both raise `audit_logs is append-only (… rejected)` (SQLSTATE 23000)                                                                                                                             |
+| Writer           | `packages/db/src/audit.ts#recordAuditLog(tx, entry)`  | The only code that writes the table, and it only inserts. In `@hamro-pasal/db` (like the outbox writer) so the API and the worker share it                                                                                                                                                                         |
+| Request plumbing | `apps/api/src/http/request-context.ts`                | `requestId` middleware (`X-Request-Id` in and out), `auditContextOf(req, res)`, `auditActorOf(req)`                                                                                                                                                                                                                |
+
+**How a service uses it** (nothing calls it yet; each audited write of BACKEND_CHECKLIST adds its
+call as it is built):
+
+```ts
+await db.transaction(async (tx) => {
+  const [before] = await tx.select().from(vendors).where(eq(vendors.id, id)).for('update');
+  const [after] = await tx.update(vendors).set({ pan_verified_at: sql`now()` }).where(…).returning();
+  await recordAuditLog(tx, {
+    actor: auditActorOf(req),               // or { kind: 'SYSTEM', job: 'VENDOR_COMPLIANCE_SWEEP' }
+    action: 'PAN_VERIFIED',                 // the record type ('vendor') follows from the action
+    entityId: id,
+    vendorId: id,
+    beforeState: { tax_id: before.tax_id, pan_verified_at: null },
+    afterState: { tax_id: after.tax_id, pan_verified_at: after.pan_verified_at.toISOString() },
+    context: auditContextOf(req, res),
+  });
+});
+```
+
+**The guarantees, and what enforces each.**
+
+| Guarantee                                            | Enforced by                                                                                                                                                                                                            |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An entry is never changed, removed or truncated      | The two database triggers, for every role and every client (tested with raw SQL and through Drizzle, and with `TRUNCATE users CASCADE`). The module exports no update or delete function                               |
+| An entry exists if and only if its change committed  | `recordAuditLog` takes a **`Transaction`**; passing the pooled `Database` does not type-check (asserted with `@ts-expect-error`). An invalid entry throws `InvalidAuditLogError`, which rolls the change back (tested) |
+| The record type cannot be mismatched with the action | The caller does not pass it: it is looked up from the action                                                                                                                                                           |
+| There is always exactly one actor                    | `auditActorSchema` (a user with a role, or a named job) and the CHECK `audit_logs_actor_check`                                                                                                                         |
+| No secret reaches the trail                          | `auditLogEntrySchema` refuses a state whose field names, at any depth, match `otp`, `secret`, `password`, `token`, `signature`, `private_key`, `ciphertext`, and names the field                                       |
+| The time is the database's                           | `occurred_at` defaults to `clock_timestamp()`: the moment of the insert, not of the transaction's start (tested: two entries in one transaction have different times)                                                  |
+| An actor or a shop with entries cannot be deleted    | The two RESTRICT foreign keys (tested)                                                                                                                                                                                 |
+
+- **Where this differs from §8Z.5's sketch.** (a) The actor may be the platform: `actor_user_id`
+  and `actor_role` are nullable and `system_actor` names the job, with a CHECK for exactly one
+  kind. §8Z.5 wrote "actor = the system user" but no such user exists, and inventing a `users`
+  row with a fake +977 number would have been worse. (b) `action` is typed in code
+  (`AuditAction`) and is `text` with a shape CHECK in the database. (c) A fourth index,
+  `(occurred_at, id)`, for the admin's list; the vendor and actor indexes are partial.
+- **Limits.** A database superuser, or the table's owner, can still `ALTER TABLE … DISABLE
+TRIGGER`: the application's database role should not own the table in production (it does
+  today, as for every table). §8Z.11's `content_hash` idea would detect that; it is not built
+  for the audit trail.
+- The admin app's proposed read contract (`features/audit/audit-rules.ts`) predates this: when
+  `GET /api/admin/audit-logs` is built it must accept a system actor (`actor_role` null) and
+  should import `auditStateSchema` from shared-types.
+- **Not done:** the read route; any caller; moving today's two `console.warn` audit lines
+  (vendor overrides, payout decisions) into the table (BACKEND_CHECKLIST, "To decide").
+
+### HTTP: strict CORS, request ids, the global error handler
+
+- **Global error handler: unchanged.** `apps/api/src/http/errors.ts` already maps every domain
+  error to `{ error: { code, message, details? } }` and hides everything else behind an opaque 500. It was not rewritten.
+- **CORS (`http/cors.ts#strictCors`, new).** There was none, deliberately (§8J: the dashboard is
+  same-origin and its cookie is `SameSite=Strict`). It is now explicit: `CORS_ALLOWED_ORIGINS`
+  (`serverEnvSchema`; comma-separated exact origins; **empty by default**; a wildcard, a path or
+  a non-http scheme fails at startup; https only in production).
+  - A listed origin gets `Access-Control-Allow-Origin: <that origin>`, credentials and its
+    preflight answered (204). An unlisted origin's preflight is `403 CORS_ORIGIN_NOT_ALLOWED`;
+    its simple requests are handled and answered without CORS headers (the browser withholds the
+    response). A request without `Origin` is untouched.
+  - **The customer and vendor apps need no CORS**: React Native is not a browser and sends no
+    `Origin`. The allowlist is only for a dashboard hosted on another origin.
+  - Socket.io has its own CORS setting; it is unchanged (WebSocket-only, token handshake).
+- **Request ids (`http/request-context.ts#requestId`, new).** Every response carries
+  `X-Request-Id`: the caller's when it is well formed (letters, digits, `. _ -`, at most 100
+  characters), otherwise a new UUID.
+- `createApp(services?, options?)` gained `options.corsAllowedOrigins`; `server.ts` passes the
+  env value. Order: request id, CORS, body parser, routes, 404, error handler.
+
+### Data layer and commands
+
+- **Migration 0021** is not applied to the dev database by this work: run `pnpm db:migrate`.
+  `drizzle-kit generate` reports "No schema changes".
+- `.env.example` gained `CORS_ALLOWED_ORIGINS` (empty).
+
+### Tests
+
+- shared-types **229** (+15): `audit/audit-log.test.ts` (12: every action in shape and mapped,
+  the actor union, entries, states as JSON objects, the context, forbidden keys at depth and in
+  lists, ordinary fields not mistaken for secrets) and three env cases (the default, the exact
+  allowlist with a wildcard / path / other scheme refused, https only in production).
+- db integration **81** (+17), real PostgreSQL: `test/audit-log.int.test.ts`: the stored row and
+  its contract; a job as actor; **the database is not a transaction (compile-time)**; commit and
+  rollback with the change; an invalid entry taking the change down; a secret refused with its
+  path; an unknown action; 20 concurrent transactions; the clock; **UPDATE (four columns), DELETE
+  and TRUNCATE (also by CASCADE) refused, through SQL and through Drizzle**; RESTRICT on actor
+  and shop; the actor, foreign-key and JSON CHECKs. The foreign-key index audit and the contract
+  test pass with the new table.
+- api unit **108** (+16): `http/cors.test.ts`: no `Origin`, a listed origin, its preflight, six
+  look-alike origins given nothing, an unlisted preflight refused, the empty default, a plain
+  OPTIONS; request ids generated, kept and replaced; the audit context accepted by the contract.
+- api integration: **524** passed, unchanged, in one full run after the app change (33 suites, real PostgreSQL, Redis and Kafka). The worker and the mobile app type-check against the new `ServerEnv`.
+- No mutation checks were run. The API was not started live for this work.
+
+## 8Z.17 Super Admin dashboard: Promotions, Audit log; the Admin UI freeze and the frontend baseline (2026-10-07)
+
+> **Updated by §8Z.25 (2026-10-08):** every tab in the table below except Vendor requests now runs on real data; the "Data" column and the "sample screens" notes describe the state before that.
+
+Admin web app (`apps/admin`) only. **No API, shared-types, SPEC.md or database change.** Both
+screens run on sample data held in memory, like those of §8Z.15 and §8Z.16.
+
+**The Super Admin UI is frozen with this section.** Every screen of the Super Admin flow exists.
+With the Customer App and the Vendor App (frozen in §8Z.14), **the frontend baseline is complete
+and the next work is the backend** (`BACKEND_CHECKLIST.md`). "Complete" means every screen exists
+and its rules are unit-tested; what it does not mean is in "What the baseline is not" below.
+
+### The two screens
+
+| Screen         | What it does                                                                                                                                                                                                                                                                                                                                                                               | Guardrail (rules module, tested)                                                                                                                                                                                                                                                                                                                        |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Promotions** | A table (promotion with an "Ad" badge when sponsored, placement, target, order, Live / Scheduled / Hidden / Ended with its dates) with Hide / Show and Edit, and a create / edit modal: placement, sort order, title, subtitle, image URL, target type, target value, first and last day (optional, Nepal Time), ad purchase id, Active                                                    | The target value must fit its type: SHOP a uuid, CATEGORY a slug, DISCOUNT_TAG a label of at most 40 characters; changing the type empties the value. A banner needs its image and a featured offer its title. **Sponsored exactly when an ad purchase is named, and then the target is a shop.** The schema is strict: no price or discount key exists |
+| **Audit log**  | A table, newest first: timestamp (Nepal Time), actor with role, action with record type, shop, **Details**. Filters: action, record type, search on actor or shop. The details modal shows who, when, the record, the request id and address, then a **field-by-field diff** of the state before and after (changed, added, removed; unchanged on request) and the raw JSON of both states | **Strictly read only.** `audit-rules.ts` exports a view schema and a query schema and nothing that writes (a test asserts it); the screen holds its entries in a constant and has no action but opening the details. The filters are checked with the query schema before use                                                                           |
+
+- **The diff** (`stateDiff`): nested objects are walked by dotted path (`terms.vendor_share_percent`);
+  a list is one value; a creation (`before_state` null) is every field added; values are compared
+  as JSON text, so `860` and `"860"` differ and a missing field differs from `null`.
+- Promotion days are whole Nepal Time days, like campaign days (`nepalDay` / `nepalInstant`, now
+  exported from `campaign-rules.ts`). Empty means "from now" / "until switched off".
+- `features/planned/` and `PLANNED_SECTIONS` are deleted: no placeholder tab is left.
+- Samples: five promotions (one per target type, an artwork-only banner, one sponsored) and eight
+  audit entries, one per kind of change the other sample screens make. **The audit samples are
+  invented: they are not a record of what was done on the other tabs.**
+
+### Where the screens follow the existing contract instead of the request
+
+| Asked                              | Built                                                                              | Why                                                                                                                                                         |
+| ---------------------------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sort_order`                       | `display_order` (labelled "Sort order")                                            | §8Z.4's column, which the customer app already reads                                                                                                        |
+| "Target ID (string / UUID)"        | `target_value`: a uuid for SHOP, a **slug** for CATEGORY, a label for DISCOUNT_TAG | §8Z.4: the customer app resolves a category by slug and a tag by its text                                                                                   |
+| Title, target, active, order       | plus placement, image URL, subtitle, dates, ad purchase id; a "None" target        | They are in §8Z.4 / §8Z.5's contract and `PUT` replaces every field: a form without them would wipe them on every edit. A carousel banner is its image      |
+| `previous_state` / `new_state`     | `before_state` / `after_state`                                                     | §8Z.5's `audit_logs` columns                                                                                                                                |
+| Actions such as `PLAN_EDITED`      | `PRICING_PLAN_UPDATED` and the others listed in BACKEND_CHECKLIST section 5 step 1 | One naming pattern (`ENTITY_VERB`) with §8Z.5's existing actions. `action` is `text`: the screen shows whatever the server sends                            |
+| "Actor (Admin Name / Vendor Name)" | `actor_name` + `vendor_name` on the admin read                                     | The table stores ids. A vendor's actor name is the shop's business name; an admin's is their first name. The system user's role is still undefined in §8Z.5 |
+
+### Final admin tabs (`apps/admin/src/tabs.ts`)
+
+| Hash              | Label            | Screen (`src/features/…`)          | Data                | Backend (BACKEND_CHECKLIST)   |
+| ----------------- | ---------------- | ---------------------------------- | ------------------- | ----------------------------- |
+| `#/dlq`           | Dead letters     | `dlq/DeadLetterScreen.tsx`         | real                | built (Phase 15)              |
+| `#/vendors`       | Vendors          | `vendors/VendorScreen.tsx`         | real                | built (Phase 15)              |
+| `#/compliance`    | Compliance       | `compliance/ComplianceScreen.tsx`  | sample              | 6.2                           |
+| `#/categories`    | Categories       | `categories/CategoryScreen.tsx`    | real                | built (Phase 17)              |
+| `#/products`      | Products         | `products/ProductScreen.tsx`       | real                | built (Phase 17)              |
+| `#/pricing-plans` | Pricing plans    | `pricing/PricingPlanScreen.tsx`    | sample              | 6.5                           |
+| `#/campaigns`     | Campaigns        | `campaigns/CampaignScreen.tsx`     | sample              | section 5 step 3              |
+| `#/ad-products`   | Ad products      | `ads/AdProductScreen.tsx`          | sample              | section 5 step 5              |
+| `#/promotions`    | Promotions       | `promotions/PromotionScreen.tsx`   | sample              | section 4                     |
+| `#/logistics`     | Logistics        | `logistics/LogisticsScreen.tsx`    | sample              | 6.3                           |
+| `#/payouts`       | Payouts (legacy) | `finance/PayoutScreen.tsx`         | real; to be deleted | built (Phase 22); retire 6.11 |
+| `#/settlements`   | Settlements      | `settlements/SettlementScreen.tsx` | sample              | 6.11                          |
+| `#/approvals`     | Vendor requests  | `approvals/ApprovalScreen.tsx`     | sample              | section 5 step 4              |
+| `#/audit-log`     | Audit log        | `audit/AuditLogScreen.tsx`         | sample              | section 5 step 1              |
+
+The Vendor Portal (the same web app, for a VENDOR account) is unchanged: My products, Earnings.
+
+### Backend required for the two screens (not built)
+
+```jsonc
+// Promotions (BACKEND_CHECKLIST section 4; contract of §8Z.4 + §8Z.5)
+// GET    /api/admin/promotions → { "promotions": [ { "id", "placement": "CAROUSEL" | "FEATURED", "image_url", "title", "subtitle",
+//          "target_type": "SHOP" | "CATEGORY" | "DISCOUNT_TAG" | null, "target_value", "display_order", "is_active",
+//          "starts_at", "ends_at", "is_sponsored", "ad_purchase_id", "created_at", "updated_at" } ] }
+// POST   /api/admin/promotions        the twelve writable fields → 201
+// PUT    /api/admin/promotions/:id    the same body, replaces every field → 200
+// DELETE /api/admin/promotions/:id    → 204                     POST /api/admin/promotions/image → { "url" }
+//   422 PROMOTION_TARGET_NOT_FOUND · 422 AD_PURCHASE_REQUIRED · 422 AD_PURCHASE_MISMATCH · 404 PROMOTION_NOT_FOUND
+
+// Audit log (BACKEND_CHECKLIST section 5 step 1)
+// GET /api/admin/audit-logs?vendor_id=&entity_type=&action=&limit=&cursor=      Bearer SUPER_ADMIN, no-store
+{ "entries": [ { "id": "uuid", "occurred_at": "…", "actor_user_id": "uuid", "actor_role": "SUPER_ADMIN",
+                 "actor_name": "Sarita", "action": "SETTLEMENT_MODEL_CHANGED",
+                 "vendor_id": "uuid" | null, "vendor_name": "Asan Masala & Snacks" | null,
+                 "entity_type": "vendor_ledger", "entity_id": "uuid",
+                 "before_state": { "settlement_model": "COD_CREDIT" } | null,
+                 "after_state":  { "settlement_model": "PLATFORM_ESCROW" },
+                 "request_id": "…" | null, "ip_address": "…" | null, "user_agent": "…" | null } ],
+  "next_cursor": "uuid" | null }
+//   400 INVALID_CURSOR · 400 VALIDATION_FAILED.   No POST, PUT, PATCH or DELETE exists for this resource.
+```
+
+- The app filters the action and record type lists from the entries it holds; the real screen
+  should send `auditQueryOf(filters)` to the server and page with `next_cursor` (the search box
+  stays a filter of the loaded page unless a `q=` is added).
+- The image upload has no control in the form yet: the admin pastes a URL. Add a file input that
+  posts to `/api/admin/promotions/image` when that route exists.
+
+### The frontend baseline (2026-10-07)
+
+| App                          | Frozen in | Runs on real data today                                                                                         | Runs on sample or phone-only data, waiting for the backend                                                                                                      |
+| ---------------------------- | --------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Customer (`apps/mobile`)     | §8Z.10    | feed, menus, search, cart, checkout, eSewa / Khalti, tracking, cancel, reviews, dispute chat, push registration | banners, offers, ratings and shop extras; the demo "Shop Discount" (§8Z.6, to be removed); profile, address book, favourites, consents, deletion (on the phone) |
+| Vendor (`apps/mobile`)       | §8Z.14    | Live Orders board (API, socket, alarm), Ledger for Model B                                                      | Catalogue, Invoices, Analytics, Marketing, Shop settings, Online switch, Models A / C                                                                           |
+| Rider (`apps/mobile`)        | Phase 21  | deliveries (accept, pickup, code)                                                                               | GPS (a mock switch)                                                                                                                                             |
+| Super Admin (`apps/admin`)   | §8Z.17    | Dead letters, Vendors, Categories, Products, Payouts (legacy)                                                   | Compliance, Pricing plans, Campaigns, Ad products, Promotions, Logistics, Settlements, Vendor requests, Audit log                                               |
+| Vendor Portal (`apps/admin`) | Phase 22  | My products, Earnings                                                                                           | –                                                                                                                                                               |
+
+**What the baseline is not.**
+
+- **Nothing has been seen running.** No mobile screen has run on a device (§13), and none of the
+  nine sample admin screens has been opened in a browser: their layout (the 14-tab bar wrapping,
+  the modals, the disabled-button tooltip, the diff table's widths) is verified by `tsc`, lint
+  and rule tests only. A visual pass of the admin app is a short job with `pnpm --filter
+@hamro-pasal/admin dev` and is worth doing before wiring.
+- **The sample screens share nothing.** Each keeps its own rows; a change on one tab does not
+  appear on another, and everything resets on a tab switch or reload.
+- **Every proposed contract is still local.** The Zod schemas of the nine sample screens live in
+  their `*-rules.ts`; each must move to `packages/shared-types` with its API (the header of each
+  module says where). Until then nothing checks them against a server.
+- **The legacy payout flow is still the only real way to pay a vendor** (§8Z.16).
+- The React screens of the admin app have no component tests; the mobile app's do.
+- Open "to confirm" points are listed in §8Z.15 and §8Z.16 (plan rates above 0, both delivery
+  modes off, the payout schedule) and above (action names).
+
+**Starting the backend.** `BACKEND_CHECKLIST.md` has every endpoint, in a suggested order. For
+the admin screens the dependency order is: `audit_logs` (section 5 step 1) first, because every
+other admin write records to it; then 6.2 (PAN compliance and verification) with 6.11's gate;
+6.3 logistics; section 4 promotions; 6.5 pricing plans; section 5 steps 3–5 (campaigns, model
+requests, ad products); 6.11's settlement payout and the retirement of the legacy flow.
+
+### Tests
+
+Admin **262** in 9 suites (`pnpm --filter @hamro-pasal/admin test`); `tsc --noEmit`, `eslint`
+and `prettier` clean; `vite build` succeeds.
+
+- `features/promotions-audit.test.ts` (37): the two hashes and **no placeholder left**; the
+  promotion contract (image for a banner, title for an offer, **the target value per type**,
+  type and value together or neither, **sponsored only with a purchase and a shop target**, no
+  price key), the form (blanks as null, Nepal Time days, each error's wording, the round trip of
+  every sample), the store and phases; the audit contract (**no write export**, a creation's null
+  state, the query's keys and limit), rows and filters, and the diff (changed, added, removed,
+  nested paths, lists, creations, number vs text, null vs missing, the summary, **the entries
+  never altered**).
+- `governance.test.ts` lost its placeholder case (37) and lists 14 tabs.
+- No mutation checks were run. **Not opened in a browser.**
+
+## 8Z.16 Super Admin dashboard: Ad products, Logistics, Vendor requests; payouts become admin-initiated (2026-10-07)
+
+> **Updated by §8Z.17 (2026-10-07):** Promotions and the Audit log are built; no placeholder tab is left; the tab table there is replaced by §8Z.17’s.
+
+Admin web app (`apps/admin`) and the three documents. **No API, shared-types or database
+change.** SPEC.md was amended by the user's decision (list below). **None of the backend is
+built:** the three new screens run on sample data held in memory, like those of §8Z.15.
+
+### Decisions (user, 2026-10-07): these govern wherever older text differs
+
+| #   | Decision                                                                                                               | What it means for the build                                                                                                                                                                                                                                                                                                                                   |
+| --- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Vendor-requested payouts are retired.** Payouts are initiated by a Super Admin, or by the system on a fixed schedule | **Supersedes Phase 22's request / approve / reject flow (§8O)** as the plan of record. The `#/settlements` tab is the replacement. Backend: BACKEND_CHECKLIST 6.11 (remove the vendor request and the admin approve / reject routes, keep `payout_requests` as the payout record, reject PENDING rows at cutover, add the scheduled run). Schedule: undecided |
+| 2   | **Settlement model change approvals live under a new tab, `#/approvals` ("Vendor requests")**                          | Built (below). SPEC Super Admin flow step 6                                                                                                                                                                                                                                                                                                                   |
+| 3   | **A changed PAN clears `pan_verified_at` at once**; payouts are frozen until it is verified again                      | Confirms §8Z.15's inference. The shop stays LIVE                                                                                                                                                                                                                                                                                                              |
+| 4   | **SPEC.md carries all of it**                                                                                          | Amended: see "SPEC.md amendments"                                                                                                                                                                                                                                                                                                                             |
+| 5   | Locking the model and fee of an existing pricing plan is confirmed                                                     | The same rule is applied to ad products (their price list is immutable per row, §8Z.5)                                                                                                                                                                                                                                                                        |
+
+**What still runs today (code, not plan).** The Phase 22 routes and screens are untouched: the
+admin tab `#/payouts` still approves and rejects real requests (now labelled **"Payouts
+(legacy)"**), and the Vendor Portal's Earnings tab still has "Request payout". They were left in
+place on purpose: their replacement is sample-only until BACKEND_CHECKLIST 6.11 ships, and removing
+them first would leave no way to pay a vendor. **Delete them in the release that ships the
+settlement routes** (the tab, `features/finance/PayoutScreen.tsx`, the request form in
+`VendorEarningsScreen.tsx`, the payout parts of `payout-rules.ts` and `finance.test.ts`).
+
+### SPEC.md amendments (2026-10-07)
+
+| Where                                             | Added                                                                                                                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core 4, Onboarding Models                         | Immutable plans (model, rate, fee, duration); exactly one default, an offered Commission plan                                                                                         |
+| Core 5, Settlement Models                         | The admin decides a model change as requested and cannot choose a model; refused while an ad runs. **Payouts**: platform-initiated or scheduled, never requested; the PAN payout gate |
+| Core 7, Platform Campaigns                        | Terms and `terms_version`; **both dates are terms**; a change voids every opt-in                                                                                                      |
+| Core 8, Billing models                            | Ad prices are NPR amounts; a published ad product never changes                                                                                                                       |
+| Core 10, after "PAN is mandatory"                 | **PAN verification**: gates payouts, not visibility; a changed PAN clears it; an admin cannot lift a compliance suspension                                                            |
+| Vendor flow 12; Super Admin flow 6 and new step 8 | No vendor payout request; "Vendor requests"; PAN verification and Settlements                                                                                                         |
+| Data model `Vendor`                               | `pan_verified_at`                                                                                                                                                                     |
+| Edge cases 16–18; verification tests 18–21        | PAN changed after verification, campaign dates moved, payout racing a PAN change; the payout gate, campaign terms, model requests, immutable price lists                              |
+
+### Admin tabs (`apps/admin/src/tabs.ts`), replacing §8Z.15's table
+
+| Hash              | Label            | Screen                                                    | Data                |
+| ----------------- | ---------------- | --------------------------------------------------------- | ------------------- |
+| `#/dlq`           | Dead letters     | `features/dlq/DeadLetterScreen.tsx`                       | real                |
+| `#/vendors`       | Vendors          | `features/vendors/VendorScreen.tsx`                       | real                |
+| `#/compliance`    | Compliance       | `features/compliance/ComplianceScreen.tsx`                | sample              |
+| `#/categories`    | Categories       | `features/categories/CategoryScreen.tsx`                  | real                |
+| `#/products`      | Products         | `features/products/ProductScreen.tsx`                     | real                |
+| `#/pricing-plans` | Pricing plans    | `features/pricing/PricingPlanScreen.tsx`                  | sample              |
+| `#/campaigns`     | Campaigns        | `features/campaigns/CampaignScreen.tsx`                   | sample              |
+| `#/ad-products`   | Ad products      | `features/ads/AdProductScreen.tsx`                        | sample              |
+| `#/logistics`     | Logistics        | `features/logistics/LogisticsScreen.tsx`                  | sample              |
+| `#/payouts`       | Payouts (legacy) | `features/finance/PayoutScreen.tsx`                       | real; to be deleted |
+| `#/settlements`   | Settlements      | `features/settlements/SettlementScreen.tsx`               | sample              |
+| `#/approvals`     | Vendor requests  | `features/approvals/ApprovalScreen.tsx`                   | sample              |
+| `#/audit-log`     | Audit log        | `features/planned/PlannedSectionScreen.tsx` (placeholder) | –                   |
+
+The only placeholder left is the Audit log. Home promotions (§8Z.4) still have no tab.
+
+### The three screens
+
+| Screen              | What it does                                                                                                                                                                                                                                          | Guardrail (rules module, tested)                                                                                                                                                                                                                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Ad products**     | A table (product, placement, billing, price, running purchases, On sale / Off sale) and a create / edit modal: name, placement, billing model, price (NPR), duration in days, On sale                                                                 | **No body names a vendor** (`adProductCreateRequestSchema` is strict): an ad exists only when a vendor buys it. **An existing product's placement, billing model, price and duration are locked**; the update schema has only `name` and `is_active`. Taking a product off sale says how many purchases run on to their end            |
+| **Logistics**       | One panel: switches for Self delivery and Platform fleet (each with the number of shops on it), the platform delivery charge, Save and Discard                                                                                                        | The fee is 0–10000 in whole paisa. **At least one mode stays on.** Switching off a mode that shops use shows how many stop taking orders and needs a second press. A fee change says it applies to new orders only                                                                                                                     |
+| **Vendor requests** | Chips Pending / Decided over a table: vendor, current model, requested model, date, and **Approve** / **Reject** (each two-step; Reject takes an optional reason for the vendor). Approving moves the shop to the requested model in the sample state | **Approve is disabled with the reason** while the shop has an open order, a running ad or a negative ledger (SPEC core 5), and always for a request to Model C. **The decision carries no model:** the admin decides the request as asked. A request is decided once. The store refuses a blocked approval independently of the button |
+
+- Samples: four ad products (one retired price), the migration's default logistics settings with
+  the seed's mode counts (5 self delivery, 4 fleet), and four model requests (one approvable A → B,
+  one blocked by 2 open orders and a ledger at Rs. -450, one B → A, one already approved).
+- All seven sample screens follow §8Z.15's pattern (`ADMIN_SAMPLES_ENABLED`, strict Zod contracts
+  in the feature's `*-rules.ts`, a `*-samples.ts` file, a local reducer). State is per screen and
+  resets on a tab switch: **approving a model change here does not change the Settlements rows.**
+
+### Where the screens follow SPEC instead of the request (to confirm)
+
+| Asked                                                                | Built                                                                                                               | Why                                                                                                                                                                                                                |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Placement type `CAROUSEL` or `SEARCH`                                | the existing `ad_slot` values; the form offers `CAROUSEL` ("Home carousel") and `FEED_LISTING` ("Sponsored Search") | §8Z.5 and §8Z.14: "Sponsored Search" is the `FEED_LISTING` slot in the feed contract and the Vendor App. A fourth name for it would split them. `FEATURED` stays in the enum, unsold                               |
+| Price as "NPR amount or % premium"                                   | NPR under both billing models                                                                                       | SPEC core 8: `PER_ORDER_PREMIUM` is "a fixed fee for each delivered order", held against a budget in NPR and posted as its own ledger line. A percentage would change SPEC, the budget hold and the order snapshot |
+| (not asked) a duration                                               | `duration_days` (1–90), required                                                                                    | `ad_products.duration_days` is NOT NULL in §8Z.5; a flat-rate price means nothing without its period                                                                                                               |
+| Create / **Edit** an ad product                                      | Edit changes the name and On sale only                                                                              | §8Z.5: prices are immutable per row. The same rule the user confirmed for pricing plans                                                                                                                            |
+| `platform_delivery_enabled` and `platform_fleet_enabled` as switches | `self_delivery_enabled` and `platform_fleet_enabled`                                                                | SPEC Super Admin flow 4 and §8Z.11: the two modes are self delivery and the platform fleet. "Platform delivery" **is** the fleet (its label in the Vendor App), so the two asked-for names were one switch         |
+| (not asked) both modes off                                           | refused                                                                                                             | With both off no shop could take an order. SPEC does not say; the server rule is proposed as `422 NO_DELIVERY_MODE_ENABLED`                                                                                        |
+
+### Backend required (not built)
+
+```jsonc
+// Ad products (BACKEND_CHECKLIST section 5 step 5)
+// GET   /api/admin/ads/products → { "products": [ { "id", "name", "slot": "CAROUSEL" | "FEATURED" | "FEED_LISTING",
+//         "billing_model": "FLAT_RATE" | "PER_ORDER_PREMIUM", "price_npr": 5000, "duration_days": 7,
+//         "is_active": true, "active_purchase_count": 2, "created_at": "…" } ] }
+// POST  /api/admin/ads/products      { name, slot, billing_model, price_npr, duration_days, is_active } → 201
+// PATCH /api/admin/ads/products/:id  { name, is_active } → 200      400 for a slot, billing model, price or duration
+// Logistics (BACKEND_CHECKLIST 6.3)
+// GET /api/admin/settings/logistics → { "self_delivery_enabled": true, "platform_fleet_enabled": true,
+//       "platform_delivery_fee_npr": 50, "self_delivery_vendor_count": 5, "platform_fleet_vendor_count": 4, "updated_at": "…" }
+// PUT /api/admin/settings/logistics   { self_delivery_enabled, platform_fleet_enabled, platform_delivery_fee_npr } → 200
+//       422 NO_DELIVERY_MODE_ENABLED (to confirm)
+// Settlement model requests (BACKEND_CHECKLIST section 5 step 4)
+// GET  /api/admin/settlement-model-requests?status=PENDING → { "requests": [ { "id", "vendor_id", "business_name", "phone",
+//        "current_model", "from_model", "requested_model", "status", "requested_at",
+//        "open_order_count", "ledger_balance_npr", "active_ad_count", "decided_at", "rejection_reason" } ] }
+// POST /api/admin/settlement-model-requests/:id/approve            → 200 { request }   (also on repeat)
+// POST /api/admin/settlement-model-requests/:id/reject { reason? } → 200 { request }
+//        409 SETTLEMENT_CHANGE_BLOCKED (details.blockers) · 422 SETTLEMENT_MODEL_UNAVAILABLE · 409 REQUEST_ALREADY_DECIDED
+```
+
+- The three blocker figures on a request are the server's view when the list is read; the approval
+  re-checks them under the vendor row lock.
+- An approval sets `vendors.settlement_model` and `vendor_ledgers.settlement_model` in one
+  transaction with the audit row (`SETTLEMENT_MODEL_CHANGED`); the vendor's request wrote
+  `SETTLEMENT_MODEL_CHANGE_REQUESTED` (§8Z.5).
+- The vendor side (`POST /api/vendor/ledger/settlement-model { model }`, §8Z.5) has no screen in
+  the Vendor App yet.
+
+### Open points
+
+- **The payout schedule** (cadence, cut-off, minimum amount) and how the bank transfer is made.
+  Until then Settlements is the admin's manual button.
+- **The legacy payout code** is still in both web apps and the API (above).
+- The audit log viewer and a Promotions tab are not built.
+- The six "to confirm" rows of the table above.
+
+### Tests
+
+Admin **226** in 8 suites; `tsc --noEmit` and `eslint` clean; `vite build` succeeds.
+
+- `features/ads-logistics-approvals.test.ts` (39): the three hashes; the ad contract (NPR price,
+  1–90 days, **no vendor key**, **no terms key on an edit**, Sponsored Search = `FEED_LISTING`),
+  form, labels and store; the logistics contract (fee range, **one mode stays on**, unknown
+  settings refused), the form's two independent errors, the mode warning with its counts, the fee
+  note, the store leaving the counts alone; the model-request contract (**no model in a
+  decision**), every blocker and its wording, Model C never approvable, approval moving the shop,
+  rejection leaving it, a blocked approval refused by the store, one decision per request.
+- `governance.test.ts` was updated for the tab list (13 tabs, one placeholder).
+- The React screens have no component tests and **were not opened in a browser**. No mutation
+  checks were run.
+
+## 8Z.15 Super Admin dashboard: new tabs, Compliance, Campaigns, Pricing plans, Settlement approvals; the PAN payout gate (2026-10-07)
+
+> **Updated by §8Z.16 (2026-10-07):** its open points are decided (vendor payout requests are retired; model change approvals live under `#/approvals`; a changed PAN clears the verification; SPEC.md is amended), the tab table is replaced by §8Z.16’s, and the Settlement approvals tab is labelled “Settlements”.
+
+Admin web app (`apps/admin`) only. **No API, shared-types, SPEC.md or database change.** Three
+rules were decided by the user and are recorded here and in `BACKEND_CHECKLIST.md` (sections 5
+step 3, 6.2, 6.5, 6.11). **None of the backend below is built**: all four screens run on sample
+data held in memory.
+
+### Decisions (user, 2026-10-07): these govern wherever older text differs
+
+| #   | Decision                                                                                                                               | What it means for the build                                                                                                                                                                                                                                                              |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **An admin cannot lift a compliance suspension.** `SUSPENDED_COMPLIANCE` is lifted only by the transaction that saves the vendor's PAN | Confirms §8Z.11 decision 4. No admin route sets `LIVE` for such a shop; the admin Restore keeps refusing it                                                                                                                                                                              |
+| 2   | **`pan_verified_at` is a real rule and gates payouts, not visibility.** A vendor is LIVE and takes orders as soon as its PAN is saved  | New columns on `vendors`, a Super Admin verify route, and **`409 PAN_NOT_VERIFIED` on every path that transfers money to a vendor's bank account** ("The PAN payout gate" below). Nothing about the feed, checkout or LIVE depends on it                                                 |
+| 3   | **Campaign dates are material terms.** Moving the start or the end date raises `terms_version` and voids the existing opt-ins          | **Supersedes §8Z.5 section 1**, whose trigger listed five fields: `starts_at` and `ends_at` join `kind`, `value`, `max_discount_npr`, `min_cart_npr`, `vendor_share_percent`. Any of the seven may change only together with `terms_version + 1`. The name and `is_active` are not terms |
+
+### The PAN payout gate (not built)
+
+```sql
+ALTER TABLE vendors
+  ADD COLUMN pan_verified_at          timestamptz NULL,
+  ADD COLUMN pan_verified_by_user_id  uuid NULL REFERENCES users(id) ON DELETE RESTRICT,
+  ADD CONSTRAINT vendors_pan_verification_check CHECK (
+    (pan_verified_at IS NULL) = (pan_verified_by_user_id IS NULL)
+    AND (pan_verified_at IS NULL OR tax_id IS NOT NULL));
+CREATE INDEX vendors_pan_verified_by_user_id_idx ON vendors (pan_verified_by_user_id)
+  WHERE pan_verified_by_user_id IS NOT NULL;                 -- the Phase 23 FK audit test
+```
+
+```jsonc
+// GET  /api/admin/compliance/vendors                  Bearer SUPER_ADMIN → 200 (no-store)
+{ "vendors": [ { "id": "uuid", "business_name": "…", "phone": "+977…", "municipality_palika_string": "…",
+                 "status": "LIVE" | "SUSPENDED_COMPLIANCE" | "…",
+                 "restore_status": "LIVE" | null,              // set only while SUSPENDED_COMPLIANCE
+                 "compliance_suspended_at": "…" | null,
+                 "legal_name": "…" | null, "tax_id": "302118845" | null, "is_vat_registered": false,
+                 "pan_verified_at": "…" | null } ] }
+
+// POST /api/admin/vendors/:id/pan-verification        Bearer SUPER_ADMIN, no body → 200 (also on repeat)
+{ "vendor": { /* the row above */ } }
+// 409 PAN_MISSING        the vendor has no tax_id (nothing to verify)
+// 404 VENDOR_NOT_FOUND
+```
+
+- **Verify** stamps the two columns under the vendor row lock and writes an `audit_logs` row
+  (`PAN_VERIFIED`) in the same transaction. It never changes `status`. A repeat keeps the first
+  stamp.
+- **A changed PAN is a new document:** `PUT /api/vendor/tax-identity` with a different `tax_id`
+  clears both columns in its transaction, so the new number must be verified before the next
+  payout. (Inferred from the rule, not stated by the user: confirm.)
+- **The gate.** Checked under the vendor row lock, re-read at the moment of the transfer:
+  - `POST /api/admin/finance/payouts/:id/approve` (Phase 22) → **`409 PAN_NOT_VERIFIED`**
+    (`details.vendor_id`). The request stays PENDING; Reject still works.
+  - `POST /api/admin/finance/settlements/:vendor_id/payout` (below) → the same.
+  - Any later transfer to a vendor's bank account (Model C / Phase 3, an ad budget released to a
+    bank) → the same.
+- **Not gated:** going LIVE, taking orders, settlement postings into the ledger (the wallet is
+  still credited at delivery), and the vendor's own payout **request** (it only holds the amount).
+  `GET /api/vendor/finance/ledger` should gain `pan_verified: boolean` so the Vendor App can say
+  why a payout is waiting.
+- The verification date is a display fact for the vendor too; nothing notifies the vendor when it
+  is verified (a `vendor.pan_verified` event is a candidate, not specified).
+
+### Admin tabs (`apps/admin/src/tabs.ts`)
+
+| Hash              | Label                | Screen                                                    | Data   |
+| ----------------- | -------------------- | --------------------------------------------------------- | ------ |
+| `#/dlq`           | Dead letters         | `features/dlq/DeadLetterScreen.tsx`                       | real   |
+| `#/vendors`       | Vendors              | `features/vendors/VendorScreen.tsx`                       | real   |
+| `#/compliance`    | Compliance           | `features/compliance/ComplianceScreen.tsx`                | sample |
+| `#/categories`    | Categories           | `features/categories/CategoryScreen.tsx`                  | real   |
+| `#/products`      | Products             | `features/products/ProductScreen.tsx`                     | real   |
+| `#/pricing-plans` | Pricing plans        | `features/pricing/PricingPlanScreen.tsx`                  | sample |
+| `#/campaigns`     | Campaigns            | `features/campaigns/CampaignScreen.tsx`                   | sample |
+| `#/ad-products`   | Ad products          | `features/planned/PlannedSectionScreen.tsx` (placeholder) | –      |
+| `#/logistics`     | Logistics            | placeholder                                               | –      |
+| `#/payouts`       | Payouts              | `features/finance/PayoutScreen.tsx`                       | real   |
+| `#/settlements`   | Settlement approvals | `features/settlements/SettlementScreen.tsx`               | sample |
+| `#/audit-log`     | Audit log            | placeholder                                               | –      |
+
+- The tab bar wraps (`.tabs { flex-wrap: wrap }`). `PLANNED_SECTIONS` in `tabs.ts` holds the text
+  of each placeholder (what the section will do, the rule it keeps, where its contract is).
+- **Sample data pattern.** `lib/sample-data.ts#ADMIN_SAMPLES_ENABLED = import.meta.env.DEV`: a
+  development build shows the samples; a production build shows "… not available yet" and an
+  empty list. It is imported by screens only, never by a `*-rules.ts` module (Jest cannot read
+  `import.meta`). Each screen keeps its rows in `useState`, so **switching tabs or reloading
+  resets them, and the screens do not share state**: verifying a PAN under Compliance does not
+  enable that shop's payout under Settlement approvals.
+- **Contracts live in the admin app for now.** Each feature's `*-rules.ts` defines its proposed
+  strict Zod schemas (request and view) and a header saying where they move in shared-types once
+  the API exists. shared-types was left alone on purpose: `SUSPENDED_COMPLIANCE` and `FREE` need
+  their enum migrations first, or `contract.ts` fails.
+- Each `*-samples.ts` file is the only place that invents rows; every sample is parsed by its
+  view schema in a test.
+- **Going live, per screen:** replace the `useState` with `useQuery`, the local reducer
+  (`markPanVerified`, `applyCampaignWrite`, `applyPlanCreate` / `applyPlanUpdate`, `applyPayout`)
+  with a mutation, delete the samples file. The rules modules and the markup stay.
+
+### The four screens
+
+| Screen                   | What it does                                                                                                                                                                                                                                                                                     | Guardrail (rules module, tested)                                                                                                                                                                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Compliance**           | A table of every vendor's PAN standing (Suspended: no PAN / PAN missing / Awaiting verification / Verified), filter chips opening on "Suspended for compliance", search, and a two-step **Verify document**                                                                                      | Verify is enabled only for a PAN on file and unchecked, and never changes `status`. A `SUSPENDED_COMPLIANCE` row has no PAN and cannot be verified or lifted. A debt-suspended shop without a PAN is told it will move to `SUSPENDED_COMPLIANCE`, not LIVE                                                 |
+| **Campaigns**            | Cards (discount, minimum cart, funding split, dates, terms version, read-only opt-in count), Publish / Unpublish, and a create / edit modal (name, percentage or flat, cap, minimum cart, vendor share, first and last day in Nepal Time, published)                                             | `campaignWriteRequestSchema` is strict with **no vendor, opt-in or `terms_version` key**. The form has no shop list. An edit that changes a term (dates included) shows how many opt-ins close and needs a second press; publishing or renaming keeps the version                                          |
+| **Pricing plans**        | A table (plan, model, terms, vendors on it, On offer / Withdrawn, Default) and a create / edit modal: name, model (Commission / Subscription / Free), one terms field that follows the model (rate %, monthly fee, Billing Cycles), On offer, Default plan                                       | **Exactly one default, and it is an offered Commission plan**: making a plan the default takes it from the previous one; the default cannot be switched off or withdrawn directly. **An existing plan's model and terms are locked** (§8Z.11: a new rate is a new plan); the update schema has no such key |
+| **Settlement approvals** | A table of Model B (`PLATFORM_ESCROW`) shops with `available_for_payout_npr > 0`: PAN and its badge, available, still in escrow, **Process Payout**. The modal takes the amount (opens on the whole balance) and the bank transfer reference; processed payouts are listed below for the sitting | **PAN gate:** with `pan_verified_at` null the button is disabled, with the tooltip and visible note **"Cannot disburse funds: PAN not verified."** and a link to Compliance. The form and the store refuse such a shop independently. An amount above the available balance is refused to the paisa        |
+
+- Sample rows that show the gate: **Thamel Kirana Pasal** (verified, Rs. 8,450: payable) and
+  **New Road Electronics** (PAN on file, not verified, Rs. 15,400: disabled). Asan Masala has
+  nothing available and is not listed.
+- The disabled button's tooltip is a `title` on a wrapping `<span>` (a disabled button swallows
+  pointer events in some browsers), repeated as text under the button and tied to it with
+  `aria-describedby`.
+- Campaign days are whole Nepal Time days: the first day's 00:00:00 to the last day's 23:59:59 at
+  UTC+05:45, sent as UTC instants. **A campaign whose instants are not on those boundaries would
+  read as a date change on its first save from this form** (and so raise the version); the API
+  should store what the form sends.
+
+### Backend required for the two new screens (not built)
+
+**Pricing plans** (adds to §8Z.11 section 2 and BACKEND_CHECKLIST 6.5):
+
+```jsonc
+// GET  /api/admin/pricing-plans → { "plans": [ { "id", "name", "model": "COMMISSION" | "SUBSCRIPTION" | "FREE",
+//        "commission_rate": 10, "monthly_fee_npr": 0, "duration_cycles": null,
+//        "is_offered": true, "is_default": true, "vendor_count": 6, "created_at": "…" } ] }
+// POST /api/admin/pricing-plans   { name, model, commission_rate, monthly_fee_npr, duration_cycles, is_offered, is_default } → 201
+// PATCH /api/admin/pricing-plans/:id   { name, is_offered, is_default } → 200      (new: replaces …/withdraw and …/make-default)
+// 409 PRICING_PLAN_NAME_TAKEN · 409 DEFAULT_PLAN_REQUIRED (switching the only default off, or withdrawing it)
+// 422 DEFAULT_PLAN_NOT_COMMISSION · 400 VALIDATION_FAILED (a model, rate, fee or duration in a PATCH)
+```
+
+- Making a plan the default clears the previous default **in the same transaction** (the partial
+  unique index of §8Z.11 then never sees two).
+- Tighter than §8Z.11's CHECKs, as the form enforces: a Commission plan's rate is above 0 and a
+  Subscription plan's fee is above 0 (a 0 plan is what `FREE` is for). Free plans last 1–36
+  cycles. Names are unique without regard to case. **To confirm.**
+- `vendor_count` = vendors whose `pricing_plan_id` is the plan.
+
+**Settlement approvals** (BACKEND_CHECKLIST 6.11):
+
+```jsonc
+// GET  /api/admin/finance/settlements       Bearer SUPER_ADMIN → 200 (no-store)
+{ "vendors": [ { "vendor_id": "uuid", "business_name": "…", "phone": "+977…",
+                 "settlement_model": "PLATFORM_ESCROW",
+                 "available_for_payout_npr": 8450, "pending_escrow_npr": 3200,
+                 "tax_id": "302118845" | null, "pan_verified_at": "…" | null } ] }
+// POST /api/admin/finance/settlements/:vendor_id/payout
+//      { "amount_npr": 8450, "bank_reference": "NIC-ASIA-778812", "idempotency_key": "…" } → 201 / 200 replay
+// 409 PAN_NOT_VERIFIED · 422 INSUFFICIENT_BALANCE (details.available_for_payout_npr) · 409 IDEMPOTENCY_KEY_REUSED
+// 422 SETTLEMENT_MODEL_NOT_ESCROW · 404 VENDOR_NOT_FOUND
+```
+
+- `available_for_payout_npr` = `max(0, wallet balance − ad_fees_owed_npr)` (§8Z.5); amounts held
+  by PENDING payout requests have already left the wallet. `pending_escrow_npr` is Phase 12's
+  `pendingEscrowOf`.
+- The payout reuses Phase 22's journals in one transaction under the vendor row lock: the
+  `VENDOR_PAYOUT` hold and a `payout_requests` row written directly as APPROVED with the
+  reference. No balance table.
+- The app sends no `idempotency_key` yet (the sample store needs none); the mutation must add one
+  per attempt, as the Vendor Portal's payout request does.
+
+### Open points
+
+- **Two payout paths now exist.** The Payouts tab (Phase 22) decides payouts a vendor
+  **requested**; Settlement approvals pays an escrow balance on the **admin's** initiative. Both
+  must honour the gate. Whether both stay, or the periodic admin payout replaces requests, is
+  undecided. The real Payouts tab shows no PAN standing and gets its 409 only once the API does.
+- **Settlement model change approvals have no tab.** SPEC Super Admin step 6 ("Approves
+  settlement model changes") was the earlier meaning of "Settlement approvals"; the tab is now
+  escrow payouts, by the user's task. The model-change queue needs a home (a second section of
+  this tab, or of Vendors).
+- **SPEC.md was not amended** for decisions 2 and 3 (the payout gate; dates as terms). It does
+  not contradict them, but it is the source of truth and should carry both.
+- Ad products, Logistics and Audit log are placeholders. Home promotions (§8Z.4) have no tab.
+
+### Tests
+
+Admin **187** in 7 suites (`pnpm --filter @hamro-pasal/admin test`); `tsc --noEmit` and
+`eslint` clean; `vite build` succeeds.
+
+- `features/governance.test.ts` (38): the tab list and placeholders; the compliance contract
+  (LIVE needs a PAN, the suspension invariants, nine digits) and rules (standing, order, search,
+  the verify button for each standing, the mock stamp); the campaign contract (**no shop, opt-in
+  or version key**, share 0–100), the form, **the seven terms with both dates**, the warning's
+  wording, version and opt-ins on create / changed terms / publish, the opt-in count never rising.
+- `features/pricing-settlements.test.ts` (43): each model's terms and no other; only an offered
+  Commission plan as default; **no model or terms key on an edit**; the form per model, name
+  clashes, the two toggles; **never two defaults and never none** through create and edit; the
+  settlement contract; only escrow shops with a positive balance; **the gate: the exact tooltip,
+  the form refused before any field, no money moved by the store**; exactly the balance vs one
+  paisa more; paisa arithmetic.
+- The React screens have no component tests (as for the other admin screens) and **were not
+  opened in a browser**: the wrapped tab bar, the tooltip on the disabled button, the modals'
+  layout and the disabled inputs' look are unverified. No mutation checks were run.
+
 ## 8Z.14 Vendor App UI, phases 5 and 6: Marketing, Analytics, settings; frontend freeze (2026-10-07)
 
 Mobile only. **No API, shared-types or database change.** SPEC.md gained vendor flow steps 21–23,
@@ -1615,6 +3284,8 @@ the Android bundle exports.
   Settings under `backBehavior="history"` are verified only in Jest.
 
 ## 8Z.11 Vendor operations and IRD compliance: delivery modularity, billing cycle lock, fiscal invoicing; Vendor App tabs (2026-10-07)
+
+> **Updated by §8Z.15 (2026-10-07):** `vendors.pan_verified_at` (a Super Admin check of the PAN document) gates payouts, not LIVE; the admin pricing-plan routes gained a `PATCH`.
 
 **Status.** SPEC.md was amended by the user's decision: Dual-Fulfillment "Delivery Modularity";
 Vendor Pricing "Onboarding Models" and "Billing Cycle Lock"; new core section 10 Fiscal Invoicing;
@@ -2538,6 +4209,8 @@ recording the discount at checkout while sending none of it, Your Orders showing
 with the store still holding the server's). `tsc`, `eslint` clean. **Not seen on a device.**
 
 ## 8Z.5 Business and settlement architecture: discounts, ads, three settlement models, cart math (2026-10-07)
+
+> **Updated by §8Z.15 (2026-10-07):** a campaign’s `starts_at` and `ends_at` are terms too (changing either raises `terms_version` and closes the opt-ins), and every transfer to a vendor bank account is refused while `vendors.pan_verified_at` is null.
 
 **Status.** SPEC.md was amended by the user's decision (Vendor Pricing "Dual-Layer Billing";
 Financial Governance "Vendor Ledger and Settlement Models"; new core sections 7 Discounts,

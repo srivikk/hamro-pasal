@@ -1,7 +1,11 @@
 import express, { type Express } from 'express';
 
+import type { AdminComplianceService } from './admin/admin-compliance-service';
 import type { AdminVendorService } from './admin/admin-vendor-service';
+import type { AuditLogService } from './admin/audit-log-service';
 import type { DeadLetterService } from './admin/dead-letter-service';
+import type { LogisticsSettingsService } from './admin/logistics-settings-service';
+import type { PricingPlanService } from './admin/pricing-plan-service';
 import type { OtpAuthService } from './auth/otp-auth-service';
 import type { CatalogService } from './catalog/catalog-service';
 import type { CategoryService } from './catalog/category-service';
@@ -9,9 +13,15 @@ import type { ProductService } from './catalog/product-service';
 import type { CheckoutService } from './checkout/checkout-service';
 import type { DisputeService } from './disputes/dispute-service';
 import type { AdminPayoutService } from './finance/admin-payout-service';
+import type { AdminSettlementService } from './finance/admin-settlement-service';
 import type { VendorFinanceService } from './finance/vendor-finance-service';
 import { requireAuth } from './http/auth';
+import { strictCors } from './http/cors';
 import { errorHandler, HttpError } from './http/errors';
+import { requestId } from './http/request-context';
+import type { AdProductService } from './marketing/ad-product-service';
+import type { CampaignService } from './marketing/campaign-service';
+import type { PromotionService } from './marketing/promotion-service';
 import type { DeviceTokenService } from './notifications/device-token-service';
 import type { DeliveryService } from './deliveries/delivery-service';
 import type { OrderService } from './orders/order-service';
@@ -20,6 +30,10 @@ import type { EsewaService } from './payments/esewa/esewa-service';
 import type { KhaltiService } from './payments/khalti/khalti-service';
 import type { MockPaymentService } from './payments/mock-payment-service';
 import type { ReviewService } from './reviews/review-service';
+import type { VendorBankAccountService } from './vendor/vendor-bank-account-service';
+import type { VendorBillingService } from './vendor/vendor-billing-service';
+import type { VendorComplianceService } from './vendor/vendor-compliance-service';
+import type { VendorDeliverySettingsService } from './vendor/vendor-delivery-settings-service';
 import type { VendorTopUpService } from './wallet/vendor-top-up-service';
 import type { VendorWalletService } from './wallet/vendor-wallet-service';
 import { adminRouter } from './routes/admin';
@@ -34,8 +48,12 @@ import { ordersRouter } from './routes/orders';
 import { paymentsRouter } from './routes/payments';
 import { reviewsRouter } from './routes/reviews';
 import { uploadsRouter } from './routes/uploads';
+import { vendorLedgerRouter } from './routes/settlement-model-requests';
+import { vendorBankAccountsRouter, vendorCampaignsRouter } from './routes/vendor-account';
+import type { SettlementModelRequestService } from './settlement/settlement-model-request-service';
 import { vendorFinanceRouter } from './routes/vendor-finance';
 import { vendorOrdersRouter } from './routes/vendor-orders';
+import { vendorSettingsRouter } from './routes/vendor-settings';
 import { vendorWalletRouter } from './routes/vendor-wallet';
 import { vendorsRouter } from './routes/vendors';
 import { LocalEvidenceStorage, type EvidenceStorage } from './uploads/evidence-storage';
@@ -73,15 +91,42 @@ export interface ApiServices {
   /** Phase 22: vendor earnings and payout requests, and the Super Admin's decisions on them. */
   readonly vendorFinance: VendorFinanceService;
   readonly adminPayouts: AdminPayoutService;
+  /** Phase 25: the shop's own tax identity (PAN) and delivery settings. */
+  readonly vendorBilling: VendorBillingService;
+  readonly vendorCompliance: VendorComplianceService;
+  readonly vendorDeliverySettings: VendorDeliverySettingsService;
+  /** Phase 26: the audit trail's read side, the logistics settings and PAN verification. */
+  readonly adminAuditLogs: AuditLogService;
+  readonly adminLogistics: LogisticsSettingsService;
+  readonly adminCompliance: AdminComplianceService;
+  /** Phase 26: admin-initiated settlement payouts (behind the PAN gate) and the pricing plans. */
+  readonly adminSettlements: AdminSettlementService;
+  readonly adminPricingPlans: PricingPlanService;
+  /** Phase 26: campaigns (admin CRUD and the vendor's own opt-in), ad products, promotions. */
+  readonly campaigns: CampaignService;
+  /** Phase 27: a vendor's request to change its settlement model, and the admin's decision. */
+  readonly settlementModelRequests: SettlementModelRequestService;
+  readonly adProducts: AdProductService;
+  readonly promotions: PromotionService;
+  /** Phase 26: where a shop is paid. */
+  readonly vendorBankAccounts: VendorBankAccountService;
   /** Local end-to-end runs: present only with MOCK_SERVICES outside production. */
   readonly mockPayments?: MockPaymentService;
 }
 
+export interface AppOptions {
+  /** Browser origins other than the API's own that may call it (`CORS_ALLOWED_ORIGINS`). */
+  readonly corsAllowedOrigins?: readonly string[];
+}
+
 /** Builds the HTTP app. Without services only /health is served (used by liveness checks/tests). */
-export function createApp(services?: ApiServices): Express {
+export function createApp(services?: ApiServices, options: AppOptions = {}): Express {
   const app = express();
 
   app.disable('x-powered-by');
+  app.use(requestId);
+  // Before the body parser: a refused preflight never has its body read.
+  app.use(strictCors(options.corsAllowedOrigins ?? []));
   app.use(express.json({ limit: '100kb' }));
 
   app.get('/health', (_req, res) => {
@@ -100,6 +145,17 @@ export function createApp(services?: ApiServices): Express {
         categories: services.categories,
         products: services.products,
         payouts: services.adminPayouts,
+        auditLogs: services.adminAuditLogs,
+        logistics: services.adminLogistics,
+        compliance: services.adminCompliance,
+        settlements: services.adminSettlements,
+        pricingPlans: services.adminPricingPlans,
+        marketing: {
+          campaigns: services.campaigns,
+          adProducts: services.adProducts,
+          promotions: services.promotions,
+        },
+        settlementModelRequests: services.settlementModelRequests,
       }),
     );
     // Phase 17. Public reads: the active taxonomy and the active products of LIVE vendors.
@@ -114,6 +170,33 @@ export function createApp(services?: ApiServices): Express {
       '/api/vendor/finance',
       requireAuth(services.accessTokenSecret, ['VENDOR']),
       vendorFinanceRouter(services.vendorFinance),
+    );
+    // Phase 26. The shop's bank accounts and its own campaign opt-in.
+    app.use(
+      '/api/vendor/bank-accounts',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorBankAccountsRouter(services.vendorBankAccounts),
+    );
+    app.use(
+      '/api/vendor/campaigns',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorCampaignsRouter(services.campaigns),
+    );
+    // Phase 27. The shop's own request to change its settlement model.
+    app.use(
+      '/api/vendor/ledger',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorLedgerRouter(services.settlementModelRequests),
+    );
+    // Phase 25. After the routers above: it only owns /tax-identity and /delivery-settings.
+    app.use(
+      '/api/vendor',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorSettingsRouter({
+        billing: services.vendorBilling,
+        compliance: services.vendorCompliance,
+        deliverySettings: services.vendorDeliverySettings,
+      }),
     );
     // Before the customer catalogue under /api/vendors, which would otherwise claim these paths.
     app.use(

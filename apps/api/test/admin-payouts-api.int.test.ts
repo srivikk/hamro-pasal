@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
-import { ledgerAccounts, ledgerTransactions, payoutRequests, vendors } from '@hamro-pasal/db';
+import {
+  auditLogs,
+  ledgerAccounts,
+  ledgerTransactions,
+  payoutRequests,
+  vendors,
+} from '@hamro-pasal/db';
 import {
   adminPayoutDecisionResponseSchema,
   adminPayoutListResponseSchema,
@@ -44,9 +50,16 @@ describe('admin payouts API', () => {
   type Role = 'VENDOR' | 'CUSTOMER' | 'DRIVER' | 'SUPER_ADMIN';
 
   /** A vendor with `balanceNpr` in the wallet and one PENDING payout of `amountNpr`. */
-  async function pendingPayout(amountNpr = 400, balanceNpr = 1000) {
+  async function pendingPayout(amountNpr = 400, balanceNpr = 1000, panVerified = true) {
     const vendorId = await createVendor(db());
     const userId = await vendorUserIdOf(db(), vendorId);
+    if (panVerified) {
+      // Approving records a bank transfer, which the PAN payout gate holds until verification.
+      await db()
+        .update(vendors)
+        .set({ tax_id: '302118845', pan_verified_at: new Date(), pan_verified_by_user_id: adminId })
+        .where(eq(vendors.id, vendorId));
+    }
     const topUp = await request(t.app)
       .post('/api/vendors/wallet/top-up')
       .set('authorization', bearer(userId, 'VENDOR'))
@@ -59,6 +72,38 @@ describe('admin payouts API', () => {
     expect(res.status).toBe(201);
     return { vendorId, userId, payoutId: bodyOf(payoutRequestResponseSchema, res).payout.id };
   }
+
+  describe('the PAN payout gate', () => {
+    it('holds an approval while the PAN is unverified, and lets a rejection through', async () => {
+      const { vendorId, payoutId } = await pendingPayout(400, 1000, false);
+      await db().update(vendors).set({ tax_id: '302118845' }).where(eq(vendors.id, vendorId));
+
+      const held = await approve(payoutId);
+
+      expect(held.status).toBe(422);
+      expect(errorOf(held)).toMatchObject({
+        code: 'PAN_NOT_VERIFIED',
+        details: { vendor_id: vendorId },
+      });
+      // Still PENDING, nothing recorded: the request waits for the verification.
+      expect(await rowOf(payoutId)).toMatchObject({ status: 'PENDING', bank_reference: null });
+      const audited = await db().select().from(auditLogs).where(eq(auditLogs.entity_id, payoutId));
+      expect(audited).toEqual([]);
+
+      const verified = await request(t.app)
+        .post(`/api/admin/vendors/${vendorId}/pan-verification`)
+        .set('authorization', bearer(adminId, 'SUPER_ADMIN'));
+      expect(verified.status).toBe(200);
+      expect((await approve(payoutId)).status).toBe(200);
+    });
+
+    it('does not gate a rejection: the held amount goes back to the wallet', async () => {
+      const { vendorId, payoutId } = await pendingPayout(400, 1000, false);
+
+      expect((await reject(payoutId)).status).toBe(200);
+      expect(await walletOf(vendorId)).toBe(1000);
+    });
+  });
 
   const list = (query: Record<string, string> = {}, role: Role = 'SUPER_ADMIN') =>
     request(t.app)
@@ -106,11 +151,9 @@ describe('admin payouts API', () => {
     return row;
   }
 
-  const auditLines = (payoutId: string) =>
-    warn.mock.calls
-      .map(([line]) => String(line))
-      .filter((line) => line.includes(payoutId))
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
+  /** Phase 25: a decision's audit_logs entries (it was a console line before). */
+  const auditEntries = (payoutId: string) =>
+    db().select().from(auditLogs).where(eq(auditLogs.entity_id, payoutId));
 
   describe('GET /api/admin/finance/payouts', () => {
     it('lists requests newest first with their vendor, filtered by status and paged', async () => {
@@ -202,15 +245,19 @@ describe('admin payouts API', () => {
       expect(await clearingBalance()).toBe(clearingBefore);
       expect((await rowOf(payoutId)).reversal_transaction_id).toBeNull();
 
-      expect(auditLines(payoutId)).toEqual([
-        expect.objectContaining({
-          audit: 'payout.approved',
-          vendor_id: vendorId,
-          amount_npr: 400,
-          bank_reference: 'NIC-ASIA-778812',
-          admin_user_id: adminId,
-        }),
-      ]);
+      const entries = await auditEntries(payoutId);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        action: 'PAYOUT_APPROVED',
+        entity_type: 'payout_request',
+        actor_user_id: adminId,
+        actor_role: 'SUPER_ADMIN',
+        vendor_id: vendorId,
+        before_state: { status: 'PENDING', amount_npr: 400 },
+        after_state: { status: 'APPROVED', amount_npr: 400, bank_reference: 'NIC-ASIA-778812' },
+      });
+      // No console line any more.
+      expect(warn.mock.calls.filter(([line]) => String(line).includes(payoutId))).toEqual([]);
 
       const ledger = bodyOf(
         vendorFinanceLedgerResponseSchema,
@@ -234,7 +281,7 @@ describe('admin payouts API', () => {
       expect(bodyOf(adminPayoutDecisionResponseSchema, repeat)).toEqual(
         bodyOf(adminPayoutDecisionResponseSchema, first),
       );
-      expect(auditLines(payoutId)).toHaveLength(1);
+      expect(await auditEntries(payoutId)).toHaveLength(1);
 
       const other = await approve(payoutId, { bank_reference: 'OTHER-1' });
       expect(other.status).toBe(409);
@@ -252,7 +299,7 @@ describe('admin payouts API', () => {
       const responses = await Promise.all(Array.from({ length: 5 }, () => approve(payoutId)));
 
       expect(responses.map((res) => res.status)).toEqual([200, 200, 200, 200, 200]);
-      expect(auditLines(payoutId)).toHaveLength(1);
+      expect(await auditEntries(payoutId)).toHaveLength(1);
       expect(await walletOf(vendorId)).toBe(600);
     });
 
@@ -313,9 +360,18 @@ describe('admin payouts API', () => {
         kind: 'VENDOR_PAYOUT_REVERSAL',
         idempotency_key: `vendor-payout-reversal:${payoutId}`,
       });
-      expect(auditLines(payoutId)).toEqual([
-        expect.objectContaining({ audit: 'payout.rejected', amount_npr: 400 }),
-      ]);
+      const entries = await auditEntries(payoutId);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        action: 'PAYOUT_REJECTED',
+        actor_user_id: adminId,
+        before_state: { status: 'PENDING', amount_npr: 400 },
+        after_state: {
+          status: 'REJECTED',
+          amount_npr: 400,
+          reversal_transaction_id: row.reversal_transaction_id,
+        },
+      });
 
       const wallet = bodyOf(
         vendorWalletLedgerResponseSchema,
@@ -339,7 +395,7 @@ describe('admin payouts API', () => {
       expect(repeat.status).toBe(200);
       expect(bodyOf(adminPayoutDecisionResponseSchema, repeat).payout.rejection_reason).toBeNull();
       expect(await walletOf(vendorId)).toBe(1000);
-      expect(auditLines(payoutId)).toHaveLength(1);
+      expect(await auditEntries(payoutId)).toHaveLength(1);
     });
 
     it('lets the vendor request the returned money again', async () => {

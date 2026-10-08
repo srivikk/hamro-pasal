@@ -264,6 +264,32 @@ export async function pendingEscrowOf(
   return { totalNpr: escrow?.total ?? 0, orderCount: escrow?.count ?? 0 };
 }
 
+/** `pendingEscrowOf` for several vendors in one query; a vendor with none is absent. */
+export async function pendingEscrowByVendor(
+  tx: Transaction,
+  vendorIds: readonly string[],
+): Promise<Map<string, number>> {
+  if (vendorIds.length === 0) return new Map();
+  const rows = await tx
+    .select({
+      vendorId: orders.vendor_id,
+      total: sql<number>`coalesce(sum(${orders.subtotal} - ${orders.platform_commission_amount}
+          + CASE WHEN ${orders.fulfillment_locked} = 'SELF_DELIVERY'
+                 THEN ${orders.delivery_fee} ELSE 0 END), 0)`.mapWith(Number),
+    })
+    .from(orders)
+    .where(
+      and(
+        inArray(orders.vendor_id, [...vendorIds]),
+        ne(orders.payment_method, 'COD'),
+        eq(orders.payment_status, 'PAID'),
+        inArray(orders.state, [...ESCROW_HELD_STATES]),
+      ),
+    )
+    .groupBy(orders.vendor_id);
+  return new Map(rows.map((row) => [row.vendorId, row.total]));
+}
+
 /** What a posting means to the vendor (see walletEntryTypes in shared-types). */
 export function entryTypeOf(kind: LedgerTransactionKind, amountNpr: number): WalletEntryType {
   switch (kind) {

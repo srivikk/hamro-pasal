@@ -2,12 +2,21 @@ import { useMutation } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
 import { useAdminApi, useSession, useSessionStore } from './app-context';
+import { AdProductScreen } from './features/ads/AdProductScreen';
+import { ApprovalScreen } from './features/approvals/ApprovalScreen';
+import { AuditLogScreen } from './features/audit/AuditLogScreen';
 import { LoginScreen } from './features/auth/LoginScreen';
 import { portalOf } from './features/auth/login-rules';
+import { CampaignScreen } from './features/campaigns/CampaignScreen';
 import { CategoryScreen } from './features/categories/CategoryScreen';
+import { ComplianceScreen } from './features/compliance/ComplianceScreen';
 import { DeadLetterScreen } from './features/dlq/DeadLetterScreen';
 import { PayoutScreen } from './features/finance/PayoutScreen';
+import { LogisticsScreen } from './features/logistics/LogisticsScreen';
+import { PricingPlanScreen } from './features/pricing/PricingPlanScreen';
 import { ProductScreen } from './features/products/ProductScreen';
+import { PromotionScreen } from './features/promotions/PromotionScreen';
+import { SettlementScreen } from './features/settlements/SettlementScreen';
 import { VendorEarningsScreen } from './features/vendor-portal/VendorEarningsScreen';
 import { VendorProductScreen } from './features/vendor-portal/VendorProductScreen';
 import { VendorScreen } from './features/vendors/VendorScreen';
@@ -26,12 +35,30 @@ function Screen({ tab }: { readonly tab: Tab }) {
       return <DeadLetterScreen />;
     case 'vendors':
       return <VendorScreen />;
+    case 'compliance':
+      return <ComplianceScreen />;
     case 'categories':
       return <CategoryScreen />;
     case 'products':
       return <ProductScreen />;
+    case 'campaigns':
+      return <CampaignScreen />;
     case 'payouts':
       return <PayoutScreen />;
+    case 'pricing-plans':
+      return <PricingPlanScreen />;
+    case 'settlements':
+      return <SettlementScreen />;
+    case 'ad-products':
+      return <AdProductScreen />;
+    case 'logistics':
+      return <LogisticsScreen />;
+    case 'approvals':
+      return <ApprovalScreen />;
+    case 'promotions':
+      return <PromotionScreen />;
+    case 'audit-log':
+      return <AuditLogScreen />;
   }
 }
 

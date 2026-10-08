@@ -1,10 +1,24 @@
-/** The dashboard's sections; each is addressed by the URL hash `#/<id>`. */
+/**
+ * The dashboard's sections; each is addressed by the URL hash `#/<id>`. The order is the order of
+ * the tab bar: operations, vendors, catalogue, commercial terms, money, audit.
+ */
 export const TABS = [
   { id: 'dlq', label: 'Dead letters' },
   { id: 'vendors', label: 'Vendors' },
+  { id: 'compliance', label: 'Compliance' },
   { id: 'categories', label: 'Categories' },
   { id: 'products', label: 'Products' },
-  { id: 'payouts', label: 'Payouts' },
+  { id: 'pricing-plans', label: 'Pricing plans' },
+  { id: 'campaigns', label: 'Campaigns' },
+  { id: 'ad-products', label: 'Ad products' },
+  { id: 'promotions', label: 'Promotions' },
+  { id: 'logistics', label: 'Logistics' },
+  // Retired by decision (2026-10-07): vendor-requested payouts are replaced by Settlements. The
+  // tab stays until the API serves the settlement routes, then it and its screen are deleted.
+  { id: 'payouts', label: 'Payouts (legacy)' },
+  { id: 'settlements', label: 'Settlements' },
+  { id: 'approvals', label: 'Vendor requests' },
+  { id: 'audit-log', label: 'Audit log' },
 ] as const;
 
 export type Tab = (typeof TABS)[number]['id'];

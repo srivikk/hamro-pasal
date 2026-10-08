@@ -86,8 +86,10 @@ describe('timer queues (real Redis)', () => {
 
       const schedulers = await queues.midnight.getJobSchedulers();
       expect(schedulers.map((s) => s.key).sort()).toEqual([
+        'billing-cycle-renewal',
         'order-reconciliation',
         'subscription-downgrade',
+        'vendor-compliance-sweep',
         'vendor-debt-reconciliation',
       ]);
       for (const scheduler of schedulers) {

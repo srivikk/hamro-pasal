@@ -55,6 +55,8 @@ export function priceCart(
   vendor: PricingVendor,
   products: ReadonlyMap<string, PricingProduct>,
   items: readonly { readonly productId: string; readonly quantity: number }[],
+  /** The delivery charge for this subtotal (`deliveryFeePaisa`); the base fee when not given. */
+  deliveryFee?: (subtotalPaisa: number) => number,
 ): PricedCart {
   const lines = items.map((item): PricedLine => {
     const product = products.get(item.productId);
@@ -83,7 +85,7 @@ export function priceCart(
   const rateBasisPoints =
     vendor.pricing_model === 'SUBSCRIPTION' ? 0 : Math.round(vendor.commission_rate * 10_000);
   const commissionPaisa = Math.round((subtotalPaisa * rateBasisPoints) / 10_000);
-  const deliveryFeePaisa = toPaisa(vendor.base_delivery_fee_npr);
+  const deliveryFeePaisa = deliveryFee?.(subtotalPaisa) ?? toPaisa(vendor.base_delivery_fee_npr);
 
   return {
     lines,

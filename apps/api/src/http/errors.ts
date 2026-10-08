@@ -6,6 +6,22 @@ import {
 import type { ErrorRequestHandler } from 'express';
 import { MulterError } from 'multer';
 
+import { PanMissingError } from '../admin/admin-compliance-service';
+import {
+  SettlementChangeBlockedError,
+  SettlementModelRequestDecidedError,
+  SettlementModelRequestNotFoundError,
+  SettlementModelRequestPendingError,
+  SettlementModelUnavailableError,
+  SettlementModelUnchangedError,
+} from '../settlement/settlement-model-request-service';
+import { InvalidAuditLogCursorError } from '../admin/audit-log-service';
+import {
+  DefaultPlanNotCommissionError,
+  DefaultPlanRequiredError,
+  PricingPlanNameTakenError,
+  PricingPlanNotFoundError,
+} from '../admin/pricing-plan-service';
 import {
   DeadLetterAlreadyReplayedError,
   DeadLetterNotFoundError,
@@ -43,6 +59,29 @@ import {
 } from '../deliveries/delivery-service';
 import { DisputeWindowClosedError } from '../disputes/dispute-service';
 import {
+  BankAccountMissingError,
+  PanNotVerifiedError,
+  SettlementModelNotEscrowError,
+} from '../finance/admin-settlement-service';
+import { AdProductNotFoundError } from '../marketing/ad-product-service';
+import {
+  CampaignEndedError,
+  CampaignNotFoundError,
+  CampaignNotOptedInError,
+  CampaignTermsChangedError,
+} from '../marketing/campaign-service';
+import {
+  AdPurchaseMismatchError,
+  PromotionNotFoundError,
+  PromotionTargetNotFoundError,
+} from '../marketing/promotion-service';
+import {
+  BankAccountExistsError,
+  BankAccountLimitError,
+  BankAccountNotFoundError,
+  PrimaryBankAccountRequiredError,
+} from '../vendor/vendor-bank-account-service';
+import {
   InvalidPayoutCursorError,
   PayoutAlreadyDecidedError,
   PayoutNotFoundError,
@@ -76,6 +115,17 @@ import {
   ReviewAlreadySubmittedError,
   ReviewWindowClosedError,
 } from '../reviews/review-service';
+import {
+  BillingCycleNotStartedError,
+  LockInActiveError,
+  PricingPlanNotOfferedError,
+  SettingChangeClosedError,
+  SettingChangeNotFoundError,
+} from '../vendor/vendor-billing-service';
+import {
+  DeliveryModeDisabledError,
+  TooManyServiceablePalikasError,
+} from '../vendor/vendor-delivery-settings-service';
 import { TopUpKeyReusedError, TopUpUnavailableError } from '../wallet/vendor-top-up-service';
 import { InvalidLedgerCursorError } from '../wallet/vendor-wallet-service';
 import {
@@ -237,6 +287,107 @@ export function toHttpError(error: unknown): HttpError {
   if (error instanceof InvalidDeadLetterCursorError) {
     return new HttpError(400, 'INVALID_CURSOR', error.message);
   }
+  if (error instanceof InvalidAuditLogCursorError) {
+    return new HttpError(400, 'INVALID_CURSOR', error.message);
+  }
+  if (error instanceof PanNotVerifiedError) {
+    return new HttpError(422, 'PAN_NOT_VERIFIED', error.message, { vendor_id: error.vendorId });
+  }
+  if (error instanceof BankAccountMissingError) {
+    return new HttpError(422, 'BANK_ACCOUNT_MISSING', error.message, {
+      vendor_id: error.vendorId,
+    });
+  }
+  if (error instanceof SettlementModelNotEscrowError) {
+    return new HttpError(422, 'SETTLEMENT_MODEL_NOT_ESCROW', error.message, {
+      settlement_model: error.settlementModel,
+    });
+  }
+  if (error instanceof BankAccountNotFoundError) {
+    return new HttpError(404, 'BANK_ACCOUNT_NOT_FOUND', 'Bank account not found');
+  }
+  if (error instanceof BankAccountExistsError) {
+    return new HttpError(409, 'BANK_ACCOUNT_EXISTS', error.message);
+  }
+  if (error instanceof BankAccountLimitError) {
+    return new HttpError(422, 'BANK_ACCOUNT_LIMIT_REACHED', error.message, { max: error.max });
+  }
+  if (error instanceof PrimaryBankAccountRequiredError) {
+    return new HttpError(409, 'PRIMARY_BANK_ACCOUNT_REQUIRED', error.message);
+  }
+  if (error instanceof CampaignNotFoundError) {
+    return new HttpError(404, 'CAMPAIGN_NOT_FOUND', 'Campaign not found');
+  }
+  if (error instanceof CampaignTermsChangedError) {
+    return new HttpError(409, 'CAMPAIGN_TERMS_CHANGED', error.message, {
+      terms_version: error.currentTermsVersion,
+    });
+  }
+  if (error instanceof CampaignNotOptedInError) {
+    return new HttpError(409, 'CAMPAIGN_NOT_OPTED_IN', error.message);
+  }
+  if (error instanceof SettlementModelRequestNotFoundError) {
+    return new HttpError(
+      404,
+      'SETTLEMENT_MODEL_REQUEST_NOT_FOUND',
+      'Settlement model request not found',
+    );
+  }
+  if (error instanceof SettlementModelUnavailableError) {
+    return new HttpError(422, 'SETTLEMENT_MODEL_UNAVAILABLE', error.message, {
+      settlement_model: error.model,
+    });
+  }
+  if (error instanceof SettlementModelUnchangedError) {
+    return new HttpError(422, 'SETTLEMENT_MODEL_UNCHANGED', error.message, {
+      settlement_model: error.model,
+    });
+  }
+  if (error instanceof SettlementModelRequestPendingError) {
+    return new HttpError(409, 'SETTLEMENT_MODEL_REQUEST_PENDING', error.message, {
+      request_id: error.requestId,
+    });
+  }
+  if (error instanceof SettlementChangeBlockedError) {
+    return new HttpError(409, 'SETTLEMENT_CHANGE_BLOCKED', error.message, {
+      blockers: error.blockers,
+    });
+  }
+  if (error instanceof SettlementModelRequestDecidedError) {
+    return new HttpError(409, 'REQUEST_ALREADY_DECIDED', error.message, { status: error.status });
+  }
+  if (error instanceof CampaignEndedError) {
+    return new HttpError(422, 'CAMPAIGN_ENDED', error.message);
+  }
+  if (error instanceof AdProductNotFoundError) {
+    return new HttpError(404, 'AD_PRODUCT_NOT_FOUND', 'Ad product not found');
+  }
+  if (error instanceof PromotionNotFoundError) {
+    return new HttpError(404, 'PROMOTION_NOT_FOUND', 'Promotion not found');
+  }
+  if (error instanceof PromotionTargetNotFoundError) {
+    return new HttpError(422, 'PROMOTION_TARGET_NOT_FOUND', error.message, {
+      target_type: error.targetType,
+    });
+  }
+  if (error instanceof AdPurchaseMismatchError) {
+    return new HttpError(422, 'AD_PURCHASE_MISMATCH', error.message);
+  }
+  if (error instanceof PricingPlanNotFoundError) {
+    return new HttpError(404, 'PRICING_PLAN_NOT_FOUND', 'Pricing plan not found');
+  }
+  if (error instanceof PricingPlanNameTakenError) {
+    return new HttpError(409, 'PRICING_PLAN_NAME_TAKEN', error.message);
+  }
+  if (error instanceof DefaultPlanRequiredError) {
+    return new HttpError(409, 'DEFAULT_PLAN_REQUIRED', error.message);
+  }
+  if (error instanceof DefaultPlanNotCommissionError) {
+    return new HttpError(422, 'DEFAULT_PLAN_NOT_COMMISSION', error.message);
+  }
+  if (error instanceof PanMissingError) {
+    return new HttpError(409, 'PAN_MISSING', 'The vendor has no PAN on file to verify');
+  }
   if (error instanceof AdminVendorNotFoundError) {
     return new HttpError(404, 'VENDOR_NOT_FOUND', 'Vendor not found');
   }
@@ -292,6 +443,33 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof InvalidProductCursorError) {
     return new HttpError(400, 'INVALID_CURSOR', error.message);
+  }
+  if (error instanceof BillingCycleNotStartedError) {
+    return new HttpError(409, 'BILLING_CYCLE_NOT_STARTED', error.message);
+  }
+  if (error instanceof PricingPlanNotOfferedError) {
+    return new HttpError(422, 'PRICING_PLAN_NOT_OFFERED', error.message);
+  }
+  if (error instanceof LockInActiveError) {
+    return new HttpError(409, 'LOCK_IN_ACTIVE', error.message, {
+      lock_in_expiry: error.lockInExpiry.toISOString(),
+    });
+  }
+  if (error instanceof SettingChangeNotFoundError) {
+    return new HttpError(404, 'SETTING_CHANGE_NOT_FOUND', error.message);
+  }
+  if (error instanceof SettingChangeClosedError) {
+    return new HttpError(409, 'SETTING_CHANGE_CLOSED', error.message, { status: error.status });
+  }
+  if (error instanceof DeliveryModeDisabledError) {
+    return new HttpError(422, 'DELIVERY_MODE_DISABLED', error.message, {
+      fulfillment_mode: error.fulfillmentMode,
+    });
+  }
+  if (error instanceof TooManyServiceablePalikasError) {
+    return new HttpError(400, 'VALIDATION_FAILED', 'Request validation failed', {
+      issues: [{ path: 'serviceable_palikas', message: error.message }],
+    });
   }
   if (error instanceof DisputeWindowClosedError) {
     return new HttpError(422, 'DISPUTE_WINDOW_CLOSED', error.message);

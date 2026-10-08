@@ -1,12 +1,21 @@
-import { payoutRequests, vendors, type Database, type Transaction } from '@hamro-pasal/db';
+import {
+  payoutRequests,
+  recordAuditLog,
+  vendors,
+  type Database,
+  type Transaction,
+} from '@hamro-pasal/db';
 import { toPaisa, type LedgerService } from '@hamro-pasal/ledger';
 import {
   ADMIN_PAYOUT_DEFAULT_LIMIT,
+  NO_AUDIT_CONTEXT,
   type AdminPayoutListQuery,
+  type AuditContext,
   type PayoutStatus,
 } from '@hamro-pasal/shared-types';
 import { and, desc, eq, sql } from 'drizzle-orm';
 
+import { PanNotVerifiedError } from './admin-settlement-service';
 import type { PayoutRow } from './vendor-finance-service';
 
 export interface AdminPayoutRow {
@@ -64,9 +73,6 @@ export class AdminPayoutService {
   constructor(
     private readonly db: Database,
     private readonly ledger: LedgerService,
-    private readonly audit: (line: string) => void = (line) => {
-      console.warn(line);
-    },
   ) {}
 
   /** Newest request first, keyset-paginated on the row id (compared in SQL, microsecond exact). */
@@ -109,13 +115,23 @@ export class AdminPayoutService {
     adminUserId: string,
     payoutId: string,
     bankReference: string,
+    context: AuditContext = NO_AUDIT_CONTEXT,
   ): Promise<AdminPayoutRow> {
-    const { row, decided } = await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const payout = await lockPayout(tx, payoutId);
       if (payout.status === 'APPROVED' && payout.bank_reference === bankReference) {
-        return { row: await viewOf(tx, payout), decided: false };
+        return viewOf(tx, payout);
       }
       if (payout.status !== 'PENDING') throw new PayoutAlreadyDecidedError(payoutId, payout.status);
+      // The PAN payout gate (SPEC core 5): approving records a transfer to the vendor's bank, so
+      // it waits for the PAN to be verified. Read under the vendor row lock a PAN change takes.
+      // The request stays PENDING; rejecting it is not gated.
+      const [vendor] = await tx
+        .select({ panVerifiedAt: vendors.pan_verified_at })
+        .from(vendors)
+        .where(eq(vendors.id, payout.vendor_id))
+        .for('update');
+      if (vendor?.panVerifiedAt == null) throw new PanNotVerifiedError(payout.vendor_id);
 
       const [approved] = await tx
         .update(payoutRequests)
@@ -128,20 +144,20 @@ export class AdminPayoutService {
         .where(eq(payoutRequests.id, payoutId))
         .returning();
       if (approved === undefined) throw new PayoutNotFoundError(payoutId);
-      return { row: await viewOf(tx, approved), decided: true };
+      await recordDecision(tx, 'PAYOUT_APPROVED', approved, adminUserId, context);
+      return viewOf(tx, approved);
     });
-    if (decided) this.record('payout.approved', row, adminUserId);
-    return row;
   }
 
   async reject(
     adminUserId: string,
     payoutId: string,
     reason: string | null,
+    context: AuditContext = NO_AUDIT_CONTEXT,
   ): Promise<AdminPayoutRow> {
-    const { row, decided } = await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const payout = await lockPayout(tx, payoutId);
-      if (payout.status === 'REJECTED') return { row: await viewOf(tx, payout), decided: false };
+      if (payout.status === 'REJECTED') return viewOf(tx, payout);
       if (payout.status !== 'PENDING') throw new PayoutAlreadyDecidedError(payoutId, payout.status);
 
       const amountPaisa = toPaisa(payout.amount_npr);
@@ -168,26 +184,39 @@ export class AdminPayoutService {
         .where(eq(payoutRequests.id, payoutId))
         .returning();
       if (rejected === undefined) throw new PayoutNotFoundError(payoutId);
-      return { row: await viewOf(tx, rejected), decided: true };
+      await recordDecision(tx, 'PAYOUT_REJECTED', rejected, adminUserId, context);
+      return viewOf(tx, rejected);
     });
-    if (decided) this.record('payout.rejected', row, adminUserId);
-    return row;
   }
+}
 
-  /** SPEC infrastructure §5: one structured audit line per money decision, after the commit. */
-  private record(audit: string, { payout }: AdminPayoutRow, adminUserId: string): void {
-    this.audit(
-      JSON.stringify({
-        audit,
-        payout_id: payout.id,
-        vendor_id: payout.vendor_id,
-        amount_npr: payout.amount_npr,
-        bank_reference: payout.bank_reference,
-        admin_user_id: adminUserId,
-        decided_at: payout.decided_at?.toISOString() ?? null,
-      }),
-    );
-  }
+/**
+ * One audit entry per money decision, in the decision's own transaction (Phase 25; it was a
+ * console line after the commit before). A repeated decision changes nothing and records nothing.
+ */
+async function recordDecision(
+  tx: Transaction,
+  action: 'PAYOUT_APPROVED' | 'PAYOUT_REJECTED',
+  payout: PayoutRow,
+  adminUserId: string,
+  context: AuditContext,
+): Promise<void> {
+  await recordAuditLog(tx, {
+    actor: { kind: 'USER', user_id: adminUserId, role: 'SUPER_ADMIN' },
+    action,
+    entityId: payout.id,
+    vendorId: payout.vendor_id,
+    beforeState: { status: 'PENDING', amount_npr: payout.amount_npr },
+    afterState: {
+      status: payout.status,
+      amount_npr: payout.amount_npr,
+      bank_reference: payout.bank_reference,
+      rejection_reason: payout.rejection_reason,
+      reversal_transaction_id: payout.reversal_transaction_id,
+      decided_at: payout.decided_at?.toISOString() ?? null,
+    },
+    context,
+  });
 }
 
 const vendorColumns = {

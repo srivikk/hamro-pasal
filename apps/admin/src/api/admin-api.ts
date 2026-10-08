@@ -1,39 +1,79 @@
 import {
+  adminAdProductListResponseSchema,
+  adminAdProductResponseSchema,
+  adminAuditLogListResponseSchema,
+  adminCampaignListResponseSchema,
+  adminCampaignResponseSchema,
   adminCategoryListResponseSchema,
   adminCategoryResponseSchema,
+  adminComplianceVendorListResponseSchema,
   adminDeadLetterListResponseSchema,
   adminDeadLetterRetryResponseSchema,
+  adminModelChangeDecisionResponseSchema,
+  adminModelChangeRequestListResponseSchema,
   adminPayoutDecisionResponseSchema,
   adminPayoutListResponseSchema,
+  adminPricingPlanListResponseSchema,
+  adminPricingPlanResponseSchema,
   adminProductListResponseSchema,
   adminProductResponseSchema,
+  adminPromotionListResponseSchema,
+  adminPromotionResponseSchema,
+  adminSettlementListResponseSchema,
   adminVendorListResponseSchema,
   adminVendorOverrideResponseSchema,
   categoryListResponseSchema,
+  logisticsSettingsViewSchema,
   otpSendResponseSchema,
   otpVerifyResponseSchema,
+  panVerificationResponseSchema,
   payoutRequestResponseSchema,
   PRODUCT_IMAGE_FILE_FIELD,
+  settlementPayoutResponseSchema,
   vendorFinanceLedgerResponseSchema,
   vendorProductListResponseSchema,
   vendorProductResponseSchema,
+  type AdminAdProductListResponseBody,
+  type AdminAdProductResponseBody,
+  type AdminAuditLogListResponseBody,
+  type AdminCampaignListResponseBody,
+  type AdminCampaignResponseBody,
   type AdminCategoryListResponseBody,
   type AdminCategoryResponseBody,
   type AdminCategoryWriteRequest,
+  type AdminComplianceVendorListResponseBody,
   type AdminDeadLetterListResponseBody,
   type AdminDeadLetterRetryResponseBody,
+  type AdminModelChangeDecisionResponseBody,
+  type AdminModelChangeRequestListResponseBody,
   type AdminPayoutDecisionResponseBody,
   type AdminPayoutListResponseBody,
+  type AdminPricingPlanListResponseBody,
+  type AdminPricingPlanResponseBody,
   type AdminProductListResponseBody,
   type AdminProductResponseBody,
+  type AdminPromotionListResponseBody,
+  type AdminPromotionResponseBody,
+  type AdminSettlementListResponseBody,
   type AdminVendorListResponseBody,
   type AdminVendorOverrideResponseBody,
+  type AdProductCreate,
+  type AdProductUpdate,
+  type CampaignWrite,
   type CategoryListResponseBody,
   type DeadLetterStatus,
+  type LogisticsSettingsView,
+  type LogisticsSettingsWrite,
   type OtpSendResponseBody,
   type OtpVerifyResponseBody,
+  type PanVerificationResponseBody,
   type PayoutRequestResponseBody,
   type PayoutStatus,
+  type PricingPlanCreate,
+  type PricingPlanUpdate,
+  type PromotionWrite,
+  type SettlementPayoutRequest,
+  type SettlementPayoutResponseBody,
   type VendorFinanceLedgerResponseBody,
   type VendorProductListResponseBody,
   type VendorProductResponseBody,
@@ -85,6 +125,63 @@ export interface AdminApi {
   approvePayout(id: string, bankReference: string): Promise<AdminPayoutDecisionResponseBody>;
   /** Returns the held amount to the vendor's wallet. */
   rejectPayout(id: string, reason: string | null): Promise<AdminPayoutDecisionResponseBody>;
+  /** Phase 26: the two delivery mode switches, the platform fee and the LIVE shops on each mode. */
+  getLogisticsSettings(): Promise<LogisticsSettingsView>;
+  /** PUT: the three settings. Both modes off is the Emergency Stop. Answers the settings as stored. */
+  updateLogisticsSettings(input: LogisticsSettingsWrite): Promise<LogisticsSettingsView>;
+  /** Phase 26: every vendor's PAN standing, worst first. */
+  listComplianceVendors(): Promise<AdminComplianceVendorListResponseBody>;
+  /** No body. Stamps the check on a PAN on file; a repeat keeps the first stamp. Never changes `status`. */
+  verifyVendorPan(id: string): Promise<PanVerificationResponseBody>;
+  /** Phase 26: every pricing plan, withdrawn ones included. */
+  listPricingPlans(): Promise<AdminPricingPlanListResponseBody>;
+  createPricingPlan(input: PricingPlanCreate): Promise<AdminPricingPlanResponseBody>;
+  /** PATCH: the name and the two toggles, all three sent. A plan's model and terms never change. */
+  updatePricingPlan(id: string, input: PricingPlanUpdate): Promise<AdminPricingPlanResponseBody>;
+  /** Phase 26: Model B shops the platform holds money for, each with its primary bank account. */
+  listSettlements(): Promise<AdminSettlementListResponseBody>;
+  /**
+   * Records a payout the admin made by bank transfer. `idempotency_key` is one per attempt:
+   * resending it answers the stored payout (`replayed`), never a second one.
+   */
+  processSettlementPayout(
+    vendorId: string,
+    input: SettlementPayoutRequest,
+  ): Promise<SettlementPayoutResponseBody>;
+  /**
+   * Phase 26: one page of the audit trail, newest first; `cursor` is the previous page's
+   * `next_cursor`. READ ONLY: the trail has no write route and this client has no write method.
+   */
+  listAuditLogs(query: {
+    action?: string | undefined;
+    entityType?: string | undefined;
+    cursor?: string | undefined;
+  }): Promise<AdminAuditLogListResponseBody>;
+  /** Phase 26: every platform campaign with its terms version and live opt-in count. */
+  listCampaigns(): Promise<AdminCampaignListResponseBody>;
+  createCampaign(input: CampaignWrite): Promise<AdminCampaignResponseBody>;
+  /** PUT: replaces every field. The server raises `terms_version` itself when a term changed. */
+  updateCampaign(id: string, input: CampaignWrite): Promise<AdminCampaignResponseBody>;
+  /** Phase 26: the Ad Marketplace price list. */
+  listAdProducts(): Promise<AdminAdProductListResponseBody>;
+  createAdProduct(input: AdProductCreate): Promise<AdminAdProductResponseBody>;
+  /** PATCH: the name and "on sale" only. A product's terms never change. */
+  updateAdProduct(id: string, input: AdProductUpdate): Promise<AdminAdProductResponseBody>;
+  /** Phase 26: every Home promotion, hidden and ended ones included. */
+  listPromotions(): Promise<AdminPromotionListResponseBody>;
+  createPromotion(input: PromotionWrite): Promise<AdminPromotionResponseBody>;
+  /** PUT: replaces every field. */
+  updatePromotion(id: string, input: PromotionWrite): Promise<AdminPromotionResponseBody>;
+  deletePromotion(id: string): Promise<void>;
+  /** Phase 27: vendors' settlement model change requests, pending first. */
+  listModelChangeRequests(): Promise<AdminModelChangeRequestListResponseBody>;
+  /** No body: the shop moves to the model it asked for. An admin cannot name another. */
+  approveModelChangeRequest(id: string): Promise<AdminModelChangeDecisionResponseBody>;
+  /** `reason` is shown to the vendor; null is none. */
+  rejectModelChangeRequest(
+    id: string,
+    reason: string | null,
+  ): Promise<AdminModelChangeDecisionResponseBody>;
 
   /*
    * Phase 19, the Vendor Portal (VENDOR only): the signed-in vendor's own shop under
@@ -219,6 +316,158 @@ export function createAdminApi(client: ApiClient): AdminApi {
         schema: adminPayoutDecisionResponseSchema,
         body: { reason },
       }),
+    getLogisticsSettings: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/settings/logistics',
+        schema: logisticsSettingsViewSchema,
+      }),
+    updateLogisticsSettings: (input) =>
+      client.request({
+        method: 'PUT',
+        path: '/api/admin/settings/logistics',
+        schema: logisticsSettingsViewSchema,
+        body: input,
+      }),
+    listComplianceVendors: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/compliance/vendors',
+        schema: adminComplianceVendorListResponseSchema,
+      }),
+    verifyVendorPan: (id) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/vendors/${encodeURIComponent(id)}/pan-verification`,
+        schema: panVerificationResponseSchema,
+      }),
+    listPricingPlans: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/pricing-plans',
+        schema: adminPricingPlanListResponseSchema,
+      }),
+    createPricingPlan: (input) =>
+      client.request({
+        method: 'POST',
+        path: '/api/admin/pricing-plans',
+        schema: adminPricingPlanResponseSchema,
+        body: input,
+      }),
+    updatePricingPlan: (id, input) =>
+      client.request({
+        method: 'PATCH',
+        path: `/api/admin/pricing-plans/${encodeURIComponent(id)}`,
+        schema: adminPricingPlanResponseSchema,
+        body: input,
+      }),
+    listSettlements: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/finance/settlements',
+        schema: adminSettlementListResponseSchema,
+      }),
+    processSettlementPayout: (vendorId, input) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/finance/settlements/${encodeURIComponent(vendorId)}/payout`,
+        schema: settlementPayoutResponseSchema,
+        body: input,
+      }),
+    listAuditLogs: ({ action, entityType, cursor }) =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/audit-logs',
+        schema: adminAuditLogListResponseSchema,
+        query: { action, entity_type: entityType, cursor },
+      }),
+    listCampaigns: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/campaigns',
+        schema: adminCampaignListResponseSchema,
+      }),
+    createCampaign: (input) =>
+      client.request({
+        method: 'POST',
+        path: '/api/admin/campaigns',
+        schema: adminCampaignResponseSchema,
+        body: input,
+      }),
+    updateCampaign: (id, input) =>
+      client.request({
+        method: 'PUT',
+        path: `/api/admin/campaigns/${encodeURIComponent(id)}`,
+        schema: adminCampaignResponseSchema,
+        body: input,
+      }),
+    listAdProducts: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/ads/products',
+        schema: adminAdProductListResponseSchema,
+      }),
+    createAdProduct: (input) =>
+      client.request({
+        method: 'POST',
+        path: '/api/admin/ads/products',
+        schema: adminAdProductResponseSchema,
+        body: input,
+      }),
+    updateAdProduct: (id, input) =>
+      client.request({
+        method: 'PATCH',
+        path: `/api/admin/ads/products/${encodeURIComponent(id)}`,
+        schema: adminAdProductResponseSchema,
+        body: input,
+      }),
+    listPromotions: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/promotions',
+        schema: adminPromotionListResponseSchema,
+      }),
+    createPromotion: (input) =>
+      client.request({
+        method: 'POST',
+        path: '/api/admin/promotions',
+        schema: adminPromotionResponseSchema,
+        body: input,
+      }),
+    updatePromotion: (id, input) =>
+      client.request({
+        method: 'PUT',
+        path: `/api/admin/promotions/${encodeURIComponent(id)}`,
+        schema: adminPromotionResponseSchema,
+        body: input,
+      }),
+    listModelChangeRequests: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/settlement-model-requests',
+        schema: adminModelChangeRequestListResponseSchema,
+      }),
+    approveModelChangeRequest: (id) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/settlement-model-requests/${encodeURIComponent(id)}/approve`,
+        schema: adminModelChangeDecisionResponseSchema,
+      }),
+    rejectModelChangeRequest: (id, reason) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/settlement-model-requests/${encodeURIComponent(id)}/reject`,
+        schema: adminModelChangeDecisionResponseSchema,
+        body: { reason },
+      }),
+    deletePromotion: async (id) => {
+      // 204 No Content: the client reads an empty body as null.
+      await client.request({
+        method: 'DELETE',
+        path: `/api/admin/promotions/${encodeURIComponent(id)}`,
+        schema: z.null(),
+      });
+    },
     listActiveCategories: () =>
       client.publicRequest({
         method: 'GET',

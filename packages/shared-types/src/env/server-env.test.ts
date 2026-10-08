@@ -49,6 +49,44 @@ describe('parseServerEnv', () => {
     expect(env.KAFKA_SSL).toBe(true);
   });
 
+  it('allows no cross-origin caller by default and parses an exact allowlist', () => {
+    expect(parseServerEnv(validEnv).CORS_ALLOWED_ORIGINS).toEqual([]);
+    expect(parseServerEnv({ ...validEnv, CORS_ALLOWED_ORIGINS: '' }).CORS_ALLOWED_ORIGINS).toEqual(
+      [],
+    );
+    expect(
+      parseServerEnv({
+        ...validEnv,
+        CORS_ALLOWED_ORIGINS: ' https://admin.hamropasal.np , http://localhost:5173,',
+      }).CORS_ALLOWED_ORIGINS,
+    ).toEqual(['https://admin.hamropasal.np', 'http://localhost:5173']);
+  });
+
+  it('rejects a wildcard, a path and a non-http origin in the CORS allowlist', () => {
+    for (const origin of [
+      '*',
+      'https://*.hamropasal.np',
+      'https://admin.hamropasal.np/',
+      'admin.hamropasal.np',
+      'ftp://admin.hamropasal.np',
+      'null',
+    ]) {
+      expectInvalid({ ...validEnv, CORS_ALLOWED_ORIGINS: origin }, 'CORS_ALLOWED_ORIGINS');
+    }
+  });
+
+  it('allows only https origins in production', () => {
+    const production = { ...validEnv, NODE_ENV: 'production' };
+    expect(
+      parseServerEnv({ ...production, CORS_ALLOWED_ORIGINS: 'https://admin.hamropasal.np' })
+        .CORS_ALLOWED_ORIGINS,
+    ).toEqual(['https://admin.hamropasal.np']);
+    expectInvalid(
+      { ...production, CORS_ALLOWED_ORIGINS: 'http://localhost:5173' },
+      'Only https origins may call the API in production',
+    );
+  });
+
   it('treats empty strings as unset', () => {
     expectInvalid({ ...validEnv, ESEWA_SECRET_KEY: '' }, 'ESEWA_SECRET_KEY');
   });

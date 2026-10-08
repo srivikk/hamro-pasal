@@ -11,11 +11,21 @@ export const userRoles = ['CUSTOMER', 'VENDOR', 'DRIVER', 'SUPER_ADMIN'] as cons
 export const userRoleSchema = z.enum(userRoles);
 export type UserRole = z.infer<typeof userRoleSchema>;
 
-export const vendorStatuses = ['SANDBOXED', 'APPROVED', 'LIVE', 'SUSPENDED'] as const;
+/**
+ * SUSPENDED is for wallet debt or a Super Admin's decision. SUSPENDED_COMPLIANCE (Phase 25) is
+ * separate: a LIVE vendor without a PAN, lifted only by the transaction that saves the PAN.
+ */
+export const vendorStatuses = [
+  'SANDBOXED',
+  'APPROVED',
+  'LIVE',
+  'SUSPENDED',
+  'SUSPENDED_COMPLIANCE',
+] as const;
 export const vendorStatusSchema = z.enum(vendorStatuses);
 export type VendorStatus = z.infer<typeof vendorStatusSchema>;
 
-export const pricingModels = ['SUBSCRIPTION', 'COMMISSION'] as const;
+export const pricingModels = ['SUBSCRIPTION', 'COMMISSION', 'FREE'] as const;
 export const pricingModelSchema = z.enum(pricingModels);
 export type PricingModel = z.infer<typeof pricingModelSchema>;
 
@@ -131,3 +141,58 @@ export type DeadLetterStatus = z.infer<typeof deadLetterStatusSchema>;
 export const deliveryStates = ['OFFERED', 'ASSIGNED', 'PICKED_UP', 'DELIVERED', 'FAILED'] as const;
 export const deliveryStateSchema = z.enum(deliveryStates);
 export type DeliveryState = z.infer<typeof deliveryStateSchema>;
+
+/** A discount rule (SPEC core 7): an amount off, or a share off with an optional cap. */
+export const discountKinds = ['FLAT', 'PERCENTAGE'] as const;
+export const discountKindSchema = z.enum(discountKinds);
+export type DiscountKind = z.infer<typeof discountKindSchema>;
+
+/**
+ * A shop's consent to a platform campaign (SPEC core 7). ACTIVE: the campaign applies to the shop.
+ * OPTED_OUT: the vendor's own account withdrew it. VOIDED: the campaign's terms changed, so the
+ * consent no longer covers them. Both ends are final: joining again is a new row.
+ */
+export const campaignOptInStatuses = ['ACTIVE', 'OPTED_OUT', 'VOIDED'] as const;
+export const campaignOptInStatusSchema = z.enum(campaignOptInStatuses);
+export type CampaignOptInStatus = z.infer<typeof campaignOptInStatusSchema>;
+
+/** Where a sponsored placement shows (SPEC core 8). FEED_LISTING is "Sponsored Search". */
+export const adSlots = ['CAROUSEL', 'FEED_LISTING'] as const;
+export const adSlotSchema = z.enum(adSlots);
+export type AdSlot = z.infer<typeof adSlotSchema>;
+
+/** FLAT_RATE: one price for the booked period. PER_ORDER_PREMIUM: a fixed fee per delivered order. */
+export const adBillingModels = ['FLAT_RATE', 'PER_ORDER_PREMIUM'] as const;
+export const adBillingModelSchema = z.enum(adBillingModels);
+export type AdBillingModel = z.infer<typeof adBillingModelSchema>;
+
+/**
+ * How a vendor's money is settled (SPEC core 5). Model A COD_CREDIT, Model B PLATFORM_ESCROW (the
+ * default, and the only one that runs today), Model C DIRECT_PREPAID (Phase 3, not selectable).
+ */
+export const settlementModels = ['COD_CREDIT', 'PLATFORM_ESCROW', 'DIRECT_PREPAID'] as const;
+export const settlementModelSchema = z.enum(settlementModels);
+export type SettlementModel = z.infer<typeof settlementModelSchema>;
+
+/** Where a Home promotion shows: the banner carousel, or a Featured Offers tile. */
+export const promotionPlacements = ['CAROUSEL', 'FEATURED'] as const;
+export const promotionPlacementSchema = z.enum(promotionPlacements);
+export type PromotionPlacement = z.infer<typeof promotionPlacementSchema>;
+
+/** What a tapped promotion opens: a shop, a category, or the shops carrying an offer label. */
+export const promotionTargetTypes = ['SHOP', 'CATEGORY', 'DISCOUNT_TAG'] as const;
+export const promotionTargetTypeSchema = z.enum(promotionTargetTypes);
+export type PromotionTargetType = z.infer<typeof promotionTargetTypeSchema>;
+
+/** A vendor's request to change its settlement model (Phase 27, SPEC core 5). */
+export const settlementModelRequestStatuses = ['PENDING', 'APPROVED', 'REJECTED'] as const;
+export const settlementModelRequestStatusSchema = z.enum(settlementModelRequestStatuses);
+export type SettlementModelRequestStatus = z.infer<typeof settlementModelRequestStatusSchema>;
+
+/**
+ * A vendor's ad purchase (Phase 27, SPEC core 8). ACTIVE: running. PAUSED: a per-order ad whose
+ * budget is used up. ENDED: its period is over. CANCELLED: the vendor withdrew it.
+ */
+export const adPurchaseStatuses = ['ACTIVE', 'PAUSED', 'ENDED', 'CANCELLED'] as const;
+export const adPurchaseStatusSchema = z.enum(adPurchaseStatuses);
+export type AdPurchaseStatus = z.infer<typeof adPurchaseStatusSchema>;

@@ -1,7 +1,13 @@
 import { z } from 'zod';
 
 import { nepalPhoneSchema } from '../domain/entities';
-import { fulfillmentModeSchema, paymentMethodSchema, payoutStatusSchema } from '../domain/enums';
+import {
+  fulfillmentModeSchema,
+  paymentMethodSchema,
+  payoutStatusSchema,
+  settlementModelSchema,
+} from '../domain/enums';
+import { panSchema } from './vendor-settings';
 
 /*
  * Financial reconciliation and payouts (Phase 22, SPEC §5). Balances are the double-entry ledger's:
@@ -158,3 +164,72 @@ export const adminPayoutDecisionResponseSchema = z.strictObject({
   payout: adminPayoutViewSchema,
 });
 export type AdminPayoutDecisionResponseBody = z.infer<typeof adminPayoutDecisionResponseSchema>;
+
+/*
+ * Settlements (Phase 26, SPEC core 5 "Payouts"): money the platform holds for a Model B vendor is
+ * paid out by the platform, never requested by the vendor, and never while the vendor's PAN
+ * document is unverified.
+ */
+
+/** One row of GET /api/admin/finance/settlements: a shop and what the platform holds for it. */
+export const settlementVendorViewSchema = z
+  .strictObject({
+    vendor_id: z.uuid(),
+    business_name: z.string().min(1),
+    phone: nepalPhoneSchema,
+    settlement_model: settlementModelSchema,
+    /** The ledger balance that may leave the platform now: never negative. */
+    available_for_payout_npr: z.number().min(0),
+    /** Prepaid earnings of orders not delivered yet. Not payable. */
+    pending_escrow_npr: z.number().min(0),
+    tax_id: panSchema.nullable(),
+    /** When a Super Admin verified the PAN document; null holds every payout. */
+    pan_verified_at: z.iso.datetime().nullable(),
+    /**
+     * The account the payout is sent to (the vendor's primary one), in full: the admin makes the
+     * transfer to it. Null holds every payout (422 BANK_ACCOUNT_MISSING).
+     */
+    primary_bank_account: z
+      .strictObject({
+        id: z.uuid(),
+        bank_name: z.string().min(1),
+        branch_name: z.string().min(1),
+        account_name: z.string().min(1),
+        account_number: z.string().min(4),
+        routing_or_swift_code: z.string().nullable(),
+      })
+      .nullable(),
+  })
+  .refine((vendor) => vendor.pan_verified_at === null || vendor.tax_id !== null, {
+    message: 'Only a PAN on file can be verified',
+  });
+export type SettlementVendorView = z.infer<typeof settlementVendorViewSchema>;
+
+/** GET /api/admin/finance/settlements: Model B shops with something to pay, by business name. */
+export const adminSettlementListResponseSchema = z.strictObject({
+  vendors: z.array(settlementVendorViewSchema),
+});
+export type AdminSettlementListResponseBody = z.infer<typeof adminSettlementListResponseSchema>;
+
+/**
+ * The body of POST /api/admin/finance/settlements/:vendor_id/payout: a Super Admin's manual
+ * payout. Any positive amount up to what is available (the 1000 NPR minimum is the automated
+ * run's, not this route's). `idempotency_key` is new per attempt and kept across retries.
+ */
+export const settlementPayoutRequestSchema = z.strictObject({
+  amount_npr: z.number().positive().multipleOf(0.01).max(MAX_PAYOUT_NPR),
+  /** The reference of the bank transfer the admin made. */
+  bank_reference: z.string().trim().min(1).max(PAYOUT_BANK_REFERENCE_MAX_LENGTH),
+  idempotency_key: z.string().trim().min(8).max(100),
+});
+export type SettlementPayoutRequest = z.infer<typeof settlementPayoutRequestSchema>;
+
+/** 201 for a new payout, 200 for a replay of the same key (then `replayed` is true). */
+export const settlementPayoutResponseSchema = z.strictObject({
+  /** Recorded as an APPROVED row of `payout_requests`, the record of every payout. */
+  payout: payoutViewSchema,
+  /** The shop after the payout. */
+  vendor: settlementVendorViewSchema,
+  replayed: z.boolean(),
+});
+export type SettlementPayoutResponseBody = z.infer<typeof settlementPayoutResponseSchema>;

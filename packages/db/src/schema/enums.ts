@@ -12,6 +12,7 @@ import {
   payoutStatuses,
   pricingModels,
   reviewDirections,
+  settlementModels,
   userRoles,
   vendorStatuses,
 } from '@hamro-pasal/shared-types';
@@ -33,3 +34,4 @@ export const reviewDirectionEnum = pgEnum('review_direction', reviewDirections);
 export const deadLetterStatusEnum = pgEnum('dead_letter_status', deadLetterStatuses);
 export const payoutStatusEnum = pgEnum('payout_status', payoutStatuses);
 export const deliveryStateEnum = pgEnum('delivery_state', deliveryStates);
+export const settlementModelEnum = pgEnum('settlement_model', settlementModels);

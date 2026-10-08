@@ -120,10 +120,16 @@ describe('feed and menu schemas', () => {
 
   it('accept a partitioned feed', () => {
     const body = {
-      serviceable: [{ vendor, distance_km: 0.18, serviceable: true }],
+      serviceable: [{ vendor, distance_km: 0.18, serviceable: true, delivery_available: true }],
       explore_further: [
-        { vendor: { ...vendor, id: randomUUID() }, distance_km: 7.2, serviceable: false },
+        {
+          vendor: { ...vendor, id: randomUUID() },
+          distance_km: 7.2,
+          serviceable: false,
+          delivery_available: false,
+        },
       ],
+      delivery_available: true,
     };
 
     expect(feedResponseSchema.parse(body)).toEqual(body);

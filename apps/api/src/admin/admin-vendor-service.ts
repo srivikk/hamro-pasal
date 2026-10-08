@@ -1,5 +1,15 @@
-import { platformSettings, vendors, type Database, type Transaction } from '@hamro-pasal/db';
-import { ADMIN_VENDOR_LIST_LIMIT } from '@hamro-pasal/shared-types';
+import {
+  platformSettings,
+  recordAuditLog,
+  vendors,
+  type Database,
+  type Transaction,
+} from '@hamro-pasal/db';
+import {
+  ADMIN_VENDOR_LIST_LIMIT,
+  NO_AUDIT_CONTEXT,
+  type AuditContext,
+} from '@hamro-pasal/shared-types';
 import { asc, eq } from 'drizzle-orm';
 
 import type { AdminOverride, WalletService } from '../wallet/wallet-service';
@@ -20,15 +30,12 @@ export interface AdminOverrideResult {
  * The Super Admin's vendor management (Phase 15): every vendor with its wallet and standing, and
  * the manual Suspend / Restore overrides. The overrides run inside WalletService (the one place that
  * changes a vendor's standing), in one transaction with their `vendor.status_overridden` outbox
- * event; a structured audit line is logged after the commit (SPEC infrastructure §5).
+ * event and their `audit_logs` entry (Phase 25; it was a console line before).
  */
 export class AdminVendorService {
   constructor(
     private readonly db: Database,
     private readonly wallet: WalletService,
-    private readonly audit: (line: string) => void = (line) => {
-      console.warn(line);
-    },
   ) {}
 
   /** One snapshot, so the balances and the limit agree. Sorted by business name, capped at 500. */
@@ -50,36 +57,46 @@ export class AdminVendorService {
     );
   }
 
-  suspend(adminUserId: string, vendorId: string): Promise<AdminOverrideResult> {
-    return this.override((tx) => this.wallet.suspendByAdmin(tx, vendorId, adminUserId));
+  suspend(
+    adminUserId: string,
+    vendorId: string,
+    context: AuditContext = NO_AUDIT_CONTEXT,
+  ): Promise<AdminOverrideResult> {
+    return this.override(context, (tx) => this.wallet.suspendByAdmin(tx, vendorId, adminUserId));
   }
 
-  restore(adminUserId: string, vendorId: string): Promise<AdminOverrideResult> {
-    return this.override((tx) => this.wallet.restoreByAdmin(tx, vendorId, adminUserId));
+  restore(
+    adminUserId: string,
+    vendorId: string,
+    context: AuditContext = NO_AUDIT_CONTEXT,
+  ): Promise<AdminOverrideResult> {
+    return this.override(context, (tx) => this.wallet.restoreByAdmin(tx, vendorId, adminUserId));
   }
 
-  private async override(
+  private override(
+    context: AuditContext,
     apply: (tx: Transaction) => Promise<AdminOverride>,
   ): Promise<AdminOverrideResult> {
-    const result = await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const override = await apply(tx);
       const [vendor] = await tx.select().from(vendors).where(eq(vendors.id, override.vendorId));
       if (vendor === undefined) throw new Error(`Vendor ${override.vendorId} vanished`);
+      // In the override's own transaction: the standing never changes without its entry.
+      await recordAuditLog(tx, {
+        actor: { kind: 'USER', user_id: override.adminUserId, role: 'SUPER_ADMIN' },
+        action:
+          override.action === 'SUSPEND' ? 'VENDOR_SUSPENDED_BY_ADMIN' : 'VENDOR_RESTORED_BY_ADMIN',
+        entityId: override.vendorId,
+        vendorId: override.vendorId,
+        beforeState: { status: override.fromStatus },
+        afterState: {
+          status: override.toStatus,
+          wallet_balance_npr: override.walletBalanceNpr,
+          overridden_at: override.overriddenAt.toISOString(),
+        },
+        context,
+      });
       return { override, vendor };
     });
-    const { override } = result;
-    this.audit(
-      JSON.stringify({
-        audit: 'vendor.status_overridden',
-        vendor_id: override.vendorId,
-        action: override.action,
-        from_status: override.fromStatus,
-        to_status: override.toStatus,
-        wallet_balance_npr: override.walletBalanceNpr,
-        admin_user_id: override.adminUserId,
-        overridden_at: override.overriddenAt.toISOString(),
-      }),
-    );
-    return result;
   }
 }

@@ -19,6 +19,12 @@ export const MAX_CART_LINES = 50;
 export const MAX_LINE_QUANTITY = 99;
 
 /** POST /api/cart/checkout. Locks the cart for 600 s and creates the order (SPEC §3, journey 6). */
+/** POST /api/cart/quote: the cart and where it goes. No amounts: the server prices it. */
+export const cartQuoteRequestSchema = z.lazy(() =>
+  checkoutRequestSchema.pick({ vendor_id: true, items: true, delivery_address: true }),
+);
+export type CartQuoteRequest = z.infer<typeof cartQuoteRequestSchema>;
+
 export const checkoutRequestSchema = z.strictObject({
   /** Client-generated per checkout attempt; resubmitting it returns the same order. */
   idempotency_key: z.string().trim().min(8).max(100),

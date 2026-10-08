@@ -232,7 +232,23 @@ export const orderSchema = z.strictObject({
   subtotal: nonNegativeNprSchema,
   delivery_fee: nonNegativeNprSchema,
   platform_commission_amount: nonNegativeNprSchema,
+  /**
+   * The platform campaign discount the customer got (SPEC core 9); 0 without one. The customer
+   * pays subtotal - this + delivery_fee.
+   */
+  platform_promo_discount_npr: nonNegativeNprSchema,
+  /** The part of that discount the vendor bears, per the terms of its own opt-in. */
+  platform_promo_vendor_share_npr: nonNegativeNprSchema,
+  /** The vendor's own opt-in the discount was priced under; null without a discount. */
+  campaign_opt_in_id: z.uuid().nullable(),
+  /** The campaign rule exactly as applied; null without a discount. */
+  discount_snapshot: z.record(z.string(), z.json()).nullable(),
   fulfillment_locked: fulfillmentModeSchema,
+  /**
+   * The shop's settlement model when the order was created (SPEC core 5): the order settles under
+   * it even if the shop changes model later. Written once; the database refuses a change.
+   */
+  settlement_model_locked: settlementModelSchema,
   payment_method: paymentMethodSchema,
   payment_status: paymentStatusSchema,
   /** eSewa transaction_uuid or Khalti pidx. Unique per gateway, and always null for COD. */

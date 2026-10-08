@@ -7,10 +7,13 @@ import {
   type Transaction,
 } from '@hamro-pasal/db';
 import {
+  chargePerOrderAdPremium,
+  generateFiscalInvoice,
   orderSettlementKey,
   planSettlement,
   toNpr,
   toPaisa,
+  type LedgerService,
   type SettlementService,
 } from '@hamro-pasal/ledger';
 import type { Order } from '@hamro-pasal/shared-types';
@@ -26,6 +29,10 @@ export interface ReconciledOrder {
   readonly commissionNpr: number;
   /** True when this run posted the settlement journal (it was missing). */
   readonly settlementPosted: boolean;
+  /** The per-order ad premium this run charged with that settlement, in NPR; 0 when none. */
+  readonly adPremiumNpr: number;
+  /** True when this run issued the order's fiscal invoice (the delivery had not). */
+  readonly invoiceIssued: boolean;
   readonly reconciledAt: Date;
 }
 
@@ -77,7 +84,10 @@ class SettlementMismatch extends Error {
  *   - works out the vendor's cut from the order snapshot (planSettlement: subtotal minus the stored
  *     `platform_commission_amount`, plus the delivery fee when the shop delivered);
  *   - posts the settlement journal if it is missing. The journal's idempotency key is the order's,
- *     so it can exist at most once whoever posts it;
+ *     so it can exist at most once whoever posts it. With it, and only then, it charges the
+ *     per-order ad premium the delivery would have charged (SPEC core 8), so an order settled
+ *     here does not escape its ad fee. Locks as the delivery takes them: the order row, the vendor
+ *     row (FOR NO KEY UPDATE), the ledger accounts, then the ad purchase row and the accounts;
  *   - compares the journal's vendor posting with that cut, and only when they agree stamps
  *     `reconciled_at`.
  * A mismatch, or a settlement that cannot be posted, rolls that order's transaction back and is
@@ -87,6 +97,7 @@ export class OrderReconciliationService {
   constructor(
     private readonly db: Database,
     private readonly settlement: Pick<SettlementService, 'settleOrderInTransaction'>,
+    private readonly ledger: LedgerService,
     private readonly batchSize = 200,
   ) {}
 
@@ -158,15 +169,27 @@ export class OrderReconciliationService {
 
     const expectedPaisa = vendorWalletPaisa(order);
     const settlementPosted = (await settlementJournalId(tx, order.id)) === null;
+    let adPremiumNpr = 0;
     if (settlementPosted) {
       // Normally the delivery already did this; a no-op plan (nothing to move) still marks COD paid.
       await this.settlement.settleOrderInTransaction(tx, order);
+      // The delivery charges the ad premium right after its settlement; so does this one. An
+      // order the delivery settled was charged there, and is not charged again here.
+      const premium = await chargePerOrderAdPremium(tx, this.ledger, order.id, order.vendor_id);
+      if (premium.status === 'CHARGED') adPremiumNpr = premium.amountNpr;
     }
 
     const actualPaisa = await postedVendorWalletPaisa(tx, order);
     if (actualPaisa !== expectedPaisa) {
       throw new SettlementMismatch(order.vendor_id, expectedPaisa, actualPaisa);
     }
+
+    // A delivered order has exactly one fiscal invoice (SPEC core 10). The delivery issues it;
+    // an order that reached DELIVERED another way gets it here. Last, after every other lock: the
+    // order row, the vendor row, the ledger accounts, the ad purchase row, then the sequence row.
+    // The order as it is now: a settlement posted above may have marked a cash order PAID.
+    const [current] = await tx.select().from(orders).where(eq(orders.id, order.id));
+    const invoice = await generateFiscalInvoice(tx, current ?? order);
 
     const [stamped] = await tx
       .update(orders)
@@ -182,6 +205,8 @@ export class OrderReconciliationService {
       vendorWalletNpr: toNpr(actualPaisa),
       commissionNpr: order.platform_commission_amount,
       settlementPosted,
+      adPremiumNpr,
+      invoiceIssued: invoice.status === 'ISSUED',
       reconciledAt: stamped.reconciledAt,
     };
   }

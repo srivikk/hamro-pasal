@@ -1,5 +1,6 @@
 import { BillingCycleRenewalService } from './billing/billing-cycle-renewal';
 import { ComplianceSweepService } from './compliance/compliance-sweep';
+import { SettlementPayoutRunService } from './finance/settlement-payout-run';
 import { MarketingStatusSweepService } from './marketing/marketing-status-sweep';
 import { createDatabase } from '@hamro-pasal/db';
 import { ivrGatewayFromEnv } from '@hamro-pasal/ivr';
@@ -53,6 +54,7 @@ async function main(): Promise<void> {
   const connection = buildBullConnection(env.REDIS_URL);
   const queues = createTimerQueues(connection);
   await registerMidnightJobs(queues.midnight);
+  const reconciliationLedger = new LedgerService(new WalletService());
   const processors = createProcessors(
     createTimerHandlers({
       escalation: new VendorEscalationService(db),
@@ -60,10 +62,15 @@ async function main(): Promise<void> {
       complianceSweep: new ComplianceSweepService(db),
       billingRenewal: new BillingCycleRenewalService(db),
       marketingSweep: new MarketingStatusSweepService(db, new LedgerService(new WalletService())),
+      settlementPayoutRun: new SettlementPayoutRunService(
+        db,
+        new LedgerService(new WalletService()),
+      ),
       // Phase 22: verifies (and, if missing, posts) the settlement of every DELIVERED order.
       orderReconciliation: new OrderReconciliationService(
         db,
-        new SettlementService(db, new LedgerService(new WalletService())),
+        new SettlementService(db, reconciliationLedger),
+        reconciliationLedger,
       ),
     }),
   );

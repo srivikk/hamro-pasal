@@ -1,5 +1,6 @@
 import type { BillingCycleRenewalService } from '../billing/billing-cycle-renewal';
 import type { ComplianceSweepService } from '../compliance/compliance-sweep';
+import type { SettlementPayoutRunService } from '../finance/settlement-payout-run';
 import type { MarketingStatusSweepService } from '../marketing/marketing-status-sweep';
 import {
   ghostCustomerTimerJobSchema,
@@ -32,6 +33,8 @@ export interface TimerHandlers {
   runMidnightTask(task: MidnightTask): Promise<void>;
   /** Phase 28: the hourly upkeep of ad purchases. */
   runMarketingStatusSweep(): Promise<void>;
+  /** Phase 29: the Tuesday 02:00 payout run. */
+  runSettlementPayoutRun(): Promise<void>;
 }
 
 /** Payloads are validated at the boundary: a malformed job fails loudly (and is retained). */
@@ -45,9 +48,9 @@ export function createProcessors(handlers: TimerHandlers) {
     },
     midnight: async (job: Job): Promise<void> => {
       const { task } = midnightMaintenanceJobSchema.parse(job.data);
-      await (task === 'MARKETING_STATUS_SWEEP'
-        ? handlers.runMarketingStatusSweep()
-        : handlers.runMidnightTask(task));
+      if (task === 'MARKETING_STATUS_SWEEP') return handlers.runMarketingStatusSweep();
+      if (task === 'SETTLEMENT_PAYOUT_RUN') return handlers.runSettlementPayoutRun();
+      return handlers.runMidnightTask(task);
     },
   };
 }
@@ -113,9 +116,24 @@ export function createTimerHandlers(deps: {
   readonly billingRenewal?: Pick<BillingCycleRenewalService, 'renewDueCycles'>;
   /** Phase 28. Optional like the two above. */
   readonly marketingSweep?: Pick<MarketingStatusSweepService, 'run'>;
+  /** Phase 29. Optional like those above. */
+  readonly settlementPayoutRun?: Pick<SettlementPayoutRunService, 'run'>;
 }): TimerHandlers {
   return {
     ...pendingImplementationHandlers,
+    runSettlementPayoutRun: async () => {
+      if (deps.settlementPayoutRun === undefined) {
+        return pendingImplementationHandlers.runSettlementPayoutRun();
+      }
+      const summary = await deps.settlementPayoutRun.run();
+      const total = summary.paid.reduce(
+        (sum, payout) => sum + Math.round(payout.amountNpr * 100),
+        0,
+      );
+      console.info(
+        `[worker] settlement payout run (cut-off ${summary.cutoff.toISOString()}): ${String(summary.paid.length)} vendor(s) paid Rs. ${String(total / 100)}; skipped ${JSON.stringify(summary.skipped)}`,
+      );
+    },
     runMarketingStatusSweep: async () => {
       if (deps.marketingSweep === undefined) {
         return pendingImplementationHandlers.runMarketingStatusSweep();
@@ -174,6 +192,10 @@ export function createTimerHandlers(deps: {
 
 /** Placeholder handlers until the escalation / downgrade phases land. They log and succeed. */
 export const pendingImplementationHandlers: TimerHandlers = {
+  runSettlementPayoutRun: () => {
+    console.warn('[worker] settlement payout run fired (not wired in this worker)');
+    return Promise.resolve();
+  },
   runMarketingStatusSweep: () => {
     console.warn('[worker] marketing status sweep fired (not wired in this worker)');
     return Promise.resolve();

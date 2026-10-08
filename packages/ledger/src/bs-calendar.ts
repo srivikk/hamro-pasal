@@ -41,3 +41,16 @@ export function nextBsMonthStart(instant: Date): Date {
   const { year, month } = bsDateOf(instant);
   return month === 12 ? bsMonthStart(year + 1, 1) : bsMonthStart(year, month + 1);
 }
+
+/** Shrawan, the BS month a Nepal fiscal year starts on. */
+const FISCAL_YEAR_FIRST_MONTH = 4;
+
+/**
+ * The Nepal fiscal year an instant falls in, as the IRD writes it: "2082/083". It runs from
+ * 1 Shrawan to the last day of Ashadh, in Nepal Time (SPEC Nepal section 5).
+ */
+export function fiscalYearOf(instant: Date): string {
+  const { year, month } = bsDateOf(instant);
+  const start = month >= FISCAL_YEAR_FIRST_MONTH ? year : year - 1;
+  return `${String(start)}/${String((start + 1) % 1000).padStart(3, '0')}`;
+}

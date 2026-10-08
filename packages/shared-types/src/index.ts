@@ -5,6 +5,7 @@ export * from './env/server-env';
 export * from './events/domain-events';
 export * from './jobs/queues';
 export * from './localization/address';
+export * from './localization/fiscal-invoice-math';
 export * from './localization/nepal-geography';
 export * from './localization/numerals';
 export * from './localization/phone';

@@ -69,6 +69,7 @@ import {
   type PanVerificationResponseBody,
   type PayoutRequestResponseBody,
   type PayoutStatus,
+  type PayoutTransferState,
   type PricingPlanCreate,
   type PricingPlanUpdate,
   type PromotionWrite,
@@ -119,8 +120,14 @@ export interface AdminApi {
   /** Phase 22: vendors' payout requests, newest first. */
   listPayouts(query: {
     status?: PayoutStatus | undefined;
+    /** Phase 30: only payouts whose bank transfer is in this state. */
+    transferState?: PayoutTransferState | undefined;
     cursor?: string | undefined;
   }): Promise<AdminPayoutListResponseBody>;
+  /** Phase 30: the bank transfer of an automated payout was made; records its reference. */
+  finalizePayout(id: string, bankReference: string): Promise<AdminPayoutDecisionResponseBody>;
+  /** Phase 30: the bank transfer could not be made; the amount returns to the vendor's wallet. */
+  failPayout(id: string, reason: string | null): Promise<AdminPayoutDecisionResponseBody>;
   /** Records the bank transfer that paid the request (the amount was held when it was requested). */
   approvePayout(id: string, bankReference: string): Promise<AdminPayoutDecisionResponseBody>;
   /** Returns the held amount to the vendor's wallet. */
@@ -295,12 +302,26 @@ export function createAdminApi(client: ApiClient): AdminApi {
         schema: adminProductResponseSchema,
         body: { is_active: isActive },
       }),
-    listPayouts: ({ status, cursor }) =>
+    listPayouts: ({ status, transferState, cursor }) =>
       client.request({
         method: 'GET',
         path: '/api/admin/finance/payouts',
         schema: adminPayoutListResponseSchema,
-        query: { status, cursor },
+        query: { status, transfer_state: transferState, cursor },
+      }),
+    finalizePayout: (id, bankReference) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/finance/payouts/${encodeURIComponent(id)}/finalize`,
+        schema: adminPayoutDecisionResponseSchema,
+        body: { bank_reference: bankReference },
+      }),
+    failPayout: (id, reason) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/finance/payouts/${encodeURIComponent(id)}/fail`,
+        schema: adminPayoutDecisionResponseSchema,
+        body: { reason },
       }),
     approvePayout: (id, bankReference) =>
       client.request({

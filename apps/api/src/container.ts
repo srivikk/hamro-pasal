@@ -154,6 +154,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
   const handoff = new DeliveryHandoff(
     settlement,
     new DeliveryOtpAttempts(infra.redisPool, infra.deliveryOtpOptions),
+    ledger,
   );
   const otps = new OtpStore(infra.redisPool, otpPepper(config.accessTokenSecret), infra.otpOptions);
   const esewa = new EsewaService(infra.db, checkout, confirmation, config.esewa);

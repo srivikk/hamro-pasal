@@ -14,6 +14,7 @@ import {
   pricingModels,
   reviewDirections,
   settlementModels,
+  fiscalDocumentTypes,
   userRoles,
   vendorStatuses,
 } from '@hamro-pasal/shared-types';
@@ -37,3 +38,4 @@ export const deadLetterStatusEnum = pgEnum('dead_letter_status', deadLetterStatu
 export const payoutStatusEnum = pgEnum('payout_status', payoutStatuses);
 export const deliveryStateEnum = pgEnum('delivery_state', deliveryStates);
 export const settlementModelEnum = pgEnum('settlement_model', settlementModels);
+export const fiscalDocumentTypeEnum = pgEnum('fiscal_document_type', fiscalDocumentTypes);

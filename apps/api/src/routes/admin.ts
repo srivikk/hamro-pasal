@@ -2,6 +2,8 @@ import {
   adminAuditLogListQuerySchema,
   adminDeadLetterListQuerySchema,
   adminPayoutApproveRequestSchema,
+  adminPayoutFailRequestSchema,
+  adminPayoutFinalizeRequestSchema,
   adminPayoutListQuerySchema,
   adminPayoutRejectRequestSchema,
   idParamSchema,
@@ -150,9 +152,24 @@ export function adminVendorView(vendor: AdminVendorRow): AdminVendorView {
   };
 }
 
-export function adminPayoutView({ payout, vendor }: AdminPayoutRow): AdminPayoutView {
+export function adminPayoutView({
+  payout,
+  vendor,
+  primaryBankAccount,
+}: AdminPayoutRow): AdminPayoutView {
   return {
     ...payoutView(payout),
+    primary_bank_account:
+      primaryBankAccount === null
+        ? null
+        : {
+            id: primaryBankAccount.id,
+            bank_name: primaryBankAccount.bank_name,
+            branch_name: primaryBankAccount.branch_name,
+            account_name: primaryBankAccount.account_name,
+            account_number: primaryBankAccount.account_number,
+            routing_or_swift_code: primaryBankAccount.routing_or_swift_code,
+          },
     vendor: {
       id: vendor.id,
       business_name: vendor.businessName,
@@ -385,6 +402,35 @@ export function adminRouter({
       input.reason,
       auditContextOf(req, res),
     );
+    const body: AdminPayoutDecisionResponseBody = { payout: adminPayoutView(row) };
+    res.json(body);
+  });
+
+  /**
+   * Phase 30. The admin made the bank transfer of a payout the scheduled run prepared
+   * (PROCESSING_BANK_TRANSFER): records its reference; the payout is COMPLETED.
+   */
+  router.post('/finance/payouts/:id/finalize', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const input = parseInput(adminPayoutFinalizeRequestSchema, req.body);
+    const row = await payouts.finalize(
+      authOf(req).userId,
+      id,
+      input.bank_reference,
+      auditContextOf(req, res),
+    );
+    const body: AdminPayoutDecisionResponseBody = { payout: adminPayoutView(row) };
+    res.json(body);
+  });
+
+  /**
+   * Phase 30. The bank transfer of such a payout could not be made: the amount is posted back to
+   * the vendor's wallet and the payout is FAILED. A body is optional.
+   */
+  router.post('/finance/payouts/:id/fail', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const input = parseInput(adminPayoutFailRequestSchema, (req.body as unknown) ?? {});
+    const row = await payouts.fail(authOf(req).userId, id, input.reason, auditContextOf(req, res));
     const body: AdminPayoutDecisionResponseBody = { payout: adminPayoutView(row) };
     res.json(body);
   });

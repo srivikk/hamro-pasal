@@ -3,7 +3,9 @@ import {
   settlementModelSchema,
   settlementPayoutRequestSchema,
   settlementVendorViewSchema,
+  type AdminPayoutView,
   type AdminSettlementListResponseBody,
+  type PayoutTransferState,
   type SettlementModel,
   type SettlementPayoutRequest,
   type SettlementVendorView,
@@ -241,4 +243,45 @@ export function replaceSettlementVendor(
       current.vendor_id === vendor.vendor_id ? vendor : current,
     ),
   };
+}
+
+/** The state of an automated payout whose bank transfer a person still has to make. */
+export const PROCESSING_TRANSFER_STATE: PayoutTransferState = 'PROCESSING_BANK_TRANSFER';
+
+/**
+ * The rows of "Bank transfers to make": the payouts still waiting, the oldest first (it has
+ * waited longest). The server filters already; a payout decided in another window meanwhile is
+ * dropped here too.
+ */
+export function processingTransfers(payouts: readonly AdminPayoutView[]): AdminPayoutView[] {
+  return payouts
+    .filter((payout) => payout.transfer_state === PROCESSING_TRANSFER_STATE)
+    .sort((a, b) => (a.decided_at ?? a.requested_at).localeCompare(b.decided_at ?? b.requested_at));
+}
+
+/** Who made the payout: the scheduled run by name, or an admin. */
+export function transferActorLabel(payout: Pick<AdminPayoutView, 'system_actor'>): string {
+  if (payout.system_actor === null) return 'Recorded by an admin';
+  return payout.system_actor === 'SETTLEMENT_PAYOUT_RUN'
+    ? 'Automated: weekly payout run'
+    : `Automated: ${payout.system_actor}`;
+}
+
+/** What to tell the admin when "Mark Transferred" or "Fail" is refused. */
+export function transferErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    switch (error.code) {
+      case 'PAYOUT_NOT_PROCESSING':
+        return 'This payout was already finalised or failed. The list has been refreshed.';
+      case 'PAYOUT_NOT_FOUND':
+        return 'This payout no longer exists.';
+      case 'VALIDATION_FAILED':
+        return 'Check the bank reference or the reason.';
+      case 'NETWORK_ERROR':
+        return 'The API cannot be reached. Try again.';
+      default:
+        break;
+    }
+  }
+  return 'The transfer could not be saved. Try again.';
 }

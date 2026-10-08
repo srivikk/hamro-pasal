@@ -40,7 +40,7 @@ export type PostResult =
 /** Account types with exactly one account that is opened by the first journal naming it. */
 type LazySingletonAccountType = Extract<
   LedgerAccountType,
-  'PAYOUT_CLEARING' | 'AD_REVENUE' | 'AD_BUDGET_CLEARING'
+  'PAYOUT_CLEARING' | 'AD_REVENUE' | 'AD_BUDGET_CLEARING' | 'PROMO_EXPENSE'
 >;
 
 /** pg_advisory_xact_lock key serialising the opening of those accounts. */
@@ -166,6 +166,7 @@ export class LedgerService {
         case 'PAYOUT_CLEARING':
         case 'AD_REVENUE':
         case 'AD_BUDGET_CLEARING':
+        case 'PROMO_EXPENSE':
           return eq(ledgerAccounts.account_type, ref.type);
         case 'GATEWAY_CLEARING':
           return eq(ledgerAccounts.gateway, ref.gateway);
@@ -182,7 +183,8 @@ export class LedgerService {
     if (
       ref.type === 'PAYOUT_CLEARING' ||
       ref.type === 'AD_REVENUE' ||
-      ref.type === 'AD_BUDGET_CLEARING'
+      ref.type === 'AD_BUDGET_CLEARING' ||
+      ref.type === 'PROMO_EXPENSE'
     ) {
       await this.ensureSingletonAccount(tx, ref.type);
     }

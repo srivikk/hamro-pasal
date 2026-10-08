@@ -118,6 +118,7 @@ export class VendorFinanceService {
             subtotal: orders.subtotal,
             deliveryFee: orders.delivery_fee,
             commission: orders.platform_commission_amount,
+            vendorDiscount: orders.platform_promo_vendor_share_npr,
             deliveredAt: orders.delivered_at,
             reconciledAt: orders.reconciled_at,
             // Drizzle writes this single-table query's columns unqualified, so the subquery names
@@ -163,6 +164,7 @@ export class VendorFinanceService {
                     commissionNpr: row.commission,
                     vendorCutNpr: toNpr(
                       toPaisa(row.subtotal) -
+                        toPaisa(row.vendorDiscount) -
                         toPaisa(row.commission) +
                         (row.fulfillment === 'SELF_DELIVERY' ? toPaisa(row.deliveryFee) : 0),
                     ),

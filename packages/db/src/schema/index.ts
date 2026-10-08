@@ -7,6 +7,7 @@ export * from './deliveries';
 export * from './device-tokens';
 export * from './disputes';
 export * from './enums';
+export * from './invoices';
 export * from './ledger';
 export * from './marketing';
 export * from './orders';

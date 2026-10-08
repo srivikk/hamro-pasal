@@ -23,6 +23,8 @@ export function payoutView(payout: PayoutRow): PayoutView {
     rejection_reason: payout.rejection_reason,
     requested_at: payout.created_at.toISOString(),
     decided_at: payout.decided_at?.toISOString() ?? null,
+    transfer_state: payout.transfer_state,
+    system_actor: payout.system_actor,
   };
 }
 

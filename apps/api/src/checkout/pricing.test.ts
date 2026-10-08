@@ -1,6 +1,9 @@
 import {
+  bestCampaign,
+  campaignDiscountPaisa,
   CheckoutRejectedError,
   priceCart,
+  type CampaignOffer,
   type PricingProduct,
   type PricingVendor,
 } from './pricing';
@@ -69,5 +72,98 @@ describe('priceCart', () => {
     expect(priceCart(vendor, atMinimum, [{ productId: 'x', quantity: 1 }]).subtotalPaisa).toBe(
       50_000,
     );
+  });
+});
+
+describe('platform campaign discounts (SPEC core 9)', () => {
+  const offer = (overrides: Partial<CampaignOffer> = {}): CampaignOffer => ({
+    campaignId: 'campaign',
+    optInId: 'opt-in',
+    optedInAt: new Date('2026-10-01T00:00:00Z'),
+    name: 'Dashain 10%',
+    kind: 'PERCENTAGE',
+    value: 10,
+    maxDiscountNpr: null,
+    minCartNpr: 0,
+    vendorSharePercent: 50,
+    termsVersion: 1,
+    ...overrides,
+  });
+
+  it('takes a percentage half-up to the paisa, up to its cap', () => {
+    expect(campaignDiscountPaisa(offer(), 100_000)).toBe(10_000);
+    // 12.5% of 333.33 is 41.66625: 41.67.
+    expect(campaignDiscountPaisa(offer({ value: 12.5 }), 33_333)).toBe(4167);
+    // 0.5 paisa rounds up, 0.49 down.
+    expect(campaignDiscountPaisa(offer({ value: 10 }), 5)).toBe(1);
+    expect(campaignDiscountPaisa(offer({ value: 10 }), 4)).toBe(0);
+    expect(campaignDiscountPaisa(offer({ maxDiscountNpr: 60 }), 100_000)).toBe(6000);
+    expect(campaignDiscountPaisa(offer({ maxDiscountNpr: 60 }), 50_000)).toBe(5000);
+  });
+
+  it('takes a flat amount, never more than the goods', () => {
+    expect(campaignDiscountPaisa(offer({ kind: 'FLAT', value: 120 }), 100_000)).toBe(12_000);
+    expect(campaignDiscountPaisa(offer({ kind: 'FLAT', value: 120 }), 9000)).toBe(9000);
+    expect(campaignDiscountPaisa(offer({ value: 100 }), 9000)).toBe(9000);
+  });
+
+  it('applies from the minimum cart exactly, on the subtotal', () => {
+    const minimum = offer({ minCartNpr: 1000 });
+    expect(campaignDiscountPaisa(minimum, 99_999)).toBe(0);
+    expect(campaignDiscountPaisa(minimum, 100_000)).toBe(10_000);
+  });
+
+  it('picks the larger discount; between equal ones, the earlier opt-in', () => {
+    const small = offer({ optInId: 'small', value: 5 });
+    const large = offer({ optInId: 'large', kind: 'FLAT', value: 80 });
+    expect(bestCampaign([small, large], 100_000)?.offer.optInId).toBe('large');
+    expect(bestCampaign([large, small], 100_000)?.offer.optInId).toBe('large');
+
+    const earlier = offer({ optInId: 'earlier', optedInAt: new Date('2026-09-01T00:00:00Z') });
+    const later = offer({ optInId: 'later', optedInAt: new Date('2026-10-05T00:00:00Z') });
+    expect(bestCampaign([later, earlier], 100_000)?.offer.optInId).toBe('earlier');
+    expect(bestCampaign([], 100_000)).toBeNull();
+    expect(bestCampaign([offer({ minCartNpr: 5000 })], 100_000)).toBeNull();
+  });
+
+  it('splits the discount so the two shares always add up to it', () => {
+    // 33.33 at 33.33% vendor share: 11.108889 rounds to 11.11; the platform bears 22.22.
+    const applied = bestCampaign(
+      [offer({ kind: 'FLAT', value: 33.33, vendorSharePercent: 33.33 })],
+      100_000,
+    );
+    expect(applied).toMatchObject({ discountPaisa: 3333, vendorSharePaisa: 1111 });
+    for (const share of [0, 100, 50, 12.5, 99.99]) {
+      const one = bestCampaign(
+        [offer({ kind: 'FLAT', value: 0.01, vendorSharePercent: share })],
+        500,
+      );
+      expect(one?.vendorSharePaisa).toBeGreaterThanOrEqual(0);
+      expect(one?.vendorSharePaisa).toBeLessThanOrEqual(one?.discountPaisa ?? 0);
+    }
+  });
+
+  it('prices SPEC verification 5 without a vendor offer: total 950, commission on 950', () => {
+    const cart = new Map<string, PricingProduct>([['x', { id: 'x', name: 'X', price_npr: 500 }]]);
+    const priced = priceCart(vendor, cart, [{ productId: 'x', quantity: 2 }], undefined, [offer()]);
+
+    expect(priced).toMatchObject({
+      subtotalPaisa: 100_000,
+      deliveryFeePaisa: 5000,
+      // 10% of (1000 - the vendor's 50): never on the platform's subsidy.
+      commissionPaisa: 9500,
+      totalPaisa: 95_000,
+      promo: { discountPaisa: 10_000, vendorSharePaisa: 5000 },
+    });
+  });
+
+  it('judges the minimum order on the subtotal before the discount, and never discounts delivery', () => {
+    const cart = new Map<string, PricingProduct>([['x', { id: 'x', name: 'X', price_npr: 500 }]]);
+    // The whole subtotal off: the customer still pays the delivery fee, and the cart is not "below minimum".
+    const priced = priceCart(vendor, cart, [{ productId: 'x', quantity: 1 }], undefined, [
+      offer({ kind: 'FLAT', value: 500, vendorSharePercent: 100 }),
+    ]);
+    expect(priced).toMatchObject({ totalPaisa: 5000, commissionPaisa: 0 });
+    expect(priceCart(vendor, cart, [{ productId: 'x', quantity: 1 }]).promo).toBeNull();
   });
 });

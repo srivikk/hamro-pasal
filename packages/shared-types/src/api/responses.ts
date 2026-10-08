@@ -631,7 +631,13 @@ export const cartQuoteResponseSchema = z.strictObject({
       method: paymentMethodSchema,
       available: z.boolean(),
       reason: z
-        .enum(['NOT_ACCEPTED_BY_SHOP', 'COD_NOT_AVAILABLE', 'DELIVERY_UNAVAILABLE'])
+        .enum([
+          'NOT_ACCEPTED_BY_SHOP',
+          'COD_NOT_AVAILABLE',
+          'DELIVERY_UNAVAILABLE',
+          // The shop's settlement model does not take this method (Model A is cash only).
+          'SETTLEMENT_MODEL',
+        ])
         .optional(),
     }),
   ),

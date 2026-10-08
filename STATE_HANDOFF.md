@@ -1,4 +1,4 @@
-# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases)
+# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
 work without re-deriving it. It describes the tree at the end of **Phase 23 (End-to-End System Audit & Failure Mode Hardening)**, the last planned development phase, on top of Phase 22 (Financial Reconciliation & Payouts), 21 (Rider Dispatch &
@@ -1099,6 +1099,389 @@ for order state changes only (Phase 20, §8M; no chat, wallet or rider pushes, n
 escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8Z.32 Phase 31: campaign discounts through checkout and settlement, the complete fiscal invoice, issued at delivery (2026-10-08)
+
+`packages/shared-types`, `packages/db`, `packages/ledger`, `apps/api`, `apps/worker`, and one
+import change in `apps/mobile`. Migrations **0031** and **0032**. SPEC.md was not changed. **Not
+run against a live API, worker or device**; the dev database needs `pnpm db:migrate`.
+
+### Asked vs built (documented contracts kept)
+
+| Asked                                                                                                | Built                                                                                                                              | Why                                                                                                                                                                                                       |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `seller_pan`                                                                                         | `seller_tax_id`, plus `seller_name`, `seller_address`, `seller_phone`, `seller_is_vat_registered`, `buyer_name`                    | §8Z.11's names and SPEC core 10's header. The table is sealed, so the header had to be complete before the first row                                                                                      |
+| taxable, VAT                                                                                         | plus `vat_rate_percent`, `exempt_amount_npr`, `delivery_charged_by`                                                                | A seller that is not VAT registered has only exempt sales; a fleet delivery charge is not the seller's sale                                                                                               |
+| "13% VAT on the taxable amount"                                                                      | catalogue prices are **VAT inclusive**: each line is split, `taxable = round_half_up(gross x 100 / 113)`, `VAT = gross - taxable`  | SPEC core 10 (decided 2026-10-07): the invoice never changes what the customer pays                                                                                                                       |
+| `nprToWords` in `@hamro-pasal/ledger`, "One Thousand Five Hundred Fifty Rupees and Fifty Paisa Only" | `amountInWords` in `@hamro-pasal/shared-types`: "Rupees One Thousand Five Hundred Fifty and Paisa Fifty Only", with lakh and crore | SPEC Nepal section 5 fixes the wording and the Nepali grouping; BACKEND_CHECKLIST 6.1 says to move the Vendor App's tested version to shared-types, not rewrite it. The ledger package uses it from there |
+| `line_items` JSONB                                                                                   | as asked (§8Z.11 sketched an `invoice_lines` table)                                                                                | One sealed row is the whole document; each element is `invoiceLineItemSchema`                                                                                                                             |
+| "pass `discount_npr` into the order"                                                                 | `orders.platform_promo_discount_npr`, `platform_promo_vendor_share_npr`, `campaign_opt_in_id`, `discount_snapshot`                 | §8Z.5's columns. The discount also had to reach the gateway amount and the settlement, or the invoice's total would not be what the customer paid                                                         |
+| 0031                                                                                                 | 0031 the invoice columns; **0032** the order columns and the `PROMO_EXPENSE` account type                                          | Two concerns                                                                                                                                                                                              |
+
+### Campaign discounts (SPEC core 7 and 9)
+
+- **Which campaign.** `CheckoutService.runningCampaigns`: published, inside its dates on the
+  database clock, and joined by the shop's own ACTIVE opt-in to its current terms. Without that
+  row a campaign discounts nothing (SPEC verification 6, tested through the API).
+- **How much** (`pricing.ts`, integer paisa): nothing below `min_cart_npr` (judged on the
+  subtotal); FLAT its value; PERCENTAGE half-up to the paisa, capped at `max_discount_npr`;
+  never more than the goods. Several campaigns: the larger discount, then the earlier opt-in.
+- **Shares:** the vendor's share is rounded half-up once; the platform's is the remainder.
+- **Commission** is charged on `subtotal - the vendor's share`. The minimum order value and the
+  free-delivery threshold use the subtotal before the discount. The delivery fee is never reduced.
+- **Quote:** `platform_promo: { id: <campaign id>, label: <campaign name>, discount_npr }`;
+  `total_npr` is discounted. `vendor_offer` is still always null (no vendor offers exist).
+- **Checkout** re-reads the opt-in `FOR SHARE` inside the order's transaction: closed since the
+  cart was priced → `409 QUOTE_CHANGED`, no order, the inventory hold released. Lock order of a
+  checkout: vendor row `FOR KEY SHARE`, opt-in row `FOR SHARE`, then the inserts.
+- **One total.** `orderTotalPaisa(order)` (`@hamro-pasal/ledger`) = subtotal - discount +
+  delivery fee. Used by the order views, the eSewa and Khalti amounts and their confirmation
+  check, the mock payment, the refund-due event and the invoice. eSewa's `amount` field is the
+  discounted goods, so `total_amount = amount + delivery charge` still holds.
+- **Settlement** (`planSettlement`), with Dp the discount, Dpv the vendor's share, Dpp the
+  platform's:
+
+  | Order              | Postings                                                                                              |
+  | ------------------ | ----------------------------------------------------------------------------------------------------- |
+  | prepaid            | escrow -(S-Dp+F), vendor +(S-Dpv-C) [+F own delivery], rider [+F], revenue +C, **PROMO_EXPENSE -Dpp** |
+  | cash, own delivery | vendor +(Dpp-C), revenue +C, PROMO_EXPENSE -Dpp (the shop holds S-Dp+F in cash)                       |
+  | cash, fleet        | rider -(S-Dp+F), vendor +(S-Dpv-C), revenue +C, rider +F, PROMO_EXPENSE -Dpp                          |
+
+  `PROMO_EXPENSE` is one account opened on first use, like `PAYOUT_CLEARING`. Pending escrow and
+  the vendor's "cut" figures subtract the vendor's share too.
+
+- **Not built:** vendor offers and stacking; `payment_session` in the checkout response;
+  `expected_total_npr`; the customer app showing the server's discount (it still shows its
+  development-only mock "Shop Discount", §8Z.6, which now disagrees with a real campaign).
+
+### The invoice (migration 0031)
+
+- New columns, all NOT NULL: the seller copy (`seller_name` = legal name else business name,
+  `seller_address` = registered address else the Palika, `seller_phone`, `seller_tax_id`,
+  `seller_is_vat_registered`), `buyer_name` (first and last name, else "Customer"),
+  `payment_method`, `taxable_amount_npr`, `vat_rate_percent`, `vat_amount_npr`,
+  `exempt_amount_npr`, `delivery_charged_by`, `amount_in_words`, `line_items`.
+- CHECKs: the PAN is nine digits; a seller that is not VAT registered shows no taxable amount and
+  no VAT; **`grand_total = taxable + VAT + exempt (+ a platform delivery charge)`**.
+- The migration requires an empty table (NOT NULL without defaults); nothing had issued one.
+- **Arithmetic** (`computeInvoiceAmounts`, shared-types `localization/fiscal-invoice-math.ts`,
+  moved unchanged from the Vendor App, which now imports it):
+  - the discount is spread over the item lines by largest remainder, in whole paisa;
+  - each taxed line is split on its own; **the header is the sum of the lines**, so it adds up to
+    the total exactly (one split of the total can differ from the lines by a paisa or two);
+  - the shop's own delivery charge is a taxed `DELIVERY` line; a fleet charge is in the total and
+    outside taxable, VAT and exempt;
+  - every discount lowers the taxable amount, the platform-funded share included.
+- `generateFiscalInvoice` computes everything, **asserts the grand total equals
+  `orderTotalPaisa(order)`** and the lines equal the order's subtotal, and only then takes the
+  number. A mismatch throws: the delivery is not committed and no number is used.
+- A seller with no PAN gets no invoice (`SELLER_HAS_NO_PAN`) and the delivery stands.
+
+### Wiring
+
+- `DeliveryHandoff.handOver`: settlement → ad premium → `generateFiscalInvoice`, one commit.
+- `OrderReconciliationService`: for every order it reconciles (`ReconciledOrder.invoiceIssued`),
+  after its own settlement and ad premium; an order the delivery invoiced is a replay.
+- **Lock order of a delivery, and of a reconciliation:** order row → vendor row (`FOR NO KEY
+UPDATE`) → ledger accounts → ad purchase row → ledger accounts → **invoice sequence row
+  (`FOR UPDATE`), last**.
+
+### Open
+
+- **An order delivered while its shop had no PAN never gets an invoice.** Saving the PAN does not
+  issue the waiting ones (SPEC core 10 says it should), and the reconciliation only sees an order
+  once.
+- No route reads an invoice (customer, vendor, admin), none prints one, and there are no Credit
+  or Debit Notes. `hs_code` is always null and no product is VAT exempt (the columns do not
+  exist); `buyer_tax_id`, `content_hash`, print and CBMS fields are not stored.
+- A cancelled prepaid order's refund amount is the discounted total (what was paid); nothing pays
+  refunds yet.
+- The mock payment route and every other caller use the one total; the customer app's cart still
+  computes its own pre-checkout total without the campaign.
+
+### Tests
+
+- **API integration 802 in 49 suites, all passing** (one full run). New
+  `discounts-and-invoicing.int.test.ts` (11): no discount without the shop's opt-in, opt-out, cap,
+  flat, minimum cart, dates, the larger of two; **a discounted order end to end** (quote 950,
+  eSewa signed for 950 with goods 900, commission 95, pending escrow 905, wallet 905, revenue +95,
+  PROMO_EXPENSE -50, escrow back to its start, invoice 950); the cash settlement (-45);
+  **`409 QUOTE_CHANGED` for an opt-out racing a checkout**; invoices 1, 2 at delivery, none on a
+  retry, none for a wrong code, none without a PAN; four simultaneous deliveries → 1 to 4.
+  `fiscal-invoice.int.test.ts` rewritten (21): SPEC verification 12 (1130 → 1000.00 + 130.00),
+  the delivery line (50 → 44.25 + 5.75), fleet delivery, a non-VAT seller, a discount (860), an
+  awkward cart to the paisa, the copy surviving later edits, the refusals, the counter, the CHECKs.
+- **Worker integration, suite by suite: 11 of 12 pass** (104 tests); `vendor-notifications.int`
+  failed its poison-pill case again (the Kafka flake). `order-reconciliation` +3 (the invoice
+  issued, none without a PAN, rolled back with a mismatch).
+- Unit: shared-types 305 (+10: words, the VAT split for every amount up to 50.00, the spread,
+  300 random carts adding up), ledger 28 (+7: settlement with a discount), api 121 (+7: pricing),
+  mobile 1505 (the sample invoices now run on the shared arithmetic), admin 292, worker 142. db
+  integration 140 (migrations 0000-0032 from scratch). `pnpm typecheck` and `pnpm lint` 16 of 16.
+- **Mutation-checked, 13 of 13 killed:** no invoice at delivery (4 fail) or in reconciliation
+  (1); commission on the undiscounted subtotal (2 + 2), a percentage rounded down (1), a discount
+  without a live opt-in (2), dates ignored (1), no opt-in re-check (1), the order total (2) or the
+  eSewa goods amount (1, after an assertion was added) ignoring the discount; no total check in
+  the invoice (1), the invoice ignoring the discount (4), a fleet delivery taxed as the seller's
+  (1), the vendor paid on the undiscounted subtotal (4).
+
+## 8Z.31 Phase 30: finalising and failing automated payouts, the ad premium in reconciliation, the fiscal invoice header and its gap-free counter (2026-10-08)
+
+`packages/shared-types`, `packages/db`, `packages/ledger`, `apps/api`, `apps/worker`, `apps/admin`.
+Migrations **0029** and **0030**. SPEC.md was not changed. **Not run in a browser or against a
+live API or worker**; the dev database needs `pnpm db:migrate`.
+
+### Asked vs built (documented contracts kept)
+
+| Asked                                                                          | Built                                                                                                                                                                             | Why                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invoice_sequences (bs_year, current_value)`: one platform counter per BS year | `invoice_sequences (vendor_id, fiscal_year, document_type, last_number)`: one counter **per seller and Nepal fiscal year**                                                        | SPEC core 10: "a strict sequence per vendor, per fiscal year and per document type". The vendor is the seller; a platform-wide counter would leave gaps in every seller's own numbers. The year is the fiscal year (from 1 Shrawan), not the BS calendar year |
+| `invoice_sequence` "HP-2083-000142"                                            | `bill_number` (integer, the counter) **and** `invoice_sequence` (text, as printed): `HP-<fiscal year's first year>-<six digits>`                                                  | §8Z.11 names the number `bill_number`; the printed format was its open question, now answered. Unique per seller, not across the platform                                                                                                                     |
+| `bs_year`, `bs_month`                                                          | `fiscal_year` ("2082/083") and `issued_date_bs` ("2082-06-22")                                                                                                                    | §8Z.11 and the Vendor App's invoice screen use these; year and month are in the date                                                                                                                                                                          |
+| `delivery_fee_npr`, `total_npr`                                                | `delivery_charge_npr`, `grand_total_npr`                                                                                                                                          | The same documents                                                                                                                                                                                                                                            |
+| payout "transitions to COMPLETED" / "marks the payout FAILED"                  | `transfer_state` COMPLETED / FAILED. `payout_status` keeps its three values: a completed payout stays APPROVED, a failed one becomes REJECTED with its reversal journal           | A failed transfer is exactly a rejected payout (amount posted back); no enum migration, and every sum over PENDING / APPROVED stays right                                                                                                                     |
+| 0029 for invoices                                                              | 0029 invoices; **0030** the payout CHECKs                                                                                                                                         | Two concerns, two files                                                                                                                                                                                                                                       |
+| views "e.g. GET …/settlements or a dedicated payouts endpoint"                 | the existing `GET /api/admin/finance/payouts` gained `?transfer_state=`; every payout view gained `transfer_state` and `system_actor`; the admin view also `primary_bank_account` | The settlements list is a list of shops, not of payouts                                                                                                                                                                                                       |
+
+### Automated payouts: views, finalize, fail
+
+```jsonc
+// every PayoutView (vendor ledger, settlement payout, admin list) gains, both defaulting to null:
+"transfer_state": "PROCESSING_BANK_TRANSFER" | "COMPLETED" | "FAILED" | null,
+"system_actor": "SETTLEMENT_PAYOUT_RUN" | null
+// AdminPayoutView also: "primary_bank_account": { id, bank_name, branch_name, account_name,
+//   account_number, routing_or_swift_code } | null   (sent only while PROCESSING_BANK_TRANSFER)
+// GET  /api/admin/finance/payouts?status=&transfer_state=&limit=&cursor=
+// POST /api/admin/finance/payouts/:id/finalize { bank_reference }  → 200 { payout }, also on repeat
+// POST /api/admin/finance/payouts/:id/fail     { reason? }          → 200 { payout }, also on repeat
+//   409 PAYOUT_NOT_PROCESSING (details.status, transfer_state) · 404 PAYOUT_NOT_FOUND · 400 VALIDATION_FAILED
+```
+
+- **finalize** (`AdminPayoutService.finalize`): `transfer_state = COMPLETED`, the bank reference,
+  `decided_by_user_id` = the admin; `system_actor` stays. No money moves. Audit
+  `PAYOUT_TRANSFER_COMPLETED`. The same reference again is 200; another one is 409.
+- **fail**: the `VENDOR_PAYOUT_REVERSAL` journal a rejected request posts (PAYOUT_CLEARING →
+  VENDOR_WALLET, key `vendor-payout-reversal:<payout>`), then `status = REJECTED`,
+  `transfer_state = FAILED`, the reason, the admin. Through `LedgerService`, so it can lift a debt
+  suspension (tested). Audit `PAYOUT_TRANSFER_FAILED`.
+- Both act **only** on `PROCESSING_BANK_TRANSFER`: a manual settlement payout or a vendor's
+  request is 409, and so is the legacy approve / reject on a run's payout (`PAYOUT_ALREADY_DECIDED`).
+- **Locks:** the payout row `FOR UPDATE` first, then (fail only) the vendor row `FOR NO KEY UPDATE`
+  and the ledger accounts inside `LedgerService.post`. The payout run and the admin's settlement
+  payout only insert payout rows, so nothing takes these the other way round. A finalize racing a
+  fail has one winner (tested, 6 rounds).
+- **After a failure** the run's key `settlement-run:<date>` is still taken, so that run does not pay
+  the shop again; the returned amount is in the next week's payout.
+- Migration 0030: the transfer state CHECK (`TRANSFERRED` of 0028 became `COMPLETED`; nothing had
+  written it), `system_actor` allowed on a REJECTED row, and the status CHECK: an APPROVED row
+  either carries a bank reference and an admin, or is PROCESSING with a job and neither.
+- **Admin app, `#/settlements`:** a "Bank transfers to make" section
+  (`ProcessingTransfers.tsx`) under the shops table: vendor, primary bank account in full, amount,
+  when the run prepared it, and **Mark Transferred** (asks the bank reference) / **Fail** (asks
+  an optional reason, then "Return Rs. … to the wallet"). Mark Transferred is disabled while the
+  shop has no primary account. Either answer refetches this list and the settlements list. It
+  shows the first 50 and says when more are waiting.
+- Not gated on the PAN again: the run paid under a verified PAN, and finalize records a transfer
+  already made. A PAN changed in between does not block it.
+
+### The ad premium in the nightly reconciliation
+
+`OrderReconciliationService` (now constructed with the `LedgerService`) calls
+`chargePerOrderAdPremium` right after a settlement **it posts itself**, in that order's
+transaction; an order the delivery settled is not charged again. `ReconciledOrder.adPremiumNpr`
+reports it. Locks as in a delivery: order row → vendor row (`FOR NO KEY UPDATE`) → accounts → ad
+purchase row → accounts. A mismatch or a failed settlement rolls the charge back with it.
+
+### Fiscal invoicing: schema and `generateFiscalInvoice` (not wired)
+
+- **Migration 0029:** enum `fiscal_document_type`; `invoice_sequences`; `invoices` (`id`,
+  `document_type`, `vendor_id`, `order_id`, `customer_id`, `fiscal_year`, `bill_number`,
+  `invoice_sequence`, `issued_at`, `issued_date_bs`, `subtotal_npr`, `discount_npr`,
+  `delivery_charge_npr`, `grand_total_npr`). Unique `(vendor_id, document_type, fiscal_year,
+bill_number)`; one INVOICE per order (partial unique index); CHECK `grand_total = subtotal −
+discount + delivery`. Neither table is in the Zod entity contract.
+- **Hand-added triggers:** `invoices` refuses UPDATE, DELETE and TRUNCATE outright;
+  `invoice_sequences` starts at 0, changes only by `last_number + 1`, and is never deleted or
+  truncated.
+- **`generateFiscalInvoice(tx, order, issuedAt?)`** (`packages/ledger/src/fiscal-invoice.ts`, so
+  the API's delivery and the worker can both call it; `fiscalYearOf` joined `bs-calendar.ts`):
+  1. the order must be DELIVERED (`InvoiceNotIssuableError`, before the counter is touched);
+  2. the issue time is the database clock; its Nepal Time date gives the fiscal year;
+  3. `INSERT … ON CONFLICT DO NOTHING` opens the seller's counter, then
+     **`SELECT … FOR UPDATE`** on that row;
+  4. under the lock: the order already has its invoice → that invoice, `replayed: true`, no number;
+  5. `UPDATE … last_number + 1 RETURNING`, then the invoice row.
+- **Lock order:** the caller holds the order row; the sequence row is taken last and nothing is
+  locked after it. When it is wired into `DeliveryHandoff` it must come after the settlement and
+  the ad premium.
+- A rollback returns the number; 20 simultaneous deliveries of one shop get 1 to 20.
+
+**What the invoice is not yet (must be added before it is wired).** It is a header with totals.
+SPEC core 10 also requires, on the same sealed row: the seller's name, address and **PAN** as
+issued, the VAT split (13%) and exempt amount, the itemised lines with HS codes, the payment
+method, the buyer's name, the amount in words, and the print / CBMS fields. None is stored, so
+**this row alone is not an IRD invoice**. `discount_npr` is always 0 (orders carry no discount).
+Because the table refuses UPDATE, those columns have to land (as NOT NULL) before the first real
+invoice, not after.
+
+### Open
+
+- Wiring: `DeliveryHandoff.handOver` (and the reconciliation's own settlement) do not issue an
+  invoice; no read, print or note route; no Vendor App or customer screen reads one.
+- The legacy Payouts tab does not show `transfer_state`; a run's payout appears there as APPROVED.
+- "Bank transfers to make" has no paging beyond 50, and no component test.
+- `GET /api/admin/finance/settlements` still has no `next_run_at` / `cutoff_at`.
+
+### Tests
+
+- **API integration 782 in 48 suites; 781 passed in the one full run.** The failure,
+  `deliveries-api` "accepts the right code again once the lockout has run out", is the known
+  timing flake and passes alone (35 of 35). New: `admin-payout-transfers-api.int.test.ts` (13:
+  the three views, finalize with its audit entry and repeat rules, fail with the money back, five
+  simultaneous failures, **finalize racing fail**, non-processing payouts refused, a debt
+  suspension lifted, 404 / 400 / roles) and `fiscal-invoice.int.test.ts` (12: the row, the
+  database clock, not DELIVERED, replays, **the same order five times at once**, **20 concurrent →
+  1 to 20**, a rollback consuming no number, sellers numbered apart, **1 Shrawan → number 1**,
+  UPDATE / DELETE / TRUNCATE refused, the counter's guard, the CHECKs).
+- **Worker integration, suite by suite: 11 of 12 pass** (101 tests); `vendor-notifications.int`
+  failed its poison-pill case again (the Kafka flake of §8Z.30). `order-reconciliation` +4 (the
+  fee charged once with a posted settlement, not for a delivery's settlement, not when the
+  settlement fails, the pause).
+- Unit: ledger 21 (+5), admin 292 (+7), shared-types 295, worker 142, api 114, mobile 1505. db
+  integration 140 (migrations 0000-0030 from scratch, the foreign-key index audit included).
+  `pnpm typecheck` and `pnpm lint` 16 of 16; `vite build` succeeds.
+- **Mutation-checked, 10 of 11 killed:** no payout row lock (2 fail), finalize or fail accepting
+  any payout (3 each), the list ignoring `transfer_state` (1); no existing-invoice check (2), an
+  invoice for any order state (1), the BS calendar year as fiscal year (1), no `FOR UPDATE` on the
+  counter (1, only after the same-order test was made to use an existing counter);
+  reconciliation not charging (2) or charging every order (1). **Survives:** sending the bank
+  account with every listed payout (the query behind it only reads accounts of waiting payouts).
+
+## 8Z.30 Phase 29: payment routing by settlement model, the model locked on orders, the ad premium at delivery, the weekly payout run (2026-10-08)
+
+Backend only (`packages/shared-types`, `packages/db`, `packages/ledger`, `apps/api`, `apps/worker`).
+Migration **0028**. SPEC.md was not changed. **Not run against a live API or worker**; the dev
+database needs `pnpm db:migrate`.
+
+### Asked vs built
+
+| Asked                                                     | Built                                                                                                                                                                          | Why                                                                                                                                        |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0028_order_settlement_lock.sql` for the orders column    | the same file also changes `payout_requests` (two columns, the status CHECK)                                                                                                   | One `drizzle-kit generate`; the payout run could not store its rows otherwise                                                              |
+| an APPROVED payout row, "state: PROCESSING_BANK_TRANSFER" | `status = APPROVED`, new column `transfer_state = PROCESSING_BANK_TRANSFER`, new column `system_actor = SETTLEMENT_PAYOUT_RUN`, `bank_reference` and `decided_by_user_id` null | The old CHECK required an admin and a bank reference on every APPROVED row. `payout_status` keeps its three values, so no API view changed |
+| pay shops with "an available balance >= 1000"             | what was in the wallet **at the cut-off** (Monday 00:00 NPT), less every debit since, capped by what is available now; paid when that is at least 1000                         | SPEC core 5 and verification 22 (decided 2026-10-07)                                                                                       |
+| `chargePerOrderAdPremium(tx, order_id, vendor_id)`        | `chargePerOrderAdPremium(tx, ledger, orderId, vendorId)`, called by `DeliveryHandoff.handOver`                                                                                 | The function as Phase 28 built it                                                                                                          |
+| Model C                                                   | offered no payment method at all (`reason: SETTLEMENT_MODEL`)                                                                                                                  | Not selectable and not built; a shop can only be on it by SQL                                                                              |
+
+### Payment routing (SPEC core 9)
+
+- `SETTLEMENT_MODEL_PAYMENT_METHODS` (shared-types `domain/enums.ts`): `COD_CREDIT` → COD;
+  `PLATFORM_ESCROW` → eSewa, Khalti, COD; `DIRECT_PREPAID` → none.
+- `offeredPaymentMethods(shop)` (`checkout-service.ts`) = that list ∩ `vendors.accepted_payment_methods`.
+  The shop's own list only narrows: a Model A shop that accepts no cash can take no order.
+- **Quote:** `payment_options[].reason` gained `SETTLEMENT_MODEL`. Precedence: `DELIVERY_UNAVAILABLE`,
+  `SETTLEMENT_MODEL`, `NOT_ACCEPTED_BY_SHOP`, `COD_NOT_AVAILABLE`.
+- **Checkout:** `422 PAYMENT_METHOD_UNAVAILABLE`, `details { accepted, reason, settlement_model }`
+  (`reason`: `SETTLEMENT_MODEL` or `NOT_ACCEPTED_BY_SHOP`). Checked before the COD rating check and
+  the inventory lock, and **again inside the order's transaction** (below).
+- `cartQuoteResponseSchema` is strict: an app build must know the new reason before it calls the
+  quote (the customer app does not call it yet).
+
+### `orders.settlement_model_locked` (migration 0028)
+
+- `settlement_model NOT NULL DEFAULT 'PLATFORM_ESCROW'`; in `orderSchema` and `contract.ts`.
+  Existing orders were backfilled from their shop's current model (no earlier record exists).
+- Hand-added trigger `orders_settlement_model_locked_immutable`: any UPDATE that changes the
+  column is refused (SQLSTATE 23000).
+- **Written under a lock.** Inside the order's transaction checkout reads
+  `vendors.settlement_model` and `accepted_payment_methods` `FOR KEY SHARE`, re-checks the payment
+  method against them, and copies the model. A settlement model approval takes the vendor row
+  `FOR UPDATE`: it either committed first (the order takes the new model, or is refused by it and
+  its Redis hold released), or it waits and then counts the order as open.
+- **Nothing reads the column yet.** Settlement is the same for A and B today (`planSettlement`
+  reads the payment method and fulfilment); the column is for the first rule that differs.
+
+### The ad premium at delivery
+
+- `DeliveryHandoff.handOver` calls `chargePerOrderAdPremium` after `settleOrderInTransaction`, in
+  the delivery's transaction, for the rider's and the vendor's handoff alike. The container passes
+  the one `LedgerService`.
+- **A Model B fee may take the wallet negative on a cash order (decided 2026-10-08).** It goes
+  through `WalletService` like the commission, so crossing the limit suspends the shop in the same
+  commit and the delivery stands (tested at -2015).
+- A charge that uses up the budget pauses the ad and audits `AD_PAUSED_BUDGET_EXHAUSTED`
+  (`system_actor` `AD_ORDER_PREMIUM`) in that commit; later orders are delivered uncharged.
+- **Lock order of a delivery:** order row (`FOR UPDATE`) → vendor row (`FOR NO KEY UPDATE`,
+  the settlement journal) → ledger accounts by id → vendor row again (already held) → ad purchase
+  row (`FOR UPDATE`) → ledger accounts by id.
+- **Deadlock found and fixed.** `chargePerOrderAdPremium` locked the vendor row `FOR UPDATE`. After
+  a settlement journal that is a lock upgrade, and two deliveries of one shop deadlocked (the second
+  already queued behind the first's weaker lock). It now takes `FOR NO KEY UPDATE`, which still
+  excludes every other ad path (they take `FOR UPDATE`). **Rule: after a wallet journal, never ask
+  for a stronger lock on that vendor row; a path that needs `FOR UPDATE` takes it first.**
+- Not done: the nightly reconciliation does not charge a premium for a settlement it posts itself;
+  `orders.ad_order_premium` does not exist (the fee is on the ledger and the purchase).
+
+### `SETTLEMENT_PAYOUT_RUN` (`apps/worker/src/finance/settlement-payout-run.ts`)
+
+- Scheduler `settlement-payout-run` on the maintenance queue: cron `0 2 * * 2`, `Asia/Kathmandu`,
+  3 attempts (`SETTLEMENT_PAYOUT_RUN_TASK`, `SETTLEMENT_PAYOUT_CRON_PATTERN`,
+  `SETTLEMENT_PAYOUT_MIN_NPR` in shared-types `jobs/queues.ts`).
+- `payoutCutoff(now)`: the first instant of the Monday of the run's week in Nepal Time.
+- Candidates (unlocked): Model B, `pan_verified_at` set, wallet at least 1000. Then **one
+  transaction per vendor**:
+  1. vendor row `FOR UPDATE`; model and PAN re-read (`NOT_ELIGIBLE`);
+  2. a payout row with key `settlement-run:<cut-off date>` exists → `ALREADY_PAID`;
+  3. no primary bank account → `NO_PRIMARY_BANK_ACCOUNT`;
+  4. `collectAdFeesDue` (flat fees owed leave the wallet first, and stay collected);
+  5. amount = min(max(0, wallet postings before the cut-off + debits since), available now);
+     under 1000 → `BELOW_MINIMUM`;
+  6. the Phase 22 `VENDOR_PAYOUT` journal (key `settlement-run:<date>:<vendor>`), the payout row,
+     and `PAYOUT_PROCESSED` audited with `{ kind: 'SYSTEM', job: 'SETTLEMENT_PAYOUT_RUN' }` (masked
+     account number, `cutoff_at`, `transfer_state`).
+- Locks: vendor row → ad purchase rows → ledger accounts, the admin payout's order.
+- A vendor that fails does not stop the others; the job then fails and BullMQ retries it, which
+  pays nobody twice.
+- `ad-fees.ts` moved to `@hamro-pasal/ledger` (the API keeps a re-export) so the worker collects
+  fees with the API's code. The run is its own service, not `AdminSettlementService` (that class
+  lives in the API): the journal, gates and fee collection are the same, the code is not shared.
+
+### Open
+
+- **No route moves a payout out of `PROCESSING_BANK_TRANSFER`.** An admin has nowhere to record
+  the bank reference of a run's payout, or to reverse one whose transfer failed. `TRANSFERRED` is
+  allowed by the CHECK and written by nothing.
+- The vendor's and the admin's payout views do not carry `transfer_state`: a run's payout shows
+  as APPROVED with no bank reference.
+- `GET /api/admin/finance/settlements` has no `next_run_at` / `cutoff_at`.
+- The run pays suspended shops too (as a manual payout may).
+- Model A's credit rule, recharge, and the Model A branch of settlement are still unbuilt.
+
+### Tests
+
+- **API integration 757 in 46 suites, all passing** (one full run). New
+  `settlement-rules-and-ad-charging.int.test.ts` (14): routing per model and its intersection, the
+  422 with nothing created and no stock held, Model C; the locked model at creation, after a model
+  change, refused by the database, and **a checkout racing a model change**; the premium in a cash
+  and a prepaid delivery, a retried delivery, a wrong code, an order placed before the ad, the
+  pause with its audit entry, **suspension at -2015 with the delivery standing**, four simultaneous
+  deliveries on a budget of two fees.
+- **Worker:** new `settlement-payout-run.int.test.ts` (13, real PostgreSQL): the cut-off instants;
+  the paid row, journal and audit entry; money credited after the cut-off waiting a week; debits
+  since; 1000 vs 999.99; unverified, no bank account, Model A; four concurrent runs and a rerun;
+  ad fees first; **a run racing a PAN change**; the CHECKs; the task dispatch.
+  `queues.int.test` asserts the Tuesday scheduler (Monday 20:15 UTC). **The full worker
+  suite in one command did not finish (stopped after 10 minutes, no output).** Run suite by suite,
+  all 12 pass (98 tests) except that `vendor-notifications.int` "dead-letters a poison pill at
+  once" timed out in 2 of 5 runs and passed in the others, also with these changes stashed: the
+  Kafka flake §1 records. No Kafka or notification code changed.
+- db integration 140, unit suites unchanged in count and passing (mobile 1505, shared-types 295,
+  admin 285, worker 142, api 114, ledger 16). `pnpm typecheck` and `pnpm lint`: 16 of 16.
+- **Mutation-checked, 10 of 10 killed:** routing ignoring the model (4 fail), model not written
+  (2), no re-check under the vendor lock (1), no premium at delivery (5); no cut-off (3), debits
+  ignored (1), no minimum (1), no vendor row lock (1), no PAN re-read (1), fees not collected (1).
+  The last two vendor-lock mutants survived until the PAN race test was added. The `FOR UPDATE` in
+  the premium is the deadlock above (3 of 4 deliveries answered 500).
 
 ## 8Z.29 Phase 28, part 3: public Home promotions, sponsored search, the per-order premium function, the purchase id (2026-10-08)
 

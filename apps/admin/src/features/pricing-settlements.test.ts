@@ -709,6 +709,8 @@ describe('createAdminApi (settlement endpoints)', () => {
       rejection_reason: null,
       requested_at: STAMP.now,
       decided_at: STAMP.now,
+      transfer_state: null,
+      system_actor: null,
     },
     vendor: after,
     replayed: false,

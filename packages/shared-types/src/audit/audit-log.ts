@@ -61,6 +61,9 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   // The retiring vendor-requested payouts (Phase 22): a Super Admin's decision on one.
   PAYOUT_APPROVED: 'payout_request',
   PAYOUT_REJECTED: 'payout_request',
+  // Phase 29: the bank transfer of a payout the scheduled run made, confirmed or failed.
+  PAYOUT_TRANSFER_COMPLETED: 'payout_request',
+  PAYOUT_TRANSFER_FAILED: 'payout_request',
   // Pricing and the billing cycle (SPEC core 4)
   PRICING_PLAN_CREATED: 'pricing_plan',
   PRICING_PLAN_UPDATED: 'pricing_plan',

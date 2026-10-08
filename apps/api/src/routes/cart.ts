@@ -25,7 +25,14 @@ export function cartRouter(checkout: CheckoutService): Router {
     const body: CartQuoteResponseBody = {
       subtotal_npr: toNpr(quote.priced.subtotalPaisa),
       vendor_offer: null,
-      platform_promo: null,
+      platform_promo:
+        quote.priced.promo === null
+          ? null
+          : {
+              id: quote.priced.promo.offer.campaignId,
+              label: quote.priced.promo.offer.name,
+              discount_npr: toNpr(quote.priced.promo.discountPaisa),
+            },
       delivery_fee_npr: toNpr(quote.priced.deliveryFeePaisa),
       distance_km: Math.round(quote.distanceKm * 1000) / 1000,
       total_npr: toNpr(quote.priced.totalPaisa),

@@ -1,10 +1,10 @@
 import { orders, type Database } from '@hamro-pasal/db';
+import { orderTotalPaisa } from '@hamro-pasal/ledger';
 import type { Order, PaymentStatus } from '@hamro-pasal/shared-types';
 import { and, eq } from 'drizzle-orm';
 
 import type { CheckoutService } from '../checkout/checkout-service';
 import { InsufficientStockError, ReservationExpiredError } from '../inventory/errors';
-import { toPaisa } from '../ledger/money';
 import type { SettlementService } from '../ledger/settlement-service';
 import { enqueueOrderStateChanged } from '../orders/order-events';
 import type { Gateway } from './gateway-http';
@@ -52,9 +52,8 @@ export interface ConfirmedPayment {
   readonly newlyCaptured: boolean;
 }
 
-export function orderTotalPaisa(order: Pick<Order, 'subtotal' | 'delivery_fee'>): number {
-  return toPaisa(order.subtotal) + toPaisa(order.delivery_fee);
-}
+/** What the customer pays: subtotal − campaign discount + delivery fee (one definition). */
+export { orderTotalPaisa };
 
 /**
  * Shared tail of the eSewa and Khalti verification flows, after the gateway itself was verified

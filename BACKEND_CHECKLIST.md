@@ -229,12 +229,14 @@ Schemas, formulas and contracts: STATE_HANDOFF.md §8Z.5. Rules: SPEC.md core se
   - [ ] **Not backfilled, and only the ad journals name their lines:** every other posting reads `ADJUSTMENT`. Still to add: `PROMO_EXPENSE`, `REFUND_CLEARING` (with the discount engine and refunds).
 - [x] **`vendors.settlement_model`** (migration 0025, 2026-10-08): enum `COD_CREDIT | PLATFORM_ESCROW | DIRECT_PREPAID`, NOT NULL, default `PLATFORM_ESCROW` for every existing and new shop; in `vendorSchema` and `contract.ts`. The settlement list and payout read it (`422 SETTLEMENT_MODEL_NOT_ESCROW`). Nothing can change it yet (the model change request flow of step 4). `vendor_ledgers`, on the line below, is still open.
 - [ ] **`vendors.settlement_model`** (all existing vendors `PLATFORM_ESCROW`) and **`vendor_ledgers`** as a projection written only by the posting trigger. No direct balance writes.
-- [ ] **`orders`**: discount, ad premium and `settlement_model_locked` columns with their CHECKs; Drizzle schema, Zod entity and `contract.ts` together.
+- [x] **`orders.settlement_model_locked`** (migration 0028, 2026-10-08, §8Z.30): copied from the shop under a vendor row lock at checkout; a trigger refuses any change.
+- [ ] **`orders`**: the discount and ad premium columns with their CHECKs; Drizzle schema, Zod entity and `contract.ts` together.
 
 ### Step 2 — cart math and the payment session
 
 - [ ] **`vendor_offers`** (immutable rules; only `ended_at` may be set) and vendor routes; audit rows.
-- [ ] **Pricing in `CheckoutService`**: `T = S - Dv - Dp + F`, commission on `S - Dv - Dpv`, integer paisa, the invariants, the snapshot. Test: SPEC verification 5 (total 860, commission 85.50).
+- [x] **Platform campaign half built 2026-10-08 (migration 0032, §8Z.32):** `T = S - Dp + F`, commission on `S - Dpv`, the snapshot on the order, the quote's `platform_promo`, `409 QUOTE_CHANGED`, and `planSettlement` / the gateway amounts / pending escrow reading it, the platform's share posted to `PROMO_EXPENSE`.
+- [ ] **Pricing in `CheckoutService`, the vendor offer half** (`Dv`, needs `vendor_offers`): `T = S - Dv - Dp + F`, commission on `S - Dv - Dpv`. Test: SPEC verification 5 (total 860, commission 85.50).
 - [ ] **`planSettlement`, reconciliation, eSewa / Khalti amount checks** read the order snapshot; platform share of a campaign posts to `PROMO_EXPENSE`.
 - [x] **`POST /api/cart/quote`** (priced cart + `payment_options`). **Built 2026-10-08** (STATE_HANDOFF.md §8Z.21), without discounts: no offers or campaigns exist yet.
 - [ ] **`payment_session` in the checkout response**, created for the discounted total before answering; `initiate` kept for retries; Khalti failure keeps no order.
@@ -251,7 +253,7 @@ Schemas, formulas and contracts: STATE_HANDOFF.md §8Z.5. Rules: SPEC.md core se
 
 ### Step 4 — settlement Model A (Model B is what runs today)
 
-- [ ] **Payment routing** by model and ledger, in quote and checkout (`422 PAYMENT_METHOD_UNAVAILABLE`).
+- [x] **Payment routing** by model, in quote and checkout (`422 PAYMENT_METHOD_UNAVAILABLE`, `details.reason`; quote reason `SETTLEMENT_MODEL`). **Built 2026-10-08** (§8Z.30): Model A is cash only, intersected with `accepted_payment_methods`; Model C offers nothing. Not built: routing by ledger balance.
 - [ ] **`WalletService.applyThreshold` per model**; same events and SMS. `DIRECT_PREPAID` exists in the enum but cannot be selected: `422 SETTLEMENT_MODEL_UNAVAILABLE`.
 - [ ] **Ledger recharge** through eSewa / Khalti (replaces the mock top-up).
 - [x] Settlement model change request + admin approval, audited. **Built 2026-10-08** (migration 0026, STATE_HANDOFF.md §8Z.26): `POST /api/vendor/ledger/settlement-model { model }` (201; `409 SETTLEMENT_MODEL_REQUEST_PENDING`, `422 SETTLEMENT_MODEL_UNAVAILABLE`, `422 SETTLEMENT_MODEL_UNCHANGED`), the admin list / approve / reject below, and the `#/approvals` tab wired. It sets `vendors.settlement_model` only (`vendor_ledgers` does not exist). The Vendor App has no screen for the request.
@@ -268,7 +270,8 @@ Schemas, formulas and contracts: STATE_HANDOFF.md §8Z.5. Rules: SPEC.md core se
 - [x] Purchase flow per model, **at purchase**: taken or held (A; `422 LEDGER_RECHARGE_REQUIRED`); in B the wallet pays what it can and the rest is taken from the wallet before any payout.
   - [x] **The hourly `MARKETING_STATUS_SWEEP` (2026-10-08, §8Z.28):** ends a purchase at its `ends_at` (audit `AD_ENDED`, the job as actor), releases what is left of a held budget, and pauses a per-order ad with less than one fee of budget.
   - [x] **`chargePerOrderAdPremium` (2026-10-08, §8Z.29):** the per-order fee as its own `AD_ORDER_PREMIUM` posting, once per order, pausing the ad when the budget runs out. Built and tested in `@hamro-pasal/ledger`.
-  - [ ] **Not wired:** nothing calls it yet. Call it in the delivery transaction after the settlement, and decide first whether a cash order's fee may take a Model B wallet negative.
+  - [x] **Also in the nightly reconciliation (2026-10-08, §8Z.31):** charged with a settlement the job posts itself.
+  - [x] **Wired 2026-10-08 (§8Z.30):** `DeliveryHandoff.handOver` calls it after the settlement. Decided: a cash order's fee may take a Model B wallet negative; the debt suspension rule applies.
   - [ ] **Not built:** collecting a Model B flat fee as each order settles, a notice to the shop when its ad ends or pauses.
   - [x] **Decided 2026-10-08:** a flat-rate ad can be cancelled only before it starts (then refunded in full); a per-order ad at any time.
 - [x] **Model B guard (required):** a `FLAT_RATE` purchase is refused when `balance + pending_escrow − flat fees already due < ad_price` → `422 AD_EXCEEDS_PENDING_PAYOUT`, under the vendor row lock. Tested to the paisa on both sides and with two simultaneous purchases. **Built 2026-10-08.**
@@ -305,7 +308,7 @@ Rules: SPEC.md Dual-Fulfillment "Delivery Modularity", Vendor Pricing "Billing C
 ### 6.1 Shared building blocks (do these first)
 
 - [x] **P0 `localization/bikram-sambat.ts` in shared-types.** A BS month-length table (lookup, no formula), AD ↔ BS in `Asia/Kathmandu`, `fiscalYearOf(date)` → `"2082/083"` (the year starts on 1 Shrawan), `nextBsMonthStart(date)`, `daysInBsMonth`. Pin known date pairs in tests (7 October 2025 = 21 Ashwin 2082). **Partly built 2026-10-08** (STATE_HANDOFF.md §8Z.20): `nextBsMonthStart`, `bsDateOf`, `bsMonthStart` in `@hamro-pasal/ledger`, on the `nepali-date-converter` library (decided: no hand-kept table). Still to do: `fiscalYearOf`, `daysInBsMonth`.
-- [ ] **P0 `amountInWords(npr)` in shared-types** (thousand / lakh / crore, "and Paisa … Only"). A working version with tests is in `apps/mobile/src/features/vendor/invoice-math.ts`; move it, do not rewrite it.
+- [x] **Moved 2026-10-08 (§8Z.32)**, with the VAT split, the discount spread and `computeInvoiceAmounts`, to shared-types `localization/fiscal-invoice-math.ts`; the Vendor App imports it. The original item: **P0 `amountInWords(npr)` in shared-types** (thousand / lakh / crore, "and Paisa … Only"). A working version with tests is in `apps/mobile/src/features/vendor/invoice-math.ts`; move it, do not rewrite it.
 - [ ] **P0 The canonical Palika list in shared-types** (753 municipalities with province and district), exported for the API's validation and the app's picker. The app uses a 10-name stand-in today (`mock-palikas.ts`).
 - [ ] **P1 `audit_logs`** (BACKEND_CHECKLIST section 5 step 1). The billing queue and the compliance sweep write to it.
 
@@ -357,7 +360,10 @@ Rules: SPEC.md Dual-Fulfillment "Delivery Modularity", Vendor Pricing "Billing C
 
 ### 6.4 Fiscal invoicing — P0
 
-- [ ] **Migration:** `fiscal_document_type`, `cbms_sync_status`; `invoice_sequences`, `invoices`, `invoice_lines`, `invoice_access_log` with every CHECK and index of §8Z.11; `products.hs_code`, `is_imported`, `is_vat_exempt`.
+- [x] **Partly built 2026-10-08 (migration 0029, §8Z.31):** `fiscal_document_type`, `invoice_sequences` (per seller, fiscal year and document type; only `+ 1`), and `invoices` as a **header with totals** (`fiscal_year`, `bill_number`, `invoice_sequence` "HP-2082-000142", `issued_date_bs`, subtotal, discount, delivery charge, grand total), sealed against UPDATE / DELETE / TRUNCATE. `generateFiscalInvoice(tx, order)` in `@hamro-pasal/ledger` issues it under the counter's row lock. **Not wired into any delivery.**
+  - [x] **Completed and wired 2026-10-08 (migration 0031, §8Z.32):** the seller copy and PAN, buyer name, payment method, the VAT split (per line, VAT inclusive) and exempt amount, `delivery_charged_by`, amount in words and `line_items` (jsonb). `DeliveryHandoff.handOver` and the nightly reconciliation issue it, last in the lock order. A seller without a PAN gets none.
+  - [ ] **Still open:** issuing the waiting invoices when a swept shop saves its PAN; `buyer_tax_id`, `content_hash`, print and CBMS columns (each needs the immutability trigger to allow it); HS codes and VAT-exempt products.
+- [ ] **Migration, the rest:** `cbms_sync_status`; `invoice_lines`, `invoice_access_log` with every CHECK and index of §8Z.11; `products.hs_code`, `is_imported`, `is_vat_exempt`.
 - [ ] **Immutability triggers:** `invoices` refuses DELETE / TRUNCATE and any UPDATE outside `print_count`, `first_printed_at`, `cbms_*`; lines and the access log are append-only; `invoice_sequences` only counts up by 1; lines only in the creating transaction; totals equal the lines at COMMIT.
 - [ ] **`InvoiceService.issueForOrder(tx, order)`**, called by `DeliveryHandoff.handOver` (both the rider's and the vendor's handoff).
   - Counter row locked `FOR UPDATE` in the delivery transaction (never a SEQUENCE).
@@ -455,7 +461,7 @@ A vendor trades as soon as its PAN is saved, but **no money is transferred to it
 - [x] **`GET /api/admin/finance/settlements`** (SUPER_ADMIN): Model B (`PLATFORM_ESCROW`) vendors with `available_for_payout_npr > 0`, each `{ vendor_id, business_name, phone, settlement_model, available_for_payout_npr, pending_escrow_npr, tax_id, pan_verified_at }`. Available = `max(0, wallet balance − ad_fees_owed_npr)`. **Built 2026-10-08** (§8Z.23). Every vendor is Model B until `vendors.settlement_model` exists, and `ad_fees_owed_npr` is 0 until `vendor_ledgers` does: available = `max(0, wallet balance)`.
 - [x] **`POST /api/admin/finance/settlements/:vendor_id/payout { amount_npr, bank_reference, idempotency_key }`** → 201 / 200 replay. One transaction under the vendor row lock: the Phase 22 `VENDOR_PAYOUT` journal and a `payout_requests` row written as APPROVED. `422 PAN_NOT_VERIFIED`, `422 INSUFFICIENT_BALANCE`, `422 SETTLEMENT_MODEL_NOT_ESCROW`, `409 IDEMPOTENCY_KEY_REUSED`. **Built 2026-10-08** (§8Z.23), with audit entry `PAYOUT_PROCESSED`; `201 { payout, vendor, replayed }`. No minimum (a manual payout). Not built: `422 SETTLEMENT_MODEL_NOT_ESCROW` (no other model exists yet) and `409 BANK_ACCOUNT_REQUIRED` (no bank account routes).
 - [ ] Any later transfer to a vendor bank account (Model C in Phase 3) takes the same gate.
-- [ ] **Scheduled run:** a worker task (`SETTLEMENT_PAYOUT_RUN`) that pays every verified Model B vendor its available balance through the same service as the admin’s button, one transaction per vendor, skipping unverified vendors. **Schedule (decided 2026-10-07):**
+- [x] **Scheduled run, built 2026-10-08 (§8Z.30)** as its own worker service, with payouts recorded as APPROVED rows in `transfer_state = PROCESSING_BANK_TRANSFER` (no bank API). **Finalize and fail built 2026-10-08 (§8Z.31):** `POST /api/admin/finance/payouts/:id/finalize { bank_reference }` and `…/fail { reason? }` (`409 PAYOUT_NOT_PROCESSING`), `transfer_state` / `system_actor` on every payout view, `?transfer_state=` on the admin list, and "Bank transfers to make" on the Settlements tab. Still open: `next_run_at` / `cutoff_at` on the settlements list. The specification it was built to: a worker task (`SETTLEMENT_PAYOUT_RUN`) that pays every verified Model B vendor its available balance through the same service as the admin’s button, one transaction per vendor, skipping unverified vendors. **Schedule (decided 2026-10-07):**
   - Cron `0 2 * * 2`, `Asia/Kathmandu` (every Tuesday 02:00 NPT), a BullMQ scheduler like the midnight tasks, 3 attempts.
   - **Cut-off: Sunday 23:59 NPT**, read as the end of Sunday: `cutoff = Monday 00:00 Asia/Kathmandu` of the run’s week, exclusive.
   - Amount per vendor = `min(available balance from postings before the cutoff, available balance now)`: money credited after the cut-off waits a week, and a debit after the cut-off (a cash-order commission, an ad fee) still reduces what is paid, so a payout never overdraws the wallet. Computed under the vendor row lock.

@@ -93,7 +93,24 @@ describe('timer queues (real Redis)', () => {
       expect(untilNext).toBeGreaterThan(0);
       expect(untilNext).toBeLessThanOrEqual(60 * 60 * 1000);
 
-      const schedulers = all.filter((s) => s.key !== 'marketing-status-sweep');
+      // The weekly payout run (Phase 29): Tuesday 02:00 Nepal Time, which is Monday 20:15 UTC.
+      const weekly = all.filter((s) => s.key === 'settlement-payout-run');
+      expect(weekly).toHaveLength(1);
+      expect(weekly[0]).toMatchObject({
+        pattern: '0 2 * * 2',
+        tz: 'Asia/Kathmandu',
+        name: 'SETTLEMENT_PAYOUT_RUN',
+      });
+      const nextRun = new Date(weekly[0]?.next ?? 0);
+      expect([nextRun.getUTCDay(), nextRun.getUTCHours(), nextRun.getUTCMinutes()]).toEqual([
+        1, 20, 15,
+      ]);
+      expect(nextRun.getTime() - Date.now()).toBeGreaterThan(0);
+      expect(nextRun.getTime() - Date.now()).toBeLessThanOrEqual(7 * 24 * 60 * 60 * 1000);
+
+      const schedulers = all.filter(
+        (s) => s.key !== 'marketing-status-sweep' && s.key !== 'settlement-payout-run',
+      );
       expect(schedulers.map((s) => s.key).sort()).toEqual([
         'billing-cycle-renewal',
         'order-reconciliation',
@@ -127,6 +144,7 @@ describe('timer queues (real Redis)', () => {
       onGhostCustomerTimerElapsed: () => Promise.resolve(),
       runMidnightTask: () => Promise.resolve(),
       runMarketingStatusSweep: () => Promise.resolve(),
+      runSettlementPayoutRun: () => Promise.resolve(),
     };
     const worker = new Worker(
       queues.vendorAcceptance.name,

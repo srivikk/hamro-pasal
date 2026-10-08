@@ -1,4 +1,9 @@
-import { GEO_SRID, NEPAL_PROVINCE_ID_MAX, NEPAL_PROVINCE_ID_MIN } from '@hamro-pasal/shared-types';
+import {
+  GEO_SRID,
+  NEPAL_PROVINCE_ID_MAX,
+  NEPAL_PROVINCE_ID_MIN,
+  type AuditState,
+} from '@hamro-pasal/shared-types';
 import { sql } from 'drizzle-orm';
 import {
   boolean,
@@ -6,6 +11,7 @@ import {
   doublePrecision,
   index,
   integer,
+  jsonb,
   pgTable,
   smallint,
   text,
@@ -15,7 +21,14 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { createdAt, geoPoint, npr, primaryId, updatedAt } from './columns';
-import { fulfillmentModeEnum, orderStateEnum, paymentMethodEnum, paymentStatusEnum } from './enums';
+import {
+  fulfillmentModeEnum,
+  orderStateEnum,
+  paymentMethodEnum,
+  paymentStatusEnum,
+  settlementModelEnum,
+} from './enums';
+import { campaignOptIns } from './marketing';
 import { users } from './users';
 import { products, vendors } from './vendors';
 
@@ -37,7 +50,23 @@ export const orders = pgTable(
     subtotal: npr().notNull(),
     delivery_fee: npr().notNull(),
     platform_commission_amount: npr().notNull(),
+    /**
+     * The platform campaign discount (SPEC core 9): the customer pays subtotal − this + delivery
+     * fee. 0 without a campaign. Written once, at checkout, with the order.
+     */
+    platform_promo_discount_npr: npr().notNull().default(0),
+    /** The part of the discount the vendor bears (its opt-in's `vendor_share_percent`). */
+    platform_promo_vendor_share_npr: npr().notNull().default(0),
+    /** The vendor's own opt-in the discount was priced under (SPEC core 7: dispute-proof). */
+    campaign_opt_in_id: uuid().references(() => campaignOptIns.id, { onDelete: 'restrict' }),
+    /** The campaign rule exactly as applied. */
+    discount_snapshot: jsonb().$type<AuditState>(),
     fulfillment_locked: fulfillmentModeEnum().notNull(),
+    /**
+     * The shop's settlement model when the order was created (SPEC core 5). Checkout writes it
+     * under a lock on the vendor row; a trigger refuses any later change.
+     */
+    settlement_model_locked: settlementModelEnum().notNull().default('PLATFORM_ESCROW'),
     payment_method: paymentMethodEnum().notNull(),
     payment_status: paymentStatusEnum().notNull().default('PENDING'),
     payment_gateway_ref: text(),
@@ -76,6 +105,23 @@ export const orders = pgTable(
     check('orders_subtotal_check', sql`${t.subtotal} >= 0`),
     check('orders_delivery_fee_check', sql`${t.delivery_fee} >= 0`),
     check('orders_platform_commission_check', sql`${t.platform_commission_amount} >= 0`),
+    index('orders_campaign_opt_in_id_idx')
+      .on(t.campaign_opt_in_id)
+      .where(sql`${t.campaign_opt_in_id} IS NOT NULL`),
+    // A discount never exceeds the goods, and the vendor never bears more than the discount.
+    check(
+      'orders_platform_promo_check',
+      sql`${t.platform_promo_discount_npr} >= 0
+            AND ${t.platform_promo_discount_npr} <= ${t.subtotal}
+            AND ${t.platform_promo_vendor_share_npr} >= 0
+            AND ${t.platform_promo_vendor_share_npr} <= ${t.platform_promo_discount_npr}`,
+    ),
+    // No discount without the vendor's own opt-in and the rule as applied, and none of them alone.
+    check(
+      'orders_platform_promo_source_check',
+      sql`(${t.platform_promo_discount_npr} > 0) = (${t.campaign_opt_in_id} IS NOT NULL)
+            AND (${t.campaign_opt_in_id} IS NULL) = (${t.discount_snapshot} IS NULL)`,
+    ),
     check(
       'orders_cod_has_no_gateway_ref_check',
       sql`${t.payment_method} <> 'COD' OR ${t.payment_gateway_ref} IS NULL`,

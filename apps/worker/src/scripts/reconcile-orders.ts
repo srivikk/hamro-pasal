@@ -13,8 +13,9 @@ import { runOrderReconciliation } from '../queues/processors';
 async function main(): Promise<void> {
   const db = createDatabase(loadEnv().DATABASE_URL);
   try {
-    const settlement = new SettlementService(db, new LedgerService(new WalletService()));
-    await runOrderReconciliation(new OrderReconciliationService(db, settlement));
+    const ledger = new LedgerService(new WalletService());
+    const settlement = new SettlementService(db, ledger);
+    await runOrderReconciliation(new OrderReconciliationService(db, settlement, ledger));
   } finally {
     await db.$client.end();
   }

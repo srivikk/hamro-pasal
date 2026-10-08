@@ -8,6 +8,7 @@ import { useEffect, useId, useRef, useState, type SyntheticEvent } from 'react';
 import { ApiError } from '../../api/client';
 import { useAdminApi } from '../../app-context';
 import { formatDateTime, formatNpr } from '../../lib/format';
+import { ProcessingTransfers } from './ProcessingTransfers';
 import {
   PAYOUT_BLOCKER_MESSAGES,
   payableVendors,
@@ -144,6 +145,8 @@ export function SettlementScreen() {
           </table>
         </div>
       )}
+
+      <ProcessingTransfers />
 
       {recorded.length > 0 && (
         <>

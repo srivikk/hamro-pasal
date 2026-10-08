@@ -5,6 +5,7 @@ import {
   fulfillmentModeSchema,
   paymentMethodSchema,
   payoutStatusSchema,
+  payoutTransferStateSchema,
   settlementModelSchema,
 } from '../domain/enums';
 import { panSchema } from './vendor-settings';
@@ -55,6 +56,13 @@ export const payoutViewSchema = z.strictObject({
   requested_at: z.iso.datetime(),
   /** When it was approved or rejected; null while PENDING. */
   decided_at: z.iso.datetime().nullable(),
+  /**
+   * Phase 29. Set on a payout the scheduled run made: where its bank transfer stands. Null on a
+   * payout an admin recorded after making the transfer (and in a response from an older API).
+   */
+  transfer_state: payoutTransferStateSchema.nullable().default(null),
+  /** Phase 29. The job that made the payout (SETTLEMENT_PAYOUT_RUN); null when an admin did. */
+  system_actor: z.string().min(1).nullable().default(null),
 });
 export type PayoutView = z.infer<typeof payoutViewSchema>;
 
@@ -111,6 +119,8 @@ export type PayoutRequestResponseBody = z.infer<typeof payoutRequestResponseSche
 /** GET /api/admin/finance/payouts?status=&limit=&cursor=: newest request first. */
 export const adminPayoutListQuerySchema = z.strictObject({
   status: payoutStatusSchema.optional(),
+  /** Phase 29: only the payouts whose bank transfer is in this state. */
+  transfer_state: payoutTransferStateSchema.optional(),
   limit: z
     .string()
     .trim()
@@ -122,8 +132,25 @@ export const adminPayoutListQuerySchema = z.strictObject({
 });
 export type AdminPayoutListQuery = z.output<typeof adminPayoutListQuerySchema>;
 
+/** A bank account in full, for the admin who makes the transfer to it. */
+export const payoutBankAccountSchema = z.strictObject({
+  id: z.uuid(),
+  bank_name: z.string().min(1),
+  branch_name: z.string().min(1),
+  account_name: z.string().min(1),
+  account_number: z.string().min(4),
+  routing_or_swift_code: z.string().nullable(),
+});
+export type PayoutBankAccount = z.infer<typeof payoutBankAccountSchema>;
+
 /** A payout request as the Super Admin sees it. */
 export const adminPayoutViewSchema = payoutViewSchema.extend({
+  /**
+   * Phase 29: the vendor's primary bank account now, in full. Sent only with a payout whose
+   * transfer is still to be made (PROCESSING_BANK_TRANSFER); null otherwise, or when the vendor
+   * has removed its primary mark since.
+   */
+  primary_bank_account: payoutBankAccountSchema.nullable().default(null),
   vendor: z.strictObject({
     id: z.uuid(),
     business_name: z.string().min(1),
@@ -159,7 +186,21 @@ export const adminPayoutRejectRequestSchema = z.strictObject({
 });
 export type AdminPayoutRejectRequest = z.infer<typeof adminPayoutRejectRequestSchema>;
 
-/** Approve and reject answer with the request after the decision (200, also on a repeat). */
+/**
+ * POST /api/admin/finance/payouts/:id/finalize (Phase 29): the admin made the bank transfer of a
+ * payout in PROCESSING_BANK_TRANSFER. Records its reference; the payout becomes COMPLETED.
+ */
+export const adminPayoutFinalizeRequestSchema = adminPayoutApproveRequestSchema;
+export type AdminPayoutFinalizeRequest = z.infer<typeof adminPayoutFinalizeRequestSchema>;
+
+/**
+ * POST /api/admin/finance/payouts/:id/fail (Phase 29): the bank transfer could not be made. The
+ * amount is posted back to the vendor's wallet; the payout becomes FAILED.
+ */
+export const adminPayoutFailRequestSchema = adminPayoutRejectRequestSchema;
+export type AdminPayoutFailRequest = z.infer<typeof adminPayoutFailRequestSchema>;
+
+/** Approve, reject, finalize and fail answer with the payout afterwards (200, also on a repeat). */
 export const adminPayoutDecisionResponseSchema = z.strictObject({
   payout: adminPayoutViewSchema,
 });
@@ -189,16 +230,7 @@ export const settlementVendorViewSchema = z
      * The account the payout is sent to (the vendor's primary one), in full: the admin makes the
      * transfer to it. Null holds every payout (422 BANK_ACCOUNT_MISSING).
      */
-    primary_bank_account: z
-      .strictObject({
-        id: z.uuid(),
-        bank_name: z.string().min(1),
-        branch_name: z.string().min(1),
-        account_name: z.string().min(1),
-        account_number: z.string().min(4),
-        routing_or_swift_code: z.string().nullable(),
-      })
-      .nullable(),
+    primary_bank_account: payoutBankAccountSchema.nullable(),
   })
   .refine((vendor) => vendor.pan_verified_at === null || vendor.tax_id !== null, {
     message: 'Only a PAN on file can be verified',

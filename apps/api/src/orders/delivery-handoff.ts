@@ -3,6 +3,12 @@ import { DELIVERY_OTP_MAX_ATTEMPTS, type Order, type OrderState } from '@hamro-p
 import { compare } from 'bcryptjs';
 import { eq, sql } from 'drizzle-orm';
 
+import {
+  chargePerOrderAdPremium,
+  generateFiscalInvoice,
+  type LedgerService,
+} from '@hamro-pasal/ledger';
+
 import type { SettlementService } from '../ledger/settlement-service';
 import type { DeliveryOtpAttempts } from './delivery-otp-attempts';
 import { enqueueOrderStateChanged } from './order-events';
@@ -55,14 +61,22 @@ export interface DeliveryResult {
  *   - the code is compared with the bcrypt hash; a wrong one is counted in Redis (401, or 429 when
  *     it is the one that reaches the limit);
  *   - a match: DELIVERED, `delivered_at = now()`, the hash erased (the code cannot be replayed),
- *     the rider recorded (fleet orders), escrow settled (SPEC: "Escrow releases") and
- *     `order.state_changed` written, all in the caller's commit.
+ *     the rider recorded (fleet orders), escrow settled (SPEC: "Escrow releases"), the per-order
+ *     ad premium charged (SPEC core 8) and `order.state_changed` written, all in the caller's
+ *     commit.
+ *
+ * Locks, in order: the order row (the caller), the vendor row and the ledger accounts (the
+ * settlement journal), then the vendor row again, the ad purchase row and the ledger accounts
+ * (the ad premium), and last the seller's invoice sequence row (the fiscal invoice, SPEC core
+ * 10). Every ad path takes vendor, purchase, accounts in that order, and holds the vendor row
+ * before any purchase row; nothing is locked after a sequence row.
  * After that commit the caller runs `afterCommit`, which clears the failure counter.
  */
 export class DeliveryHandoff {
   constructor(
     private readonly settlement: SettlementService,
     private readonly attempts: DeliveryOtpAttempts,
+    private readonly ledger: LedgerService,
   ) {}
 
   async handOver(
@@ -100,6 +114,15 @@ export class DeliveryHandoff {
       .returning();
     if (delivered === undefined) throw new Error(`Order ${order.id} disappeared during delivery`);
     const { order: settled } = await this.settlement.settleOrderInTransaction(tx, delivered);
+    // After the settlement, so a Model B shop's fee comes out of a wallet this order has just
+    // credited. On a cash order it can take the wallet negative, as the commission does; the
+    // debt suspension rule then applies (decided 2026-10-08). A paused ad is audited inside.
+    await chargePerOrderAdPremium(tx, this.ledger, settled.id, settled.vendor_id);
+    // The fiscal invoice, in the delivery's own commit: a delivered order has exactly one, and a
+    // delivery that rolls back takes no Bill Number. A seller without a PAN (swept for
+    // compliance, finishing its open orders) gets none. An invoice whose total would not equal
+    // what the customer paid throws, and the order is not delivered.
+    await generateFiscalInvoice(tx, settled);
     await enqueueOrderStateChanged(tx, order.state, settled);
     return settled;
   }

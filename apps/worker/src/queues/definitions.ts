@@ -6,6 +6,8 @@ import {
   MIDNIGHT_CRON_PATTERN,
   midnightTasks,
   NEPAL_TIMEZONE,
+  SETTLEMENT_PAYOUT_CRON_PATTERN,
+  SETTLEMENT_PAYOUT_RUN_TASK,
   VENDOR_ACCEPTANCE_TIMEOUT_MS,
   type GhostCustomerTimerJob,
   type MidnightMaintenanceJob,
@@ -154,6 +156,17 @@ export async function registerMidnightJobs(queue: Queue<MidnightMaintenanceJob>)
       opts: { attempts: 3, ...RETENTION },
     },
   );
+  // The weekly payout run (Phase 29, SPEC core 5): Tuesday 02:00 Nepal Time.
+  await queue.upsertJobScheduler(
+    SETTLEMENT_PAYOUT_SCHEDULER_ID,
+    { pattern: SETTLEMENT_PAYOUT_CRON_PATTERN, tz: NEPAL_TIMEZONE },
+    {
+      name: SETTLEMENT_PAYOUT_RUN_TASK,
+      data: { task: SETTLEMENT_PAYOUT_RUN_TASK },
+      opts: { attempts: 3, ...RETENTION },
+    },
+  );
 }
 
 export const MARKETING_SWEEP_SCHEDULER_ID = 'marketing-status-sweep';
+export const SETTLEMENT_PAYOUT_SCHEDULER_ID = 'settlement-payout-run';

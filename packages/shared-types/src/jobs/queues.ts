@@ -53,6 +53,16 @@ export const midnightTasks = [
 export const MARKETING_STATUS_SWEEP_TASK = 'MARKETING_STATUS_SWEEP';
 export const HOURLY_CRON_PATTERN = '0 * * * *';
 
+/**
+ * The automated payout run (SPEC core 5, "Payouts"): every Tuesday at 02:00 Nepal Time, on the
+ * maintenance queue. It pays each verified Model B vendor what was available at the cut-off (the
+ * end of Sunday), less anything debited since, when that is at least the minimum.
+ */
+export const SETTLEMENT_PAYOUT_RUN_TASK = 'SETTLEMENT_PAYOUT_RUN';
+export const SETTLEMENT_PAYOUT_CRON_PATTERN = '0 2 * * 2';
+/** A smaller amount is not paid by the run and carries over. A manual payout has no minimum. */
+export const SETTLEMENT_PAYOUT_MIN_NPR = 1000;
+
 export const midnightTaskSchema = z.enum(midnightTasks);
 export type MidnightTask = z.infer<typeof midnightTaskSchema>;
 
@@ -69,6 +79,6 @@ export const ghostCustomerTimerJobSchema = z.strictObject({
 export type GhostCustomerTimerJob = z.infer<typeof ghostCustomerTimerJobSchema>;
 
 export const midnightMaintenanceJobSchema = z.strictObject({
-  task: z.enum([...midnightTasks, MARKETING_STATUS_SWEEP_TASK]),
+  task: z.enum([...midnightTasks, MARKETING_STATUS_SWEEP_TASK, SETTLEMENT_PAYOUT_RUN_TASK]),
 });
 export type MidnightMaintenanceJob = z.infer<typeof midnightMaintenanceJobSchema>;

@@ -1,8 +1,15 @@
 import { randomInt, randomUUID } from 'node:crypto';
 
 import {
+  adProducts,
+  adPurchases,
+  auditLogs,
   createDatabase,
+  invoices,
   ledgerAccounts,
+  ledgerEntries,
+  orderItems,
+  products,
   ledgerTransactions,
   orders,
   users,
@@ -38,14 +45,16 @@ describe('nightly order reconciliation (real PostgreSQL + BullMQ)', () => {
   const connection = buildBullConnection(process.env.TEST_REDIS_URL ?? '');
   let db: Database;
   let queues: TimerQueues;
+  let ledger: LedgerService;
   let settlement: SettlementService;
   let reconciliation: OrderReconciliationService;
 
   beforeAll(() => {
     db = createDatabase(process.env.TEST_DATABASE_URL ?? '', { max: 10 });
     queues = createTimerQueues(connection, prefix);
-    settlement = new SettlementService(db, new LedgerService(new WalletService()));
-    reconciliation = new OrderReconciliationService(db, settlement);
+    ledger = new LedgerService(new WalletService());
+    settlement = new SettlementService(db, ledger);
+    reconciliation = new OrderReconciliationService(db, settlement, ledger);
   });
 
   afterAll(async () => {
@@ -406,5 +415,240 @@ describe('nightly order reconciliation (real PostgreSQL + BullMQ)', () => {
     );
     warn.mockRestore();
     info.mockRestore();
+  });
+
+  describe('the per-order ad premium of a settlement this job posts (Phase 30)', () => {
+    /** A per-order ad of the shop: 25 NPR per delivered order, running since an hour ago. */
+    async function perOrderAd(vendorId: string, budgetNpr: number): Promise<string> {
+      const [shop] = await db
+        .select({ userId: vendors.user_id })
+        .from(vendors)
+        .where(eq(vendors.id, vendorId));
+      const phone = `+9779${String(randomInt(0, 1_000_000_000)).padStart(9, '0')}`;
+      const [admin] = await db
+        .insert(users)
+        .values({ phone, role: 'SUPER_ADMIN' })
+        .returning({ id: users.id });
+      if (shop === undefined || admin === undefined) throw new Error('fixture not created');
+      const [product] = await db
+        .insert(adProducts)
+        .values({
+          name: `Per order ${randomUUID()}`,
+          slot: 'FEED_LISTING',
+          billing_model: 'PER_ORDER_PREMIUM',
+          price_npr: 25,
+          duration_days: 7,
+          created_by_user_id: admin.id,
+        })
+        .returning();
+      if (product === undefined) throw new Error('product not created');
+      const [purchase] = await db
+        .insert(adPurchases)
+        .values({
+          vendor_id: vendorId,
+          ad_product_id: product.id,
+          billing_model: 'PER_ORDER_PREMIUM',
+          price_npr: 25,
+          budget_npr: budgetNpr,
+          settlement_model: 'PLATFORM_ESCROW',
+          starts_at: new Date(Date.now() - 3_600_000),
+          ends_at: new Date(Date.now() + 86_400_000),
+          agreed_by_user_id: shop.userId,
+          idempotency_key: randomUUID(),
+        })
+        .returning({ id: adPurchases.id });
+      if (purchase === undefined) throw new Error('purchase not created');
+      return purchase.id;
+    }
+
+    const adRow = async (id: string) =>
+      (await db.select().from(adPurchases).where(eq(adPurchases.id, id)))[0];
+
+    const premiumLines = async (purchaseId: string) =>
+      (
+        await db
+          .select({ type: ledgerAccounts.account_type, amount: ledgerEntries.amount_npr })
+          .from(ledgerEntries)
+          .innerJoin(ledgerAccounts, eq(ledgerAccounts.id, ledgerEntries.account_id))
+          .where(
+            and(
+              eq(ledgerEntries.ad_purchase_id, purchaseId),
+              eq(ledgerEntries.line_type, 'AD_ORDER_PREMIUM'),
+            ),
+          )
+      ).sort((a, b) => a.amount - b.amount);
+
+    it('charges the ad fee with the settlement it posts, once, as its own lines', async () => {
+      const vendorId = await vendor();
+      const adId = await perOrderAd(vendorId, 100);
+      const orderId = await order(vendorId, { subtotal: 1000, commission: 100 });
+
+      const outcome = await reconciliation.reconcileOrder(orderId);
+
+      expect(outcome).toMatchObject({
+        status: 'RECONCILED',
+        settlementPosted: true,
+        // The settlement's own posting is still what is verified: the fee is a separate journal.
+        vendorWalletNpr: 900,
+        adPremiumNpr: 25,
+      });
+      expect(await walletOf(vendorId)).toBe(875);
+      expect(await premiumLines(adId)).toEqual([
+        { type: 'VENDOR_WALLET', amount: -25 },
+        { type: 'AD_REVENUE', amount: 25 },
+      ]);
+      expect(await adRow(adId)).toMatchObject({ amount_paid_npr: 25, status: 'ACTIVE' });
+
+      // A second run finds the order reconciled and charges nothing more.
+      expect(await reconciliation.reconcileOrder(orderId)).toEqual({ status: 'SKIPPED' });
+      expect(await walletOf(vendorId)).toBe(875);
+      expect(await premiumLines(adId)).toHaveLength(2);
+    });
+
+    it('does not charge an order the delivery had already settled', async () => {
+      const vendorId = await vendor();
+      const adId = await perOrderAd(vendorId, 100);
+      const orderId = await order(vendorId);
+      // The delivery's settlement (its own ad charge is the delivery's business, not this job's).
+      await settlement.settleOrder(orderId);
+
+      expect(await reconciliation.reconcileOrder(orderId)).toMatchObject({
+        status: 'RECONCILED',
+        settlementPosted: false,
+        adPremiumNpr: 0,
+      });
+      expect(await walletOf(vendorId)).toBe(900);
+      expect(await premiumLines(adId)).toEqual([]);
+      expect((await adRow(adId))?.amount_paid_npr).toBe(0);
+    });
+
+    it('charges nothing when the settlement cannot be posted', async () => {
+      const vendorId = await vendor();
+      const adId = await perOrderAd(vendorId, 100);
+      const orderId = await order(vendorId, { captured: false });
+
+      expect(await reconciliation.reconcileOrder(orderId)).toMatchObject({
+        status: 'DISCREPANCY',
+        reason: 'SETTLEMENT_FAILED',
+      });
+      expect(await walletOf(vendorId)).toBe(0);
+      expect(await premiumLines(adId)).toEqual([]);
+      expect((await adRow(adId))?.amount_paid_npr).toBe(0);
+    });
+
+    it('pauses an exhausted ad with its audit entry; the next order is settled without a fee', async () => {
+      const vendorId = await vendor();
+      const adId = await perOrderAd(vendorId, 25); // exactly one fee
+      const first = await order(vendorId);
+      const second = await order(vendorId);
+
+      expect(await reconciliation.reconcileOrder(first)).toMatchObject({ adPremiumNpr: 25 });
+      expect(await reconciliation.reconcileOrder(second)).toMatchObject({
+        status: 'RECONCILED',
+        settlementPosted: true,
+        adPremiumNpr: 0,
+      });
+
+      expect(await adRow(adId)).toMatchObject({ amount_paid_npr: 25, status: 'PAUSED' });
+      expect(await walletOf(vendorId)).toBe(900 + 900 - 25);
+      const pauses = await db
+        .select()
+        .from(auditLogs)
+        .where(
+          and(eq(auditLogs.entity_id, adId), eq(auditLogs.action, 'AD_PAUSED_BUDGET_EXHAUSTED')),
+        );
+      expect(pauses).toHaveLength(1);
+      expect(pauses[0]).toMatchObject({ system_actor: 'AD_ORDER_PREMIUM', actor_user_id: null });
+    });
+  });
+
+  describe('the fiscal invoice of an order this job reconciles (Phase 31)', () => {
+    /** A shop with a PAN, and a delivered 2 x 500 order of it with its item line. */
+    async function invoiceable(options: { pan?: boolean } = {}) {
+      const vendorId = await vendor();
+      if (options.pan !== false) {
+        await db
+          .update(vendors)
+          .set({ tax_id: '302118845', is_vat_registered: true })
+          .where(eq(vendors.id, vendorId));
+      }
+      const orderId = await order(vendorId, { subtotal: 1000, commission: 100, deliveryFee: 50 });
+      const [product] = await db
+        .insert(products)
+        .values({
+          vendor_id: vendorId,
+          name: `Rice ${randomUUID()}`,
+          price_npr: 500,
+          stock_quantity: 10,
+        })
+        .returning({ id: products.id });
+      if (product === undefined) throw new Error('product not created');
+      await db.insert(orderItems).values({
+        order_id: orderId,
+        product_id: product.id,
+        product_name: 'Basmati Rice 5kg',
+        unit_price_npr: 500,
+        quantity: 2,
+      });
+      return { vendorId, orderId };
+    }
+
+    const invoicesOf = (orderId: string) =>
+      db.select().from(invoices).where(eq(invoices.order_id, orderId));
+
+    it('issues the invoice the delivery did not, in the transaction that reconciles the order', async () => {
+      const { vendorId, orderId } = await invoiceable();
+
+      expect(await reconciliation.reconcileOrder(orderId)).toMatchObject({
+        status: 'RECONCILED',
+        settlementPosted: true,
+        invoiceIssued: true,
+      });
+
+      const [invoice, ...rest] = await invoicesOf(orderId);
+      expect(rest).toHaveLength(0);
+      expect(invoice).toMatchObject({
+        vendor_id: vendorId,
+        bill_number: 1,
+        seller_tax_id: '302118845',
+        payment_method: 'ESEWA',
+        subtotal_npr: 1000,
+        delivery_charge_npr: 50,
+        grand_total_npr: 1050,
+        // 1050.00 inclusive over two lines: 884.96 + 44.25 taxable, 115.04 + 5.75 VAT.
+        taxable_amount_npr: 929.21,
+        vat_amount_npr: 120.79,
+      });
+      // A second run finds the order reconciled: no second invoice, no second number.
+      expect(await reconciliation.reconcileOrder(orderId)).toEqual({ status: 'SKIPPED' });
+      expect(await invoicesOf(orderId)).toHaveLength(1);
+    });
+
+    it('issues none for a shop without a PAN, and still reconciles the order', async () => {
+      const { orderId } = await invoiceable({ pan: false });
+
+      expect(await reconciliation.reconcileOrder(orderId)).toMatchObject({
+        status: 'RECONCILED',
+        invoiceIssued: false,
+      });
+      expect(await invoicesOf(orderId)).toEqual([]);
+    });
+
+    it('rolls the invoice and its number back with a settlement that does not verify', async () => {
+      const { vendorId, orderId } = await invoiceable();
+      // The order's stored commission no longer matches the journal a delivery posted for it.
+      await settlement.settleOrder(orderId);
+      await db
+        .update(orders)
+        .set({ platform_commission_amount: 200 })
+        .where(eq(orders.id, orderId));
+
+      expect(await reconciliation.reconcileOrder(orderId)).toMatchObject({
+        status: 'DISCREPANCY',
+        reason: 'SETTLEMENT_MISMATCH',
+      });
+      expect(await invoicesOf(orderId)).toEqual([]);
+      expect(await db.select().from(invoices).where(eq(invoices.vendor_id, vendorId))).toEqual([]);
+    });
   });
 });

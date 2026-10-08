@@ -24,6 +24,7 @@ function handlers() {
     >(),
     runMidnightTask: jest.fn<Promise<void>, Parameters<TimerHandlers['runMidnightTask']>>(),
     runMarketingStatusSweep: jest.fn<Promise<void>, []>(),
+    runSettlementPayoutRun: jest.fn<Promise<void>, []>(),
   };
   for (const mock of Object.values(mocks)) mock.mockResolvedValue(undefined);
   const impl: TimerHandlers = mocks;

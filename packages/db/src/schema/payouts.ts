@@ -1,3 +1,4 @@
+import type { PayoutTransferState } from '@hamro-pasal/shared-types';
 import { sql } from 'drizzle-orm';
 import { check, index, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 
@@ -37,6 +38,19 @@ export const payoutRequests = pgTable(
     rejection_reason: text(),
     decided_by_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
     decided_at: timestamp({ withTimezone: true, mode: 'date' }),
+    /**
+     * Phase 29: the scheduled job that made the payout (SETTLEMENT_PAYOUT_RUN); null for a
+     * payout a Super Admin decided. An APPROVED row names exactly one of the two.
+     */
+    system_actor: text(),
+    /**
+     * Phase 29: where the bank transfer stands. Null for a payout whose transfer an admin had
+     * already made (it carries the bank reference). PROCESSING_BANK_TRANSFER: the run took the
+     * money out of the wallet and the transfer is still to be made, so there is no reference yet.
+     * COMPLETED: an admin made it and recorded the reference (the row stays APPROVED). FAILED: it
+     * could not be made, the amount was posted back and the row is REJECTED.
+     */
+    transfer_state: text().$type<PayoutTransferState>(),
     created_at: createdAt(),
     updated_at: updatedAt(),
   },
@@ -55,6 +69,16 @@ export const payoutRequests = pgTable(
       .on(t.decided_by_user_id)
       .where(sql`${t.decided_by_user_id} IS NOT NULL`),
     check('payout_requests_amount_check', sql`${t.amount_npr} > 0`),
+    check(
+      'payout_requests_transfer_state_check',
+      sql`${t.transfer_state} IS NULL
+        OR (${t.status} = 'APPROVED' AND ${t.transfer_state} IN ('PROCESSING_BANK_TRANSFER', 'COMPLETED'))
+        OR (${t.status} = 'REJECTED' AND ${t.transfer_state} = 'FAILED')`,
+    ),
+    check(
+      'payout_requests_system_actor_check',
+      sql`${t.system_actor} IS NULL OR (${t.status} <> 'PENDING' AND btrim(${t.system_actor}) <> '')`,
+    ),
     check('payout_requests_idempotency_key_check', sql`btrim(${t.idempotency_key}) <> ''`),
     // PENDING is undecided; APPROVED names the bank transfer; REJECTED names the reversing journal.
     check(
@@ -63,8 +87,12 @@ export const payoutRequests = pgTable(
             AND ${t.bank_reference} IS NULL AND ${t.reversal_transaction_id} IS NULL
             AND ${t.rejection_reason} IS NULL)
         OR (${t.status} = 'APPROVED' AND ${t.decided_at} IS NOT NULL
-            AND ${t.decided_by_user_id} IS NOT NULL AND ${t.bank_reference} IS NOT NULL
-            AND btrim(${t.bank_reference}) <> ''
+            AND ((${t.bank_reference} IS NOT NULL AND btrim(${t.bank_reference}) <> ''
+                AND ${t.decided_by_user_id} IS NOT NULL
+                AND ${t.transfer_state} IS DISTINCT FROM 'PROCESSING_BANK_TRANSFER')
+              OR (${t.bank_reference} IS NULL AND ${t.decided_by_user_id} IS NULL
+                AND ${t.system_actor} IS NOT NULL
+                AND ${t.transfer_state} IS NOT DISTINCT FROM 'PROCESSING_BANK_TRANSFER'))
             AND ${t.reversal_transaction_id} IS NULL AND ${t.rejection_reason} IS NULL)
         OR (${t.status} = 'REJECTED' AND ${t.decided_at} IS NOT NULL
             AND ${t.decided_by_user_id} IS NOT NULL AND ${t.bank_reference} IS NULL

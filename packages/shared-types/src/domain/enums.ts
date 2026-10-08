@@ -87,6 +87,8 @@ export const ledgerAccountTypes = [
   'PAYOUT_CLEARING',
   'AD_REVENUE',
   'AD_BUDGET_CLEARING',
+  /** The platform's share of campaign discounts: its marketing cost (SPEC core 9). */
+  'PROMO_EXPENSE',
 ] as const;
 export const ledgerAccountTypeSchema = z.enum(ledgerAccountTypes);
 export type LedgerAccountType = z.infer<typeof ledgerAccountTypeSchema>;
@@ -161,6 +163,22 @@ export const payoutStatuses = ['PENDING', 'APPROVED', 'REJECTED'] as const;
 export const payoutStatusSchema = z.enum(payoutStatuses);
 export type PayoutStatus = z.infer<typeof payoutStatusSchema>;
 
+/**
+ * Where the bank transfer of a payout made by the scheduled run stands (Phase 29). Null on a
+ * payout whose transfer an admin had already made when it was recorded.
+ *   PROCESSING_BANK_TRANSFER  the amount left the wallet; the transfer is still to be made
+ *   COMPLETED                 an admin made the transfer and recorded its reference
+ *   FAILED                    the transfer failed; the amount was posted back to the wallet
+ */
+export const payoutTransferStates = ['PROCESSING_BANK_TRANSFER', 'COMPLETED', 'FAILED'] as const;
+export const payoutTransferStateSchema = z.enum(payoutTransferStates);
+export type PayoutTransferState = z.infer<typeof payoutTransferStateSchema>;
+
+/** The documents of the fiscal invoicing engine (SPEC core 10). Only INVOICE is issued today. */
+export const fiscalDocumentTypes = ['INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'] as const;
+export const fiscalDocumentTypeSchema = z.enum(fiscalDocumentTypes);
+export type FiscalDocumentType = z.infer<typeof fiscalDocumentTypeSchema>;
+
 /** Super Admin arbitration outcomes (SPEC Super Admin flow step 3). */
 export const disputeStatuses = ['OPEN', 'REFUNDED_TO_CUSTOMER', 'RELEASED_TO_VENDOR'] as const;
 export const disputeStatusSchema = z.enum(disputeStatuses);
@@ -221,6 +239,20 @@ export type AdBillingModel = z.infer<typeof adBillingModelSchema>;
 export const settlementModels = ['COD_CREDIT', 'PLATFORM_ESCROW', 'DIRECT_PREPAID'] as const;
 export const settlementModelSchema = z.enum(settlementModels);
 export type SettlementModel = z.infer<typeof settlementModelSchema>;
+
+/**
+ * Payment routing (SPEC core 9): the methods a shop's settlement model allows. Model A is cash
+ * only; Model B takes all three. Model C is Phase 3: it needs the vendor's own gateway
+ * credentials and the Fixed Reserve check, neither of which exists, so it allows nothing.
+ * A shop's `accepted_payment_methods` can only narrow this list.
+ */
+export const SETTLEMENT_MODEL_PAYMENT_METHODS: Readonly<
+  Record<SettlementModel, readonly PaymentMethod[]>
+> = {
+  COD_CREDIT: ['COD'],
+  PLATFORM_ESCROW: ['ESEWA', 'KHALTI', 'COD'],
+  DIRECT_PREPAID: [],
+};
 
 /** Where a Home promotion shows: the banner carousel, or a Featured Offers tile. */
 export const promotionPlacements = ['CAROUSEL', 'FEATURED'] as const;

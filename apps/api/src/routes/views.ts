@@ -1,3 +1,4 @@
+import { orderTotalPaisa, toNpr } from '@hamro-pasal/ledger';
 import type {
   DeliveryConfirmedResponseBody,
   DeliveryView,
@@ -42,7 +43,7 @@ export function orderView(order: Order): OrderView {
     fulfillment: order.fulfillment_locked,
     subtotal_npr: order.subtotal,
     delivery_fee_npr: order.delivery_fee,
-    total_npr: Math.round((order.subtotal + order.delivery_fee) * 100) / 100,
+    total_npr: toNpr(orderTotalPaisa(order)),
     created_at: order.created_at.toISOString(),
   };
 }

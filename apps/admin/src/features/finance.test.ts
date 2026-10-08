@@ -42,6 +42,9 @@ const payout: AdminPayoutView = {
     wallet_balance_npr: 600,
   },
   decided_by: null,
+  transfer_state: null,
+  system_actor: null,
+  primary_bank_account: null,
 };
 
 const ledger: VendorFinanceLedgerResponseBody = {
@@ -203,7 +206,12 @@ function setup(user: AuthUser) {
       ? ledger
       : url.endsWith('/api/vendor/finance/payout')
         ? {
-            payout: { ...payout, vendor: undefined, decided_by: undefined },
+            payout: {
+              ...payout,
+              vendor: undefined,
+              decided_by: undefined,
+              primary_bank_account: undefined,
+            },
             available_balance_npr: 200,
             replayed: false,
           }

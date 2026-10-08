@@ -1,5 +1,7 @@
 export * from './ad-budget';
+export * from './ad-fees';
 export * from './ad-order-premium';
+export * from './fiscal-invoice';
 export * from './ledger-service';
 export * from './money';
 export * from './settlement-plan';

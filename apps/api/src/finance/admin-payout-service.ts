@@ -1,6 +1,7 @@
 import {
   payoutRequests,
   recordAuditLog,
+  vendorBankAccounts,
   vendors,
   type Database,
   type Transaction,
@@ -12,8 +13,9 @@ import {
   type AdminPayoutListQuery,
   type AuditContext,
   type PayoutStatus,
+  type PayoutTransferState,
 } from '@hamro-pasal/shared-types';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import { PanNotVerifiedError } from './admin-settlement-service';
 import type { PayoutRow } from './vendor-finance-service';
@@ -26,6 +28,23 @@ export interface AdminPayoutRow {
     readonly phone: string;
     readonly walletBalanceNpr: number;
   };
+  /**
+   * Where the transfer goes: the vendor's primary bank account now. Read only for a payout
+   * whose transfer is still to be made; null otherwise.
+   */
+  readonly primaryBankAccount: typeof vendorBankAccounts.$inferSelect | null;
+}
+
+/** Finalize and fail act only on a payout whose bank transfer is still to be made. */
+export class PayoutNotProcessingError extends Error {
+  constructor(
+    readonly payoutId: string,
+    readonly status: PayoutStatus,
+    readonly transferState: PayoutTransferState | null,
+  ) {
+    super(`Payout ${payoutId} is not waiting for its bank transfer`);
+    this.name = 'PayoutNotProcessingError';
+  }
 }
 
 export interface AdminPayoutPage {
@@ -68,6 +87,17 @@ export class InvalidPayoutCursorError extends Error {
  * Both run under the request's row lock, so an approve racing a reject has exactly one winner and
  * the money is never both paid out and returned. Repeating the same decision answers with the same
  * row; the other decision, or an approval with another bank reference, is refused.
+ *
+ * And of a payout the scheduled run made (Phase 30), which is APPROVED with its bank transfer
+ * still to be made:
+ *
+ *   PROCESSING_BANK_TRANSFER ── finalize {bank_reference} ──▶ COMPLETED  (stays APPROVED)
+ *   PROCESSING_BANK_TRANSFER ── fail {reason?} ─────────────▶ FAILED     (REJECTED, amount back)
+ *
+ * The same rules: the payout's row lock first, one winner, a repeat answers with the same row.
+ * Lock order of every path here: the payout row, then (when money moves back) the vendor row and
+ * the ledger accounts inside LedgerService.post. Nothing takes them the other way round: the
+ * payout run and the admin's settlement payout only insert payout rows.
  */
 export class AdminPayoutService {
   constructor(
@@ -80,6 +110,7 @@ export class AdminPayoutService {
     status,
     limit = ADMIN_PAYOUT_DEFAULT_LIMIT,
     cursor,
+    transfer_state: transferState,
   }: AdminPayoutListQuery): Promise<AdminPayoutPage> {
     if (cursor !== undefined) {
       const [known] = await this.db
@@ -95,6 +126,9 @@ export class AdminPayoutService {
       .where(
         and(
           status === undefined ? undefined : eq(payoutRequests.status, status),
+          transferState === undefined
+            ? undefined
+            : eq(payoutRequests.transfer_state, transferState),
           cursor === undefined
             ? undefined
             : sql`(${payoutRequests.created_at}, ${payoutRequests.id}) <
@@ -105,8 +139,30 @@ export class AdminPayoutService {
       .limit(limit + 1);
     const page = rows.slice(0, limit);
     const last = page.at(-1);
+    const waiting = page
+      .filter(({ payout }) => payout.transfer_state === 'PROCESSING_BANK_TRANSFER')
+      .map(({ payout }) => payout.vendor_id);
+    const accounts =
+      waiting.length === 0
+        ? []
+        : await this.db
+            .select()
+            .from(vendorBankAccounts)
+            .where(
+              and(
+                inArray(vendorBankAccounts.vendor_id, waiting),
+                eq(vendorBankAccounts.is_primary, true),
+              ),
+            );
+    const primary = new Map(accounts.map((account) => [account.vendor_id, account]));
     return {
-      rows: page,
+      rows: page.map((row) => ({
+        ...row,
+        primaryBankAccount:
+          row.payout.transfer_state === 'PROCESSING_BANK_TRANSFER'
+            ? (primary.get(row.payout.vendor_id) ?? null)
+            : null,
+      })),
       nextCursor: rows.length > limit && last !== undefined ? last.payout.id : null,
     };
   }
@@ -188,6 +244,116 @@ export class AdminPayoutService {
       return viewOf(tx, rejected);
     });
   }
+
+  /** The admin made the bank transfer: its reference is recorded and the payout is COMPLETED. */
+  async finalize(
+    adminUserId: string,
+    payoutId: string,
+    bankReference: string,
+    context: AuditContext = NO_AUDIT_CONTEXT,
+  ): Promise<AdminPayoutRow> {
+    return this.db.transaction(async (tx) => {
+      const payout = await lockPayout(tx, payoutId);
+      if (payout.transfer_state === 'COMPLETED' && payout.bank_reference === bankReference) {
+        return viewOf(tx, payout);
+      }
+      if (payout.transfer_state !== 'PROCESSING_BANK_TRANSFER') {
+        throw new PayoutNotProcessingError(payoutId, payout.status, payout.transfer_state);
+      }
+      const [completed] = await tx
+        .update(payoutRequests)
+        .set({
+          transfer_state: 'COMPLETED',
+          bank_reference: bankReference,
+          decided_by_user_id: adminUserId,
+        })
+        .where(eq(payoutRequests.id, payoutId))
+        .returning();
+      if (completed === undefined) throw new PayoutNotFoundError(payoutId);
+      await recordTransfer(tx, 'PAYOUT_TRANSFER_COMPLETED', completed, adminUserId, context);
+      return viewOf(tx, completed);
+    });
+  }
+
+  /**
+   * The bank transfer could not be made: the amount goes back to the vendor's wallet (the
+   * VENDOR_PAYOUT_REVERSAL journal a rejected request posts, PAYOUT_CLEARING to VENDOR_WALLET)
+   * and the payout is FAILED. The run that made it does not pay that vendor again for the same
+   * cut-off; the returned money is in the next run's.
+   */
+  async fail(
+    adminUserId: string,
+    payoutId: string,
+    reason: string | null,
+    context: AuditContext = NO_AUDIT_CONTEXT,
+  ): Promise<AdminPayoutRow> {
+    return this.db.transaction(async (tx) => {
+      const payout = await lockPayout(tx, payoutId);
+      if (payout.transfer_state === 'FAILED') return viewOf(tx, payout);
+      if (payout.transfer_state !== 'PROCESSING_BANK_TRANSFER') {
+        throw new PayoutNotProcessingError(payoutId, payout.status, payout.transfer_state);
+      }
+      const amountPaisa = toPaisa(payout.amount_npr);
+      // Through LedgerService, so a credit that clears a debt also lifts a debt suspension.
+      const reversal = await this.ledger.post(tx, {
+        kind: 'VENDOR_PAYOUT_REVERSAL',
+        idempotencyKey: `vendor-payout-reversal:${payout.id}`,
+        orderId: null,
+        description: 'Payout failed: bank transfer not made, amount returned to the wallet',
+        postings: [
+          { account: { type: 'PAYOUT_CLEARING' }, amountPaisa: -amountPaisa },
+          { account: { type: 'VENDOR_WALLET', vendorId: payout.vendor_id }, amountPaisa },
+        ],
+      });
+      const [failed] = await tx
+        .update(payoutRequests)
+        .set({
+          status: 'REJECTED',
+          transfer_state: 'FAILED',
+          reversal_transaction_id: reversal.transactionId,
+          rejection_reason: reason,
+          decided_by_user_id: adminUserId,
+          decided_at: sql`now()`,
+        })
+        .where(eq(payoutRequests.id, payoutId))
+        .returning();
+      if (failed === undefined) throw new PayoutNotFoundError(payoutId);
+      await recordTransfer(tx, 'PAYOUT_TRANSFER_FAILED', failed, adminUserId, context);
+      return viewOf(tx, failed);
+    });
+  }
+}
+
+/** One audit entry per transfer outcome, in its own transaction; a repeat records nothing. */
+async function recordTransfer(
+  tx: Transaction,
+  action: 'PAYOUT_TRANSFER_COMPLETED' | 'PAYOUT_TRANSFER_FAILED',
+  payout: PayoutRow,
+  adminUserId: string,
+  context: AuditContext,
+): Promise<void> {
+  await recordAuditLog(tx, {
+    actor: { kind: 'USER', user_id: adminUserId, role: 'SUPER_ADMIN' },
+    action,
+    entityId: payout.id,
+    vendorId: payout.vendor_id,
+    beforeState: {
+      status: 'APPROVED',
+      transfer_state: 'PROCESSING_BANK_TRANSFER',
+      amount_npr: payout.amount_npr,
+      system_actor: payout.system_actor,
+    },
+    afterState: {
+      status: payout.status,
+      transfer_state: payout.transfer_state,
+      amount_npr: payout.amount_npr,
+      system_actor: payout.system_actor,
+      bank_reference: payout.bank_reference,
+      rejection_reason: payout.rejection_reason,
+      reversal_transaction_id: payout.reversal_transaction_id,
+    },
+    context,
+  });
 }
 
 /**
@@ -242,5 +408,18 @@ async function viewOf(tx: Transaction, payout: PayoutRow): Promise<AdminPayoutRo
     .from(vendors)
     .where(eq(vendors.id, payout.vendor_id));
   if (vendor === undefined) throw new Error(`Vendor ${payout.vendor_id} vanished`);
-  return { payout, vendor };
+  let primaryBankAccount: AdminPayoutRow['primaryBankAccount'] = null;
+  if (payout.transfer_state === 'PROCESSING_BANK_TRANSFER') {
+    const [account] = await tx
+      .select()
+      .from(vendorBankAccounts)
+      .where(
+        and(
+          eq(vendorBankAccounts.vendor_id, payout.vendor_id),
+          eq(vendorBankAccounts.is_primary, true),
+        ),
+      );
+    primaryBankAccount = account ?? null;
+  }
+  return { payout, vendor, primaryBankAccount };
 }

@@ -47,7 +47,8 @@ function budgetState(purchase: AdPurchaseRow) {
  *   fee pauses the ad in the same transaction.
  * - One journal per purchase and order (`ad-order-premium:<purchase>:<order>`): a second call for
  *   the same order posts nothing.
- * - Locks: the vendor row, then the purchase row, then the ledger accounts.
+ * - Locks: the vendor row (FOR NO KEY UPDATE, see below), then the purchase row, then the ledger
+ *   accounts.
  * - A shop with several running per-order ads is charged for the oldest one.
  */
 export async function chargePerOrderAdPremium(
@@ -56,7 +57,15 @@ export async function chargePerOrderAdPremium(
   orderId: string,
   vendorId: string,
 ): Promise<AdOrderPremiumOutcome> {
-  await tx.select({ id: vendors.id }).from(vendors).where(eq(vendors.id, vendorId)).for('update');
+  // The strength the settlement journal has just taken on this row (WalletService.lockStandings).
+  // Asking for FOR UPDATE here would be a lock upgrade, and two deliveries of one shop deadlock on
+  // it: the second already queues behind the first's weaker lock. NO KEY UPDATE still excludes
+  // every other ad path (purchase, cancel, the hourly sweep, a payout), which take FOR UPDATE.
+  await tx
+    .select({ id: vendors.id })
+    .from(vendors)
+    .where(eq(vendors.id, vendorId))
+    .for('no key update');
   const [order] = await tx
     .select({ placedAt: orders.placed_at })
     .from(orders)

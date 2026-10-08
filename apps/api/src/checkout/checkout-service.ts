@@ -1,8 +1,10 @@
 import {
+  campaignOptIns,
   enqueueDomainEvent,
   orderAddresses,
   orderItems,
   orders,
+  platformCampaigns,
   platformSettings,
   products,
   reviews,
@@ -12,13 +14,15 @@ import {
 import {
   COD_MIN_CUSTOMER_RATING,
   paymentMethods,
+  SETTLEMENT_MODEL_PAYMENT_METHODS,
   type CartQuoteRequest,
   type CheckoutRequest,
   type PaymentMethod,
   type DomainEvent,
   type Order,
+  type SettlementModel,
 } from '@hamro-pasal/shared-types';
-import { and, avg, count, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, avg, count, eq, gt, gte, inArray, lte, sql } from 'drizzle-orm';
 
 import { deliveryFeePaisa, haversineKm, type DeliveryTerms } from './delivery-fee';
 import { isUniqueViolation } from '../infra/pg-errors';
@@ -33,7 +37,7 @@ import { reviewIsPublic } from '../reviews/review-visibility';
 import { enqueueOrderStateChanged } from '../orders/order-events';
 import { generateDeliveryOtp, hashDeliveryOtp } from './delivery-otp';
 import { deliversTo, enabledModes } from '../catalog/catalog-service';
-import { CheckoutRejectedError, priceCart, type PricedCart } from './pricing';
+import { CheckoutRejectedError, priceCart, type CampaignOffer, type PricedCart } from './pricing';
 import type {
   InventoryLockService,
   InventoryReservation,
@@ -111,7 +115,8 @@ export interface CartQuote {
   readonly paymentOptions: readonly {
     readonly method: PaymentMethod;
     readonly available: boolean;
-    readonly reason?: 'NOT_ACCEPTED_BY_SHOP' | 'COD_NOT_AVAILABLE' | 'DELIVERY_UNAVAILABLE';
+    readonly reason?:
+      'NOT_ACCEPTED_BY_SHOP' | 'COD_NOT_AVAILABLE' | 'DELIVERY_UNAVAILABLE' | 'SETTLEMENT_MODEL';
   }[];
 }
 
@@ -146,13 +151,7 @@ export class CheckoutService {
     }
 
     const { vendor, items, priced } = await this.price(request);
-    if (!vendor.accepted_payment_methods.includes(request.payment_method)) {
-      throw new CheckoutRejectedError(
-        'PAYMENT_METHOD_UNAVAILABLE',
-        'This shop does not accept that payment method',
-        { accepted: vendor.accepted_payment_methods },
-      );
-    }
+    assertPaymentMethodOffered(vendor, request.payment_method);
 
     if (request.payment_method === 'COD') {
       await this.assertCodEligible(customerId);
@@ -165,6 +164,40 @@ export class CheckoutService {
     let order: Order;
     try {
       order = await this.db.transaction(async (tx) => {
+        // The model is read again under a lock on the vendor row, the row a settlement model
+        // approval locks FOR UPDATE: the approval either committed before this read (and the
+        // order takes the new model, or is refused if that model does not take the method), or
+        // it waits for this order and then counts it as open.
+        const [shop] = await tx
+          .select({
+            settlement_model: vendors.settlement_model,
+            accepted_payment_methods: vendors.accepted_payment_methods,
+          })
+          .from(vendors)
+          .where(eq(vendors.id, vendor.id))
+          .for('key share');
+        if (shop === undefined) throw new Error(`Vendor ${vendor.id} vanished during checkout`);
+        assertPaymentMethodOffered(shop, request.payment_method);
+        // A discount is charged to the vendor only under its own live opt-in (SPEC core 7). The
+        // opt-in is read again under a lock: an opt-out or a change of the campaign's terms that
+        // committed since the cart was priced means the customer was quoted a total that no
+        // longer holds, and no order is created for it.
+        const promo = priced.promo;
+        if (promo !== null) {
+          const [optIn] = await tx
+            .select({ status: campaignOptIns.status })
+            .from(campaignOptIns)
+            .where(eq(campaignOptIns.id, promo.offer.optInId))
+            .for('share');
+          if (optIn?.status !== 'ACTIVE') {
+            throw new CheckoutRejectedError(
+              'QUOTE_CHANGED',
+              'The offer on this cart has just ended. Review the new total.',
+              undefined,
+              409,
+            );
+          }
+        }
         const [created] = await tx
           .insert(orders)
           .values({
@@ -175,7 +208,25 @@ export class CheckoutService {
             subtotal: toNpr(priced.subtotalPaisa),
             delivery_fee: toNpr(priced.deliveryFeePaisa),
             platform_commission_amount: toNpr(priced.commissionPaisa),
+            ...(promo === null
+              ? {}
+              : {
+                  platform_promo_discount_npr: toNpr(promo.discountPaisa),
+                  platform_promo_vendor_share_npr: toNpr(promo.vendorSharePaisa),
+                  campaign_opt_in_id: promo.offer.optInId,
+                  discount_snapshot: {
+                    campaign_id: promo.offer.campaignId,
+                    name: promo.offer.name,
+                    kind: promo.offer.kind,
+                    value: promo.offer.value,
+                    max_discount_npr: promo.offer.maxDiscountNpr,
+                    min_cart_npr: promo.offer.minCartNpr,
+                    vendor_share_percent: promo.offer.vendorSharePercent,
+                    terms_version: promo.offer.termsVersion,
+                  },
+                }),
             fulfillment_locked: vendor.fulfillment_mode,
+            settlement_model_locked: shop.settlement_model,
             payment_method: request.payment_method,
             delivery_otp: otpHash,
           })
@@ -288,6 +339,9 @@ export class CheckoutService {
         if (!deliveryAvailable) {
           return { method, available: false, reason: 'DELIVERY_UNAVAILABLE' as const };
         }
+        if (!SETTLEMENT_MODEL_PAYMENT_METHODS[vendor.settlement_model].includes(method)) {
+          return { method, available: false, reason: 'SETTLEMENT_MODEL' as const };
+        }
         if (!vendor.accepted_payment_methods.includes(method)) {
           return { method, available: false, reason: 'NOT_ACCEPTED_BY_SHOP' as const };
         }
@@ -383,10 +437,47 @@ export class CheckoutService {
       freeAboveNpr: vendor.free_delivery_above_npr,
       platformFeeNpr: settings.platformFeeNpr,
     };
-    const priced = priceCart(vendor, byId, items, (subtotalPaisa) =>
-      deliveryFeePaisa(terms, subtotalPaisa, distanceKm),
+    const priced = priceCart(
+      vendor,
+      byId,
+      items,
+      (subtotalPaisa) => deliveryFeePaisa(terms, subtotalPaisa, distanceKm),
+      await this.runningCampaigns(vendor.id),
     );
     return { vendor, items, priced, distanceKm, deliveryAvailable };
+  }
+
+  /**
+   * The platform campaigns that apply to a shop now: published, inside their dates on the
+   * database clock, and joined by the shop's own ACTIVE opt-in to their current terms. A campaign
+   * discounts nothing for a shop without that row (SPEC verification 6).
+   */
+  private async runningCampaigns(vendorId: string): Promise<CampaignOffer[]> {
+    return this.db
+      .select({
+        campaignId: platformCampaigns.id,
+        optInId: campaignOptIns.id,
+        optedInAt: campaignOptIns.opted_in_at,
+        name: platformCampaigns.name,
+        kind: platformCampaigns.kind,
+        value: platformCampaigns.value,
+        maxDiscountNpr: platformCampaigns.max_discount_npr,
+        minCartNpr: platformCampaigns.min_cart_npr,
+        vendorSharePercent: platformCampaigns.vendor_share_percent,
+        termsVersion: platformCampaigns.terms_version,
+      })
+      .from(campaignOptIns)
+      .innerJoin(platformCampaigns, eq(platformCampaigns.id, campaignOptIns.campaign_id))
+      .where(
+        and(
+          eq(campaignOptIns.vendor_id, vendorId),
+          eq(campaignOptIns.status, 'ACTIVE'),
+          eq(campaignOptIns.opt_in_terms_version, platformCampaigns.terms_version),
+          eq(platformCampaigns.is_active, true),
+          lte(platformCampaigns.starts_at, sql`now()`),
+          gt(platformCampaigns.ends_at, sql`now()`),
+        ),
+      );
   }
 
   private async findByIdempotencyKey(key: string): Promise<Order | undefined> {
@@ -576,6 +667,40 @@ export class CheckoutService {
     await this.locks.release(input.vendorId, input.reservationId);
     return placed;
   }
+}
+
+/**
+ * The methods a shop takes now (SPEC core 9, "Payment routing"): what its settlement model
+ * allows, narrowed by what the shop itself accepts. In the order customers see them.
+ */
+export function offeredPaymentMethods(shop: {
+  readonly settlement_model: SettlementModel;
+  readonly accepted_payment_methods: readonly PaymentMethod[];
+}): PaymentMethod[] {
+  const routed = SETTLEMENT_MODEL_PAYMENT_METHODS[shop.settlement_model];
+  return paymentMethods.filter(
+    (method) => routed.includes(method) && shop.accepted_payment_methods.includes(method),
+  );
+}
+
+function assertPaymentMethodOffered(
+  shop: Parameters<typeof offeredPaymentMethods>[0],
+  method: PaymentMethod,
+): void {
+  const accepted = offeredPaymentMethods(shop);
+  if (accepted.includes(method)) return;
+  const routed = SETTLEMENT_MODEL_PAYMENT_METHODS[shop.settlement_model].includes(method);
+  throw new CheckoutRejectedError(
+    'PAYMENT_METHOD_UNAVAILABLE',
+    routed
+      ? 'This shop does not accept that payment method'
+      : 'This shop takes cash on delivery only',
+    {
+      accepted,
+      reason: routed ? 'NOT_ACCEPTED_BY_SHOP' : 'SETTLEMENT_MODEL',
+      settlement_model: shop.settlement_model,
+    },
+  );
 }
 
 /**

@@ -96,6 +96,7 @@ import {
   InvalidPayoutCursorError,
   PayoutAlreadyDecidedError,
   PayoutNotFoundError,
+  PayoutNotProcessingError,
 } from '../finance/admin-payout-service';
 import { PayoutExceedsBalanceError, PayoutKeyReusedError } from '../finance/vendor-finance-service';
 import {
@@ -282,6 +283,12 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof PayoutAlreadyDecidedError) {
     return new HttpError(409, 'PAYOUT_ALREADY_DECIDED', error.message, { status: error.status });
+  }
+  if (error instanceof PayoutNotProcessingError) {
+    return new HttpError(409, 'PAYOUT_NOT_PROCESSING', error.message, {
+      status: error.status,
+      transfer_state: error.transferState,
+    });
   }
   if (error instanceof InvalidPayoutCursorError) {
     return new HttpError(400, 'INVALID_CURSOR', error.message);

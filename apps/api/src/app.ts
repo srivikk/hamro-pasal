@@ -21,6 +21,8 @@ import { errorHandler, HttpError } from './http/errors';
 import { requestId } from './http/request-context';
 import type { AdProductService } from './marketing/ad-product-service';
 import type { AdPurchaseService } from './marketing/ad-purchase-service';
+import type { VendorOfferService } from './marketing/vendor-offer-service';
+import type { VendorInvoiceService } from './invoices/vendor-invoice-service';
 import type { CampaignService } from './marketing/campaign-service';
 import type { PromotionService } from './marketing/promotion-service';
 import type { DeviceTokenService } from './notifications/device-token-service';
@@ -55,6 +57,7 @@ import { homeRouter } from './routes/home';
 import { vendorAdsRouter } from './routes/vendor-ads';
 import type { SettlementModelRequestService } from './settlement/settlement-model-request-service';
 import { vendorFinanceRouter } from './routes/vendor-finance';
+import { vendorInvoicesRouter, vendorOffersRouter } from './routes/vendor-invoices-offers';
 import { vendorOrdersRouter } from './routes/vendor-orders';
 import { vendorSettingsRouter } from './routes/vendor-settings';
 import { vendorWalletRouter } from './routes/vendor-wallet';
@@ -113,6 +116,9 @@ export interface ApiServices {
   readonly promotions: PromotionService;
   /** Phase 28: the Ad Marketplace as a shop uses it (its own purchases). */
   readonly adPurchases: AdPurchaseService;
+  /** Phase 32: the shop's fiscal invoices (list, server-rendered PDF) and its own offers. */
+  readonly vendorInvoices: VendorInvoiceService;
+  readonly vendorOffers: VendorOfferService;
   /** Phase 26: where a shop is paid. */
   readonly vendorBankAccounts: VendorBankAccountService;
   /** Local end-to-end runs: present only with MOCK_SERVICES outside production. */
@@ -194,6 +200,17 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       '/api/vendor/ads',
       requireAuth(services.accessTokenSecret, ['VENDOR']),
       vendorAdsRouter(services.adPurchases),
+    );
+    // Phase 32. The shop's invoices (the PDF is the server's) and its own offers.
+    app.use(
+      '/api/vendor/invoices',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorInvoicesRouter(services.vendorInvoices),
+    );
+    app.use(
+      '/api/vendor/offers',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorOffersRouter(services.vendorOffers),
     );
     // Phase 27. The shop's own request to change its settlement model.
     app.use(

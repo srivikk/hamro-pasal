@@ -42,6 +42,8 @@ import { LedgerService } from './ledger/ledger-service';
 import { SettlementService } from './ledger/settlement-service';
 import { AdProductService } from './marketing/ad-product-service';
 import { AdPurchaseService } from './marketing/ad-purchase-service';
+import { VendorOfferService } from './marketing/vendor-offer-service';
+import { VendorInvoiceService } from './invoices/vendor-invoice-service';
 import { CampaignService } from './marketing/campaign-service';
 import { SettlementModelRequestService } from './settlement/settlement-model-request-service';
 import { PromotionService } from './marketing/promotion-service';
@@ -209,6 +211,8 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     adPurchases: new AdPurchaseService(infra.db, ledger),
     promotions: new PromotionService(infra.db),
     vendorBankAccounts: new VendorBankAccountService(infra.db),
+    vendorInvoices: new VendorInvoiceService(infra.db),
+    vendorOffers: new VendorOfferService(infra.db),
     async close() {
       await infra.redisPool.close();
       await infra.db.$client.end();

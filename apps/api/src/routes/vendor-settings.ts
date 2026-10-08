@@ -75,11 +75,8 @@ export function vendorSettingsRouter({
   /** Saving the PAN lifts a compliance suspension in the same transaction (SPEC core 10). */
   router.put('/tax-identity', async (req, res) => {
     const input = parseInput(taxIdentityRequestSchema, req.body);
-    const { vendor, complianceSuspensionLifted } = await compliance.saveTaxIdentity(
-      vendorActor(req),
-      input,
-      auditContextOf(req, res),
-    );
+    const { vendor, complianceSuspensionLifted, waitingInvoicesIssued } =
+      await compliance.saveTaxIdentity(vendorActor(req), input, auditContextOf(req, res));
     const body: TaxIdentityResponseBody = {
       vendor_id: vendor.id,
       tax_id: input.tax_id,
@@ -89,6 +86,7 @@ export function vendorSettingsRouter({
       status: vendor.status,
       compliance_suspension_lifted: complianceSuspensionLifted,
       pan_verified_at: vendor.pan_verified_at?.toISOString() ?? null,
+      waiting_invoices_issued: waitingInvoicesIssued,
     };
     res.json(body);
   });

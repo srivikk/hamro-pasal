@@ -1,9 +1,14 @@
-import type { InvoiceDeliveryChargedBy, InvoiceLineItem } from '@hamro-pasal/shared-types';
+import type {
+  InvoiceAccessAction,
+  InvoiceDeliveryChargedBy,
+  InvoiceLineItem,
+} from '@hamro-pasal/shared-types';
 import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
   index,
+  inet,
   integer,
   jsonb,
   pgTable,
@@ -16,7 +21,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 import { npr, primaryId } from './columns';
-import { fiscalDocumentTypeEnum, paymentMethodEnum } from './enums';
+import { fiscalDocumentTypeEnum, paymentMethodEnum, userRoleEnum } from './enums';
 import { orders } from './orders';
 import { users } from './users';
 import { vendors } from './vendors';
@@ -164,6 +169,52 @@ export const invoices = pgTable(
     check(
       'invoices_grand_total_check',
       sql`${t.grand_total_npr} = ${t.subtotal_npr} - ${t.discount_npr} + ${t.delivery_charge_npr}`,
+    ),
+  ],
+);
+
+/**
+ * Phase 32: every view, download and print of an invoice (SPEC core 10, "View and print
+ * tracking"), with the user and the time. Append-only: the triggers of migration 0033 refuse
+ * UPDATE, DELETE and TRUNCATE.
+ *
+ * A PRINT row carries its `copy_number`: 0 is the original, n is "Copy of Original (n)". The
+ * number is the count of the invoice's earlier PRINT rows, taken under the invoice's row lock, so
+ * two simultaneous prints never share one.
+ */
+export const invoiceAccessLog = pgTable(
+  'invoice_access_log',
+  {
+    id: primaryId(),
+    invoice_id: uuid()
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'restrict' }),
+    user_id: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    /** The role the caller's access token carried. */
+    actor_role: userRoleEnum().notNull(),
+    action: text().$type<InvoiceAccessAction>().notNull(),
+    /** PRINT only. */
+    copy_number: integer(),
+    occurred_at: timestamp({ withTimezone: true, mode: 'date' })
+      .notNull()
+      .default(sql`clock_timestamp()`),
+    ip_address: inet(),
+    user_agent: text(),
+  },
+  (t) => [
+    index('invoice_access_log_invoice_idx').on(t.invoice_id, t.occurred_at),
+    index('invoice_access_log_user_idx').on(t.user_id),
+    // One of each copy number per invoice, whatever the application does.
+    uniqueIndex('invoice_access_log_copy_number_uidx')
+      .on(t.invoice_id, t.copy_number)
+      .where(sql`${t.action} = 'PRINT'`),
+    check('invoice_access_log_action_check', sql`${t.action} IN ('VIEW', 'DOWNLOAD', 'PRINT')`),
+    check(
+      'invoice_access_log_copy_number_check',
+      sql`(${t.action} = 'PRINT') = (${t.copy_number} IS NOT NULL)
+            AND (${t.copy_number} IS NULL OR ${t.copy_number} >= 0)`,
     ),
   ],
 );

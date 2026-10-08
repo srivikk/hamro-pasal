@@ -47,6 +47,11 @@ export const taxIdentityResponseSchema = z.strictObject({
   compliance_suspension_lifted: z.boolean(),
   /** Null until a Super Admin verifies this PAN; payouts wait for it. */
   pan_verified_at: z.iso.datetime().nullable(),
+  /**
+   * Phase 32: invoices this save issued for orders delivered while the shop had no PAN (SPEC core
+   * 10). 0 for a response from before the field.
+   */
+  waiting_invoices_issued: z.number().int().min(0).default(0),
 });
 export type TaxIdentityResponseBody = z.infer<typeof taxIdentityResponseSchema>;
 

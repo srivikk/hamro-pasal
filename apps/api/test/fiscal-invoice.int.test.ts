@@ -602,7 +602,12 @@ describe('generateFiscalInvoice (real PostgreSQL)', () => {
       expect(await refusal(db.delete(invoices).where(eq(invoices.id, invoice.id)))).toContain(
         'invoices are immutable (DELETE rejected)',
       );
+      // Since migration 0033 the access log references invoices, so PostgreSQL refuses a plain
+      // TRUNCATE before any trigger runs; with CASCADE the tables' own triggers refuse it.
       expect(await refusal(db.execute(sql`TRUNCATE invoices`))).toContain(
+        'cannot truncate a table referenced in a foreign key constraint',
+      );
+      expect(await refusal(db.execute(sql`TRUNCATE invoices CASCADE`))).toContain(
         'invoices are immutable (TRUNCATE rejected)',
       );
       const [stored] = await db.select().from(invoices).where(eq(invoices.id, invoice.id));

@@ -75,6 +75,8 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   TAX_IDENTITY_SAVED: 'vendor',
   PAN_VERIFIED: 'vendor',
   PAN_VERIFICATION_CLEARED: 'vendor',
+  // Phase 32: the invoices of orders delivered while the shop had no PAN, issued when it saved one.
+  WAITING_INVOICES_ISSUED: 'vendor',
   VENDOR_SUSPENDED_FOR_COMPLIANCE: 'vendor',
   VENDOR_DELETION_REQUESTED: 'vendor',
   VENDOR_SUSPENDED_BY_ADMIN: 'vendor',

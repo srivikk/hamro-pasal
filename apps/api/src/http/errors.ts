@@ -76,6 +76,15 @@ import {
   LedgerRechargeRequiredError,
 } from '../marketing/ad-purchase-service';
 import {
+  InvalidInvoiceCursorError,
+  InvoiceNotFoundError,
+} from '../invoices/vendor-invoice-service';
+import {
+  VendorOfferEndInPastError,
+  VendorOfferLimitError,
+  VendorOfferNotFoundError,
+} from '../marketing/vendor-offer-service';
+import {
   CampaignEndedError,
   CampaignNotFoundError,
   CampaignNotOptedInError,
@@ -332,6 +341,21 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof PrimaryBankAccountRequiredError) {
     return new HttpError(409, 'PRIMARY_BANK_ACCOUNT_REQUIRED', error.message);
+  }
+  if (error instanceof InvoiceNotFoundError) {
+    return new HttpError(404, 'INVOICE_NOT_FOUND', 'Invoice not found');
+  }
+  if (error instanceof InvalidInvoiceCursorError) {
+    return new HttpError(400, 'INVALID_CURSOR', 'The cursor is not valid');
+  }
+  if (error instanceof VendorOfferNotFoundError) {
+    return new HttpError(404, 'OFFER_NOT_FOUND', 'Offer not found');
+  }
+  if (error instanceof VendorOfferLimitError) {
+    return new HttpError(422, 'OFFER_LIMIT_REACHED', error.message, { max: error.max });
+  }
+  if (error instanceof VendorOfferEndInPastError) {
+    return new HttpError(422, 'OFFER_END_IN_PAST', error.message);
   }
   if (error instanceof CampaignNotFoundError) {
     return new HttpError(404, 'CAMPAIGN_NOT_FOUND', 'Campaign not found');

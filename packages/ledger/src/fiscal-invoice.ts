@@ -73,9 +73,12 @@ export type FiscalInvoiceResult =
  * - **The Grand Total must equal what the customer paid** (the order total), to the paisa. A
  *   mismatch throws, which aborts the delivery: it is a bug, never a rounding allowance.
  *
- * Locks: the caller holds the order row, and by then the vendor row, the ledger accounts and the
- * ad purchase row (settlement, ad premium). This takes the sequence row **last**, and nothing
- * after it: a transaction holding a sequence row never waits for another lock.
+ * Locks: a delivery holds the order row, and by then usually the vendor row, the ledger accounts
+ * and the ad purchase row (settlement, ad premium). This takes the vendor row `FOR SHARE` (never
+ * stronger than what a wallet journal already holds), then the sequence row **last**, and nothing
+ * after it: a transaction holding a sequence row never waits for another lock. The PAN save, which
+ * issues a shop's waiting invoices, follows the same order: vendor row, then sequence rows; it
+ * locks no order row.
  *
  * `issuedAt` defaults to the database clock; tests pass it to cross a fiscal year.
  */
@@ -99,7 +102,12 @@ export async function generateFiscalInvoice(
       is_vat_registered: vendors.is_vat_registered,
     })
     .from(vendors)
-    .where(eq(vendors.id, order.vendor_id));
+    .where(eq(vendors.id, order.vendor_id))
+    // Read under a share lock: a PAN being saved at this moment (which holds the row FOR UPDATE
+    // and issues the shop's waiting invoices) is either seen here, or sees this delivery. Without
+    // it, a delivery that posts no wallet journal could read "no PAN" while the save, not yet
+    // seeing the delivery, skips it: an order with no invoice from either side.
+    .for('share');
   if (seller === undefined) throw new InvoiceNotIssuableError(order.id, 'its vendor is gone');
   if (seller.tax_id === null)
     return { status: 'SELLER_HAS_NO_PAN', invoice: null, replayed: false };

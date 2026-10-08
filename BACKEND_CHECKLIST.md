@@ -234,7 +234,7 @@ Schemas, formulas and contracts: STATE_HANDOFF.md §8Z.5. Rules: SPEC.md core se
 
 ### Step 2 — cart math and the payment session
 
-- [ ] **`vendor_offers`** (immutable rules; only `ended_at` may be set) and vendor routes; audit rows.
+- [x] **`vendor_offers`** (immutable rules; only `ended_at` may be set) and vendor routes; audit rows. **Built 2026-10-08 (migration 0034, STATE_HANDOFF.md §8Z.33): table, trigger and CRUD only.** `GET / POST /api/vendor/offers`, `POST /api/vendor/offers/:id/end` (200 also on repeat; `404 OFFER_NOT_FOUND`, `422 OFFER_LIMIT_REACHED` with `details.max` 10, `422 OFFER_END_IN_PAST`). No stored status: the view's `status` (`ACTIVE | ENDED | CANCELLED`) is derived. **No order is priced with an offer yet** (the line below).
 - [x] **Platform campaign half built 2026-10-08 (migration 0032, §8Z.32):** `T = S - Dp + F`, commission on `S - Dpv`, the snapshot on the order, the quote's `platform_promo`, `409 QUOTE_CHANGED`, and `planSettlement` / the gateway amounts / pending escrow reading it, the platform's share posted to `PROMO_EXPENSE`.
 - [ ] **Pricing in `CheckoutService`, the vendor offer half** (`Dv`, needs `vendor_offers`): `T = S - Dv - Dp + F`, commission on `S - Dv - Dpv`. Test: SPEC verification 5 (total 860, commission 85.50).
 - [ ] **`planSettlement`, reconciliation, eSewa / Khalti amount checks** read the order snapshot; platform share of a campaign posts to `PROMO_EXPENSE`.
@@ -317,7 +317,8 @@ Rules: SPEC.md Dual-Fulfillment "Delivery Modularity", Vendor Pricing "Billing C
 - [x] **Enum value `SUSPENDED_COMPLIANCE`** (migration 0022, 2026-10-08). It is in the same file as the columns: nothing there uses the value as an enum (the two CHECKs compare the status as text), which is what PostgreSQL requires inside one transaction.
 - [x] **Migration B:** `vendors.legal_name`, `registered_address`, `tax_id` (`^[0-9]{9}$`), `is_vat_registered`, `status_before_compliance_suspension`; `vendors_compliance_suspension_check`. **Built 2026-10-08** (migration 0022), with one difference: the CHECK is one-way (`SUSPENDED_COMPLIANCE` needs a remembered status), so a debt or admin suspension can be laid on top of a compliance one without failing a delivery. Drizzle schema, `vendorSchema` and `contract.ts` together.
 - [x] **`PUT /api/vendor/tax-identity`** (VENDOR, own shop, any status). **Built 2026-10-08** (STATE_HANDOFF.md §8Z.19): the PAN save, the compliance lift in the same transaction, the verification cleared on a changed PAN, audit entries `TAX_IDENTITY_SAVED` and `PAN_VERIFICATION_CLEARED`. The response also carries `legal_name`, `registered_address`, `compliance_suspension_lifted`, `pan_verified_at`.
-  - [ ] **Not built with it:** the `vendor.restored` event (its payload is the debt restore’s: it needs its own event and SMS / push template), and issuing the invoices that were waiting (6.4 does not exist yet).
+  - [x] **Issuing the invoices that were waiting (2026-10-08, §8Z.33):** the first PAN issues, in its own transaction and in delivery order, the invoice of every DELIVERED order of the shop that has none; the response carries `waiting_invoices_issued`; audit `WAITING_INVOICES_ISSUED`.
+  - [ ] **Not built with it:** the `vendor.restored` event (its payload is the debt restore’s: it needs its own event and SMS / push template).
   - [ ] **Not built: uploading the PAN document itself.** The endpoint stores the number. A document vault (R2, KYC uploads) does not exist, so today a Super Admin has nothing to open when verifying.
   - Body `{ tax_id, is_vat_registered, legal_name?, registered_address? }` → `200 { vendor_id, tax_id, is_vat_registered, status }`.
   - `400 VALIDATION_FAILED` for anything but nine digits.
@@ -362,19 +363,23 @@ Rules: SPEC.md Dual-Fulfillment "Delivery Modularity", Vendor Pricing "Billing C
 
 - [x] **Partly built 2026-10-08 (migration 0029, §8Z.31):** `fiscal_document_type`, `invoice_sequences` (per seller, fiscal year and document type; only `+ 1`), and `invoices` as a **header with totals** (`fiscal_year`, `bill_number`, `invoice_sequence` "HP-2082-000142", `issued_date_bs`, subtotal, discount, delivery charge, grand total), sealed against UPDATE / DELETE / TRUNCATE. `generateFiscalInvoice(tx, order)` in `@hamro-pasal/ledger` issues it under the counter's row lock. **Not wired into any delivery.**
   - [x] **Completed and wired 2026-10-08 (migration 0031, §8Z.32):** the seller copy and PAN, buyer name, payment method, the VAT split (per line, VAT inclusive) and exempt amount, `delivery_charged_by`, amount in words and `line_items` (jsonb). `DeliveryHandoff.handOver` and the nightly reconciliation issue it, last in the lock order. A seller without a PAN gets none.
-  - [ ] **Still open:** issuing the waiting invoices when a swept shop saves its PAN; `buyer_tax_id`, `content_hash`, print and CBMS columns (each needs the immutability trigger to allow it); HS codes and VAT-exempt products.
-- [ ] **Migration, the rest:** `cbms_sync_status`; `invoice_lines`, `invoice_access_log` with every CHECK and index of §8Z.11; `products.hs_code`, `is_imported`, `is_vat_exempt`.
+  - [x] **Issuing the waiting invoices when a swept shop saves its PAN (2026-10-08, §8Z.33).**
+  - [ ] **Still open:** `buyer_tax_id`, `content_hash` and CBMS columns (each needs the immutability trigger to allow it); HS codes and VAT-exempt products. `print_count` is not a column: it is the count of PRINT rows in `invoice_access_log`.
+- [x] **`invoice_access_log` (migration 0033, 2026-10-08, §8Z.33)** with §8Z.11's columns (`actor_role`, `action` `VIEW | DOWNLOAD | PRINT`, `copy_number`, `occurred_at`, `ip_address`, `user_agent`), append-only, one of each copy number per invoice.
+- [ ] **Migration, the rest:** `cbms_sync_status`; `products.hs_code`, `is_imported`, `is_vat_exempt`. (`invoice_lines` is the `line_items` column since 0031.)
 - [ ] **Immutability triggers:** `invoices` refuses DELETE / TRUNCATE and any UPDATE outside `print_count`, `first_printed_at`, `cbms_*`; lines and the access log are append-only; `invoice_sequences` only counts up by 1; lines only in the creating transaction; totals equal the lines at COMMIT.
 - [ ] **`InvoiceService.issueForOrder(tx, order)`**, called by `DeliveryHandoff.handOver` (both the rider's and the vendor's handoff).
   - Counter row locked `FOR UPDATE` in the delivery transaction (never a SEQUENCE).
   - Discount spread over the lines (largest remainder), VAT split per line `taxable = round_half_up(g × 100 / 113)`, the shop's own delivery charge as a taxed `DELIVERY` line, a fleet charge outside its taxable sales.
   - **Assert `grand_total_npr = orders.total_npr` before insert**; a mismatch aborts the delivery.
   - Reference arithmetic with tests: `apps/mobile/src/features/vendor/invoice-math.ts#buildInvoice`.
-- [ ] **A shop swept for compliance:** deliveries of its open orders succeed without an invoice; the PAN upload issues them (6.2).
+- [x] **A shop swept for compliance:** deliveries of its open orders succeed without an invoice; the PAN upload issues them (6.2). **Built 2026-10-08 (§8Z.33).**
 - [ ] **`GET /api/orders/:id/invoice`** (customer, order owner): the invoice and its notes; logs VIEW; `404 INVOICE_NOT_FOUND` before delivery.
-- [ ] **`GET /api/vendor/invoices?fiscal_year=&document_type=&limit=&cursor=`** (newest first, keyset) and **`GET /api/vendor/invoices/:id`** (header, metadata, lines, totals, `print_count`; logs VIEW). Another shop's is 404.
-- [ ] **Printing is server-side only (confirmed 2026-10-07):** the app has no Print button until this route exists, so every copy is numbered.
-- [ ] **`POST /api/vendor/invoices/:id/print`** → `{ copy_number, label }` (`ORIGINAL`, then `COPY OF ORIGINAL (n)`); under the row lock: `print_count + 1` and a PRINT log row.
+- [x] **`GET /api/vendor/invoices?fiscal_year=&document_type=&limit=&cursor=`** (newest first, keyset on `(issued_at, id)`, limit 1–50, default 20; `400 INVALID_CURSOR`). **Built 2026-10-08 (§8Z.33)**: each entry is the header with `print_count`.
+- [ ] **`GET /api/vendor/invoices/:id`** (header, metadata, lines, totals, `print_count`; logs VIEW). Another shop's is 404. Not built: nothing writes a VIEW row yet.
+- [x] **Printing is server-side only, and the printed document is the server's PDF (decided 2026-10-08, replacing the JSON `POST …/print` sketched here before).** **`GET /api/vendor/invoices/:id/pdf`** → `application/pdf` (pdfkit), rendered from the sealed row. Every request is one print: under the invoice's row lock it takes the next copy number (0 = `ORIGINAL`, n = `COPY OF ORIGINAL (n)`, printed on the page and sent as `X-Invoice-Copy-Number`) and writes the PRINT row. `404 INVOICE_NOT_FOUND` (also another shop's). **Built 2026-10-08 (§8Z.33).**
+  - [ ] **The PDF's fonts are Latin only:** a product or buyer name in Devanagari prints as `?`, and the IRD's Nepali field labels are not printed. Needs a bundled Devanagari font (Noto Sans Devanagari, OFL).
+  - [ ] The Vendor App's invoice screen still shows sample invoices and has no Print button: wire it to the list and open the PDF.
 - [ ] **`POST /api/vendor/invoices/:id/notes { document_type, reason, lines[] }`** (Credit / Debit Note, own gap-free sequence; a credit may not exceed what is left uncredited). Automatic Credit Note when a refund is paid after delivery (needs dispute resolution).
 - [ ] **`GET /api/admin/invoices?vendor_id=&fiscal_year=&cursor=`** (read only; logs VIEW).
 - [ ] **Vendor product routes** accept `hs_code`, `is_imported`, `is_vat_exempt` (`400` for an imported product without an HS code).
@@ -430,7 +435,7 @@ Rules: SPEC.md Dual-Fulfillment "Delivery Modularity", Vendor Pricing "Billing C
 
 The Vendor App's Marketing tab is built on sample data to these contracts. Build them with section 5 steps 2, 3 and 5.
 
-- [ ] **My Offers:** `GET / POST /api/vendor/offers` (body `{ kind: FLAT | PERCENTAGE, value, min_cart_npr, max_discount_npr?, ends_at? }`; `400` when a flat value exceeds its minimum cart), `POST /api/vendor/offers/:id/end`. Each offer in the list carries the server-rendered `label`.
+- [x] **My Offers:** `GET / POST /api/vendor/offers` (body `{ kind: FLAT | PERCENTAGE, value, min_cart_npr?, max_discount_npr?, ends_at? }`; `400` when a flat value exceeds its minimum cart), `POST /api/vendor/offers/:id/end`. Each offer in the list carries the server-rendered `label` and a derived `status`. **Built 2026-10-08 (§8Z.33).** The Vendor App's My Offers section still runs on samples.
 - [ ] **Campaigns:** `GET /api/vendor/campaigns` (invites and joined, each with `kind`, `value`, `max_discount_npr`, `min_cart_npr`, `vendor_share_percent`, `terms_version`, dates, `opted_in_at | null`), `POST …/:id/opt-in { terms_version }` (`409 CAMPAIGN_TERMS_CHANGED`), `POST …/:id/opt-out`. No admin opt-in route.
 - [x] **Ad Marketplace:** `GET /api/vendor/ads/products` (with the shop's `settlement_model`, `available_for_ads_npr`, and per product `collection` and `recharge_required_npr`), `POST /api/vendor/ads/purchases { ad_product_id, starts_at, budget_npr?, idempotency_key, agreed: true }`, `GET /api/vendor/ads/purchases`, `POST …/:id/cancel`. **Built 2026-10-08** (§8Z.27).
 - [x] **The guard the app mirrors:** `422 AD_EXCEEDS_PENDING_PAYOUT` (Model B) and `422 LEDGER_RECHARGE_REQUIRED` (Models A and C). Both answer with the message "Insufficient funds for this ad purchase."
@@ -488,7 +493,7 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 5. **Scheduled jobs:** `SETTLEMENT_PAYOUT_RUN` (blocked on the transfer rail), the Free-plan reversion and its 7-day notice in `BILLING_CYCLE_RENEWAL`, `vendor.suspended_for_compliance` SMS / push, the "one gate for LIVE", then `vendors_live_tax_identity_check`.
 6. **Retire vendor payout requests** (6.11) with the legacy Payouts tab and the Vendor Portal's request form.
 7. **Public promotions:** `GET /api/home/promotions` and the customer app's switch are done (2026-10-08, §8Z.29). Left: the image upload, and `offer_tags` on shops.
-8. The discount engine (section 5 step 2) and fiscal invoicing (6.4).
+8. The discount engine (section 5 step 2): `vendor_offers` exists (2026-10-08, §8Z.33); **next: the vendor offer half of checkout** (`Dv`, stacking with the campaign, the order snapshot, settlement and the invoice's discount). Fiscal invoicing (6.4): the waiting invoices, the list and the PDF are done; left are the detail read, the customer's and admin's reads, Credit / Debit Notes, and a Devanagari font for the PDF.
 
 ## Suggested build order
 

@@ -238,3 +238,76 @@ export const adPurchases = pgTable(
     ),
   ],
 );
+
+/**
+ * Phase 32: a vendor's own offer (SPEC core 7, "Vendor Offers"). The vendor funds it entirely, so
+ * the row exists only because the shop's own account created it: a trigger of migration 0034
+ * refuses any other creator.
+ *
+ * A rule is never edited. The same trigger lets an UPDATE set `ended_at` / `ended_by_user_id`
+ * once and nothing else, and refuses DELETE: changing an offer ends this row and creates another,
+ * so an order always points at the exact rule it was priced with.
+ *
+ * There is no status column: "ended" (its `ends_at` passed) is read from the clock and "cancelled"
+ * from `ended_at`, so nothing stored goes stale (`vendorOfferStatusOf` in shared-types).
+ */
+export const vendorOffers = pgTable(
+  'vendor_offers',
+  {
+    id: primaryId(),
+    vendor_id: uuid()
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'restrict' }),
+    kind: discountKindEnum().notNull(),
+    /** NPR for FLAT; percent for PERCENTAGE. */
+    value: numeric({ precision: 12, scale: 2, mode: 'number' }).notNull(),
+    /** The most one order is discounted; PERCENTAGE only. */
+    max_discount_npr: npr(),
+    min_cart_npr: npr().notNull().default(0),
+    /** "Flat Rs. 200 OFF": rendered by the server from the rule at creation. */
+    label: text().notNull(),
+    starts_at: timestamp({ withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    /** Null: until the shop ends it. */
+    ends_at: timestamp({ withTimezone: true, mode: 'date' }),
+    /** Always the vendor's own user. */
+    created_by_user_id: uuid()
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    created_at: createdAt(),
+    /** The shop switched it off. Set once, never cleared. */
+    ended_at: timestamp({ withTimezone: true, mode: 'date' }),
+    ended_by_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
+  },
+  (t) => [
+    // A shop's offers newest first; also serves the vendors FK check.
+    index('vendor_offers_vendor_id_idx').on(t.vendor_id, t.created_at),
+    // The offers that can still apply to an order (checkout's lookup).
+    index('vendor_offers_live_idx')
+      .on(t.vendor_id, t.starts_at)
+      .where(sql`${t.ended_at} IS NULL`),
+    index('vendor_offers_created_by_user_id_idx').on(t.created_by_user_id),
+    index('vendor_offers_ended_by_user_id_idx')
+      .on(t.ended_by_user_id)
+      .where(sql`${t.ended_by_user_id} IS NOT NULL`),
+    check(
+      'vendor_offers_value_check',
+      sql`${t.value} > 0 AND (${t.kind} <> 'PERCENTAGE' OR ${t.value} <= 100)`,
+    ),
+    check(
+      'vendor_offers_max_discount_check',
+      sql`${t.max_discount_npr} IS NULL OR (${t.kind} = 'PERCENTAGE' AND ${t.max_discount_npr} > 0)`,
+    ),
+    check('vendor_offers_min_cart_check', sql`${t.min_cart_npr} >= 0`),
+    // A flat offer never exceeds its own minimum cart.
+    check(
+      'vendor_offers_flat_min_cart_check',
+      sql`${t.kind} <> 'FLAT' OR ${t.min_cart_npr} >= ${t.value}`,
+    ),
+    check('vendor_offers_label_check', sql`btrim(${t.label}) <> ''`),
+    check('vendor_offers_dates_check', sql`${t.ends_at} IS NULL OR ${t.ends_at} > ${t.starts_at}`),
+    check(
+      'vendor_offers_ended_check',
+      sql`(${t.ended_at} IS NULL) = (${t.ended_by_user_id} IS NULL)`,
+    ),
+  ],
+);

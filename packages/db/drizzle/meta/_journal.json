@@ -232,6 +232,20 @@
       "when": 1791467415168,
       "tag": "0032_order_discounts",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1791479123453,
+      "tag": "0033_invoice_access_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1791479131093,
+      "tag": "0034_vendor_offers",
+      "breakpoints": true
     }
   ]
 }

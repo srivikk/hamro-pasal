@@ -1,4 +1,4 @@
-# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery)
+# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery; Phase 32 retroactive invoices, the invoice PDF, vendor offers CRUD)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
 work without re-deriving it. It describes the tree at the end of **Phase 23 (End-to-End System Audit & Failure Mode Hardening)**, the last planned development phase, on top of Phase 22 (Financial Reconciliation & Payouts), 21 (Rider Dispatch &
@@ -1099,6 +1099,208 @@ for order state changes only (Phase 20, §8M; no chat, wallet or rider pushes, n
 escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8Z.33 Phase 32: retroactive invoices on PAN save, the invoice list and server-rendered PDF, vendor offers (table and CRUD) (2026-10-08)
+
+`packages/shared-types`, `packages/db`, `packages/ledger`, `apps/api`. Migrations **0033** and
+**0034**. One new dependency: **`pdfkit`** (API only). SPEC.md was not changed. **Not run against
+a live API or device**; the dev database needs `pnpm db:migrate`. No app screen was changed.
+
+**Decided 2026-10-08 (user): the printed invoice is a PDF the server renders.** A client that
+lays out the invoice from JSON could alter it before printing. This replaces the JSON
+`POST /api/vendor/invoices/:id/print` sketched in §8Z.11.
+
+### Asked vs built (documented contracts kept)
+
+| Asked                                                                    | Built                                                                                                                                      | Why                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invoice_access_log (id, invoice_id, user_id, role, action, created_at)` | §8Z.11's table: `actor_role`, `occurred_at`, plus `copy_number`, `ip_address`, `user_agent`                                                | The documented columns. `copy_number` is what makes the first print the original and each later one a numbered copy (SPEC core 10)                                                                  |
+| actions `VIEWED`, `PRINTED`                                              | `VIEW`, `DOWNLOAD`, `PRINT`                                                                                                                | §8Z.11's values. Only `PRINT` is written today                                                                                                                                                      |
+| `POST /api/vendor/offers/:id/cancel`                                     | `POST /api/vendor/offers/:id/end`                                                                                                          | §8Z.5 and BACKEND_CHECKLIST 6.9; the Vendor App's button is "End offer". `/cancel` is not served                                                                                                    |
+| `vendor_offers.status (ACTIVE, ENDED, CANCELLED)` stored                 | no status column: `ended_at` / `ended_by_user_id` (§8Z.5). The API view carries a **derived** `status` with exactly those three values     | A stored `ENDED` needs a job to flip it and is wrong until the job runs (the campaigns precedent, §8Z.28). CANCELLED = the shop ended it; ENDED = its `ends_at` passed; ACTIVE otherwise            |
+| columns as listed                                                        | plus `label`, `created_by_user_id`, `created_at`                                                                                           | §8Z.5. SPEC core 7: every vendor-funded discount traces to a record the shop's own account created; the trigger refuses any other creator                                                           |
+| immutable: kind, value, min cart, cap, `starts_at`                       | those and `ends_at`, `label`, `vendor_id`, the creator; the only UPDATE allowed sets `ended_at` + `ended_by_user_id`, once; DELETE refused | §8Z.5: "a rule is never edited"                                                                                                                                                                     |
+| `starts_at` in the request                                               | not accepted: an offer starts when it is created                                                                                           | §8Z.5's body has none. Say if scheduled offers are wanted                                                                                                                                           |
+| "loop through these orders and call `generateFiscalInvoice`"             | as asked, for the **first** PAN only (`tax_id` was null), whether or not the shop was suspended                                            | An order of a shop that already had a PAN and still has no invoice was delivered before invoicing existed (§8Z.11's open question); a PAN correction must not sweep those in                        |
+| lock sequence "Vendor Row → Invoice Sequence Row"                        | **order rows → vendor row → sequence row** (below)                                                                                         | The invoice insert's foreign key reads the order row. Taken after the sequence row it could deadlock with the nightly reconciliation, which holds an order and then wants the vendor / sequence row |
+| the PDF "must log PRINTED"                                               | each request is one numbered print: a `PRINT` row with `copy_number`, the label on the page, `X-Invoice-Copy-Number` in the response       | SPEC core 10 and verification 12 ("a second print is logged and returned as copy 1")                                                                                                                |
+
+### 1. Retroactive invoices (`VendorComplianceService.saveTaxIdentity`)
+
+- **When.** The save that gives the shop its first PAN. In that transaction, after the vendor
+  row is updated (so the invoices copy the PAN, VAT registration, legal name and address this
+  save leaves), every DELIVERED order of the shop with no invoice gets one, oldest
+  `delivered_at` first. Bill Numbers therefore follow the deliveries; the invoices are dated and
+  numbered **now** (no invoice could exist before the seller had a PAN, §8Z.11).
+- **Response:** `taxIdentityResponseSchema` gained `waiting_invoices_issued` (defaults to 0, so a
+  client reads an older API as "none"). Audit: one `WAITING_INVOICES_ISSUED` entry (new action,
+  on `vendor`) with `issued_count`, `first_invoice_sequence`, `last_invoice_sequence` and
+  `refused_order_ids`; none when no order waited.
+- **An order that cannot be invoiced** (`InvoiceNotIssuableError`: its lines do not add up to
+  what the customer paid) is skipped and named in `refused_order_ids`. It takes no number (the
+  generator refuses before the counter moves) and does not keep the shop from saving its PAN.
+  **Nothing retries it.**
+- **Lock order** (one order for every path that issues an invoice):
+
+  | Path                             | Order rows                                                 | Vendor row                                                   | Sequence row       |
+  | -------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------ | ------------------ |
+  | delivery, nightly reconciliation | its order `FOR UPDATE` (first)                             | `FOR NO KEY UPDATE` (wallet journal), then `FOR SHARE` (new) | `FOR UPDATE`, last |
+  | PAN save                         | the waiting orders `FOR UPDATE`, in delivery order (first) | `FOR UPDATE`                                                 | `FOR UPDATE`, last |
+  - The PAN save reads the shop (id, "has a PAN") unlocked first; both facts are stable (an
+    account's shop never changes, a PAN is never removed). Only a shop without a PAN locks orders.
+  - Under the vendor lock it re-selects the waiting orders `FOR UPDATE SKIP LOCKED`: it holds
+    the ones from the first pass, picks up any delivered since, and **never waits for an order
+    row while holding the vendor row**. An order skipped there is held by a delivery or the
+    reconciliation, which then reads the vendor row after this commit and issues the invoice
+    itself.
+  - **`generateFiscalInvoice` now reads the seller `FOR SHARE`.** Without it a delivery that
+    posts no wallet journal (a 0 % cash order of the shop's own delivery) could read "no PAN"
+    while the save, not yet seeing that delivery, skipped it: an order with no invoice from
+    either side. With it one of the two always sees the other (tested with a held transaction).
+    `FOR SHARE` is never stronger than what a wallet journal already holds, so §8Z.30's rule
+    stands.
+
+- **Known gap:** an order delivered in the instant between the two passes **and** row-locked by
+  something that issues no invoice (a review being submitted for it) is skipped and stays
+  without an invoice. Not observed; a nightly "delivered, PAN on file, no invoice" sweep would
+  close it and retry the refused ones.
+- **On a dev database** the first PAN of a shop also invoices orders delivered before Phase 31.
+
+### 2. Invoices: list and PDF (`/api/vendor/invoices`, `requireAuth(VENDOR)`, `no-store`)
+
+```jsonc
+// GET /api/vendor/invoices?fiscal_year=2082/083&document_type=INVOICE&limit=20&cursor=<invoice id>
+{ "invoices": [ { "id", "document_type", "order_id", "fiscal_year", "bill_number",
+                  "invoice_sequence": "HP-2082-000142", "issued_at", "issued_date_bs": "2082-06-22",
+                  "buyer_name", "payment_method", "grand_total_npr", "print_count": 0 } ],
+  "next_cursor": "uuid" | null }
+// 400 INVALID_CURSOR (not this shop's invoice) · 400 VALIDATION_FAILED · 404 VENDOR_NOT_FOUND
+// GET /api/vendor/invoices/:id/pdf → 200 application/pdf
+//   Content-Disposition: inline; filename="HP-2082-000142.pdf" · X-Invoice-Copy-Number: 0
+// 404 INVOICE_NOT_FOUND (also another shop's) · 400 VALIDATION_FAILED
+```
+
+- **List** (`VendorInvoiceService.list`): newest first, keyset on `(issued_at, id)` compared in
+  SQL; limit 1–50, default 20. `print_count` = the invoice's PRINT rows. Not logged.
+- **PDF** (`VendorInvoiceService.print`, `invoices/invoice-pdf.ts`), one transaction:
+  1. the invoice row joined to the caller's shop, locked **`FOR UPDATE OF invoices`** (a lock,
+     not a write: the row stays sealed). It is the only lock taken;
+  2. `copy_number` = the count of its PRINT rows; insert the PRINT row (user, role, copy number,
+     IP, user agent);
+  3. render, **before the commit**: a print that cannot be rendered takes no number.
+- Two simultaneous prints queue on the row lock and get consecutive numbers (tested with five);
+  a partial unique index `(invoice_id, copy_number) WHERE action = 'PRINT'` backs it.
+- **A GET with a side effect, on purpose:** every request is a print. It is `no-store`; a
+  client that retries or prefetches makes a copy. The response is a buffer with
+  `Content-Length`, not a chunked stream (an invoice is a few kB).
+- **The document** (A4, pdfkit, built-in Helvetica): the copy mark (`ORIGINAL` /
+  `COPY OF ORIGINAL (n)`), seller name, address, phone, `VAT No.` or `PAN`; `TAX INVOICE` for a
+  VAT-registered seller, else `INVOICE`; buyer, payment method, order id; invoice number, Bill
+  No., fiscal year, BS date, AD date and time in Nepal Time; the table (S.N., Particulars, HS
+  Code, Qty, Rate, Discount, Taxable, VAT, Amount) with the header repeated on every page; the
+  stored totals; the amount in words; on every page the disclaimer, the invoice number, the copy
+  mark and "Page n of m".
+  - **Nothing is computed:** every figure, date and the amount in words is the sealed row's.
+    Amounts use the Nepali grouping (`1,02,500.50`).
+  - **Deterministic:** the same row and copy number give the same bytes (`CreationDate` is the
+    issue time).
+- **`invoice_access_log`** (migration 0033): the columns of the table above; FKs to `invoices`
+  and `users` (RESTRICT), each indexed; CHECK a copy number exactly for PRINT, never negative;
+  hand-added triggers refuse UPDATE, DELETE and TRUNCATE. Not in the Zod entity contract.
+  - `TRUNCATE invoices` is now refused by PostgreSQL itself (the table is referenced);
+    `TRUNCATE invoices CASCADE` by the triggers.
+
+### 3. Vendor offers (`/api/vendor/offers`, `requireAuth(VENDOR)`, `no-store`)
+
+```jsonc
+// POST /api/vendor/offers { kind: "FLAT" | "PERCENTAGE", value, min_cart_npr? (0),
+//                           max_discount_npr? (null), ends_at? (null) }   → 201 { offer }
+//   400 VALIDATION_FAILED (a flat value above its minimum cart, a cap on a flat offer, > 100 %,
+//       a vendor id / start date / status / label in the body)
+//   422 OFFER_END_IN_PAST · 422 OFFER_LIMIT_REACHED (details.max 10) · 404 VENDOR_NOT_FOUND
+// GET  /api/vendor/offers          → { offers: [ VendorOfferView ] }   newest first, at most 100
+// POST /api/vendor/offers/:id/end  → 200 { offer }, also on repeat · 404 OFFER_NOT_FOUND (also another shop's)
+// VendorOfferView: { id, kind, value, max_discount_npr, min_cart_npr, label, starts_at, ends_at,
+//                    status: "ACTIVE" | "ENDED" | "CANCELLED", created_at, ended_at }
+```
+
+- **Table** (migration 0034, `schema/marketing.ts#vendorOffers`): §8Z.5's columns and CHECKs
+  (value > 0, a percentage ≤ 100, a cap only on a percentage, a flat offer never above its
+  minimum cart, `ends_at > starts_at`, ended at and by together). Indexes on every FK. Hand-added
+  trigger `vendor_offers_guard`: INSERT only by the vendor's own user and never already ended;
+  UPDATE only to end it, once, by the vendor's own user, with every other column unchanged;
+  DELETE refused. Not in the Zod entity contract.
+- **Service** (`marketing/vendor-offer-service.ts`): create and end each take the **vendor row
+  `FOR UPDATE`**, then (end) the offer row; one transaction with the audit entry
+  (`VENDOR_OFFER_CREATED` / `VENDOR_OFFER_ENDED`, both already in the contract). A repeated end
+  answers the same row and records nothing.
+- **`label`** is rendered by the server at creation (`vendorOfferLabel`: "Flat Rs. 100 OFF",
+  "10% OFF", "20% OFF up to Rs. 100") and stored.
+- **Limit (not asked):** at most 10 offers running or scheduled per shop, counted under the
+  vendor lock, so checkout's later "best of the shop's offers" stays bounded.
+- A flat offer always needs a minimum cart of at least its value, so `min_cart_npr` is optional
+  only for a percentage.
+- **No order is priced with an offer.** Checkout, the quote, settlement and the invoice ignore
+  the table; `vendor_offer` in the quote is still null.
+
+### Open
+
+- **The PDF prints Latin text only.** A product or buyer name in Devanagari is printed as `?`
+  (never dropped), and the IRD's Nepali field labels (आर्थिक वर्ष, बिजक नम्बर) are absent. It
+  needs a bundled Devanagari font (Noto Sans Devanagari, OFL: a binary in the repository) and a
+  check that pdfkit shapes it correctly. **Decide before the first real invoice is printed.**
+- Checkout's vendor offer half (`Dv`), stacking with the campaign, the order snapshot columns
+  (`vendor_offer_id`, `vendor_offer_discount_npr`), settlement and the invoice's discount.
+- `GET /api/vendor/invoices/:id` (JSON detail, VIEW), the customer's and the admin's invoice
+  reads, Credit / Debit Notes. The Vendor App's Invoices and My Offers screens still run on
+  samples.
+- A print cannot be undone or re-issued under the same number: a lost download is the next copy.
+- `ip_address` in the access log is the load balancer's until Express `trust proxy` is set.
+
+### Tests
+
+- **API integration 856 in 52 suites, all passing** (one full run after the last change). New:
+  `retroactive-invoices.int.test.ts` (14), `vendor-invoices-api.int.test.ts` (13),
+  `vendor-offers-api.int.test.ts` (28). Two existing assertions updated: the tax identity body's
+  new field, and `TRUNCATE invoices` (refused earlier now; a `CASCADE` case added).
+  - Retroactive: bill numbers in delivery order with the seller as saved; only DELIVERED orders
+    of this shop; a shop never swept; nothing waiting; once (repeat, changed PAN); a shop that
+    already had a PAN left alone; no order twice; an order that cannot be invoiced skipped with
+    no gap; a refused PAN; five simultaneous saves; **a save waiting on a held order row**;
+    **a delivery that read "no PAN" and commits after the save started**; six rounds of four
+    deliveries racing the save.
+  - Invoices: the list contract, other shops hidden, both filters, paging 2 / 2 / 1, cursor and
+    query refusals; **the PDF's text read back from the served file** (header, table, words,
+    disclaimer); copy numbers 0, 1, 2 with their log rows; **five simultaneous prints → 0 to 4**;
+    the stored document after the shop changed its PAN; another shop's 404 with nothing logged;
+    roles; no write route.
+  - Offers: create with audit, defaults, twelve refused bodies, a past end, the limit and its
+    release, **fifteen simultaneous creates → ten**; the list with the three derived statuses;
+    end with audit, repeat, five at once, another shop's; no edit / delete route, no admin
+    route, roles.
+- **db integration 170** (+30, `invoice-access-log-and-offers.int.test.ts`): the log's CHECKs,
+  unique copy numbers, append-only, an invoice row lockable; the offer CHECKs, **each term
+  frozen**, creator and ender must be the shop's user, ended once, never deleted. Migrations
+  0000–0034 from scratch and the foreign-key index audit pass.
+- Unit: shared-types 338 (+33), api 135 (+14, `invoice-pdf.test.ts`: header, table, totals,
+  copy mark, PAN invoice, fleet delivery, same bytes, 120 lines over several pages, a wrapped
+  name, non-Latin text), ledger 28, admin 292, worker 142. Mobile 1505: 1504 passed in the full
+  run; `category-navigation` failed one timing case and passes alone (17 of 17), the flake
+  §8Z.28 records.
+- Worker integration: `order-reconciliation`, `settlement-payout-run`, `compliance-and-billing`
+  (46 tests) pass with the new share lock. The Kafka suites were not run.
+- `pnpm typecheck` and `pnpm lint` 16 of 16; `drizzle-kit generate` reports no schema changes.
+- **Mutation-checked, 17 of 17 killed:** the seller read without the share lock (1 fails, only
+  after the held-delivery test was added), invoices on every save (1), not in delivery order
+  (1), a refused order aborting the save (1), non-delivered orders tried (1, after an assertion
+  was added); print without the row lock (1), not scoped to the shop (2), not logged as a print
+  (2), every print ORIGINAL (2), the list not scoped (4), an inclusive cursor (1); no offer
+  limit (2), no vendor lock on create (1), end not scoped (1), a repeat audited again (2), a
+  past end accepted (1), ended offers counted as running (1).
+- **A bug the tests caught:** `print_count` read 0 for every invoice. In a single-table select
+  Drizzle renders `${invoices.id}` inside a raw SQL fragment as a bare `"id"`, which the
+  subquery bound to the log row. The outer column is now written out. **Rule: in a correlated
+  subquery written as raw SQL, qualify the outer column by hand.**
 
 ## 8Z.32 Phase 31: campaign discounts through checkout and settlement, the complete fiscal invoice, issued at delivery (2026-10-08)
 

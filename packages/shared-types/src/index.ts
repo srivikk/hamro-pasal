@@ -25,6 +25,8 @@ export * from './api/settlement-model-requests';
 export * from './api/vendor-ads';
 export * from './api/vendor-banking';
 export * from './api/vendor-billing';
+export * from './api/vendor-invoices';
+export * from './api/vendor-offers';
 export * from './api/vendor-settings';
 export * from './constants/palikas';
 export * from './audit/audit-log';

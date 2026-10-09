@@ -1,11 +1,13 @@
 import {
   campaignOptIns,
+  enqueueDomainEvent,
   platformCampaigns,
   recordAuditLog,
   vendors,
   type Database,
 } from '@hamro-pasal/db';
 import {
+  MAX_CAMPAIGN_EVENT_VENDORS,
   NO_AUDIT_CONTEXT,
   type AuditActor,
   type AuditContext,
@@ -179,13 +181,13 @@ export class CampaignService {
         before.vendor_share_percent !== next.vendor_share_percent ||
         before.starts_at.getTime() !== next.starts_at.getTime() ||
         before.ends_at.getTime() !== next.ends_at.getTime();
-      const [live] = await tx
-        .select({ count: sql<number>`count(*)::int` })
+      // Stable under the campaign row lock: an opt-in takes that row FOR SHARE before it inserts.
+      const liveOptIns = await tx
+        .select({ vendorId: campaignOptIns.vendor_id })
         .from(campaignOptIns)
-        .where(
-          and(eq(campaignOptIns.campaign_id, campaignId), eq(campaignOptIns.status, 'ACTIVE')),
-        );
-      const optInsBefore = live?.count ?? 0;
+        .where(and(eq(campaignOptIns.campaign_id, campaignId), eq(campaignOptIns.status, 'ACTIVE')))
+        .orderBy(asc(campaignOptIns.opted_in_at), asc(campaignOptIns.id));
+      const optInsBefore = liveOptIns.length;
       if (!termsChanged && before.name === next.name && before.is_active === next.is_active) {
         return { campaign: before, optInCount: optInsBefore };
       }
@@ -209,6 +211,27 @@ export class CampaignService {
           : campaignState(after),
         context,
       });
+      // Phase 35: the shops whose consent this voided must be told. Written last, in the
+      // transaction of the change, so the event exists exactly when the new terms do.
+      if (termsChanged) {
+        await enqueueDomainEvent(tx, {
+          type: 'marketing.campaign_terms_changed',
+          aggregateId: campaignId,
+          occurredAt: after.updated_at,
+          payload: {
+            campaign_id: campaignId,
+            campaign_name: after.name,
+            previous_terms_version: before.terms_version,
+            terms_version: after.terms_version,
+            voided_vendor_ids: liveOptIns
+              .slice(0, MAX_CAMPAIGN_EVENT_VENDORS)
+              .map((optIn) => optIn.vendorId),
+            voided_opt_in_count: optInsBefore,
+            changed_by_user_id: adminUserId,
+            changed_at: after.updated_at.toISOString(),
+          },
+        });
+      }
       return { campaign: after, optInCount: termsChanged ? 0 : optInsBefore };
     });
   }

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { nepalPhoneSchema } from '../domain/entities';
 import {
+  adBillingModelSchema,
   fulfillmentModeSchema,
   ledgerAccountTypeSchema,
   ledgerTransactionKindSchema,
@@ -153,6 +154,85 @@ export const vendorStatusOverriddenPayloadSchema = z.strictObject({
   overridden_at: z.iso.datetime(),
 });
 
+/**
+ * SPEC core 10 (Phase 35): the nightly compliance sweep found the shop LIVE without a PAN and took
+ * it offline. It returns the moment its PAN is saved. Written once per suspension, in the sweep's
+ * own transaction for that vendor.
+ */
+export const vendorSuspendedForCompliancePayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  /** The vendor's +977 business number, for the message telling them to add their PAN. */
+  vendor_phone: nepalPhoneSchema,
+  /** What saving the PAN restores. The sweep only suspends LIVE shops. */
+  previous_status: z.literal('LIVE'),
+  suspended_at: z.iso.datetime(),
+});
+
+/**
+ * SPEC core 10 (Phase 36): saving the PAN lifted the shop's compliance suspension. `status` is
+ * where that left it: LIVE again, or still SUSPENDED when a debt or admin suspension lies on top
+ * (a PAN never lifts those). Written in the transaction that saved the PAN.
+ */
+export const vendorComplianceRestoredPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  vendor_phone: nepalPhoneSchema,
+  status: vendorStatusSchema.exclude(['SUSPENDED_COMPLIANCE', 'DEACTIVATED']),
+  /** Invoices issued by the same save for orders delivered while the shop had no PAN. */
+  waiting_invoices_issued: z.number().int().min(0),
+  restored_at: z.iso.datetime(),
+});
+
+/** SPEC core 8 (Phase 35): an ad's paid period is over. Written once, when it becomes ENDED. */
+export const marketingAdEndedPayloadSchema = z.strictObject({
+  ad_purchase_id: z.uuid(),
+  vendor_id: z.uuid(),
+  vendor_phone: nepalPhoneSchema,
+  billing_model: adBillingModelSchema,
+  /** The end of the period the shop bought. */
+  ends_at: z.iso.datetime(),
+  /** Unused held budget returned to the shop's ledger with the end; 0 when none was held. */
+  returned_npr: z.number().min(0),
+  ended_at: z.iso.datetime(),
+});
+
+/**
+ * SPEC edge case 8 (Phase 35): a per-order ad was paused because its budget cannot cover one more
+ * fee. Written once, by whichever path paused it (the hourly sweep, or the delivery that used the
+ * budget up).
+ */
+export const marketingAdPausedPayloadSchema = z.strictObject({
+  ad_purchase_id: z.uuid(),
+  vendor_id: z.uuid(),
+  vendor_phone: nepalPhoneSchema,
+  reason: z.literal('BUDGET_EXHAUSTED'),
+  budget_npr: z.number().min(0),
+  amount_paid_npr: z.number().min(0),
+  /** The paid period still runs to here; adding budget is not possible yet. */
+  ends_at: z.iso.datetime(),
+  paused_at: z.iso.datetime(),
+});
+
+/** At most this many shops are named in one `marketing.campaign_terms_changed` event. */
+export const MAX_CAMPAIGN_EVENT_VENDORS = 5000;
+
+/**
+ * SPEC core 7 (Phase 35): an admin changed a campaign's terms. The version went up and every live
+ * opt-in was voided in the same transaction; the shops named here are no longer in the campaign
+ * until each opts in to the new terms.
+ */
+export const marketingCampaignTermsChangedPayloadSchema = z.strictObject({
+  campaign_id: z.uuid(),
+  campaign_name: z.string().min(1),
+  previous_terms_version: z.number().int().positive(),
+  terms_version: z.number().int().positive(),
+  /** The shops whose opt-in this change voided (the first MAX_CAMPAIGN_EVENT_VENDORS of them). */
+  voided_vendor_ids: z.array(z.uuid()).max(MAX_CAMPAIGN_EVENT_VENDORS),
+  /** How many opt-ins were voided in all. */
+  voided_opt_in_count: z.number().int().min(0),
+  changed_by_user_id: z.uuid(),
+  changed_at: z.iso.datetime(),
+});
+
 /** A balanced journal transaction was posted. One posting per affected account line. */
 export const ledgerMutatedPayloadSchema = z.strictObject({
   transaction_id: z.uuid(),
@@ -217,6 +297,27 @@ export const vendorStatusOverriddenEventSchema = envelope(
   vendorStatusOverriddenPayloadSchema,
 );
 
+export const vendorSuspendedForComplianceEventSchema = envelope(
+  'vendor.suspended_for_compliance',
+  vendorSuspendedForCompliancePayloadSchema,
+);
+export const vendorComplianceRestoredEventSchema = envelope(
+  'vendor.compliance_restored',
+  vendorComplianceRestoredPayloadSchema,
+);
+export const marketingAdEndedEventSchema = envelope(
+  'marketing.ad_ended',
+  marketingAdEndedPayloadSchema,
+);
+export const marketingAdPausedEventSchema = envelope(
+  'marketing.ad_paused',
+  marketingAdPausedPayloadSchema,
+);
+export const marketingCampaignTermsChangedEventSchema = envelope(
+  'marketing.campaign_terms_changed',
+  marketingCampaignTermsChangedPayloadSchema,
+);
+
 export const domainEventSchema = z.discriminatedUnion('event_type', [
   orderLockedEventSchema,
   orderPlacedEventSchema,
@@ -227,6 +328,11 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   vendorSuspendedForDebtEventSchema,
   vendorRestoredEventSchema,
   vendorStatusOverriddenEventSchema,
+  vendorSuspendedForComplianceEventSchema,
+  vendorComplianceRestoredEventSchema,
+  marketingAdEndedEventSchema,
+  marketingAdPausedEventSchema,
+  marketingCampaignTermsChangedEventSchema,
 ]);
 
 export type OrderLockedEvent = z.infer<typeof orderLockedEventSchema>;
@@ -238,6 +344,15 @@ export type VendorEscalationRequiredEvent = z.infer<typeof vendorEscalationRequi
 export type VendorSuspendedForDebtEvent = z.infer<typeof vendorSuspendedForDebtEventSchema>;
 export type VendorRestoredEvent = z.infer<typeof vendorRestoredEventSchema>;
 export type VendorStatusOverriddenEvent = z.infer<typeof vendorStatusOverriddenEventSchema>;
+export type VendorSuspendedForComplianceEvent = z.infer<
+  typeof vendorSuspendedForComplianceEventSchema
+>;
+export type VendorComplianceRestoredEvent = z.infer<typeof vendorComplianceRestoredEventSchema>;
+export type MarketingAdEndedEvent = z.infer<typeof marketingAdEndedEventSchema>;
+export type MarketingAdPausedEvent = z.infer<typeof marketingAdPausedEventSchema>;
+export type MarketingCampaignTermsChangedEvent = z.infer<
+  typeof marketingCampaignTermsChangedEventSchema
+>;
 export type DomainEvent = z.infer<typeof domainEventSchema>;
 export type DomainEventType = DomainEvent['event_type'];
 export type DomainEventPayload<T extends DomainEventType> = Extract<
@@ -255,4 +370,9 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'vendor.suspended_for_debt': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.restored': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.status_overridden': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.suspended_for_compliance': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.compliance_restored': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'marketing.ad_ended': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'marketing.ad_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'marketing.campaign_terms_changed': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
 };

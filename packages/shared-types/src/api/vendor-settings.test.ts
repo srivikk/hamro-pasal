@@ -23,6 +23,7 @@ describe('vendor status', () => {
       'LIVE',
       'SUSPENDED',
       'SUSPENDED_COMPLIANCE',
+      'DEACTIVATED',
     ]);
   });
 });

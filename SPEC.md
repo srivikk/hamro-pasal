@@ -227,6 +227,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 21. **Marketing screens (added 2026-10-07; the screens exist, the backend does not).** The Marketing tab has three sections. **My Offers:** the running vendor-funded offers and a form for a new one (discount type, amount, minimum order). **Campaigns:** the invites, each with its terms and an Opt In that asks the vendor to accept those terms. **Ads:** the placements on sale; a purchase the shop cannot pay for under its settlement model is refused before any agreement is asked ("Insufficient funds for this ad purchase.").
 22. **Analytics (added 2026-10-07, not yet implemented on the server).** Today's sales, the best-selling item, the return on the shop's ads, and the last seven days of sales.
 23. **Vendor account (added 2026-10-07, not yet implemented on the server).** In Shop settings: the app language, the WhatsApp updates consent, and "Delete Shop Account". A shop with a negative ledger balance or an order not yet handed over cannot be deleted; otherwise the vendor confirms, the account is marked for deletion (a soft delete: invoices and financial records are kept) and the shop stops taking orders. The vendor can withdraw the request until the data is purged.
+    * **Amended 2026-10-09 (decided by the user; implemented on the server as `POST /api/vendor/account/deactivate`):** closing a shop is a **deactivation**, never a hard delete (the ledger, invoices and audit trail name the vendor). The shop's status becomes `DEACTIVATED`: it is hidden from customers and not orderable, **its account can no longer sign in**, its running ads are cancelled (unused held budget and the fee of an ad that had not started are returned; the fee of an ad that ran stays paid) and its campaign opt-ins are closed. It is refused while the shop owes the platform (a negative balance, or an ad fee still due), has an order that is not finished, or has a payout in progress. A positive balance is still paid out by the platform. Because the account cannot sign in, **the vendor cannot withdraw a deactivation itself** (this replaces the sentence above); bringing a shop back is a Super Admin matter and is not specified yet.
 
 **Delivery Partner (Platform Fleet) Flow**
 
@@ -303,7 +304,7 @@ enum AdBillingModel { FLAT_RATE, PER_ORDER_PREMIUM }
 interface Vendor {
   id: string;
   phone: string; // +977 format
-  status: 'SANDBOXED' | 'APPROVED' | 'LIVE' | 'SUSPENDED' | 'SUSPENDED_COMPLIANCE'; // SUSPENDED_COMPLIANCE added 2026-10-07: LIVE without a PAN
+  status: 'SANDBOXED' | 'APPROVED' | 'LIVE' | 'SUSPENDED' | 'SUSPENDED_COMPLIANCE' | 'DEACTIVATED'; // SUSPENDED_COMPLIANCE added 2026-10-07: LIVE without a PAN. DEACTIVATED added 2026-10-09: the vendor closed its shop
   pricing_model: 'SUBSCRIPTION' | 'COMMISSION';
   lock_in_expiry: Date | null;
   commission_rate: number;

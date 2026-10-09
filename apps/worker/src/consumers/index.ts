@@ -4,8 +4,10 @@ import { KAFKA_TOPICS } from '@hamro-pasal/shared-types';
 import type { SmsGateway } from '@hamro-pasal/sms';
 import type { Redis } from 'ioredis';
 
+import type { NotificationAdapter } from '../notifications/notification-adapter';
 import type { OrderStateReader } from '../notifications/order-state-reader';
 import type { DeviceTokenRemover, PushRecipientReader } from '../notifications/push-recipients';
+import type { VendorContactReader } from '../notifications/vendor-notices';
 import type { PushGateway } from '../push/expo-push';
 import { withDeadLetter, type DeadLetterPublisher, type DeadLetterStore } from './dead-letter';
 import {
@@ -18,6 +20,7 @@ import {
   RedisOrderRoomBroadcaster,
 } from './order-state-fanout';
 import type { KafkaConsumerDefinition } from './types';
+import { VENDOR_NOTICE_DEDUPE_PREFIX, vendorNoticeConsumer } from './vendor-notices';
 import {
   VENDOR_IVR_DEDUPE_PREFIX,
   VENDOR_SMS_DEDUPE_PREFIX,
@@ -51,6 +54,10 @@ export interface ConsumerDeps {
   readonly pushSmsFallbackLog: ((line: string) => void) | null;
   /** Set when MOCK_SERVICES is on: logs "[MOCK PUSH] -> …" for each order push. */
   readonly pushMockLog?: ((line: string) => void) | null;
+  /** Where compliance, ad and campaign notices leave the worker (Phase 36: the logger). */
+  readonly notifications: NotificationAdapter;
+  /** Phone numbers of the shops a campaign change names by id. */
+  readonly vendorContacts: VendorContactReader;
 }
 
 /** Register Kafka topic handlers here. Several may share a topic (see routeByTopic). */
@@ -82,6 +89,21 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
       }),
       {
         name: 'vendor-notifications',
+        deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
+        publisher: deps.deadLetters,
+        store: deps.deadLetterStore,
+      },
+    ),
+    // Phase 36. After the consumer above on the same topic, with its own retries and dead
+    // letters: a notice that cannot be delivered never holds back a debt or escalation SMS.
+    withDeadLetter(
+      vendorNoticeConsumer({
+        notifications: deps.notifications,
+        contacts: deps.vendorContacts,
+        deduplicator: new RedisEventDeduplicator(deps.redis, VENDOR_NOTICE_DEDUPE_PREFIX),
+      }),
+      {
+        name: 'vendor-notices',
         deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
         publisher: deps.deadLetters,
         store: deps.deadLetterStore,

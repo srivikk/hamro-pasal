@@ -65,7 +65,10 @@ describe('admin settlements API', () => {
     }
     const pan = options.pan === undefined ? '302118845' : options.pan;
     if (pan !== null) {
-      await db.update(vendors).set({ tax_id: pan }).where(eq(vendors.id, vendorId));
+      await db
+        .update(vendors)
+        .set({ tax_id: pan, pan_document_url: `kyc/pan/${vendorId}/${randomUUID()}.webp` })
+        .where(eq(vendors.id, vendorId));
     }
     if (options.verified === true) await verify(vendorId);
     // A payout needs somewhere to go: the shop's primary bank account.
@@ -87,6 +90,11 @@ describe('admin settlements API', () => {
   }
 
   async function verify(vendorId: string) {
+    // A PAN is verified against its document (Phase 35); a changed PAN number removes it.
+    await db
+      .update(vendors)
+      .set({ pan_document_url: `kyc/pan/${vendorId}/${randomUUID()}.webp` })
+      .where(eq(vendors.id, vendorId));
     const res = await request(t.app)
       .post(`/api/admin/vendors/${vendorId}/pan-verification`)
       .set('Authorization', admin);

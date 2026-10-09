@@ -1,21 +1,21 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useQuery } from '@tanstack/react-query';
 import type { ComponentProps } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { retryTransientFailures } from '../../src/api/query-client';
+import { fetchVendorAnalytics } from '../../src/api/vendor-analytics';
+import { Button } from '../../src/components/Button';
 import { SkeletonBlock, SkeletonGroup } from '../../src/components/Skeleton';
 import {
   adRoiRatio,
   BAR_HEIGHT_CLASSES,
   barStep,
-  fetchMockAnalytics,
-  VENDOR_ANALYTICS_MOCKS_ENABLED,
-} from '../../src/features/vendor/mock-analytics';
-import { VendorSectionPlaceholder } from '../../src/features/vendor/VendorSectionPlaceholder';
+} from '../../src/features/vendor/analytics-format';
 import { colors } from '../../src/theme/colors';
 
-const vendorAnalyticsQueryKey = ['vendor', 'analytics'] as const;
+export const VENDOR_ANALYTICS_QUERY_KEY = ['vendor', 'analytics'] as const;
 
 const cardClass = 'gap-1 rounded-2xl bg-white p-4 shadow-sm';
 
@@ -71,25 +71,38 @@ function AnalyticsSkeleton() {
  * A first look at how the shop is doing: today's sales, the best-selling item, what the ads
  * returned, and the last seven days as bars. Opened from the chart icon in the Ledger header.
  *
- * TODO: `GET /api/vendor/analytics/summary` (STATE_HANDOFF.md §8Z.14). Until it exists the figures
- * are samples (development builds); a production build shows the placeholder.
+ * Every figure is the server's (`GET /api/vendor/analytics/summary`, Phase 35): sales are the
+ * delivered subtotal less the shop's own discounts, and a day is a day in Nepal Time. Nothing is
+ * computed or remembered on the phone; the screen refetches when it is opened and on pull.
  */
 export default function VendorAnalyticsScreen() {
   const { t } = useTranslation();
   const query = useQuery({
-    queryKey: vendorAnalyticsQueryKey,
-    queryFn: fetchMockAnalytics,
-    enabled: VENDOR_ANALYTICS_MOCKS_ENABLED,
+    queryKey: VENDOR_ANALYTICS_QUERY_KEY,
+    queryFn: fetchVendorAnalytics,
+    staleTime: 0,
+    retry: retryTransientFailures,
   });
 
-  if (!VENDOR_ANALYTICS_MOCKS_ENABLED) {
+  if (query.data === undefined && query.isError) {
     return (
-      <VendorSectionPlaceholder
+      <View
+        className="flex-1 items-center justify-center gap-3 bg-gray-50 p-6"
         testID="vendor-analytics"
-        icon="stats-chart-outline"
-        title={t('vendorAnalytics.title')}
-        body={t('vendorAnalytics.body')}
-      />
+      >
+        <Ionicons name="cloud-offline-outline" size={32} color={colors.inactive} />
+        <Text className="text-center text-base text-gray-700" testID="analytics-error">
+          {t('vendorAnalytics.loadError')}
+        </Text>
+        <Button
+          testID="analytics-retry"
+          label={t('vendorAnalytics.retry')}
+          variant="secondary"
+          onPress={() => {
+            void query.refetch();
+          }}
+        />
+      </View>
     );
   }
   if (query.data === undefined) {
@@ -109,10 +122,16 @@ export default function VendorAnalyticsScreen() {
       className="flex-1 bg-gray-50"
       contentContainerStyle={{ padding: 16, gap: 12 }}
       testID="vendor-analytics"
+      refreshControl={
+        <RefreshControl refreshing={query.isRefetching} onRefresh={() => void query.refetch()} />
+      }
     >
-      <Text className="text-sm text-gray-500" testID="analytics-sample-note">
-        {t('vendorAnalytics.sampleNote')}
-      </Text>
+      {query.isError ? (
+        // A refresh failed: the figures below are the last ones the server sent.
+        <Text className="text-sm text-amber-700" testID="analytics-stale">
+          {t('vendorAnalytics.stale')}
+        </Text>
+      ) : null}
 
       <MetricCard
         testID="metric-sales"
@@ -128,7 +147,7 @@ export default function VendorAnalyticsScreen() {
         value={analytics.top_item?.product_name ?? t('vendorAnalytics.none')}
         detail={
           analytics.top_item === null
-            ? t('vendorAnalytics.noSales')
+            ? t('vendorAnalytics.noTopItem')
             : t('vendorAnalytics.topItemDetail', {
                 units: analytics.top_item.units_sold,
                 amount: analytics.top_item.sales_npr,
@@ -143,12 +162,15 @@ export default function VendorAnalyticsScreen() {
           ratio === null ? t('vendorAnalytics.none') : t('vendorAnalytics.roiValue', { ratio })
         }
         detail={
-          analytics.ad_roi === null || ratio === null
+          analytics.ad_roi === null
             ? t('vendorAnalytics.noAds')
-            : t('vendorAnalytics.roiDetail', {
-                revenue: analytics.ad_roi.revenue_npr,
-                spend: analytics.ad_roi.spend_npr,
-              })
+            : ratio === null
+              ? // An ad ran, but no fee has been charged for it yet: there is no ratio to show.
+                t('vendorAnalytics.roiNoSpend', { revenue: analytics.ad_roi.revenue_npr })
+              : t('vendorAnalytics.roiDetail', {
+                  revenue: analytics.ad_roi.revenue_npr,
+                  spend: analytics.ad_roi.spend_npr,
+                })
         }
       />
 

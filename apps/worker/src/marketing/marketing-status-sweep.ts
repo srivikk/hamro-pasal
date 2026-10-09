@@ -1,4 +1,10 @@
-import { adPurchases, recordAuditLog, vendors, type Database } from '@hamro-pasal/db';
+import {
+  adPurchases,
+  enqueueDomainEvent,
+  recordAuditLog,
+  vendors,
+  type Database,
+} from '@hamro-pasal/db';
 import { releaseUnusedAdBudget, toNpr, type LedgerService } from '@hamro-pasal/ledger';
 import { and, asc, eq, gt, inArray, lte, sql } from 'drizzle-orm';
 
@@ -40,7 +46,8 @@ function statusState(purchase: AdPurchaseRow) {
  * One transaction per purchase. Locks in the order every ad path uses: the vendor row, then the
  * purchase row, then the ledger accounts. The conditions are re-read under the locks against the
  * database clock, so a rerun, a second worker or a cancellation racing the sweep changes a
- * purchase once. Each change is audited with the job as the actor.
+ * purchase once. Each change is audited with the job as the actor, and writes its outbox event
+ * (`marketing.ad_ended` / `marketing.ad_paused`, Phase 35) last in the same transaction.
  */
 export class MarketingStatusSweepService {
   constructor(
@@ -69,11 +76,12 @@ export class MarketingStatusSweepService {
     let releasedPaisa = 0;
     for (const { id, vendorId } of candidates) {
       const released = await this.db.transaction(async (tx) => {
-        await tx
-          .select({ id: vendors.id })
+        const [vendor] = await tx
+          .select({ id: vendors.id, phone: vendors.phone })
           .from(vendors)
           .where(eq(vendors.id, vendorId))
           .for('update');
+        if (vendor === undefined) throw new Error(`Vendor ${vendorId} vanished`);
         const [before] = await tx
           .select()
           .from(adPurchases)
@@ -95,6 +103,21 @@ export class MarketingStatusSweepService {
           vendorId,
           beforeState: statusState(before),
           afterState: { ...statusState(after), returned_npr: toNpr(returned) },
+        });
+        const endedAt = new Date();
+        await enqueueDomainEvent(tx, {
+          type: 'marketing.ad_ended',
+          aggregateId: id,
+          occurredAt: endedAt,
+          payload: {
+            ad_purchase_id: id,
+            vendor_id: vendorId,
+            vendor_phone: vendor.phone,
+            billing_model: after.billing_model,
+            ends_at: after.ends_at.toISOString(),
+            returned_npr: toNpr(returned),
+            ended_at: endedAt.toISOString(),
+          },
         });
         return returned;
       });
@@ -122,11 +145,12 @@ export class MarketingStatusSweepService {
     let paused = 0;
     for (const { id, vendorId } of candidates) {
       const changed = await this.db.transaction(async (tx) => {
-        await tx
-          .select({ id: vendors.id })
+        const [vendor] = await tx
+          .select({ id: vendors.id, phone: vendors.phone })
           .from(vendors)
           .where(eq(vendors.id, vendorId))
           .for('update');
+        if (vendor === undefined) throw new Error(`Vendor ${vendorId} vanished`);
         const [before] = await tx
           .select()
           .from(adPurchases)
@@ -146,6 +170,22 @@ export class MarketingStatusSweepService {
           vendorId,
           beforeState: statusState(before),
           afterState: statusState(after),
+        });
+        const pausedAt = new Date();
+        await enqueueDomainEvent(tx, {
+          type: 'marketing.ad_paused',
+          aggregateId: id,
+          occurredAt: pausedAt,
+          payload: {
+            ad_purchase_id: id,
+            vendor_id: vendorId,
+            vendor_phone: vendor.phone,
+            reason: 'BUDGET_EXHAUSTED',
+            budget_npr: after.budget_npr ?? 0,
+            amount_paid_npr: after.amount_paid_npr,
+            ends_at: after.ends_at.toISOString(),
+            paused_at: pausedAt.toISOString(),
+          },
         });
         return true;
       });

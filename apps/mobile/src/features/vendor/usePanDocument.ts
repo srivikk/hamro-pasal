@@ -4,8 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { retryTransientFailures } from '../../api/query-client';
 import {
   fetchTaxIdentity,
+  saveTaxIdentity,
   uploadPanDocument,
   type PanDocumentFile,
+  type TaxIdentityDraft,
 } from '../../api/vendor-tax-identity';
 
 export const TAX_IDENTITY_QUERY_KEY = ['vendor', 'tax-identity'] as const;
@@ -17,6 +19,33 @@ export function useTaxIdentityQuery() {
     queryFn: fetchTaxIdentity,
     staleTime: 0,
     retry: retryTransientFailures,
+  });
+}
+
+/**
+ * Saves the PAN number and the VAT registration (PUT /api/vendor/tax-identity). Never retried
+ * automatically. The answer is written into the cached tax identity at once, so the document
+ * card beside it shows "no document" the moment a changed number removed the old one; then the
+ * query is refetched.
+ */
+export function useSaveTaxIdentity() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (draft: TaxIdentityDraft) => saveTaxIdentity(draft),
+    retry: false,
+    onSuccess: (result) => {
+      queryClient.setQueryData<TaxIdentityView>(TAX_IDENTITY_QUERY_KEY, {
+        vendor_id: result.vendor_id,
+        tax_id: result.tax_id,
+        is_vat_registered: result.is_vat_registered,
+        legal_name: result.legal_name,
+        registered_address: result.registered_address,
+        status: result.status,
+        pan_verified_at: result.pan_verified_at,
+        has_pan_document: result.has_pan_document,
+      });
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: TAX_IDENTITY_QUERY_KEY }),
   });
 }
 

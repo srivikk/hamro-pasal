@@ -186,6 +186,7 @@ export class CheckoutService {
         // it waits for this order and then counts it as open.
         const [shop] = await tx
           .select({
+            status: vendors.status,
             settlement_model: vendors.settlement_model,
             accepted_payment_methods: vendors.accepted_payment_methods,
           })
@@ -193,6 +194,15 @@ export class CheckoutService {
           .where(eq(vendors.id, vendor.id))
           .for('key share');
         if (shop === undefined) throw new Error(`Vendor ${vendor.id} vanished during checkout`);
+        // Phase 36: a shop that closed (or was suspended) since the cart was priced takes no
+        // order. A deactivation holds this row FOR UPDATE: it either committed first (refused
+        // here) or waits and then counts this order as open.
+        if (shop.status !== 'LIVE') {
+          throw new CheckoutRejectedError(
+            'VENDOR_UNAVAILABLE',
+            'This vendor is not accepting orders',
+          );
+        }
         assertPaymentMethodOffered(shop, request.payment_method);
         // Lock order of a checkout: vendor row (above), vendor offer row, opt-in row, each
         // FOR SHARE or weaker, then the inserts.

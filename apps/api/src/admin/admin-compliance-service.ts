@@ -31,6 +31,17 @@ export class PanMissingError extends Error {
   }
 }
 
+/**
+ * Phase 35: the vendor has a PAN but uploaded no document for it. A Super Admin verifies a
+ * document, never a bare number, so there is nothing to verify yet.
+ */
+export class PanDocumentMissingError extends Error {
+  constructor(readonly vendorId: string) {
+    super(`Vendor ${vendorId} has uploaded no PAN document to verify`);
+    this.name = 'PanDocumentMissingError';
+  }
+}
+
 /** The vendor uploaded no PAN document (or its object is gone from the store). */
 export class PanDocumentNotFoundError extends Error {
   constructor(readonly vendorId: string) {
@@ -97,8 +108,12 @@ export class AdminComplianceService {
 
   /**
    * One transaction under the vendor row lock (the lock a PAN change takes, so a verification
-   * never lands on a PAN that was replaced first), with its audit entry. A repeat keeps the first
-   * stamp and records nothing.
+   * never lands on a PAN or a document that was replaced first), with its audit entry. A repeat
+   * keeps the first stamp and records nothing.
+   *
+   * Phase 35: a PAN without an uploaded document cannot be verified (422 DOCUMENT_MISSING). The
+   * check comes before the repeat: a shop that is marked verified with no document on file (only
+   * a seeded one can be) answers the same refusal, never a confirmation.
    */
   verifyPan(
     adminUserId: string,
@@ -113,6 +128,7 @@ export class AdminComplianceService {
         .for('update');
       if (before === undefined) throw new AdminVendorNotFoundError(vendorId);
       if (before.tax_id === null) throw new PanMissingError(vendorId);
+      if (before.pan_document_url === null) throw new PanDocumentMissingError(vendorId);
       if (before.pan_verified_at !== null) return complianceVendor(tx, before);
 
       const [after] = await tx

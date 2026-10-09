@@ -25,7 +25,13 @@ import {
 import { asc, eq } from 'drizzle-orm';
 import request from 'supertest';
 
-import { createCategory, createUser, createVendor, vendorUserIdOf } from './support/fixtures';
+import {
+  createCategory,
+  createUser,
+  createVendor,
+  outboxFor,
+  vendorUserIdOf,
+} from './support/fixtures';
 import { bearer, bodyOf, buildTestApp, errorOf, type TestApp } from './support/http';
 
 /**
@@ -318,9 +324,53 @@ describe('admin marketing API', () => {
         before_state: { terms_version: 1 },
         after_state: { terms_version: 2, voided_opt_in_count: 2 },
       });
+      // Phase 35: the shops whose consent was voided are named in one outbox event.
+      const events = await outboxFor(db, view.id);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        event_type: 'marketing.campaign_terms_changed',
+        topic: 'notifications.broadcast',
+        published_at: null,
+        payload: {
+          campaign_id: view.id,
+          campaign_name: body.name,
+          previous_terms_version: 1,
+          terms_version: 2,
+          voided_vendor_ids: [first.vendorId, second.vendorId],
+          voided_opt_in_count: 2,
+          changed_by_user_id: adminId,
+        },
+      });
       // The shop sees the campaign again only by accepting the new terms.
       expect((await optIn(first.token, view.id, 2)).status).toBe(201);
       expect((await listedCampaign(view.id)).opt_in_count).toBe(1);
+    });
+
+    it('writes no terms event for a refused change, an unchanged save, a rename or an unpublish', async () => {
+      const { view, body } = await campaign();
+      const { token } = await shop();
+      expect((await optIn(token, view.id)).status).toBe(201);
+
+      expect((await putCampaign(view.id, { ...body, value: 101 })).status).toBe(400);
+      expect((await putCampaign(view.id, body)).status).toBe(200);
+      expect((await putCampaign(view.id, { ...body, name: 'Renamed' })).status).toBe(200);
+      expect((await putCampaign(view.id, { ...body, is_active: false })).status).toBe(200);
+
+      expect(await outboxFor(db, view.id)).toEqual([]);
+    });
+
+    it('writes the terms event with no shop named when nobody had opted in', async () => {
+      const { view, body } = await campaign();
+
+      expect((await putCampaign(view.id, { ...body, min_cart_npr: 900 })).status).toBe(200);
+
+      const events = await outboxFor(db, view.id);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.payload).toMatchObject({
+        terms_version: 2,
+        voided_vendor_ids: [],
+        voided_opt_in_count: 0,
+      });
     });
 
     it('keeps the version and the opt-ins when it is renamed or unpublished', async () => {

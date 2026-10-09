@@ -20,7 +20,9 @@ import { OrderReconciliationService } from './finance/order-reconciliation';
 import { BullVendorAcceptanceTimers } from './consumers/vendor-sla-scheduler';
 import { buildBullConnection } from './infra/redis';
 import { Lifecycle } from './lifecycle';
+import { LoggerNotificationAdapter } from './notifications/notification-adapter';
 import { DatabaseOrderStateReader } from './notifications/order-state-reader';
+import { DatabaseVendorContacts } from './notifications/vendor-notices';
 import { DatabasePushRecipients } from './notifications/push-recipients';
 import { mockPushLogFromEnv, pushGatewayFromEnv } from './push/mock-push';
 import { OutboxRelay } from './outbox/outbox-relay';
@@ -115,6 +117,10 @@ async function main(): Promise<void> {
     pushRecipients: new DatabasePushRecipients(db),
     // SMS_PROVIDER=MOCK also logs "[sms:mock] to +977…: <text>" beside each push attempt.
     pushSmsFallbackLog: smsFallbackLogFromEnv(env),
+    // Compliance, ad and campaign notices are written to stdout as "[notify:sms] …" and
+    // "[notify:push] …" until a provider adapter is chosen for them.
+    notifications: new LoggerNotificationAdapter(),
+    vendorContacts: new DatabaseVendorContacts(db),
   });
   if (consumers.length > 0) {
     const handlers = routeByTopic(consumers);

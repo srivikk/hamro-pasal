@@ -61,6 +61,26 @@ export const server = setupServer(
       has_pan_document: false,
     }),
   ),
+  // Shop settings also read the delivery settings; a new shop's defaults unless a test says more.
+  http.get(apiUrl('/api/vendor/delivery-settings'), () =>
+    HttpResponse.json({
+      vendor_id: '7b1f0c8e-0000-4000-8000-0000000000aa',
+      fulfillment_mode: 'SELF_DELIVERY',
+      delivery_scope: 'RADIUS_BOUND',
+      radius_km: 5,
+      serviceable_palikas: ['Kathmandu Metropolitan City'],
+      municipality_palika_string: 'Kathmandu Metropolitan City',
+      base_delivery_fee_npr: 0,
+      delivery_fee_per_km_npr: 0,
+      free_delivery_above_npr: null,
+      platform: {
+        self_delivery_enabled: true,
+        platform_fleet_enabled: true,
+        platform_delivery_fee_npr: 50,
+      },
+      fulfillment_mode_enabled: true,
+    }),
+  ),
   // The shop page reads its products' categories from the public list; none by default.
   http.get(apiUrl('/api/products'), () => HttpResponse.json({ products: [], next_cursor: null })),
   ...accountMockHandlers({ baseUrl: API_URL }),

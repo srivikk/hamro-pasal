@@ -155,7 +155,7 @@ export function PanDocumentCard() {
         />
       ) : null}
 
-      {previewUri === null ? null : (
+      {previewUri === null || (!onFile && !upload.isPending) ? null : (
         <Image
           testID="pan-document-preview"
           source={{ uri: previewUri }}

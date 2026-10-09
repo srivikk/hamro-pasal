@@ -25,6 +25,14 @@ export function vendorAction(
   vendor: AdminVendorView,
   suspensionLimitNpr: number,
 ): VendorActionButton {
+  // Phase 36: a shop its vendor closed has no standing to suspend, and nothing restores it.
+  if (vendor.status === 'DEACTIVATED') {
+    return {
+      action: 'SUSPEND',
+      enabled: false,
+      note: 'The vendor closed this shop. Its records are kept; it cannot be suspended or restored.',
+    };
+  }
   if (vendor.status !== 'SUSPENDED') {
     return { action: 'SUSPEND', enabled: true, note: null };
   }

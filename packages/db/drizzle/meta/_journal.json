@@ -260,6 +260,20 @@
       "when": 1791487524297,
       "tag": "0036_vendor_kyc_docs",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1791516479998,
+      "tag": "0037_vendor_analytics_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1791519090638,
+      "tag": "0038_vendor_deactivated",
+      "breakpoints": true
     }
   ]
 }

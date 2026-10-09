@@ -104,6 +104,8 @@ describe('Vendor settings API', () => {
         compliance_suspension_lifted: false,
         pan_verified_at: null,
         waiting_invoices_issued: 0,
+        pan_document_removed: false,
+        has_pan_document: false,
       });
       expect(await vendorRow(vendorId)).toMatchObject({
         tax_id: '302118845',

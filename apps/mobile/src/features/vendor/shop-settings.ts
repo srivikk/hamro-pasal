@@ -1,6 +1,7 @@
-import { toAsciiDigits } from '@hamro-pasal/shared-types';
+import { toAsciiDigits, type DeliverySettingsResponseBody } from '@hamro-pasal/shared-types';
 import { z } from 'zod';
 
+import type { DeliverySettingsDraft } from '../../api/vendor-delivery-settings';
 import { isKnownPalika } from './mock-palikas';
 
 /** A PAN is nine digits; a VAT-registered shop's VAT number is its PAN (SPEC Nepal section 5). */
@@ -57,6 +58,11 @@ export type ShopSettingsErrors = Partial<Record<ShopSettingsField, ShopSettingsE
 
 export type ShopSettingsResult =
   { ok: true; settings: ShopSettings } | { ok: false; errors: ShopSettingsErrors };
+
+/** The delivery half of the settings: everything but the PAN, which has its own save. */
+export type DeliverySettings = Omit<ShopSettings, 'taxId'>;
+export type DeliverySettingsResult =
+  { ok: true; settings: DeliverySettings } | { ok: false; errors: ShopSettingsErrors };
 
 export const DEFAULT_SHOP_SETTINGS_FORM: ShopSettingsForm = {
   taxId: '',
@@ -122,16 +128,66 @@ export function addPalika(palikas: readonly string[], input: string): readonly s
   return [...palikas, name];
 }
 
-/**
- * Checks the form and builds the settings. Fields that do not apply to the chosen mode and scope
- * are not checked and are saved empty: no radius outside `RADIUS_BOUND`, no municipalities outside
- * `CITY_WIDE`, and no charges under platform delivery (the platform sets that fee).
- */
+/** The whole form, PAN included: what the phone's own copy of the settings needs. */
 export function validateShopSettings(form: ShopSettingsForm): ShopSettingsResult {
+  const delivery = validateDeliverySettings(form);
+  const taxIdValid = /^[0-9]{9}$/.test(form.taxId);
+  if (!delivery.ok || !taxIdValid) {
+    return {
+      ok: false,
+      errors: {
+        ...(delivery.ok ? {} : delivery.errors),
+        ...(taxIdValid ? {} : { taxId: 'taxId' }),
+      },
+    };
+  }
+  return { ok: true, settings: { taxId: form.taxId, ...delivery.settings } };
+}
+
+/** The settings as PUT /api/vendor/delivery-settings takes them. */
+export function deliveryRequestOf(settings: DeliverySettings): DeliverySettingsDraft {
+  return {
+    fulfillment_mode: settings.fulfillmentMode,
+    delivery_scope: settings.deliveryScope,
+    radius_km: settings.radiusKm,
+    serviceable_palikas: [...settings.serviceablePalikas],
+    base_delivery_fee_npr: settings.baseDeliveryFeeNpr,
+    delivery_fee_per_km_npr: settings.perKmFeeNpr,
+    free_delivery_above_npr: settings.freeDeliveryAboveNpr,
+  };
+}
+
+/**
+ * The form for what the server holds. The municipality list is shown only for a City / Regional
+ * shop (the server keeps the shop's own Palika in it for every scope); the stored radius is kept
+ * for the day the shop returns to the Radius tier. The PAN is not part of this answer.
+ */
+export function formFromDeliveryResponse(
+  server: DeliverySettingsResponseBody,
+  taxId: string,
+): ShopSettingsForm {
+  return {
+    taxId,
+    fulfillmentMode: server.fulfillment_mode,
+    deliveryScope: server.delivery_scope,
+    radiusKm: String(server.radius_km),
+    palikas: server.delivery_scope === 'CITY_WIDE' ? server.serviceable_palikas : [],
+    baseFee: String(server.base_delivery_fee_npr),
+    perKmFee: String(server.delivery_fee_per_km_npr),
+    freeAbove:
+      server.free_delivery_above_npr === null ? '' : String(server.free_delivery_above_npr),
+  };
+}
+
+/**
+ * Checks the delivery half of the form and builds its settings. Fields that do not apply to the
+ * chosen mode and scope are not checked and are saved empty: no radius outside `RADIUS_BOUND`,
+ * no municipalities outside `CITY_WIDE`, and no charges under platform delivery (the platform
+ * sets that fee).
+ */
+export function validateDeliverySettings(form: ShopSettingsForm): DeliverySettingsResult {
   const errors: ShopSettingsErrors = {};
   const selfDelivery = form.fulfillmentMode === 'SELF_DELIVERY';
-
-  if (!/^[0-9]{9}$/.test(form.taxId)) errors.taxId = 'taxId';
 
   let radiusKm: number | null = null;
   if (form.deliveryScope === 'RADIUS_BOUND') {
@@ -176,7 +232,6 @@ export function validateShopSettings(form: ShopSettingsForm): ShopSettingsResult
   return {
     ok: true,
     settings: {
-      taxId: form.taxId,
       fulfillmentMode: form.fulfillmentMode,
       deliveryScope: form.deliveryScope,
       radiusKm,

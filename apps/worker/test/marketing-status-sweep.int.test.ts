@@ -5,12 +5,18 @@ import {
   adPurchases,
   auditLogs,
   createDatabase,
+  outboxEvents,
   users,
   vendors,
   type Database,
 } from '@hamro-pasal/db';
 import { LedgerService, WalletService } from '@hamro-pasal/ledger';
-import type { AdPurchaseStatus, AuditAction, SettlementModel } from '@hamro-pasal/shared-types';
+import {
+  domainEventSchema,
+  type AdPurchaseStatus,
+  type AuditAction,
+  type SettlementModel,
+} from '@hamro-pasal/shared-types';
 import { and, eq } from 'drizzle-orm';
 
 import { MarketingStatusSweepService } from '../src/marketing/marketing-status-sweep';
@@ -21,6 +27,18 @@ import {
 } from '../src/queues/processors';
 
 const DAY_MS = 86_400_000;
+
+/** A stored outbox row as the envelope the relay publishes. */
+function envelopeOf(row: typeof outboxEvents.$inferSelect | undefined) {
+  return {
+    event_id: row?.id,
+    event_type: row?.event_type,
+    event_version: 1,
+    occurred_at: row?.occurred_at.toISOString(),
+    aggregate_id: row?.aggregate_id,
+    payload: row?.payload,
+  };
+}
 
 /**
  * Phase 28 on real PostgreSQL: the hourly MARKETING_STATUS_SWEEP (SPEC core 8, edge case 8). It
@@ -162,6 +180,13 @@ describe('marketing status sweep (real PostgreSQL)', () => {
       .from(auditLogs)
       .where(and(eq(auditLogs.entity_id, purchaseId), eq(auditLogs.action, action)));
 
+  /** The outbox events of one aggregate, of one type. */
+  const outbox = (aggregateId: string, type: string) =>
+    db
+      .select()
+      .from(outboxEvents)
+      .where(and(eq(outboxEvents.aggregate_id, aggregateId), eq(outboxEvents.event_type, type)));
+
   it('ends a purchase whose period is over, with the job as the actor, and no other', async () => {
     const owner = await shop();
     const over = await purchase(owner, { endsInDays: -1 });
@@ -190,6 +215,25 @@ describe('marketing status sweep (real PostgreSQL)', () => {
     expect(entry?.after_state).toMatchObject({ status: 'ENDED', returned_npr: 0 });
     expect(await entries(running.id, 'AD_ENDED')).toHaveLength(0);
     expect(await entries(cancelled.id, 'AD_ENDED')).toHaveLength(0);
+
+    // Phase 35: one marketing.ad_ended per ended purchase, in the outbox for the relay.
+    const [event, ...more] = await outbox(over.id, 'marketing.ad_ended');
+    expect(more).toHaveLength(0);
+    expect(event).toMatchObject({
+      topic: 'notifications.broadcast',
+      published_at: null,
+      payload: {
+        ad_purchase_id: over.id,
+        vendor_id: owner.vendorId,
+        vendor_phone: '+9779800000000',
+        billing_model: 'FLAT_RATE',
+        returned_npr: 0,
+      },
+    });
+    expect(domainEventSchema.safeParse(envelopeOf(event)).success).toBe(true);
+    expect(await outbox(pausedOver.id, 'marketing.ad_ended')).toHaveLength(1);
+    expect(await outbox(running.id, 'marketing.ad_ended')).toHaveLength(0);
+    expect(await outbox(cancelled.id, 'marketing.ad_ended')).toHaveLength(0);
   });
 
   it('returns the unused part of a held budget when the ad ends', async () => {
@@ -209,6 +253,8 @@ describe('marketing status sweep (real PostgreSQL)', () => {
     expect(await walletOf(owner.vendorId)).toBe(225);
     const [entry] = await entries(ad.id, 'AD_ENDED');
     expect(entry?.after_state).toMatchObject({ returned_npr: 225 });
+    const [event] = await outbox(ad.id, 'marketing.ad_ended');
+    expect(event?.payload).toMatchObject({ billing_model: 'PER_ORDER_PREMIUM', returned_npr: 225 });
   });
 
   it('changes a purchase once under a rerun and four concurrent runs', async () => {
@@ -225,6 +271,7 @@ describe('marketing status sweep (real PostgreSQL)', () => {
 
     expect(await statusOf(ad.id)).toBe('ENDED');
     expect(await entries(ad.id, 'AD_ENDED')).toHaveLength(1);
+    expect(await outbox(ad.id, 'marketing.ad_ended')).toHaveLength(1);
     expect(await walletOf(owner.vendorId)).toBe(200);
   });
 
@@ -244,6 +291,23 @@ describe('marketing status sweep (real PostgreSQL)', () => {
     const [entry, ...rest] = await entries(exhausted.id, 'AD_PAUSED_BUDGET_EXHAUSTED');
     expect(rest).toHaveLength(0);
     expect(entry).toMatchObject({ system_actor: 'MARKETING_STATUS_SWEEP', actor_user_id: null });
+
+    // Phase 35: paused once, announced once (the rerun above added nothing).
+    const [event, ...more] = await outbox(exhausted.id, 'marketing.ad_paused');
+    expect(more).toHaveLength(0);
+    expect(event).toMatchObject({
+      topic: 'notifications.broadcast',
+      payload: {
+        ad_purchase_id: exhausted.id,
+        vendor_id: owner.vendorId,
+        reason: 'BUDGET_EXHAUSTED',
+        budget_npr: 100,
+        amount_paid_npr: 80,
+      },
+    });
+    expect(domainEventSchema.safeParse(envelopeOf(event)).success).toBe(true);
+    expect(await outbox(funded.id, 'marketing.ad_paused')).toHaveLength(0);
+    expect(await outbox(flat.id, 'marketing.ad_paused')).toHaveLength(0);
   });
 
   it('runs as the hourly task of the maintenance queue, and never as a midnight task', async () => {

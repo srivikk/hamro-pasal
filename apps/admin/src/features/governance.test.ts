@@ -244,12 +244,21 @@ describe('compliance rules', () => {
     expect(complianceRows(all, 'VERIFIED', 'boudha')).toEqual([]);
   });
 
-  it('offers verification only for a PAN that is on file and unchecked', () => {
-    expect(verifyButton(live)).toEqual({
+  it('offers verification only for a PAN that is on file, unchecked and has its document', () => {
+    expect(verifyButton({ ...live, has_pan_document: true })).toEqual({
       label: 'Verify document',
       enabled: true,
       note: 'The shop trades normally. Its payouts are held until the PAN is verified.',
     });
+    // Phase 35: a number without its certificate is not something an admin can check.
+    expect(verifyButton(live)).toEqual({
+      label: 'Verify document',
+      enabled: false,
+      note: 'No document uploaded. The vendor uploads its PAN certificate in the Vendor App; there is nothing to verify until then. Its payouts are held.',
+    });
+    expect(verifyErrorMessage(new ApiError(422, 'DOCUMENT_MISSING', 'x'))).toBe(
+      'This vendor has no PAN document on file (a changed PAN number removes the old one). The list has been refreshed.',
+    );
     expect(verifyButton(verified)).toEqual({
       label: 'Verified',
       enabled: false,

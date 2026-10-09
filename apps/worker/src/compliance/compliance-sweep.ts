@@ -1,4 +1,4 @@
-import { recordAuditLog, vendors, type Database } from '@hamro-pasal/db';
+import { enqueueDomainEvent, recordAuditLog, vendors, type Database } from '@hamro-pasal/db';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 
 export const COMPLIANCE_SWEEP_JOB = 'VENDOR_COMPLIANCE_SWEEP';
@@ -22,7 +22,9 @@ export class ComplianceSweepService {
   /**
    * One transaction per vendor, under the vendor row lock the PAN save also takes: a PAN saved
    * just before the sweep keeps the shop LIVE, and a rerun or a second worker finds nothing left.
-   * Each suspension is audited in its own transaction, with the job as the actor.
+   * Each suspension is audited in its own transaction, with the job as the actor, and writes
+   * `vendor.suspended_for_compliance` to the outbox there (Phase 35): the event exists exactly
+   * when the suspension committed.
    */
   async suspendVendorsWithoutPan(): Promise<ComplianceSuspension[]> {
     const candidates = await this.db
@@ -49,6 +51,18 @@ export class ComplianceSweepService {
           vendorId: id,
           beforeState: { status: 'LIVE', tax_id: null },
           afterState: { status: 'SUSPENDED_COMPLIANCE', tax_id: null, restores_to: 'LIVE' },
+        });
+        const suspendedAt = new Date();
+        await enqueueDomainEvent(tx, {
+          type: 'vendor.suspended_for_compliance',
+          aggregateId: id,
+          occurredAt: suspendedAt,
+          payload: {
+            vendor_id: id,
+            vendor_phone: vendor.phone,
+            previous_status: 'LIVE',
+            suspended_at: suspendedAt.toISOString(),
+          },
         });
         return { vendorId: id, businessName: vendor.business_name };
       });

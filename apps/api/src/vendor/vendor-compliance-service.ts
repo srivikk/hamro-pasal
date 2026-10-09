@@ -1,4 +1,5 @@
 import {
+  enqueueDomainEvent,
   invoices,
   orders,
   recordAuditLog,
@@ -27,6 +28,8 @@ export interface TaxIdentityResult {
   readonly complianceSuspensionLifted: boolean;
   /** Invoices this save issued for orders delivered while the shop had no PAN. */
   readonly waitingInvoicesIssued: number;
+  /** The PAN number changed, so the document of the old number was removed. */
+  readonly panDocumentRemoved: boolean;
 }
 
 export interface PanDocumentResult {
@@ -42,7 +45,9 @@ export interface PanDocumentResult {
  *
  * Saving a PAN is the only thing that lifts a compliance suspension, and it does so in the same
  * transaction: no admin route can. Saving a different PAN clears the Super Admin's verification,
- * which freezes the shop's payouts until the new PAN is verified; the shop keeps trading.
+ * which freezes the shop's payouts until the new PAN is verified; the shop keeps trading. It also
+ * removes the document uploaded for the old number (Phase 35): a document belongs to one PAN, and
+ * an admin must never be shown the old certificate beside a new number.
  *
  * The first PAN also issues the invoices that were waiting for it (Phase 32): a shop swept for
  * compliance still delivers its open orders, and those deliveries could name no seller.
@@ -182,16 +187,32 @@ export class VendorComplianceService {
    * - The order rows come first because the invoice insert's foreign key reads the order row:
    *   taken after the sequence row, it could wait on a transaction (the nightly reconciliation)
    *   that holds that order and waits for this shop's vendor or sequence row.
+   * A changed PAN number sets `pan_document_url` to null in this transaction and, only after
+   * the commit, deletes the object it named (the order `uploadPanDocument` keeps: a row never
+   * names a missing object; a failed delete leaves a logged orphan). An upload racing this save
+   * queues on the same vendor row lock, so whichever commits second decides what is on file. A
+   * first PAN is not a change: a document uploaded before it is kept.
+   *
    * - An order delivered after that first pass is picked up under the vendor lock with SKIP
    *   LOCKED: this transaction never waits for an order row while it holds the vendor row. An
    *   order skipped there is held by a delivery or reconciliation, which reads the vendor row
    *   after this commit, finds the PAN and issues the invoice itself.
    */
-  saveTaxIdentity(
+  async saveTaxIdentity(
     actor: AuditActor & { kind: 'USER' },
     input: TaxIdentityRequest,
     context: AuditContext,
   ): Promise<TaxIdentityResult> {
+    const { result, removedKey } = await this.saveTaxIdentityRow(actor, input, context);
+    if (removedKey !== null) await this.discard(removedKey);
+    return result;
+  }
+
+  private saveTaxIdentityRow(
+    actor: AuditActor & { kind: 'USER' },
+    input: TaxIdentityRequest,
+    context: AuditContext,
+  ): Promise<{ result: TaxIdentityResult; removedKey: string | null }> {
     return this.db.transaction(async (tx) => {
       // The account's shop never changes, and a PAN is never removed: both are safe to read
       // before the lock. A shop that already has a PAN has no invoice waiting for one.
@@ -210,7 +231,10 @@ export class VendorComplianceService {
       if (before === undefined) throw new VendorAccountNotFoundError(actor.user_id);
 
       // A different PAN is a different document: the check of the old one says nothing about it.
+      const panChanged = before.tax_id !== null && before.tax_id !== input.tax_id;
       const verificationCleared = before.tax_id !== input.tax_id && before.pan_verified_at !== null;
+      // The document on file is the old number's: the matching one must be uploaded.
+      const removedKey = panChanged ? before.pan_document_url : null;
       const standing = standingWithPan(before);
 
       const next = {
@@ -223,6 +247,7 @@ export class VendorComplianceService {
             : input.registered_address,
         pan_verified_at: verificationCleared ? null : before.pan_verified_at,
         pan_verified_by_user_id: verificationCleared ? null : before.pan_verified_by_user_id,
+        pan_document_url: panChanged ? null : before.pan_document_url,
         ...standing.columns,
       };
 
@@ -233,7 +258,15 @@ export class VendorComplianceService {
         before.registered_address === next.registered_address &&
         !standing.lifted;
       if (unchanged) {
-        return { vendor: before, complianceSuspensionLifted: false, waitingInvoicesIssued: 0 };
+        return {
+          result: {
+            vendor: before,
+            complianceSuspensionLifted: false,
+            waitingInvoicesIssued: 0,
+            panDocumentRemoved: false,
+          },
+          removedKey: null,
+        };
       }
 
       const [after] = await tx
@@ -272,11 +305,52 @@ export class VendorComplianceService {
         });
       }
 
+      if (removedKey !== null) {
+        await recordAuditLog(tx, {
+          actor,
+          action: 'PAN_DOCUMENT_REMOVED',
+          entityId: before.id,
+          vendorId: before.id,
+          beforeState: { tax_id: before.tax_id, pan_document_url: removedKey },
+          afterState: { tax_id: after.tax_id, pan_document_url: null, reason: 'PAN_CHANGED' },
+          context,
+        });
+      }
+
       // After the update: the invoices copy the seller's PAN, VAT registration, name and address
       // as this save leaves them.
       const waitingInvoicesIssued =
         before.tax_id === null ? await issueWaitingInvoices(tx, actor, after, context) : 0;
-      return { vendor: after, complianceSuspensionLifted: standing.lifted, waitingInvoicesIssued };
+      // Phase 36: the shop is told it is back (or what still keeps it offline). Last in the
+      // transaction, so the event exists exactly when the lift committed.
+      if (
+        standing.lifted &&
+        after.status !== 'SUSPENDED_COMPLIANCE' &&
+        after.status !== 'DEACTIVATED'
+      ) {
+        const restoredAt = new Date();
+        await enqueueDomainEvent(tx, {
+          type: 'vendor.compliance_restored',
+          aggregateId: after.id,
+          occurredAt: restoredAt,
+          payload: {
+            vendor_id: after.id,
+            vendor_phone: after.phone,
+            status: after.status,
+            waiting_invoices_issued: waitingInvoicesIssued,
+            restored_at: restoredAt.toISOString(),
+          },
+        });
+      }
+      return {
+        result: {
+          vendor: after,
+          complianceSuspensionLifted: standing.lifted,
+          waitingInvoicesIssued,
+          panDocumentRemoved: removedKey !== null,
+        },
+        removedKey,
+      };
     });
   }
 }

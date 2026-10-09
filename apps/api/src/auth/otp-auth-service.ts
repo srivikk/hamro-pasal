@@ -1,15 +1,26 @@
-import { users, type Database } from '@hamro-pasal/db';
+import { users, vendors, type Database } from '@hamro-pasal/db';
 import {
   OTP_MAX_VERIFY_ATTEMPTS,
   REFRESH_TOKEN_TTL_SECONDS,
   type User,
 } from '@hamro-pasal/shared-types';
-import { eq } from 'drizzle-orm';
+import { and, eq, type SQL } from 'drizzle-orm';
 
 import type { SmsGateway } from '@hamro-pasal/sms';
 import { ACCESS_TOKEN, signAccessToken } from './access-token';
 import { generateOtpCode, type OtpStore } from './otp-store';
 import { InvalidRefreshTokenError, signRefreshToken, verifyRefreshToken } from './refresh-token';
+
+/**
+ * Phase 36: the number belongs to a vendor that closed its shop. The account is kept for the
+ * ledger and can no longer sign in; no code is sent to it.
+ */
+export class AccountDeactivatedError extends Error {
+  constructor() {
+    super('This shop account has been deactivated. Contact Hamro Pasal support.');
+    this.name = 'AccountDeactivatedError';
+  }
+}
 
 export class OtpCooldownError extends Error {
   constructor(readonly retryAfterSeconds: number) {
@@ -96,7 +107,20 @@ export class OtpAuthService {
     private readonly secrets: AuthSecrets,
   ) {}
 
+  /** True when the account is a vendor whose shop was deactivated. */
+  private async isDeactivated(where: SQL): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .innerJoin(users, eq(users.id, vendors.user_id))
+      .where(and(where, eq(vendors.status, 'DEACTIVATED')))
+      .limit(1);
+    return row !== undefined;
+  }
+
   async sendOtp(phone: string): Promise<OtpSent> {
+    // Before the cooldown and the SMS: a closed account is not texted (or billed) a code.
+    if (await this.isDeactivated(eq(users.phone, phone))) throw new AccountDeactivatedError();
     const cooldownLeftMs = await this.otps.claimCooldown(phone);
     if (cooldownLeftMs !== null) {
       throw new OtpCooldownError(Math.max(1, Math.ceil(cooldownLeftMs / 1000)));
@@ -132,6 +156,8 @@ export class OtpAuthService {
     }
 
     const { user, isNewUser } = await this.findOrCreateCustomer(phone);
+    // A code sent just before the shop was closed opens nothing.
+    if (await this.isDeactivated(eq(users.id, user.id))) throw new AccountDeactivatedError();
     return {
       accessToken: signAccessToken(
         { userId: user.id, role: user.role },
@@ -158,6 +184,10 @@ export class OtpAuthService {
       .where(eq(users.id, userId));
     if (user === undefined) {
       throw new InvalidRefreshTokenError('account no longer exists');
+    }
+    // Phase 36: the session of a closed shop ends at its next refresh (15 minutes at most).
+    if (await this.isDeactivated(eq(users.id, user.id))) {
+      throw new InvalidRefreshTokenError('the shop account was deactivated');
     }
     return {
       accessToken: signAccessToken(

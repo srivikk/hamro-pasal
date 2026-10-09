@@ -4,6 +4,9 @@ import { Alert, Pressable, Switch, Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { useSignOut } from '../../src/api/auth';
+import { ApiError } from '../../src/api/http';
+import { DELIVERY_SETTINGS_ERROR_CODES } from '../../src/api/vendor-delivery-settings';
+import { TAX_IDENTITY_ERROR_CODES } from '../../src/api/vendor-tax-identity';
 import { Button } from '../../src/components/Button';
 import { KeyboardScreen } from '../../src/components/KeyboardScreen';
 import { SearchableSelect } from '../../src/components/SearchableSelect';
@@ -15,17 +18,24 @@ import { PanDocumentCard } from '../../src/features/vendor/PanDocumentCard';
 import { useShopDeletionCheck } from '../../src/features/vendor/shop-deletion';
 import {
   addPalika,
+  deliveryRequestOf,
   FULFILLMENT_CHOICES,
+  formFromDeliveryResponse,
   formFromSettings,
   sanitizeAmountInput,
   sanitizeTaxIdInput,
   SCOPE_CHOICES,
   TAX_ID_LENGTH,
-  validateShopSettings,
+  validateDeliverySettings,
   type ShopSettingsErrors,
   type ShopSettingsField,
   type ShopSettingsForm,
 } from '../../src/features/vendor/shop-settings';
+import {
+  useDeliverySettingsQuery,
+  useSaveDeliverySettings,
+} from '../../src/features/vendor/useDeliverySettings';
+import { useSaveTaxIdentity, useTaxIdentityQuery } from '../../src/features/vendor/usePanDocument';
 import { useSaveShopSettings, useShopSettings } from '../../src/features/vendor/useShopSettings';
 import { useAuthStore } from '../../src/store/useAuthStore';
 import { selectSessionUserId } from '../../src/store/useProfileStore';
@@ -48,21 +58,24 @@ function Option({
   label,
   hint,
   selected,
+  disabled = false,
   onPress,
 }: {
   testID: string;
   label: string;
   hint: string;
   selected: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }) {
   return (
     <Pressable
       testID={testID}
       accessibilityRole="radio"
-      accessibilityState={{ selected }}
+      accessibilityState={{ selected, disabled }}
+      disabled={disabled}
       onPress={onPress}
-      className={`flex-row items-center gap-3 rounded-xl border-2 p-3 ${selected ? 'border-brand bg-brand-light' : 'border-gray-200 bg-white'}`}
+      className={`flex-row items-center gap-3 rounded-xl border-2 p-3 ${selected ? 'border-brand bg-brand-light' : 'border-gray-200 bg-white'} ${disabled ? 'opacity-40' : 'opacity-100'}`}
     >
       <Ionicons
         name={selected ? 'radio-button-on' : 'radio-button-off'}
@@ -127,12 +140,18 @@ function Field({
  * (language, WhatsApp updates) and the request to delete the shop account. Opened from the gear in the Vendor App
  * header.
  *
- * The PAN document (Phase 34) is the one part that goes to the server: PanDocumentCard uploads it
- * to `POST /api/vendor/tax-identity/document` and reads its standing back.
+ * The tax identity is the server's (Phase 35): the PAN number and the VAT switch are read from
+ * `GET /api/vendor/tax-identity` and saved with `PUT` by their own button, and PanDocumentCard
+ * uploads the certificate to `POST /api/vendor/tax-identity/document`. A changed PAN number
+ * removes the document of the old one on the server, so the vendor is asked first.
  *
- * TODO: send the rest (`PUT /api/vendor/tax-identity` for the PAN number itself,
- * `PUT /api/vendor/delivery-settings`; both routes exist). Until then the form below is saved on
- * the phone only.
+ * The delivery settings are the server's too (Phase 36): the form opens on what
+ * `GET /api/vendor/delivery-settings` holds, Save sends all seven with `PUT`, and the answer (the
+ * shop's own Palika added, names in the list's spelling) is what the form then shows. A mode the
+ * Super Admin has switched off cannot be chosen. Save is off until the server's settings have
+ * loaded: saving the form's defaults over settings the phone could not read would replace them.
+ *
+ * The phone keeps a copy of the last saved settings for the dashboard's "add your PAN" reminder.
  */
 export default function VendorSettingsScreen() {
   const { t } = useTranslation();
@@ -140,11 +159,99 @@ export default function VendorSettingsScreen() {
   const save = useSaveShopSettings();
   const signOut = useSignOut();
   const toast = useToastStore((store) => store.show);
-  const [form, setForm] = useState<ShopSettingsForm>(() => formFromSettings(saved));
+  // Until the vendor changes something the form shows the server's settings (derived, never
+  // copied into state: the answer of a save, or a refetch, is on screen at once).
+  const delivery = useDeliverySettingsQuery();
+  const saveDelivery = useSaveDeliverySettings();
+  const [draft, setDraft] = useState<ShopSettingsForm | null>(null);
+  const base =
+    delivery.data === undefined
+      ? formFromSettings(saved)
+      : formFromDeliveryResponse(delivery.data, saved?.taxId ?? '');
+  const form = draft ?? base;
   const [errors, setErrors] = useState<ShopSettingsErrors>({});
+  const platform = delivery.data?.platform;
+  const ownPalika = delivery.data?.municipality_palika_string ?? null;
 
   const update = (patch: Partial<ShopSettingsForm>): void => {
-    setForm((current) => ({ ...current, ...patch }));
+    setDraft((current) => ({ ...(current ?? base), ...patch }));
+  };
+  /** Switched off by the Super Admin: only the shop already on it keeps it selected. */
+  const modeOff = (mode: ShopSettingsForm['fulfillmentMode']): boolean =>
+    platform !== undefined &&
+    !(mode === 'SELF_DELIVERY' ? platform.self_delivery_enabled : platform.platform_fleet_enabled);
+
+  // The tax identity on file. Until the vendor types, the field and the switch show the server's
+  // values (derived, never copied into state: a refetch can only change what was not touched).
+  const identity = useTaxIdentityQuery();
+  const saveIdentity = useSaveTaxIdentity();
+  const [taxIdTouched, setTaxIdTouched] = useState(false);
+  const [vatDraft, setVatDraft] = useState<boolean | null>(null);
+  const [taxError, setTaxError] = useState(false);
+  const onFile = identity.data;
+  const taxId = taxIdTouched ? form.taxId : (onFile?.tax_id ?? form.taxId);
+  const vatRegistered = vatDraft ?? onFile?.is_vat_registered ?? false;
+
+  const sendTaxIdentity = (): void => {
+    saveIdentity.mutate(
+      { taxId, isVatRegistered: vatRegistered },
+      {
+        onSuccess: (result) => {
+          // From here on the form follows the server again.
+          setTaxIdTouched(false);
+          setVatDraft(null);
+          toast(
+            result.compliance_suspension_lifted
+              ? t('vendorShop.taxSavedRestored')
+              : result.pan_document_removed
+                ? t('vendorShop.taxSavedDocumentRemoved')
+                : result.waiting_invoices_issued > 0
+                  ? t('vendorShop.taxSavedInvoices', { count: result.waiting_invoices_issued })
+                  : t('vendorShop.taxSaved'),
+            'success',
+          );
+        },
+        onError: (error) => {
+          const code = error instanceof ApiError ? error.code : null;
+          const invalid = code === TAX_IDENTITY_ERROR_CODES.invalid || code === 'VALIDATION_FAILED';
+          setTaxError(invalid);
+          toast(
+            t(
+              invalid
+                ? 'vendorShop.taxErrors.invalid'
+                : code === 'NETWORK_ERROR'
+                  ? 'vendorShop.taxErrors.network'
+                  : 'vendorShop.taxErrors.failed',
+            ),
+            'error',
+          );
+        },
+      },
+    );
+  };
+
+  const submitTaxIdentity = (): void => {
+    if (saveIdentity.isPending) return;
+    if (taxId.length !== TAX_ID_LENGTH) {
+      setTaxError(true);
+      toast(t('vendorShop.taxErrors.invalid'), 'error');
+      return;
+    }
+    setTaxError(false);
+    // A different number takes the uploaded document (and its verification) with it.
+    const replaces =
+      onFile !== undefined &&
+      onFile.tax_id !== null &&
+      onFile.tax_id !== taxId &&
+      (onFile.has_pan_document || onFile.pan_verified_at !== null);
+    if (!replaces) {
+      sendTaxIdentity();
+      return;
+    }
+    Alert.alert(t('vendorShop.taxChangeTitle'), t('vendorShop.taxChangeBody'), [
+      { text: t('vendorMarketing.cancel'), style: 'cancel' },
+      { text: t('vendorShop.taxChangeConfirm'), style: 'destructive', onPress: sendTaxIdentity },
+    ]);
   };
   const errorOf = (field: ShopSettingsField): string | undefined => {
     const error = errors[field];
@@ -190,16 +297,38 @@ export default function VendorSettingsScreen() {
   };
 
   const submit = (): void => {
-    const result = validateShopSettings(form);
+    if (saveDelivery.isPending || delivery.data === undefined) return;
+    const result = validateDeliverySettings(form);
     if (!result.ok) {
       setErrors(result.errors);
       toast(t('vendorShop.fixErrors'), 'error');
       return;
     }
     setErrors({});
-    save(result.settings);
-    setForm(formFromSettings(result.settings));
-    toast(t('vendorShop.saved'), 'success');
+    saveDelivery.mutate(deliveryRequestOf(result.settings), {
+      onSuccess: () => {
+        // From here on the form follows the server's answer again.
+        setDraft(null);
+        // The phone's copy needs a PAN (the one on file, or the one being typed).
+        if (taxId.length === TAX_ID_LENGTH) save({ taxId, ...result.settings });
+        toast(t('vendorShop.saved'), 'success');
+      },
+      onError: (error) => {
+        const code = error instanceof ApiError ? error.code : null;
+        toast(
+          t(
+            code === DELIVERY_SETTINGS_ERROR_CODES.modeDisabled
+              ? 'vendorShop.deliveryErrors.modeDisabled'
+              : code === DELIVERY_SETTINGS_ERROR_CODES.invalid || code === 'VALIDATION_FAILED'
+                ? 'vendorShop.deliveryErrors.invalid'
+                : code === 'NETWORK_ERROR'
+                  ? 'vendorShop.deliveryErrors.network'
+                  : 'vendorShop.deliveryErrors.failed',
+          ),
+          'error',
+        );
+      },
+    });
   };
 
   return (
@@ -209,31 +338,89 @@ export default function VendorSettingsScreen() {
           testID="settings-tax-id"
           label={t('vendorShop.taxId')}
           hint={t('vendorShop.taxIdHint')}
-          value={form.taxId}
-          error={errorOf('taxId')}
+          value={taxId}
+          error={taxError ? t('vendorShop.taxErrors.invalid') : errorOf('taxId')}
           keyboardType="number-pad"
           // Room for a pasted number with separators; the field itself never holds more than nine.
-          maxLength={form.taxId.length >= TAX_ID_LENGTH ? TAX_ID_LENGTH : 20}
+          maxLength={taxId.length >= TAX_ID_LENGTH ? TAX_ID_LENGTH : 20}
           onChangeText={(text) => {
+            setTaxIdTouched(true);
+            setTaxError(false);
             update({ taxId: sanitizeTaxIdInput(text) });
           }}
+        />
+        <View className="flex-row items-center gap-3">
+          <View className="flex-1">
+            <Text className="text-base text-gray-900">{t('vendorShop.vatRegistered')}</Text>
+            <Text className="text-sm text-gray-500">{t('vendorShop.vatRegisteredHint')}</Text>
+          </View>
+          <Switch
+            testID="settings-vat-registered"
+            accessibilityLabel={t('vendorShop.vatRegistered')}
+            value={vatRegistered}
+            disabled={saveIdentity.isPending}
+            onValueChange={setVatDraft}
+            // Switch takes raw colours, not a className.
+            trackColor={{ true: colors.success, false: colors.inactive }}
+          />
+        </View>
+        {identity.isError ? (
+          <Text className="text-sm text-amber-700" testID="settings-tax-load-error">
+            {t('vendorShop.taxLoadError')}
+          </Text>
+        ) : null}
+        <Button
+          testID="settings-tax-save"
+          label={t(saveIdentity.isPending ? 'vendorShop.taxSaving' : 'vendorShop.taxSave')}
+          disabled={saveIdentity.isPending}
+          onPress={submitTaxIdentity}
         />
         <PanDocumentCard />
       </Section>
 
       <Section title={t('vendorShop.modeTitle')}>
+        {delivery.isError ? (
+          <View className="gap-2" testID="settings-delivery-error">
+            <Text className="text-sm text-red-700">{t('vendorShop.deliveryLoadError')}</Text>
+            <Button
+              testID="settings-delivery-retry"
+              label={t('vendorShop.deliveryRetry')}
+              variant="secondary"
+              size="sm"
+              onPress={() => {
+                void delivery.refetch();
+              }}
+            />
+          </View>
+        ) : delivery.data === undefined ? (
+          <Text className="text-sm text-gray-500" testID="settings-delivery-loading">
+            {t('vendorShop.deliveryLoading')}
+          </Text>
+        ) : null}
+        {delivery.data?.fulfillment_mode_enabled === false ? (
+          <Text className="text-sm font-semibold text-red-700" testID="settings-forced-offline">
+            {t('vendorShop.forcedOffline')}
+          </Text>
+        ) : null}
         {FULFILLMENT_CHOICES.map((mode) => (
           <Option
             key={mode}
             testID={`settings-mode-${mode}`}
             label={t(`vendorShop.mode.${mode}`)}
-            hint={t(`vendorShop.modeHint.${mode}`)}
+            hint={modeOff(mode) ? t('vendorShop.modeOff') : t(`vendorShop.modeHint.${mode}`)}
             selected={form.fulfillmentMode === mode}
+            // The server refuses a switched-off mode unless the shop is already on it.
+            disabled={modeOff(mode) && delivery.data?.fulfillment_mode !== mode}
             onPress={() => {
               update({ fulfillmentMode: mode });
             }}
           />
         ))}
+        {!selfDelivery && platform !== undefined ? (
+          <Text className="text-sm text-gray-500" testID="settings-platform-fee">
+            {t('vendorShop.platformFee', { amount: platform.platform_delivery_fee_npr })}
+          </Text>
+        ) : null}
       </Section>
 
       <Section title={t('vendorShop.scopeTitle')}>
@@ -281,18 +468,23 @@ export default function VendorSettingsScreen() {
                 key={palika}
                 className="flex-row items-center justify-between rounded-xl bg-gray-100 px-3 py-2"
               >
-                <Text className="flex-1 text-base text-gray-900">{palika}</Text>
-                <Pressable
-                  testID={`settings-palika-remove-${palika}`}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('vendorShop.palikaRemove', { name: palika })}
-                  hitSlop={8}
-                  onPress={() => {
-                    update({ palikas: form.palikas.filter((each) => each !== palika) });
-                  }}
-                >
-                  <Ionicons name="close-circle" size={22} color={colors.inactive} />
-                </Pressable>
+                <Text className="flex-1 text-base text-gray-900">
+                  {palika === ownPalika ? t('vendorShop.ownPalika', { name: palika }) : palika}
+                </Text>
+                {/* The shop's own municipality is always served: the server keeps it listed. */}
+                {palika === ownPalika ? null : (
+                  <Pressable
+                    testID={`settings-palika-remove-${palika}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('vendorShop.palikaRemove', { name: palika })}
+                    hitSlop={8}
+                    onPress={() => {
+                      update({ palikas: form.palikas.filter((each) => each !== palika) });
+                    }}
+                  >
+                    <Ionicons name="close-circle" size={22} color={colors.inactive} />
+                  </Pressable>
+                )}
               </View>
             ))}
             {errors.palikas === undefined ? null : (
@@ -338,8 +530,12 @@ export default function VendorSettingsScreen() {
         </Section>
       ) : null}
 
-      <Button testID="settings-save" label={t('vendorShop.save')} onPress={submit} />
-      <Text className="text-center text-sm text-gray-500">{t('vendorShop.localOnly')}</Text>
+      <Button
+        testID="settings-save"
+        label={t(saveDelivery.isPending ? 'vendorShop.taxSaving' : 'vendorShop.save')}
+        disabled={saveDelivery.isPending || delivery.data === undefined}
+        onPress={submit}
+      />
 
       <Section title={t('vendorShop.preferencesTitle')}>
         <View className="flex-row items-center justify-between gap-3">

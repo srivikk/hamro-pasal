@@ -464,6 +464,8 @@ describe('orderPushNotificationConsumer', () => {
         push: new ExpoPushGateway({ fetch: expo.fetch }),
         pushRecipients: recipients,
         pushSmsFallbackLog: null,
+        notifications: { name: 'NONE', send: () => Promise.resolve() },
+        vendorContacts: { contacts: () => Promise.resolve([]) },
       }),
     );
 

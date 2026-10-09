@@ -1,20 +1,12 @@
+import { PALIKAS } from '@hamro-pasal/shared-types';
+
 /**
- * TEMPORARY: the municipalities a shop can pick for its City / Regional scope. A hard-coded short
- * list until the canonical list of Nepal's 753 Palikas exists in shared-types (or an API serves
- * it): delivery routing matches these names exactly, so they are picked, never typed.
+ * The municipalities a shop can pick for its City / Regional scope: the list the API itself
+ * checks a saved name against (shared-types `PALIKAS`, still a stand-in for Nepal's 753), so a
+ * name picked here is never refused there. Delivery routing matches these names exactly: they
+ * are picked, never typed.
  */
-export const MOCK_PALIKAS = [
-  'Kathmandu Metropolitan City',
-  'Lalitpur Metropolitan City',
-  'Bhaktapur Municipality',
-  'Kirtipur Municipality',
-  'Pokhara Metropolitan City',
-  'Bharatpur Metropolitan City',
-  'Biratnagar Metropolitan City',
-  'Birgunj Metropolitan City',
-  'Dharan Sub-Metropolitan City',
-  'Nepalgunj Sub-Metropolitan City',
-] as const;
+export const MOCK_PALIKAS: readonly string[] = PALIKAS;
 
 export function isKnownPalika(name: string): boolean {
   return MOCK_PALIKAS.some((palika) => palika === name);

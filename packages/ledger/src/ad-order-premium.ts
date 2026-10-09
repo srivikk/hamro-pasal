@@ -1,4 +1,11 @@
-import { adPurchases, orders, recordAuditLog, vendors, type Transaction } from '@hamro-pasal/db';
+import {
+  adPurchases,
+  enqueueDomainEvent,
+  orders,
+  recordAuditLog,
+  vendors,
+  type Transaction,
+} from '@hamro-pasal/db';
 import { and, asc, eq, gt, lte } from 'drizzle-orm';
 
 import type { LedgerService } from './ledger-service';
@@ -61,8 +68,8 @@ export async function chargePerOrderAdPremium(
   // Asking for FOR UPDATE here would be a lock upgrade, and two deliveries of one shop deadlock on
   // it: the second already queues behind the first's weaker lock. NO KEY UPDATE still excludes
   // every other ad path (purchase, cancel, the hourly sweep, a payout), which take FOR UPDATE.
-  await tx
-    .select({ id: vendors.id })
+  const [vendor] = await tx
+    .select({ id: vendors.id, phone: vendors.phone })
     .from(vendors)
     .where(eq(vendors.id, vendorId))
     .for('no key update');
@@ -109,6 +116,24 @@ export async function chargePerOrderAdPremium(
       vendorId,
       beforeState: budgetState(before),
       afterState: { ...budgetState(after), order_id: orderId },
+    });
+    // Phase 35: the same event the hourly sweep writes when it is the one to pause the ad.
+    if (vendor === undefined) return;
+    const pausedAt = new Date();
+    await enqueueDomainEvent(tx, {
+      type: 'marketing.ad_paused',
+      aggregateId: before.id,
+      occurredAt: pausedAt,
+      payload: {
+        ad_purchase_id: before.id,
+        vendor_id: vendorId,
+        vendor_phone: vendor.phone,
+        reason: 'BUDGET_EXHAUSTED',
+        budget_npr: after.budget_npr ?? 0,
+        amount_paid_npr: after.amount_paid_npr,
+        ends_at: after.ends_at.toISOString(),
+        paused_at: pausedAt.toISOString(),
+      },
     });
   };
 

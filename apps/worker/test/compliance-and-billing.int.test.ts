@@ -3,6 +3,8 @@ import { randomInt, randomUUID } from 'node:crypto';
 import {
   auditLogs,
   createDatabase,
+  outboxEvents,
+  outboxRowToDomainEvent,
   pricingPlans,
   users,
   vendorSettingChanges,
@@ -10,7 +12,7 @@ import {
   type Database,
 } from '@hamro-pasal/db';
 import { bsDateOf, bsMonthStart } from '@hamro-pasal/ledger';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 
 import { BillingCycleRenewalService } from '../src/billing/billing-cycle-renewal';
 import { ComplianceSweepService } from '../src/compliance/compliance-sweep';
@@ -84,6 +86,17 @@ describe('compliance sweep and billing cycle renewal (real PostgreSQL)', () => {
       .where(eq(auditLogs.entity_id, entityId))
       .orderBy(asc(auditLogs.occurred_at));
 
+  const suspensionEvents = (vendorId: string) =>
+    db
+      .select()
+      .from(outboxEvents)
+      .where(
+        and(
+          eq(outboxEvents.aggregate_id, vendorId),
+          eq(outboxEvents.event_type, 'vendor.suspended_for_compliance'),
+        ),
+      );
+
   describe('VENDOR_COMPLIANCE_SWEEP', () => {
     it('suspends a LIVE vendor without a PAN and audits it with the job as the actor', async () => {
       const vendorId = await vendor();
@@ -107,6 +120,22 @@ describe('compliance sweep and billing cycle renewal (real PostgreSQL)', () => {
         before_state: { status: 'LIVE', tax_id: null },
         after_state: { status: 'SUSPENDED_COMPLIANCE', restores_to: 'LIVE' },
       });
+
+      // Phase 35: the shop is told why it went offline, through the outbox.
+      const [event, ...more] = await suspensionEvents(vendorId);
+      if (event === undefined) throw new Error('no suspension event in the outbox');
+      expect(more).toEqual([]);
+      expect(event).toMatchObject({
+        topic: 'notifications.broadcast',
+        published_at: null,
+        payload: {
+          vendor_id: vendorId,
+          vendor_phone: (await row(vendorId)).phone,
+          previous_status: 'LIVE',
+        },
+      });
+      // The stored row is an envelope the relay can publish.
+      expect(outboxRowToDomainEvent(event).event_type).toBe('vendor.suspended_for_compliance');
     });
 
     it('leaves a vendor with a PAN alone, verified or not, and any vendor that is not LIVE', async () => {
@@ -129,6 +158,7 @@ describe('compliance sweep and billing cycle renewal (real PostgreSQL)', () => {
       expect((await row(suspendedForDebt)).status).toBe('SUSPENDED');
       for (const id of [withPan, verified, approved, sandboxed, suspendedForDebt]) {
         expect(await audit(id)).toEqual([]);
+        expect(await suspensionEvents(id)).toEqual([]);
       }
     });
 
@@ -143,6 +173,7 @@ describe('compliance sweep and billing cycle renewal (real PostgreSQL)', () => {
       for (const id of [first, second]) {
         expect((await row(id)).status).toBe('SUSPENDED_COMPLIANCE');
         expect(await audit(id)).toHaveLength(1);
+        expect(await suspensionEvents(id)).toHaveLength(1);
       }
     });
 

@@ -491,7 +491,10 @@ describe('Admin governance API', () => {
 
     async function vendorWithPan(taxId = '302118845') {
       const vendorId = await createVendor(db);
-      await db.update(vendors).set({ tax_id: taxId }).where(eq(vendors.id, vendorId));
+      await db
+        .update(vendors)
+        .set({ tax_id: taxId, pan_document_url: `kyc/pan/${vendorId}/${randomUUID()}.webp` })
+        .where(eq(vendors.id, vendorId));
       return vendorId;
     }
 
@@ -623,6 +626,46 @@ describe('Admin governance API', () => {
       expect(await storedEntries(vendorId)).toEqual([]);
     });
 
+    it('answers 422 DOCUMENT_MISSING for a PAN without an uploaded document, storing nothing', async () => {
+      const vendorId = await createVendor(db);
+      await db.update(vendors).set({ tax_id: '302118845' }).where(eq(vendors.id, vendorId));
+
+      const res = await verify(vendorId);
+
+      expect(res.status).toBe(422);
+      expect(errorOf(res)).toMatchObject({
+        code: 'DOCUMENT_MISSING',
+        details: { vendor_id: vendorId },
+      });
+      expect(await vendorRow(vendorId)).toMatchObject({
+        pan_verified_at: null,
+        pan_verified_by_user_id: null,
+      });
+      expect(await storedEntries(vendorId)).toEqual([]);
+
+      // The document arrives: the same request now verifies.
+      await db
+        .update(vendors)
+        .set({ pan_document_url: `kyc/pan/${vendorId}/${randomUUID()}.webp` })
+        .where(eq(vendors.id, vendorId));
+      expect((await verify(vendorId)).status).toBe(200);
+    });
+
+    it('never confirms a shop that is marked verified with no document on file', async () => {
+      // Only a seeded or hand-edited row can be in this state.
+      const vendorId = await createVendor(db);
+      await db
+        .update(vendors)
+        .set({ tax_id: '302118845', pan_verified_at: new Date(), pan_verified_by_user_id: adminId })
+        .where(eq(vendors.id, vendorId));
+
+      const res = await verify(vendorId);
+
+      expect(res.status).toBe(422);
+      expect(errorOf(res).code).toBe('DOCUMENT_MISSING');
+      expect(await storedEntries(vendorId)).toEqual([]);
+    });
+
     it('cannot lift a compliance suspension', async () => {
       const vendorId = await createVendor(db);
       await db
@@ -650,6 +693,16 @@ describe('Admin governance API', () => {
       const cleared = await vendorRow(vendorId);
       expect(cleared).toMatchObject({ pan_verified_at: null, status: 'LIVE' });
 
+      // The document was the old number's: it went with it, and nothing can be verified yet.
+      expect(cleared.pan_document_url).toBeNull();
+      const early = await verify(vendorId);
+      expect(early.status).toBe(422);
+      expect(errorOf(early).code).toBe('DOCUMENT_MISSING');
+      await db
+        .update(vendors)
+        .set({ pan_document_url: `kyc/pan/${vendorId}/${randomUUID()}.webp` })
+        .where(eq(vendors.id, vendorId));
+
       const res = await verify(vendorId);
 
       expect(res.status).toBe(200);
@@ -663,6 +716,7 @@ describe('Admin governance API', () => {
         '609988776',
       ]);
       expect((await storedEntries(vendorId)).map((entry) => entry.action).sort()).toEqual([
+        'PAN_DOCUMENT_REMOVED',
         'PAN_VERIFICATION_CLEARED',
         'PAN_VERIFIED',
         'PAN_VERIFIED',
@@ -704,7 +758,10 @@ describe('Admin governance API', () => {
       const tag = randomUUID();
       const make = async (label: string) => createVendor(db, { businessName: `${label} ${tag}` });
       const verified = await make('A verified');
-      await db.update(vendors).set({ tax_id: '302118845' }).where(eq(vendors.id, verified));
+      await db
+        .update(vendors)
+        .set({ tax_id: '302118845', pan_document_url: `kyc/pan/${verified}/${randomUUID()}.webp` })
+        .where(eq(vendors.id, verified));
       await request(testApp.app)
         .post(`/api/admin/vendors/${verified}/pan-verification`)
         .set('Authorization', admin);
@@ -776,7 +833,10 @@ describe('Admin governance API', () => {
 
     it('moves a shop to Verified once its PAN is verified', async () => {
       const vendorId = await createVendor(db);
-      await db.update(vendors).set({ tax_id: '302118845' }).where(eq(vendors.id, vendorId));
+      await db
+        .update(vendors)
+        .set({ tax_id: '302118845', pan_document_url: `kyc/pan/${vendorId}/${randomUUID()}.webp` })
+        .where(eq(vendors.id, vendorId));
       const standing = async () => {
         const body = bodyOf(
           adminComplianceVendorListResponseSchema,

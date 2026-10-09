@@ -18,7 +18,8 @@ export const MAX_REGISTERED_ADDRESS_LENGTH = 200;
  * PUT /api/vendor/tax-identity (SPEC core section 10, "PAN is mandatory").
  *
  * Saving a PAN lifts a compliance suspension in the same transaction. Saving a different PAN
- * clears the Super Admin's verification, which freezes payouts until the new one is verified.
+ * clears the Super Admin's verification, which freezes payouts until the new one is verified, and
+ * removes the document uploaded for the old number (Phase 35): the matching one must be uploaded.
  * `legal_name` and `registered_address` are kept as they are when omitted, and cleared by null.
  */
 export const taxIdentityRequestSchema = z.strictObject({
@@ -52,6 +53,13 @@ export const taxIdentityResponseSchema = z.strictObject({
    * 10). 0 for a response from before the field.
    */
   waiting_invoices_issued: z.number().int().min(0).default(0),
+  /**
+   * Phase 35: this save changed the PAN number, so the document uploaded for the old number was
+   * removed and the matching one must be uploaded. False for a response from before the field.
+   */
+  pan_document_removed: z.boolean().default(false),
+  /** Phase 35: whether a PAN document is on file after the save. */
+  has_pan_document: z.boolean().default(false),
 });
 export type TaxIdentityResponseBody = z.infer<typeof taxIdentityResponseSchema>;
 

@@ -1,4 +1,4 @@
-# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery; Phase 32 retroactive invoices, the invoice PDF, vendor offers CRUD; Phase 33 discount stacking in checkout, Devanagari in the PDF, vendor invoices / offers and the customer quote wired; Phase 34 S3-compatible storage, image compression, promotion image upload, vendor PAN document)
+# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery; Phase 32 retroactive invoices, the invoice PDF, vendor offers CRUD; Phase 33 discount stacking in checkout, Devanagari in the PDF, vendor invoices / offers and the customer quote wired; Phase 34 S3-compatible storage, image compression, promotion image upload, vendor PAN document; Phase 35 strict KYC, Vendor App tax identity, vendor analytics, notification events in the outbox; Phase 36 vendor notice consumer, delivery settings wired, shop deactivation)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
 work without re-deriving it. It describes the tree at the end of **Phase 23 (End-to-End System Audit & Failure Mode Hardening)**, the last planned development phase, on top of Phase 22 (Financial Reconciliation & Payouts), 21 (Rider Dispatch &
@@ -1100,6 +1100,397 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.37 Phase 36: vendor notice consumer, `vendor.compliance_restored`, delivery settings wired in the Vendor App, shop deactivation (2026-10-09)
+
+`packages/shared-types`, `packages/db`, `packages/ledger`, `apps/api`, `apps/worker`,
+`apps/mobile`, and one rule in `apps/admin`. Migration **0038** (one enum value). No new
+dependency. **SPEC.md was amended** (vendor flow step 23 and the `Vendor.status` union: below).
+**Not run on a device, in a browser, or through a live Kafka broker**; the dev database has 0038
+applied.
+
+### Confirmed by the user (2026-10-09)
+
+A document uploaded before the first PAN is kept. Seeded shops need no document (the seed's SQL
+verification stands). The analytics definitions of §8Z.36 are final.
+
+### Asked vs built
+
+| Asked                                                                           | Built                                                                                                                                                                                                                                          | Why                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| the event "in `PUT /api/vendor/tax-identity` (or the Admin verification route)" | in the PAN save only                                                                                                                                                                                                                           | The admin's verification never lifts a compliance suspension (SPEC core 10; tested again here)                                                                                                                                                                     |
+| "we do not have a real SMS / Push provider integrated yet"                      | `NotificationAdapter` + `LoggerNotificationAdapter` as asked, for the five events. **The premise is not quite so:** Sparrow / Aakash SMS (`@hamro-pasal/sms`) and Expo push already send the login code, the debt notices and the order pushes | The logger is what was asked for; a provider-backed adapter is one class (it is described on the interface). The existing debt / escalation consumer was left on its SMS gateway                                                                                   |
+| deduplication by `event_id`                                                     | by **`event_id` + vendor id**                                                                                                                                                                                                                  | One `marketing.campaign_terms_changed` event names many shops. Claiming the event alone would tell the first shop and skip the rest, or repeat every shop when one failed                                                                                          |
+| `delivery_fee_npr`                                                              | `base_delivery_fee_npr` (with `delivery_fee_per_km_npr`, `free_delivery_above_npr`)                                                                                                                                                            | The documented contract of `PUT /api/vendor/delivery-settings`                                                                                                                                                                                                     |
+| `POST /api/vendor/account/deactivate`, status `DEACTIVATED`                     | as asked. **It replaces the never-built sketch of §8Z.14** (`GET /api/vendor/deletion-eligibility`, `POST / DELETE /api/vendor/deletion-request`, `users.account_status`)                                                                      | A new, explicit product rule (status on the vendor, no sign-in, ads and opt-ins closed) that the sketch's response shape and its "withdraw" route cannot express. Nothing was built on the sketch but the app's local-only button                                  |
+| opt-ins "VOIDED"                                                                | closed as **`OPTED_OUT`**, by the vendor's own user                                                                                                                                                                                            | Confirmed 2026-10-08: `VOIDED` is what a change of terms by the platform does, `OPTED_OUT` is the vendor's own act, and "in a dispute they must not look the same". Closing the shop is the vendor's act. Either way the opt-in is closed; say if VOIDED is wanted |
+| (not asked) blockers                                                            | `409 SHOP_NOT_DEACTIVATABLE` while money or goods are in motion (below)                                                                                                                                                                        | "Safe" route, and SPEC vendor flow 23: a shop in debt or with an unfinished order cannot be closed                                                                                                                                                                 |
+| "do not worry about the cascade to the customer search"                         | nothing was needed: the feed, menus, the public product list and checkout already require `status = 'LIVE'`                                                                                                                                    | –                                                                                                                                                                                                                                                                  |
+
+### SPEC.md amendments (2026-10-09, by the user's decision)
+
+- `Vendor.status` gains `'DEACTIVATED'`.
+- Vendor flow step 23 gains an amendment: closing a shop is a deactivation (never a hard delete);
+  the account can no longer sign in; ads are cancelled and opt-ins closed; refused while the shop
+  owes money, has an unfinished order or a payout in progress. **It replaces "the vendor can
+  withdraw the request until the data is purged":** an account that cannot sign in cannot
+  withdraw. Bringing a shop back is a Super Admin matter and is **not specified or built**.
+
+### 1. `vendor.compliance_restored`
+
+Written by `VendorComplianceService.saveTaxIdentity`, last in its transaction, when the save
+lifted a compliance suspension. Aggregate = vendor id, topic `notifications.broadcast`. Payload
+`{ vendor_id, vendor_phone, status, waiting_invoices_issued, restored_at }`. `status` is where
+the lift left the shop: `LIVE`, or still `SUSPENDED` when a debt or admin suspension lies on top
+(the consumer words the two differently). Not written for a shop that was never suspended, a
+repeat, or a refused PAN.
+
+### 2. Vendor notice consumer (worker)
+
+```
+Kafka notifications.broadcast ──▶ withDeadLetter( vendorNoticeConsumer )      name "vendor-notices"
+  parse envelope ── invalid, or not one of the five ──▶ return (nothing claimed)
+  notices = one per shop the event concerns
+     campaign change: SELECT id, phone FROM vendors WHERE id IN (…) AND status <> 'DEACTIVATED'
+  per notice: SET notifications:notice:seen:<event_id>:<vendor_id> NX EX 86400
+     claimed ──▶ NotificationAdapter.send(notice)
+        ok      ──▶ log {"notification":"notice.sent",…} (no phone, no text)
+        refused ──▶ DEL that claim, remember the error, go on to the next shop
+  any refusal ──▶ throw (retried 1 s / 2 s / 4 s, then dead_letter_events + notifications.dlq)
+```
+
+| File (`apps/worker/src/`)               | What                                                                                                                                                 |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notifications/notification-adapter.ts` | `VendorNotice { eventId, eventType, vendorId, phone, sms, push { title, body } }`, `NotificationAdapter { name, send }`, `LoggerNotificationAdapter` |
+| `notifications/vendor-notices.ts`       | the wording of the five events, `nepalDate`, `VendorContactReader` / `DatabaseVendorContacts`                                                        |
+| `consumers/vendor-notices.ts`           | `vendorNoticeConsumer`, `VENDOR_NOTICE_DEDUPE_PREFIX`                                                                                                |
+
+- **Logger output**, two lines per notice on the worker's stdout:
+  `[notify:sms] to +9779800000011: Hamro Pasal: your shop is offline because no PAN is on file. Please add your 9-digit PAN in the app (Shop settings) and your shop goes back online at once.`
+  `[notify:push] to vendor <vendor id>: Your shop is offline | Please add your PAN in Shop settings. …`
+- **Wording:** every SMS opens "Hamro Pasal: ", is plain ASCII (GSM-7; a campaign's own name,
+  quoted and cut to 40 characters, is the one part an admin may have typed otherwise), says what
+  happened and what to do next. Amounts use the Nepali grouping (`Rs. 1,25,000`); an ad's end is
+  a Nepal Time date (`9 Oct 2026`). English only: the server does not know a shop's language.
+  The texts run to two SMS segments (most are 150 to 190 characters).
+- **Registered after** `vendor-notifications` on the topic, each with its own `withDeadLetter`.
+  The two act on disjoint event types. A poison message is left to the older consumer, which
+  dead-letters it once.
+- A shop deactivated since the event was written is not told. A retry (or a replay from the
+  admin's dead-letter screen) repeats only the shops that were not told.
+- The older `vendor-notifications` consumer still ignores these five types (it has no SMS
+  template for them), so nothing is sent twice.
+
+### 3. Vendor App: delivery settings (`app/(vendor)/settings.tsx`)
+
+- The form opens on `GET /api/vendor/delivery-settings` and **Save** sends all seven settings
+  with `PUT` (`api/vendor-delivery-settings.ts`, `features/vendor/useDeliverySettings.ts`;
+  checked with the API's own schema first). The answer becomes the cached settings, and the form
+  shows it: the shop's own Palika, which the server always keeps in the list, appears marked
+  "(your own, always served)" and has no remove button.
+- **Save is disabled until the server's settings have loaded** (a load error offers Try again):
+  saving the form's defaults over settings the phone could not read would replace them.
+- A mode the Super Admin switched off is disabled with "Switched off by Hamro Pasal for now."; a
+  shop whose own mode was switched off sees why it is offline and can move to the other. Under
+  platform delivery the three charge fields are hidden and the platform's fee is shown.
+- Errors: `422 DELIVERY_MODE_DISABLED`, a refused body, no connection, generic. Never retried
+  automatically; what was typed stays.
+- The delivery Save no longer needs a PAN (the PAN has its own Save since §8Z.36): a shop being
+  set up configures delivery first.
+- The municipality picker now offers shared-types `PALIKAS` (20 names, the list the API checks
+  against) instead of its own ten.
+- **The phone still keeps a copy** of the last saved settings (`useVendorShopStore`), written
+  after a successful save when a PAN is known. Only the dashboard's "Add your PAN" reminder
+  reads it. That reminder is therefore still phone-based: a vendor who saved its PAN but never
+  pressed the delivery Save on this phone keeps seeing it.
+
+### 4. `POST /api/vendor/account/deactivate` (VENDOR, own shop, any status, `no-store`)
+
+```jsonc
+// body { "confirm": true }   (strict: nothing names a shop)
+// 200, also on repeat
+{
+  "vendor_id": "uuid",
+  "status": "DEACTIVATED",
+  "deactivated_at": "…",
+  "cancelled_ad_count": 2,
+  "returned_npr": 200,
+  "closed_opt_in_count": 1,
+  "wallet_balance_npr": 700,
+}
+// 409 SHOP_NOT_DEACTIVATABLE  details.blockers: NEGATIVE_BALANCE | ACTIVE_ORDERS | PENDING_PAYOUT | AD_FEES_DUE
+// 400 VALIDATION_FAILED · 404 VENDOR_NOT_FOUND · 401 / 403
+```
+
+`vendor/vendor-deactivation-service.ts`, one transaction under the **vendor row `FOR UPDATE`**,
+then ad purchase rows, ledger accounts, opt-in rows (the order every ad path and an opt-out use):
+
+1. Flat-rate ads that have **not started** are cancelled and what was paid is returned
+   (`AD_REFUND`, the vendor's own cancel journal key).
+2. `collectAdFeesDue`: flat fees still owed for ads that ran are taken from the wallet.
+3. **Blockers**, read under the lock; any of them rolls everything back (the refunds and the
+   collection included) and all are named at once:
+   - `NEGATIVE_BALANCE`: wallet below 0;
+   - `ACTIVE_ORDERS`: PLACED, PREPARING, OUT_FOR_DELIVERY, DISPUTED, or PENDING_PAYMENT younger
+     than 600 s (the settlement model rule of §8Z.26);
+   - `PENDING_PAYOUT`: a PENDING request, or a run's payout in `PROCESSING_BANK_TRANSFER`;
+   - `AD_FEES_DUE`: a flat fee still owed after step 2.
+4. Every other ACTIVE or PAUSED ad is cancelled: a held per-order budget goes back; the fee of a
+   flat-rate ad that ran stays paid. Audit `AD_CANCELLED` with `reason: VENDOR_DEACTIVATED`.
+5. Live campaign opt-ins become `OPTED_OUT` by the vendor's user (audit `CAMPAIGN_OPTED_OUT`).
+6. The account's device tokens are deleted; `status = 'DEACTIVATED'`; the three remembered
+   suspension statuses are cleared. Audit `VENDOR_DEACTIVATED` (new action, 46 in all).
+
+- **A positive balance is not a blocker.** The platform still owes it; a Super Admin pays it
+  from the Settlements tab (which does not look at the status). The weekly run pays it too.
+- **Cannot sign in:** `POST /api/auth/otp/send` and `…/otp/verify` answer
+  `403 ACCOUNT_DEACTIVATED` (no SMS is sent or billed, no cooldown is started), and
+  `…/token/refresh` answers `401 REFRESH_TOKEN_INVALID`. **An access token already issued works
+  for up to 15 minutes** (tokens are stateless, as everywhere else).
+- **Checkout** now reads the shop's status again under its `FOR KEY SHARE` vendor lock: a
+  deactivation either committed first (the checkout is refused, `422 VENDOR_UNAVAILABLE`) or
+  waits and then counts the order as open. The same re-check closes that window for a
+  suspension.
+- An admin can neither Suspend nor Restore a deactivated shop (`409 VENDOR_STATUS_CONFLICT`); the
+  admin Vendors tab disables the button and says why.
+- Migration 0038: `ALTER TYPE vendor_status ADD VALUE 'DEACTIVATED'`. Nothing in the file uses it.
+
+### Open
+
+- **The Vendor App's "Delete Shop Account" button is still local.** It records a request on the
+  phone and offers "Cancel deletion request"; it does not call the new route. Wiring it means:
+  confirm, `POST …/deactivate`, show the blockers the server names, then sign out; and removing
+  the cancel button (a deactivation cannot be withdrawn by the vendor).
+- No Super Admin route reactivates a shop, and no screen lists deactivated shops apart from the
+  status on the Vendors tab. The business name and its products' names stay reserved.
+- No provider-backed `NotificationAdapter`; no event or notice for a deactivation itself.
+- A deactivated vendor's products are hidden because their shop is not LIVE; `products.is_active`
+  is not changed.
+- The consumer was exercised with real PostgreSQL and Redis on the bytes the relay publishes,
+  not through a Kafka broker.
+- The checkout's status re-check under the lock has no race test of its own (the refusal of a
+  closed shop is tested; the lock order is the one the settlement model race test covers).
+- New Nepali strings are unreviewed.
+
+### Tests (2026-10-09, on the finished tree)
+
+- `pnpm typecheck` and `pnpm lint`: 16 of 16.
+- Unit: shared-types **362** (+6), worker **159** (+17, `consumers/vendor-notices.test.ts`),
+  admin 303, ledger 34, sms 21, kafka 7, db 7, ivr 7. API 193: 192 passed in the parallel run;
+  `image-compression` "gives up rather than store an image over the limit" failed there again
+  and passes alone (12 of 12).
+- Mobile **1561** in 103 suites, all passing (+14: `DeliverySettings.test.tsx`, msw through the
+  real `apiRequest`; `VendorSettings.test.tsx` now runs on an in-memory stand-in of the hook).
+- db integration **170** (migrations 0000-0038 from scratch).
+- **API integration 965 in 56 suites; 964 passed.** New `vendor-deactivation-api.int.test.ts`
+  (27). **The failure is `deliveries-api` "accepts the right code again once the lockout has run
+  out"**: the timing test recorded as flaky since §8Z.34 (five bcrypt checks must fit inside a
+  400 ms lockout). On this machine today it failed 4 of 4 runs alone as well; its code path
+  (the delivery handoff) is untouched by this phase.
+- Worker integration, the eight suites without Kafka: **76 of 76** (new `vendor-notices.int`, 4).
+- **Mutation-checked, 27 of 27 killed:** closing despite blockers (9 fail), a disputed order or
+  a bank-side payout not blocking, a stale checkout blocking forever, an owed fee forgiven or
+  not collected, an unstarted ad not refunded, opt-ins left live, device tokens kept, a repeat
+  closing twice; a closed account sent a code, signing in with an earlier code, refreshing its
+  session; an admin suspending a closed shop; no restored event; the consumer without its
+  claim (4), claiming by event only (3), keeping a refused shop's claim, swallowing a failure,
+  stopping at the first refusal, "back online" for a shop still suspended, dates in UTC, a
+  deactivated shop told; the app saving before the settings loaded (4), keeping the typed list
+  over the server's answer, choosing a switched-off mode, removing its own Palika.
+
+## 8Z.36 Phase 35: strict KYC (document per PAN number), Vendor App tax identity wired, vendor analytics, notification events in the outbox (2026-10-09)
+
+`packages/shared-types`, `packages/db`, `packages/ledger`, `apps/api`, `apps/worker`,
+`apps/mobile`, and one rule in `apps/admin`. Migration **0037** (one index). No new dependency,
+so no development-client rebuild. SPEC.md was not changed. **Not run on a device, in a browser
+or against a live API**; the dev database has 0037 applied (`pnpm db:migrate` was run).
+
+### Asked vs built (documented contracts kept)
+
+| Asked                                                                                                      | Built                                                                                                                                                                                                                  | Why                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| migration `0037_outbox_events.sql` creating `outbox_events (id, topic, payload, created_at, processed_at)` | **no new table.** The four events are written to the existing `outbox_events` (migration 0005: `event_type`, `topic`, `aggregate_id`, `payload`, `occurred_at`, `published_at`, attempts) through `enqueueDomainEvent` | The table, its relay to Kafka (`OutboxRelay`) and its typed envelope already exist and carry every other event. A second table of the same name cannot be created, and a renamed one would have no relay. `created_at` = `occurred_at`, `processed_at` = `published_at` |
+| (not asked) migration 0037                                                                                 | `0037_vendor_analytics_index.sql`: partial index `orders (vendor_id, delivered_at) WHERE delivered_at IS NOT NULL`                                                                                                     | The analytics windows read a shop's deliveries by time; the only vendor index was `(vendor_id, state)`                                                                                                                                                                  |
+| "accept `tax_id` and a new boolean `is_vat_registered`"                                                    | nothing to add: the route has taken both since Phase 25. New in the answer: `pan_document_removed`, `has_pan_document` (both default false)                                                                            | –                                                                                                                                                                                                                                                                       |
+| events fired by the sweeps and the campaign update                                                         | those, **and** `marketing.ad_paused` from `chargePerOrderAdPremium` (the delivery that uses a budget up)                                                                                                               | That is the path that pauses ads in practice; the hourly sweep only catches what it missed. The same state change must not be announced from one path and silent from the other                                                                                         |
+| ad ROI "if applicable"                                                                                     | `ad_roi` is null unless an ad of the shop ran in the last 30 days                                                                                                                                                      | §8Z.14's contract                                                                                                                                                                                                                                                       |
+| (not asked) admin Compliance tab                                                                           | Verify is disabled, with the reason, for a PAN without a document; `422 DOCUMENT_MISSING` is worded                                                                                                                    | Otherwise the button the rule forbids stays enabled and answers a generic error                                                                                                                                                                                         |
+
+**Not built (not asked):** SMS / push templates and a consumer for the four events (the worker's
+notification consumer ignores event types it has no template for, so they are relayed to
+`notifications.broadcast` and dropped there); `vendor.restored` for a lifted compliance suspension.
+
+### Decided here, to confirm
+
+- **A first PAN is not a change.** A document uploaded before any PAN was saved is kept when the
+  first number arrives. Only replacing one number with another removes the document.
+- **`DOCUMENT_MISSING` comes before the idempotent repeat.** A shop marked verified with no
+  document on file (only a seeded or hand-edited row: every code path now clears one with the
+  other) answers 422 to a verification request, never a confirmation. **The seed still verifies
+  its shops by SQL with no document**; they stay verified and payable.
+- **The top item is counted over the last 7 days** (the chart's window); its `sales_npr` is
+  units x the price sold at, before order-level discounts (a discount is not per line).
+- **An ad counts for its whole booked period.** No status history is stored, so the hours a
+  per-order ad sat PAUSED count as "an ad ran". A purchase cancelled before it cost anything
+  does not count at all.
+- **A DISPUTED order leaves the figures** (state must be DELIVERED) until the dispute is resolved.
+
+### 1. Strict KYC
+
+- **`POST /api/admin/vendors/:id/pan-verification`**, under the vendor row lock, in this order:
+  404 `VENDOR_NOT_FOUND`, 409 `PAN_MISSING`, **422 `DOCUMENT_MISSING`** (`details.vendor_id`),
+  then the repeat (200, nothing recorded), then the stamp and its audit entry.
+- **`PUT /api/vendor/tax-identity`** (`VendorComplianceService.saveTaxIdentity`), when the number
+  changes (`before.tax_id` not null and different):
+  1. in the transaction, under the vendor row lock: `pan_document_url = NULL`, the verification
+     cleared (as before), audit `PAN_DOCUMENT_REMOVED` (new action, 45 in all; before: the old
+     PAN and key, after: the new PAN, `reason: PAN_CHANGED`);
+  2. **after the commit**: `DeleteObject` of the old key. A failed delete leaves a logged orphan
+     (`storage: orphan_object`) and the save stands: the row already names nothing, so no admin
+     can be shown the old certificate.
+- **Lock order is unchanged:** waiting order rows, vendor row, invoice sequence row. The object
+  delete happens outside any transaction. An upload racing a PAN change queues on the vendor row
+  lock; whichever commits second decides, and the bucket holds exactly what the row names
+  (tested, 4 rounds).
+- Consequence for payouts: a changed PAN now needs **upload, then verify** before the next
+  payout (the gate itself is unchanged).
+
+### 2. Vendor App: Tax identity (`app/(vendor)/settings.tsx`)
+
+- The PAN field and a new **VAT registered** switch show what `GET /api/vendor/tax-identity`
+  holds until the vendor types (derived, not copied into state). **Save tax identity**
+  (`settings-tax-save`) sends `PUT { tax_id, is_vat_registered }`; `legal_name` and
+  `registered_address` are not sent, so the server keeps them.
+- Nine digits are checked on the phone first (nothing is sent otherwise). The button is disabled
+  while a save is on its way; a save is never retried automatically.
+- **Changing a number that has a document or a verification asks first** ("Change your PAN? ...
+  removes it, and payouts are paused ..."). On agreement the save is sent; the answer is written
+  into the cached tax identity, so the document card beside it shows "No document uploaded yet."
+  at once.
+- Toasts: saved / shop back online (compliance lifted) / upload the new certificate / waiting
+  invoices issued. Errors: nine digits, no connection, generic.
+- **The delivery settings are still saved on the phone only**, by the Save button under them
+  (`PUT /api/vendor/delivery-settings` exists and is not called). That button also keeps a copy
+  of the PAN on the phone, which the dashboard's "Add your PAN" reminder reads.
+- `apiRequest` gained the `PUT` method.
+
+### 3. `GET /api/vendor/analytics/summary` (VENDOR, own shop, any status, `no-store`)
+
+```jsonc
+{ "today_sales_npr": 855, "today_order_count": 1,
+  "top_item": { "product_name": "…", "units_sold": 11, "sales_npr": 208 } | null,
+  "ad_roi": { "spend_npr": 50, "revenue_npr": 1000 } | null,
+  "daily_sales": [ { "day": "FRI", "sales_npr": 0 }, /* 7 entries, oldest first, today last */ ] }
+// 404 VENDOR_NOT_FOUND (a vendor account without a shop) · 401 / 403
+```
+
+`apps/api/src/analytics/vendor-analytics-service.ts`, contract `shared-types/api/vendor-analytics.ts`.
+Four statements in one `REPEATABLE READ, READ ONLY` transaction; no lock is taken.
+
+```sql
+-- sales of one order: what the commission is charged on
+(o.subtotal - o.vendor_offer_discount_npr - o.platform_promo_vendor_share_npr)
+
+-- 00:00 today in Nepal Time (a wall-clock value), and the instant a day began
+date_trunc('day', now() AT TIME ZONE 'Asia/Kathmandu')                       -- TODAY_LOCAL
+(TODAY_LOCAL - make_interval(days => n)) AT TIME ZONE 'Asia/Kathmandu'      -- dayStart(n)
+
+-- 1. seven bars (the last row is also "today"): one row per day even without a delivery
+SELECT extract(dow FROM d.day)::int, coalesce(sum(SALES), 0), count(o.id)
+FROM generate_series(TODAY_LOCAL - 6 days, TODAY_LOCAL, interval '1 day') AS d(day)
+LEFT JOIN orders o ON o.vendor_id = $v AND o.state = 'DELIVERED'
+  AND o.delivered_at >= d.day AT TIME ZONE 'Asia/Kathmandu'
+  AND o.delivered_at <  (d.day + interval '1 day') AT TIME ZONE 'Asia/Kathmandu'
+GROUP BY d.day ORDER BY d.day;
+
+-- 2. top item, by volume; ties by amount, then product id
+SELECT (array_agg(i.product_name ORDER BY o.delivered_at DESC, o.id DESC))[1],
+       sum(i.quantity), sum(i.quantity * i.unit_price_npr)
+FROM order_items i JOIN orders o ON o.id = i.order_id
+WHERE o.vendor_id = $v AND o.state = 'DELIVERED' AND o.delivered_at >= dayStart(6)
+GROUP BY i.product_id ORDER BY 2 DESC, 3 DESC, i.product_id LIMIT 1;
+
+-- 3. ad return, last 30 Nepal Time days. counted(p) = NOT (CANCELLED AND amount_paid_npr = 0)
+had_ad  = EXISTS (ad_purchases p of the shop, counted, starts_at <= now() AND ends_at > dayStart(29))
+spend   = sum(e.amount_npr) FROM ledger_entries e JOIN ledger_accounts a (AD_REVENUE)
+          JOIN ad_purchases p ON p.id = e.ad_purchase_id
+          WHERE p.vendor_id = $v AND e.line_type IN ('AD_FLAT_FEE','AD_ORDER_PREMIUM')
+            AND e.created_at >= dayStart(29)
+revenue = sum(SALES) of DELIVERED orders, delivered_at >= dayStart(29), with
+          EXISTS (counted p of the shop: o.placed_at >= p.starts_at AND o.placed_at < p.ends_at)
+```
+
+- Nepal has no daylight saving, so `+ interval '1 day'` on the wall-clock value is exact.
+- Spend is read on the `AD_REVENUE` side: a refunded flat fee is the same line type, negative,
+  and nets out. A held budget (`AD_BUDGET_HOLD`) is not a cost until an order draws on it.
+- The name of the top item is the one on its most recent delivery (an order line keeps the name
+  it was sold under).
+- Sums are `numeric(12,2)` read as text and converted once; every amount in the answer is >= 0.
+- No parameter names a shop; a `vendor_id` in the query string is ignored (tested).
+- **Vendor App:** `app/(vendor)/analytics.tsx` reads it with TanStack Query (`['vendor',
+'analytics']`, `staleTime` 0, pull to refresh). The sample figures, their flag and the
+  production placeholder are deleted (`mock-analytics.ts` became `analytics-format.ts`: the two
+  display helpers only). New states: a load error with Try again; a failed refresh keeps the last
+  figures with a note; an ad that has cost nothing yet shows no ratio.
+
+### 4. Notification events (transactional outbox)
+
+All on `notifications.broadcast`, each written with `enqueueDomainEvent(tx, …)` **last in the
+transaction of the change**, after its audit entry, under the locks that change already held
+(no new lock, no new order):
+
+| `event_type`                       | Aggregate   | Written by                                                                                             | Payload                                                                                                                                                                |
+| ---------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vendor.suspended_for_compliance`  | vendor id   | `ComplianceSweepService` (worker), per vendor, under the vendor row lock                               | `vendor_id`, `vendor_phone`, `previous_status: LIVE`, `suspended_at`                                                                                                   |
+| `marketing.ad_ended`               | purchase id | `MarketingStatusSweepService.endFinishedPurchases` (vendor row, purchase row, ledger accounts)         | `ad_purchase_id`, `vendor_id`, `vendor_phone`, `billing_model`, `ends_at`, `returned_npr`, `ended_at`                                                                  |
+| `marketing.ad_paused`              | purchase id | the sweep's `pauseExhaustedBudgets`, and `chargePerOrderAdPremium` (`@hamro-pasal/ledger`) at delivery | `ad_purchase_id`, `vendor_id`, `vendor_phone`, `reason: BUDGET_EXHAUSTED`, `budget_npr`, `amount_paid_npr`, `ends_at`, `paused_at`                                     |
+| `marketing.campaign_terms_changed` | campaign id | `CampaignService.update`, only when a term changed (under the campaign row lock)                       | `campaign_id`, `campaign_name`, `previous_terms_version`, `terms_version`, `voided_vendor_ids` (first 5000), `voided_opt_in_count`, `changed_by_user_id`, `changed_at` |
+
+- Once per state change: a rerun or concurrent sweeps write one event (the status is re-read
+  under the lock), and a rename, an unpublish, an unchanged save or a refused body writes none.
+- The campaign update now reads the live opt-ins' vendor ids (it counted them before) under the
+  campaign row lock; an opt-in takes that row `FOR SHARE` first, so the list is exact.
+- `chargePerOrderAdPremium` reads the vendor's phone with the `FOR NO KEY UPDATE` it already
+  took: the lock strength is unchanged (the §8Z.30 rule stands).
+
+### Open
+
+- No consumer acts on the four events: no SMS, push or in-app notice reaches a shop yet.
+- A vendor still cannot view its stored PAN document; delivery settings are still phone-only.
+- The Vendor App form has no fields for `legal_name` / `registered_address`.
+- Analytics: no date range, no per-product list, no rollup table (each open of the screen runs
+  the four statements; fine at today's sizes, move to a nightly rollup when a shop's history
+  makes it slow). `EXPLAIN` on production-sized data was not run.
+- The new Nepali strings are unreviewed.
+
+### Tests (2026-10-09, one run each on the finished tree)
+
+- `pnpm typecheck` and `pnpm lint`: 16 of 16. `drizzle-kit generate`: no schema changes.
+- Unit: shared-types **356** (+8, `api/phase-35.test.ts`), admin **303**, worker 142, ledger 34,
+  sms 21, kafka 7, db 7, ivr 7. API **193**: 192 passed in the parallel `pnpm test`; the failure,
+  `image-compression` "gives up rather than store an image over the limit", is in code this
+  phase did not touch and passes alone (12 of 12).
+- Mobile **1547** in 102 suites, all passing (+23): `TaxIdentity.test.tsx` (18, msw through the
+  real `apiRequest`), `VendorAnalytics.test.tsx` rewritten (11).
+- db integration **170** (migrations 0000-0037 from scratch).
+- **API integration 938 in 55 suites, all passing** (+23): new `vendor-analytics-api.int.test.ts`
+  (12: zeros and seven days ending on today's Nepal weekday; **SPEC verification 5's order counted
+  as 855**; **the Nepal midnight boundary to the second, and the seven-day edge**; only DELIVERED,
+  only the caller's shop; top item by volume, its tie and its window; ad return, no ad, a
+  cancelled ad; `marketing.ad_paused` at delivery; roles; the index); `kyc-and-cloud-storage`
+  (+7: 422 before the upload, **row nulled then the object deleted**, same PAN keeps it, first
+  PAN keeps it, a refused number removes nothing, a failed delete, the race); `admin-governance`
+  (+2), `admin-marketing` (+2 and the event on each of the seven terms).
+- Worker integration, the seven suites without Kafka: **72 of 72** (compliance sweep and
+  marketing sweep assert their events, once under reruns). The Kafka suites were not run.
+- **Mutation-checked, 18 of 19 killed:** verifying without a document (5 fail), a changed PAN
+  keeping the document (4), a first PAN removing one (1), the object never deleted (3); sales
+  without the vendor share (1) or the offer (1), days cut in UTC (1), every state counted (1),
+  top item by amount (1), orders placed before the ad counted (1), a cancelled unpaid ad counted
+  (1); no terms event (8), an event for a rename (1), no compliance event (2), no ad-ended event
+  (5); the app saving a changed PAN without asking (2), not sending the VAT switch (2), sending
+  a short PAN (2). **Survives:** removing the `isPending` guard in the save handler (the button
+  is disabled while a save runs, which the test presses through).
+
 ## 8Z.35 Phase 34: S3-compatible storage, server-side image compression, promotion image upload, vendor PAN document (KYC) (2026-10-09)
 
 `packages/shared-types`, `packages/db`, `apps/api`, `apps/admin`, `apps/mobile`. Migration
@@ -1122,6 +1513,8 @@ device**; the dev database needs `pnpm db:migrate`.
 | (not asked) cleaning up an upload that was never saved | `DELETE /api/admin/promotions/image { url }` (409 while a promotion uses it); the admin form calls it on Cancel and for replaced tries                                   | An image is uploaded before its promotion is saved; a cancelled form would otherwise leave an object nothing names                                                                                     |
 | "compress the image on the client-side"                | `expo-image-manipulator`: longer side to 1200 px, JPEG at 75%. The server re-encodes it once more to WebP                                                                | SPEC infrastructure §6 names `react-native-compressor`; the request named Expo's tool, which needs no extra native module beyond itself. The stored format is the server's in either case              |
 | compress "before final storage, as per SPEC"           | applied to **every** image upload: dispute evidence, product photos, promotion art, PAN documents                                                                        | SPEC's rule is not per route. **Behaviour change:** evidence and product photos are now stored as `.webp` (`content_type: image/webp`); files stored earlier keep their names and are still deletable  |
+
+> **Updated by §8Z.36 (2026-10-09):** verification now requires a document (`422 DOCUMENT_MISSING`), a changed PAN number removes the uploaded document, and the Vendor App sends the PAN and the VAT flag. The second and third bullets below, and the first item under "Open", are superseded.
 
 ### Decided here, to confirm
 

@@ -161,7 +161,8 @@ export class WalletService {
     adminUserId: string,
   ): Promise<AdminOverride> {
     const vendor = await lockVendor(tx, vendorId);
-    if (!isActive(vendor.status)) {
+    // A closed shop has no standing to suspend, and a Restore must never bring it back.
+    if (!isActive(vendor.status) || vendor.status === 'DEACTIVATED') {
       throw new VendorStatusConflictError(vendorId, vendor.status, 'SUSPEND');
     }
     await tx

@@ -21,6 +21,9 @@ export const vendorStatuses = [
   'LIVE',
   'SUSPENDED',
   'SUSPENDED_COMPLIANCE',
+  // Phase 36: the vendor closed its shop (POST /api/vendor/account/deactivate). Final for the
+  // vendor: the row stays for the ledger, the account can no longer sign in.
+  'DEACTIVATED',
 ] as const;
 export const vendorStatusSchema = z.enum(vendorStatuses);
 export type VendorStatus = z.infer<typeof vendorStatusSchema>;

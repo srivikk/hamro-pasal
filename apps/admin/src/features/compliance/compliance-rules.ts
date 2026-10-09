@@ -94,8 +94,9 @@ export interface VerifyButton {
 }
 
 /**
- * The "Verify document" button of one row. Only a PAN that is on file and unchecked can be
- * verified. An admin cannot lift a compliance suspension: the vendor saving its PAN does (SPEC
+ * The "Verify document" button of one row. Only a PAN that is on file, unchecked and backed by
+ * an uploaded document can be verified (Phase 35: the server answers 422 DOCUMENT_MISSING
+ * otherwise; an admin verifies a document, never a bare number). An admin cannot lift a compliance suspension: the vendor saving its PAN does (SPEC
  * core section 10).
  */
 export function verifyButton(vendor: ComplianceVendorView): VerifyButton {
@@ -118,6 +119,13 @@ export function verifyButton(vendor: ComplianceVendorView): VerifyButton {
               : 'No PAN on file. The shop cannot go LIVE without one.',
       };
     case 'UNVERIFIED':
+      if (!vendor.has_pan_document) {
+        return {
+          label: 'Verify document',
+          enabled: false,
+          note: 'No document uploaded. The vendor uploads its PAN certificate in the Vendor App; there is nothing to verify until then. Its payouts are held.',
+        };
+      }
       return {
         label: 'Verify document',
         enabled: true,
@@ -151,6 +159,8 @@ export function verifyErrorMessage(error: unknown): string {
     switch (error.code) {
       case 'PAN_MISSING':
         return 'This vendor has no PAN on file any more. The list has been refreshed.';
+      case 'DOCUMENT_MISSING':
+        return 'This vendor has no PAN document on file (a changed PAN number removes the old one). The list has been refreshed.';
       case 'VENDOR_NOT_FOUND':
         return 'This vendor no longer exists.';
       case 'NETWORK_ERROR':

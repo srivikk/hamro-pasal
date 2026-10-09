@@ -6,7 +6,11 @@ import {
 import type { ErrorRequestHandler } from 'express';
 import { MulterError } from 'multer';
 
-import { PanDocumentNotFoundError, PanMissingError } from '../admin/admin-compliance-service';
+import {
+  PanDocumentMissingError,
+  PanDocumentNotFoundError,
+  PanMissingError,
+} from '../admin/admin-compliance-service';
 import {
   SettlementChangeBlockedError,
   SettlementModelRequestDecidedError,
@@ -34,7 +38,9 @@ import {
   OtpInvalidError,
 } from '../auth/otp-auth-service';
 import { InvalidRefreshTokenError } from '../auth/refresh-token';
+import { AccountDeactivatedError } from '../auth/otp-auth-service';
 import { VendorNotFoundError } from '../catalog/catalog-service';
+import { VendorNotDeactivatableError } from '../vendor/vendor-deactivation-service';
 import {
   CategoryCycleError,
   CategoryInUseError,
@@ -204,6 +210,14 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof OtpAttemptsExceededError) {
     return new HttpError(429, 'OTP_ATTEMPTS_EXCEEDED', error.message);
+  }
+  if (error instanceof AccountDeactivatedError) {
+    return new HttpError(403, 'ACCOUNT_DEACTIVATED', error.message);
+  }
+  if (error instanceof VendorNotDeactivatableError) {
+    return new HttpError(409, 'SHOP_NOT_DEACTIVATABLE', error.message, {
+      blockers: error.blockers,
+    });
   }
   if (error instanceof OtpExpiredError) {
     return new HttpError(410, 'OTP_EXPIRED', error.message);
@@ -470,6 +484,14 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof PanMissingError) {
     return new HttpError(409, 'PAN_MISSING', 'The vendor has no PAN on file to verify');
+  }
+  if (error instanceof PanDocumentMissingError) {
+    return new HttpError(
+      422,
+      'DOCUMENT_MISSING',
+      'The vendor has uploaded no PAN document: there is nothing to verify',
+      { vendor_id: error.vendorId },
+    );
   }
   if (error instanceof PanDocumentNotFoundError) {
     return new HttpError(404, 'PAN_DOCUMENT_NOT_FOUND', 'The vendor has uploaded no PAN document');

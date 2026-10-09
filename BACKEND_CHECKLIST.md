@@ -274,7 +274,8 @@ Schemas, formulas and contracts: STATE_HANDOFF.md §8Z.5. Rules: SPEC.md core se
   - [x] **`chargePerOrderAdPremium` (2026-10-08, §8Z.29):** the per-order fee as its own `AD_ORDER_PREMIUM` posting, once per order, pausing the ad when the budget runs out. Built and tested in `@hamro-pasal/ledger`.
   - [x] **Also in the nightly reconciliation (2026-10-08, §8Z.31):** charged with a settlement the job posts itself.
   - [x] **Wired 2026-10-08 (§8Z.30):** `DeliveryHandoff.handOver` calls it after the settlement. Decided: a cash order's fee may take a Model B wallet negative; the debt suspension rule applies.
-  - [ ] **Not built:** collecting a Model B flat fee as each order settles, a notice to the shop when its ad ends or pauses.
+  - [x] **Outbox events `marketing.ad_ended` / `marketing.ad_paused` (2026-10-09, §8Z.36)**, from the hourly sweep and from the delivery that uses a budget up.
+  - [ ] **Not built:** collecting a Model B flat fee as each order settles; a consumer that turns those two events into an SMS / push.
   - [x] **Decided 2026-10-08:** a flat-rate ad can be cancelled only before it starts (then refunded in full); a per-order ad at any time.
 - [x] **Model B guard (required):** a `FLAT_RATE` purchase is refused when `balance + pending_escrow − flat fees already due < ad_price` → `422 AD_EXCEEDS_PENDING_PAYOUT`, under the vendor row lock. Tested to the paisa on both sides and with two simultaneous purchases. **Built 2026-10-08.**
 - [x] **Sponsored feed (required):** `GET /api/vendors` puts up to two ACTIVE `FEED_LISTING` shops first in "Delivers to you", nearest first, with `is_sponsored: true` on exactly those entries; never a shop that does not deliver here. **Built 2026-10-08** (§8Z.28; SPEC verification 9 tested). The customer app shows the badge from the field.
@@ -322,12 +323,13 @@ Rules: SPEC.md Dual-Fulfillment "Delivery Modularity", Vendor Pricing "Billing C
   - [x] **Issuing the invoices that were waiting (2026-10-08, §8Z.33):** the first PAN issues, in its own transaction and in delivery order, the invoice of every DELIVERED order of the shop that has none; the response carries `waiting_invoices_issued`; audit `WAITING_INVOICES_ISSUED`.
   - [ ] **Not built with it:** the `vendor.restored` event (its payload is the debt restore’s: it needs its own event and SMS / push template).
   - [x] **The PAN document (2026-10-09, migration 0036, §8Z.35):** `POST /api/vendor/tax-identity/document` (multipart, one `document` part) stores it in the **private** bucket (`vendors.pan_document_url` holds the object key, never a public URL), replaces an earlier one and deletes its object; replacing the document of a verified PAN clears the verification. `GET /api/vendor/tax-identity` (what is on file, `has_pan_document`), `GET /api/admin/vendors/:id/pan-document` (the image, for the admin's check), `has_pan_document` on the compliance list. The Vendor App uploads from the camera or the gallery; the admin Compliance tab opens the document.
-    - [ ] **The app still does not send the PAN number** (`PUT /api/vendor/tax-identity`): the settings form saves it on the phone. Until it does, a document uploaded from the app belongs to a shop the server holds no PAN for.
-    - [ ] To decide: require a document before `pan-verification`; drop the document when the PAN number changes.
+    - [x] **The app sends the PAN number and the VAT flag (2026-10-09, §8Z.36):** the Tax identity section reads `GET /api/vendor/tax-identity` and saves with `PUT` (its own button; a changed number asks first).
+    - [x] **Decided and built 2026-10-09 (§8Z.36):** `POST …/pan-verification` answers **`422 DOCUMENT_MISSING`** without an uploaded document; a changed PAN number sets `pan_document_url` to null in its transaction and deletes the object after the commit (audit `PAN_DOCUMENT_REMOVED`; the response carries `pan_document_removed`, `has_pan_document`). A first PAN keeps a document uploaded before it (to confirm).
+    - [ ] The seed verifies its shops by SQL with no document on file; decide whether it should upload one.
   - Body `{ tax_id, is_vat_registered, legal_name?, registered_address? }` → `200 { vendor_id, tax_id, is_vat_registered, status }`.
   - `400 VALIDATION_FAILED` for anything but nine digits.
   - Same transaction, vendor row lock: a `SUSPENDED_COMPLIANCE` shop returns to `status_before_compliance_suspension`; write `vendor.restored`; issue the invoices its delivered orders were waiting for (6.4).
-- [x] **Compliance sweep.** One-off run, then nightly `VENDOR_COMPLIANCE_SWEEP` on `midnight-maintenance`: every `LIVE` vendor with `tax_id IS NULL` → `SUSPENDED_COMPLIANCE`, outbox `vendor.suspended_for_compliance` (SMS + push), audit row. Only after it has run: add `vendors_live_tax_identity_check`. **Built 2026-10-08** (nightly `VENDOR_COMPLIANCE_SWEEP`, audited with the job as actor). Not built: the `vendor.suspended_for_compliance` event and its SMS / push, and `vendors_live_tax_identity_check`.
+- [x] **Compliance sweep.** One-off run, then nightly `VENDOR_COMPLIANCE_SWEEP` on `midnight-maintenance`: every `LIVE` vendor with `tax_id IS NULL` → `SUSPENDED_COMPLIANCE`, outbox `vendor.suspended_for_compliance` (SMS + push), audit row. Only after it has run: add `vendors_live_tax_identity_check`. **Built 2026-10-08** (nightly `VENDOR_COMPLIANCE_SWEEP`, audited with the job as actor). **The `vendor.suspended_for_compliance` outbox event is written since 2026-10-09 (§8Z.36).** Not built: its SMS / push, and `vendors_live_tax_identity_check`.
 - [ ] **One gate for LIVE.** Go-live, `WalletService`'s debt restore and the admin Restore each send a vendor without a PAN to `SUSPENDED_COMPLIANCE` instead of `LIVE`.
 - [ ] **Worker:** SMS + push templates for `vendor.suspended_for_compliance`.
 - [ ] **Admin vendor list:** show the new status and suspension kind `COMPLIANCE`; Restore is refused while the PAN is missing.
@@ -450,9 +452,9 @@ The Vendor App's Marketing tab is built on sample data to these contracts. Build
 
 ### 6.10 Analytics and the vendor account — P2
 
-- [ ] **`GET /api/vendor/analytics/summary`** (VENDOR, own shop, `no-store`): `{ today_sales_npr, today_order_count, top_item: { product_name, units_sold, sales_npr } | null, ad_roi: { spend_npr, revenue_npr } | null, daily_sales: [{ day: SUN…SAT, sales_npr }] }` (7 entries, oldest first; days in Asia/Kathmandu; sales = delivered subtotal less the shop's own discounts). Shape and definitions: STATE_HANDOFF.md §8Z.14.
+- [x] **Built 2026-10-09 (§8Z.36), with the Vendor App's Analytics screen wired to it** (the samples are deleted). Decided there: the top item is by units over the last 7 days; an ad counts for its whole booked period; a DISPUTED order is not counted. Migration 0037 adds the `(vendor_id, delivered_at)` index. The original item: **`GET /api/vendor/analytics/summary`** (VENDOR, own shop, `no-store`): `{ today_sales_npr, today_order_count, top_item: { product_name, units_sold, sales_npr } | null, ad_roi: { spend_npr, revenue_npr } | null, daily_sales: [{ day: SUN…SAT, sales_npr }] }` (7 entries, oldest first; days in Asia/Kathmandu; sales = delivered subtotal less the shop's own discounts). Shape and definitions: STATE_HANDOFF.md §8Z.14.
 - [ ] **Language and WhatsApp consent:** the vendor settings call `PATCH /api/me { language_preference | whatsapp_opt_in }` (section 2, any role). Nothing vendor-specific.
-- [ ] **`GET /api/vendor/deletion-eligibility`** → `{ eligible, blockers: [NEGATIVE_BALANCE | ACTIVE_ORDERS | PENDING_PAYOUT | ACTIVE_AD], wallet_balance_npr, active_order_count }`.
+- [x] **Superseded 2026-10-09 (§8Z.37) by `POST /api/vendor/account/deactivate`**: the three deletion-request items below were never built and are not to be. The original items: **`GET /api/vendor/deletion-eligibility`** → `{ eligible, blockers: [NEGATIVE_BALANCE | ACTIVE_ORDERS | PENDING_PAYOUT | ACTIVE_AD], wallet_balance_npr, active_order_count }`.
 - [ ] **`POST /api/vendor/deletion-request`** (no body) → `200 { account_status: DELETED_REQUESTED, deletion_requested_at, accepting_orders: false }`, also on repeat; `409 SHOP_NOT_DELETABLE` (`details.blockers`), re-checked under the vendor row lock. One transaction: `users.account_status`, `vendors.accepting_orders = false`, audit row. `vendors.status` is not changed; invoices, ledger entries and audit rows are kept.
 - [ ] **`DELETE /api/vendor/deletion-request`** → 204 (withdraw before the purge).
 - [ ] Test: SPEC verification 17.
@@ -495,12 +497,27 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 1. **A browser pass of the wired admin app** against a migrated dev database (`pnpm db:migrate`, 0021–0025), and the first live run of the new routes.
 2. ~~Vendor requests~~ **done 2026-10-08** (§8Z.26).
 3. ~~Ad purchases, the routes~~ **done 2026-10-08** (§8Z.27: marketplace, purchase per model, the Model B guard, cancel, sponsored promotions). The sponsored feed, the job that ends ads and the Vendor App's Ads and Campaigns sections followed the same day (§8Z.28). Left of step 5: the per-order premium at delivery.
-4. **The vendor side of campaigns:** routes (§8Z.26) and the Vendor App's Campaigns section (§8Z.28) are done. Left: a notice to shops whose opt-in a terms change voided.
+4. **The vendor side of campaigns:** routes (§8Z.26) and the Vendor App's Campaigns section (§8Z.28) are done. The outbox event `marketing.campaign_terms_changed` (with the voided shops' ids) is written since 2026-10-09 (§8Z.36). Left: a consumer that tells those shops.
 5. **Scheduled jobs:** `SETTLEMENT_PAYOUT_RUN` (blocked on the transfer rail), the Free-plan reversion and its 7-day notice in `BILLING_CYCLE_RENEWAL`, `vendor.suspended_for_compliance` SMS / push, the "one gate for LIVE", then `vendors_live_tax_identity_check`.
 6. **Retire vendor payout requests** (6.11) with the legacy Payouts tab and the Vendor Portal's request form.
 7. **Public promotions:** `GET /api/home/promotions` and the customer app's switch are done (2026-10-08, §8Z.29); the image upload on 2026-10-09 (§8Z.35). Left: `offer_tags` on shops.
 8. The discount engine (section 5 step 2) is **done 2026-10-09 (§8Z.34)**: vendor offers stack with campaigns in the quote and checkout, on the order, in settlement and on the invoice, and both apps are wired. Left of step 2: `payment_session` in the checkout response. Fiscal invoicing (6.4): the waiting invoices, the list, the PDF and its Devanagari font are done; left are the detail read, the customer's and admin's reads and Credit / Debit Notes.
 9. **A device run of the new screens**, after rebuilding the development client (expo-file-system, expo-sharing): the cart on a real quote, the two refusal dialogs, the invoice download and share sheet.
+
+## Notification events (2026-10-09, STATE_HANDOFF.md §8Z.36)
+
+- [x] **Four events in the existing transactional outbox** (`outbox_events`, migration 0005; no new table), relayed to `notifications.broadcast`: `vendor.suspended_for_compliance`, `marketing.ad_ended`, `marketing.ad_paused`, `marketing.campaign_terms_changed`. Each is written last in the transaction of its change.
+- [x] **The consumer (2026-10-09, §8Z.37):** the worker's `vendor-notices` consumer words all five events (these four and `vendor.compliance_restored`) and hands them to a `NotificationAdapter`; the only adapter is the logger (`[notify:sms]` / `[notify:push]` lines on stdout). Idempotent per `event_id` + vendor.
+- [ ] **A provider-backed adapter** (SMS through `@hamro-pasal/sms`, push through the Expo gateway), and the shop's language. The original item: SMS / push templates (the worker's notification consumer ignores an event type it has no template for), and an in-app notice. `marketing.campaign_terms_changed` names vendor ids, not phones: its consumer reads the phones.
+- [x] **`vendor.compliance_restored` (2026-10-09, §8Z.37)** when a saved PAN lifts a compliance suspension, with the status it left the shop in.
+
+## Vendor App delivery settings and shop deactivation (2026-10-09, STATE_HANDOFF.md §8Z.37)
+
+- [x] **Delivery settings wired:** the Vendor App reads `GET /api/vendor/delivery-settings` and saves with `PUT`; the form shows the server's answer. Save is off until the server's settings have loaded.
+- [ ] The dashboard's "Add your PAN" reminder still reads the phone's copy of the settings, not the server's tax identity.
+- [x] **`POST /api/vendor/account/deactivate { confirm: true }`** → `200 { vendor_id, status: DEACTIVATED, deactivated_at, cancelled_ad_count, returned_npr, closed_opt_in_count, wallet_balance_npr }`, also on repeat; `409 SHOP_NOT_DEACTIVATABLE` (`details.blockers`: `NEGATIVE_BALANCE`, `ACTIVE_ORDERS`, `PENDING_PAYOUT`, `AD_FEES_DUE`). Migration 0038 (`vendor_status` + `DEACTIVATED`). Running ads are cancelled, live opt-ins closed as `OPTED_OUT`, device tokens removed; the account can no longer sign in (`403 ACCOUNT_DEACTIVATED`). **This replaces the deletion-request routes of 6.10**, which were never built. SPEC vendor flow 23 amended.
+- [ ] **Vendor App:** the "Delete Shop Account" button still records a request on the phone only; wire it to the route and drop "Cancel deletion request".
+- [ ] A Super Admin route and screen to reactivate a shop (not specified).
 
 ## Cloud storage (2026-10-09, STATE_HANDOFF.md §8Z.35)
 

@@ -76,7 +76,10 @@ describe('admin payouts API', () => {
   describe('the PAN payout gate', () => {
     it('holds an approval while the PAN is unverified, and lets a rejection through', async () => {
       const { vendorId, payoutId } = await pendingPayout(400, 1000, false);
-      await db().update(vendors).set({ tax_id: '302118845' }).where(eq(vendors.id, vendorId));
+      await db()
+        .update(vendors)
+        .set({ tax_id: '302118845', pan_document_url: `kyc/pan/${vendorId}/${randomUUID()}.webp` })
+        .where(eq(vendors.id, vendorId));
 
       const held = await approve(payoutId);
 

@@ -22,6 +22,7 @@ import { requestId } from './http/request-context';
 import type { AdProductService } from './marketing/ad-product-service';
 import type { AdPurchaseService } from './marketing/ad-purchase-service';
 import type { VendorOfferService } from './marketing/vendor-offer-service';
+import type { VendorAnalyticsService } from './analytics/vendor-analytics-service';
 import type { VendorInvoiceService } from './invoices/vendor-invoice-service';
 import type { CampaignService } from './marketing/campaign-service';
 import type { PromotionService } from './marketing/promotion-service';
@@ -36,6 +37,7 @@ import type { ReviewService } from './reviews/review-service';
 import type { VendorBankAccountService } from './vendor/vendor-bank-account-service';
 import type { VendorBillingService } from './vendor/vendor-billing-service';
 import type { VendorComplianceService } from './vendor/vendor-compliance-service';
+import type { VendorDeactivationService } from './vendor/vendor-deactivation-service';
 import type { VendorDeliverySettingsService } from './vendor/vendor-delivery-settings-service';
 import type { VendorTopUpService } from './wallet/vendor-top-up-service';
 import type { VendorWalletService } from './wallet/vendor-wallet-service';
@@ -56,6 +58,8 @@ import { vendorBankAccountsRouter, vendorCampaignsRouter } from './routes/vendor
 import { homeRouter } from './routes/home';
 import { vendorAdsRouter } from './routes/vendor-ads';
 import type { SettlementModelRequestService } from './settlement/settlement-model-request-service';
+import { vendorAnalyticsRouter } from './routes/vendor-analytics';
+import { vendorDeactivationRouter } from './routes/vendor-deactivation';
 import { vendorFinanceRouter } from './routes/vendor-finance';
 import { vendorInvoicesRouter, vendorOffersRouter } from './routes/vendor-invoices-offers';
 import { vendorOrdersRouter } from './routes/vendor-orders';
@@ -122,6 +126,8 @@ export interface ApiServices {
   /** Phase 32: the shop's fiscal invoices (list, server-rendered PDF) and its own offers. */
   readonly vendorInvoices: VendorInvoiceService;
   readonly vendorOffers: VendorOfferService;
+  readonly vendorAnalytics: VendorAnalyticsService;
+  readonly vendorDeactivation: VendorDeactivationService;
   /** Phase 26: where a shop is paid. */
   readonly vendorBankAccounts: VendorBankAccountService;
   /** Local end-to-end runs: present only with MOCK_SERVICES outside production. */
@@ -215,6 +221,18 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       '/api/vendor/offers',
       requireAuth(services.accessTokenSecret, ['VENDOR']),
       vendorOffersRouter(services.vendorOffers),
+    );
+    // Phase 35. How the shop is doing: today, the top item, the ad return, seven days of sales.
+    app.use(
+      '/api/vendor/analytics',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorAnalyticsRouter(services.vendorAnalytics),
+    );
+    // Phase 36. Closing the shop (soft delete).
+    app.use(
+      '/api/vendor/account',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorDeactivationRouter(services.vendorDeactivation),
     );
     // Phase 27. The shop's own request to change its settlement model.
     app.use(

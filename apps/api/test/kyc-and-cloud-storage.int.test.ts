@@ -9,6 +9,7 @@ import {
   disputeEvidenceUploadResponseSchema,
   panDocumentUploadResponseSchema,
   promotionImageUploadResponseSchema,
+  taxIdentityResponseSchema,
   taxIdentityViewSchema,
   vendorProductResponseSchema,
   type UserRole,
@@ -758,6 +759,184 @@ describe('cloud storage and vendor KYC', () => {
       expect(shopless.status).toBe(404);
       expect(errorOf(shopless).code).toBe('VENDOR_NOT_FOUND');
       expect(s3.log).toEqual([]);
+    });
+
+    describe('strict KYC: one document per PAN number (Phase 35)', () => {
+      const savePan = (token: string, taxId: string, isVatRegistered = false) =>
+        request(cloud.app)
+          .put('/api/vendor/tax-identity')
+          .set('authorization', token)
+          .send({ tax_id: taxId, is_vat_registered: isVatRegistered });
+
+      const verifyByAdmin = (vendorId: string) =>
+        request(cloud.app)
+          .post(`/api/admin/vendors/${vendorId}/pan-verification`)
+          .set('authorization', adminToken);
+
+      it('verifies only once a document is on file: 422 DOCUMENT_MISSING before the upload', async () => {
+        const { vendorId, token } = await shop();
+        expect((await savePan(token, '302118845', true)).status).toBe(200);
+
+        const early = await verifyByAdmin(vendorId);
+
+        expect(early.status).toBe(422);
+        expect(errorOf(early)).toMatchObject({
+          code: 'DOCUMENT_MISSING',
+          details: { vendor_id: vendorId },
+        });
+        expect((await vendorRow(vendorId)).pan_verified_at).toBeNull();
+
+        await uploaded(token);
+        const res = await verifyByAdmin(vendorId);
+
+        expect(res.status).toBe(200);
+        expect(await vendorRow(vendorId)).toMatchObject({
+          is_vat_registered: true,
+          pan_verified_by_user_id: adminId,
+        });
+        expect((await vendorRow(vendorId)).pan_verified_at).toBeInstanceOf(Date);
+      });
+
+      it('removes the document when the PAN number changes: row first, then the object', async () => {
+        const { vendorId, token } = await shop();
+        await savePan(token, '302118845');
+        await uploaded(token);
+        const [oldKey] = documentsOf(vendorId);
+        expect((await verifyByAdmin(vendorId)).status).toBe(200);
+        s3.log.length = 0;
+
+        const res = await savePan(token, '609871234', true);
+
+        expect(res.status).toBe(200);
+        expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
+          tax_id: '609871234',
+          is_vat_registered: true,
+          pan_verified_at: null,
+          pan_document_removed: true,
+          has_pan_document: false,
+        });
+        expect(await vendorRow(vendorId)).toMatchObject({
+          tax_id: '609871234',
+          pan_document_url: null,
+          pan_verified_at: null,
+          pan_verified_by_user_id: null,
+          status: 'LIVE',
+        });
+        // Exactly the old number's document, deleted from the private bucket.
+        expect(s3.log).toEqual([{ operation: 'DeleteObject', bucket: PRIVATE, key: oldKey }]);
+        expect(documentsOf(vendorId)).toEqual([]);
+        const removed = (await auditOf(vendorId)).find(
+          (entry) => entry.action === 'PAN_DOCUMENT_REMOVED',
+        );
+        expect(removed).toMatchObject({
+          before_state: { tax_id: '302118845', pan_document_url: oldKey },
+          after_state: { tax_id: '609871234', pan_document_url: null, reason: 'PAN_CHANGED' },
+        });
+        expect(JSON.stringify(res.body)).not.toContain('kyc/');
+
+        // Nothing to show an admin, and nothing to verify, until the matching document arrives.
+        const read = await request(cloud.app)
+          .get(`/api/admin/vendors/${vendorId}/pan-document`)
+          .set('authorization', adminToken);
+        expect(read.status).toBe(404);
+        expect(errorOf(await verifyByAdmin(vendorId)).code).toBe('DOCUMENT_MISSING');
+
+        await uploaded(token);
+        expect((await verifyByAdmin(vendorId)).status).toBe(200);
+        expect(documentsOf(vendorId)).toHaveLength(1);
+        expect(documentsOf(vendorId)).not.toContain(oldKey);
+      });
+
+      it('keeps the document when the same PAN is saved again with other details', async () => {
+        const { vendorId, token } = await shop();
+        await savePan(token, '302118845');
+        await uploaded(token);
+        const [key] = documentsOf(vendorId);
+        expect((await verifyByAdmin(vendorId)).status).toBe(200);
+        s3.log.length = 0;
+
+        const res = await savePan(token, '302118845', true);
+
+        expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
+          is_vat_registered: true,
+          pan_document_removed: false,
+          has_pan_document: true,
+        });
+        expect(bodyOf(taxIdentityResponseSchema, res).pan_verified_at).toEqual(expect.any(String));
+        expect((await vendorRow(vendorId)).pan_document_url).toBe(key);
+        expect(s3.log).toEqual([]);
+      });
+
+      it('keeps a document uploaded before the first PAN: a first number is not a change', async () => {
+        const { vendorId, token } = await shop();
+        await uploaded(token);
+        const [key] = documentsOf(vendorId);
+        s3.log.length = 0;
+
+        const res = await savePan(token, '302118845');
+
+        expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
+          pan_document_removed: false,
+          has_pan_document: true,
+        });
+        expect((await vendorRow(vendorId)).pan_document_url).toBe(key);
+        expect(s3.log).toEqual([]);
+        expect((await verifyByAdmin(vendorId)).status).toBe(200);
+      });
+
+      it('removes nothing when the new number is refused', async () => {
+        const { vendorId, token } = await shop();
+        await savePan(token, '302118845');
+        await uploaded(token);
+        const [key] = documentsOf(vendorId);
+        s3.log.length = 0;
+
+        const res = await savePan(token, '60987123');
+
+        expect(res.status).toBe(400);
+        expect((await vendorRow(vendorId)).pan_document_url).toBe(key);
+        expect(s3.log).toEqual([]);
+      });
+
+      it('stands when the bucket cannot delete the old document: the orphan is logged', async () => {
+        const { vendorId, token } = await shop();
+        await savePan(token, '302118845');
+        await uploaded(token);
+        const [oldKey] = documentsOf(vendorId);
+        s3.failing.add('DeleteObject');
+
+        const res = await savePan(token, '609871234');
+
+        expect(res.status).toBe(200);
+        // The row no longer names it, so no admin can be shown the old certificate.
+        expect((await vendorRow(vendorId)).pan_document_url).toBeNull();
+        expect(documentsOf(vendorId)).toEqual([oldKey]);
+        expect(warnings).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(String(warnings.mock.calls[0]?.[0]))).toMatchObject({
+          storage: 'orphan_object',
+          kind: 'pan_document',
+          key: oldKey,
+        });
+      });
+
+      it('leaves one consistent outcome when a PAN change races an upload', async () => {
+        for (let round = 0; round < 4; round += 1) {
+          const { vendorId, token } = await shop();
+          await savePan(token, '302118845');
+          await uploaded(token);
+
+          const [change, second] = await Promise.all([
+            savePan(token, '609871234'),
+            upload(token, [{ bytes: jpeg }]),
+          ]);
+
+          expect(change.status).toBe(200);
+          expect(second.status).toBe(201);
+          // Whichever committed second decided; the bucket holds exactly what the row names.
+          const key = (await vendorRow(vendorId)).pan_document_url;
+          expect(documentsOf(vendorId)).toEqual(key === null ? [] : [key]);
+        }
+      });
     });
 
     describe('GET /api/vendor/tax-identity', () => {

@@ -9,8 +9,68 @@ import { renderWithProviders } from '../../test/render';
 import { VendorOnlineToggle } from './VendorOnlineToggle';
 
 // The PAN document card talks to the API and has its own tests (PanDocument.test.tsx); this
-// file is about the form, which is saved on the phone.
+// file is about the form itself: what it shows, what it checks and what it hands on.
 jest.mock('./PanDocumentCard', () => ({ PanDocumentCard: () => null }));
+// The tax identity is the server's and has its own tests too (TaxIdentity.test.tsx): here nothing
+// is on file and nothing is being saved, so the form shows what the phone holds.
+jest.mock('./usePanDocument', () => ({
+  useTaxIdentityQuery: () => ({ data: undefined, isError: false }),
+  useSaveTaxIdentity: () => ({ mutate: jest.fn(), isPending: false }),
+}));
+
+// The delivery settings are the server's (DeliverySettings.test.tsx drives the real requests).
+// Here a stand-in holds them in memory and answers a save as the API does: what was sent,
+// with the shop's own Palika kept in the list and the stored radius kept outside the radius tier.
+const MOCK_OWN_PALIKA = 'Kathmandu Metropolitan City';
+const mockNewShop = () => ({
+  vendor_id: '7b1f0c8e-0000-4000-8000-0000000000aa',
+  fulfillment_mode: 'SELF_DELIVERY' as 'SELF_DELIVERY' | 'PLATFORM_FLEET',
+  delivery_scope: 'RADIUS_BOUND' as 'RADIUS_BOUND' | 'CITY_WIDE' | 'NATION_WIDE',
+  radius_km: 5,
+  serviceable_palikas: [MOCK_OWN_PALIKA],
+  municipality_palika_string: MOCK_OWN_PALIKA,
+  base_delivery_fee_npr: 0,
+  delivery_fee_per_km_npr: 0,
+  free_delivery_above_npr: null as number | null,
+  platform: {
+    self_delivery_enabled: true,
+    platform_fleet_enabled: true,
+    platform_delivery_fee_npr: 50,
+  },
+  fulfillment_mode_enabled: true,
+});
+let mockDelivery = mockNewShop();
+const mockSaves: unknown[] = [];
+jest.mock('./useDeliverySettings', () => ({
+  useDeliverySettingsQuery: () => ({ data: mockDelivery, isError: false, refetch: jest.fn() }),
+  useSaveDeliverySettings: () => ({
+    isPending: false,
+    mutate: (
+      draft: {
+        fulfillment_mode: 'SELF_DELIVERY' | 'PLATFORM_FLEET';
+        delivery_scope: 'RADIUS_BOUND' | 'CITY_WIDE' | 'NATION_WIDE';
+        radius_km: number | null;
+        serviceable_palikas: string[];
+        base_delivery_fee_npr: number;
+        delivery_fee_per_km_npr: number;
+        free_delivery_above_npr: number | null;
+      },
+      options?: { onSuccess?: (result: unknown) => void },
+    ) => {
+      mockSaves.push(draft);
+      mockDelivery = {
+        ...mockDelivery,
+        ...draft,
+        radius_km: draft.radius_km ?? mockDelivery.radius_km,
+        serviceable_palikas: [
+          MOCK_OWN_PALIKA,
+          ...draft.serviceable_palikas.filter((name) => name !== MOCK_OWN_PALIKA),
+        ],
+      };
+      options?.onSuccess?.(mockDelivery);
+    },
+  }),
+}));
 
 const VENDOR_USER_ID = '9f1c2a10-0000-4000-8000-0000000000aa';
 
@@ -33,6 +93,8 @@ beforeEach(() => {
   });
   useVendorShopStore.setState({ online: true, stored: null });
   useToastStore.setState({ toast: null });
+  mockDelivery = mockNewShop();
+  mockSaves.length = 0;
 });
 
 describe('Shop settings: PAN', () => {
@@ -46,16 +108,19 @@ describe('Shop settings: PAN', () => {
     expect(screen.getByTestId('settings-tax-id')).toHaveDisplayValue('301234567');
   });
 
-  it('is mandatory: nothing is saved without nine digits', () => {
+  it('is not needed to save the delivery settings, but the phone keeps no copy without one', () => {
+    // A shop still being set up configures its delivery before its PAN is on file; the PAN has
+    // its own Save (TaxIdentity.test.tsx).
     renderWithProviders(<VendorSettingsScreen />);
     type('settings-tax-id', '30123');
+    type('settings-base-fee', '40');
 
     press('settings-save');
 
-    expect(screen.getByTestId('settings-tax-id-error')).toHaveTextContent(
-      'Enter your 9-digit PAN.',
-    );
-    expect(toast()).toMatchObject({ message: 'Check the highlighted fields.', tone: 'error' });
+    expect(screen.queryByTestId('settings-tax-id-error')).not.toBeOnTheScreen();
+    expect(toast()).toMatchObject({ message: 'Shop settings saved.', tone: 'success' });
+    expect(mockSaves).toHaveLength(1);
+    expect(mockSaves[0]).toMatchObject({ base_delivery_fee_npr: 40 });
     expect(stored()).toBeNull();
   });
 });
@@ -96,6 +161,7 @@ describe('Shop settings: delivery mode and charges', () => {
       'Enter an amount in rupees.',
     );
     expect(stored()).toBeNull();
+    expect(mockSaves).toEqual([]);
   });
 });
 

@@ -30,6 +30,7 @@ import { VendorFinanceService } from './finance/vendor-finance-service';
 import { VendorBankAccountService } from './vendor/vendor-bank-account-service';
 import { VendorBillingService } from './vendor/vendor-billing-service';
 import { VendorComplianceService } from './vendor/vendor-compliance-service';
+import { VendorDeactivationService } from './vendor/vendor-deactivation-service';
 import { VendorDeliverySettingsService } from './vendor/vendor-delivery-settings-service';
 import { RedisKeyedMutex } from './infra/redis-mutex';
 import { RedisConnectionPool } from './infra/redis-pool';
@@ -43,6 +44,7 @@ import { SettlementService } from './ledger/settlement-service';
 import { AdProductService } from './marketing/ad-product-service';
 import { AdPurchaseService } from './marketing/ad-purchase-service';
 import { VendorOfferService } from './marketing/vendor-offer-service';
+import { VendorAnalyticsService } from './analytics/vendor-analytics-service';
 import {
   DEFAULT_INVOICE_FONT_DIR,
   DEVANAGARI_REGULAR_FILE,
@@ -239,6 +241,8 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
       process.env.NODE_ENV === 'production',
     ),
     vendorOffers: new VendorOfferService(infra.db),
+    vendorAnalytics: new VendorAnalyticsService(infra.db),
+    vendorDeactivation: new VendorDeactivationService(infra.db, ledger),
     async close() {
       await infra.redisPool.close();
       await infra.db.$client.end();

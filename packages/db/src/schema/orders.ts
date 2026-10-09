@@ -105,6 +105,10 @@ export const orders = pgTable(
       .on(t.delivered_at, t.id)
       .where(sql`${t.state} = 'DELIVERED' AND ${t.reconciled_at} IS NULL`),
     index('orders_vendor_id_reconciled_at_idx').on(t.vendor_id, t.reconciled_at),
+    // Phase 35: a shop's deliveries by time (the analytics summary's day and 30-day windows).
+    index('orders_vendor_id_delivered_at_idx')
+      .on(t.vendor_id, t.delivered_at)
+      .where(sql`${t.delivered_at} IS NOT NULL`),
     // Phase 23: serves the users FK check (and a rider's own orders); most orders have no rider.
     index('orders_driver_user_id_idx')
       .on(t.driver_user_id)

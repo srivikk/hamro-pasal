@@ -142,6 +142,11 @@ describe('vendor rules', () => {
   it('offers Suspend for any vendor that is not suspended', () => {
     expect(vendorAction(vendor, -2000)).toEqual({ action: 'SUSPEND', enabled: true, note: null });
     expect(vendorAction({ ...vendor, status: 'SANDBOXED' }, -2000).action).toBe('SUSPEND');
+    // Phase 37: a shop its vendor closed is offered Reactivate, never Suspend or Restore.
+    expect(vendorAction({ ...vendor, status: 'DEACTIVATED' }, -2000)).toMatchObject({
+      action: 'REACTIVATE',
+      enabled: true,
+    });
   });
 
   it('offers Restore with the status it returns to', () => {

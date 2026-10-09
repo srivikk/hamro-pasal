@@ -11,7 +11,7 @@ export const SUSPENSION_LABELS: Readonly<Record<AdminVendorSuspension, string>> 
 };
 
 export interface VendorActionButton {
-  readonly action: 'SUSPEND' | 'RESTORE';
+  readonly action: 'SUSPEND' | 'RESTORE' | 'REACTIVATE';
   readonly enabled: boolean;
   /** Why the button is disabled, or what a Restore will do. */
   readonly note: string | null;
@@ -28,9 +28,9 @@ export function vendorAction(
   // Phase 36: a shop its vendor closed has no standing to suspend, and nothing restores it.
   if (vendor.status === 'DEACTIVATED') {
     return {
-      action: 'SUSPEND',
-      enabled: false,
-      note: 'The vendor closed this shop. Its records are kept; it cannot be suspended or restored.',
+      action: 'REACTIVATE',
+      enabled: true,
+      note: 'The vendor closed this shop. Reactivating reopens it (it waits for a PAN if none is on file) and lets the vendor sign in again; its ads and campaigns stay closed.',
     };
   }
   if (vendor.status !== 'SUSPENDED') {

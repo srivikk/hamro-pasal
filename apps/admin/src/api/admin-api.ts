@@ -107,7 +107,7 @@ export interface AdminApi {
   listVendors(): Promise<AdminVendorListResponseBody>;
   overrideVendor(
     id: string,
-    action: 'SUSPEND' | 'RESTORE',
+    action: 'SUSPEND' | 'RESTORE' | 'REACTIVATE',
   ): Promise<AdminVendorOverrideResponseBody>;
   /** Phase 17: the whole taxonomy in tree order, inactive categories included. */
   listCategories(): Promise<AdminCategoryListResponseBody>;
@@ -269,7 +269,7 @@ export function createAdminApi(client: ApiClient): AdminApi {
     overrideVendor: (id, action) =>
       client.request({
         method: 'POST',
-        path: `/api/admin/vendors/${encodeURIComponent(id)}/${action === 'SUSPEND' ? 'suspend' : 'restore'}`,
+        path: `/api/admin/vendors/${encodeURIComponent(id)}/${action === 'SUSPEND' ? 'suspend' : action === 'RESTORE' ? 'restore' : 'reactivate'}`,
         schema: adminVendorOverrideResponseSchema,
       }),
     listCategories: () =>

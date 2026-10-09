@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useMutation } from '@tanstack/react-query';
 import { useState, type ReactNode } from 'react';
 import { Alert, Pressable, Switch, Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
@@ -6,16 +7,15 @@ import { useTranslation } from 'react-i18next';
 import { useSignOut } from '../../src/api/auth';
 import { ApiError } from '../../src/api/http';
 import { DELIVERY_SETTINGS_ERROR_CODES } from '../../src/api/vendor-delivery-settings';
+import { deactivateShop, deactivationBlockersOf } from '../../src/api/vendor-account';
 import { TAX_IDENTITY_ERROR_CODES } from '../../src/api/vendor-tax-identity';
 import { Button } from '../../src/components/Button';
 import { KeyboardScreen } from '../../src/components/KeyboardScreen';
 import { SearchableSelect } from '../../src/components/SearchableSelect';
 import { LanguageToggle } from '../../src/features/settings/LanguageToggle';
 import { useWhatsAppOptIn } from '../../src/features/settings/useWhatsAppOptIn';
-import { formatNepalDateTime } from '../../src/features/vendor/invoice-math';
 import { MOCK_PALIKAS } from '../../src/features/vendor/mock-palikas';
 import { PanDocumentCard } from '../../src/features/vendor/PanDocumentCard';
-import { useShopDeletionCheck } from '../../src/features/vendor/shop-deletion';
 import {
   addPalika,
   deliveryRequestOf,
@@ -37,10 +37,7 @@ import {
 } from '../../src/features/vendor/useDeliverySettings';
 import { useSaveTaxIdentity, useTaxIdentityQuery } from '../../src/features/vendor/usePanDocument';
 import { useSaveShopSettings, useShopSettings } from '../../src/features/vendor/useShopSettings';
-import { useAuthStore } from '../../src/store/useAuthStore';
-import { selectSessionUserId } from '../../src/store/useProfileStore';
 import { useToastStore } from '../../src/store/useToastStore';
-import { useVendorShopStore } from '../../src/store/useVendorShopStore';
 import { colors } from '../../src/theme/colors';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -265,32 +262,40 @@ export default function VendorSettingsScreen() {
   );
 
   const whatsApp = useWhatsAppOptIn();
-  const userId = useAuthStore(selectSessionUserId);
-  const deletionBlockers = useShopDeletionCheck();
-  const deletionRequest = useVendorShopStore((state) =>
-    state.deletionRequest?.userId === userId ? state.deletionRequest : null,
-  );
 
-  // TODO: `GET /api/vendor/deletion-eligibility` and `POST /api/vendor/deletion-request`
-  // (STATE_HANDOFF.md §8Z.14). Until they exist the check uses what the phone knows and the
-  // request is only recorded here: nothing is deleted on the server.
+  // Phase 37: closing the shop is the server's (POST /api/vendor/account/deactivate). It decides
+  // what stands in the way; the app names each reason so the vendor knows what to settle first.
+  const deactivate = useMutation({ mutationFn: deactivateShop, retry: false });
   const deleteShop = (): void => {
-    const blockers = deletionBlockers();
-    if (blockers.length > 0) {
-      Alert.alert(
-        t('vendorShop.deleteBlockedTitle'),
-        blockers.map((blocker) => t(`vendorShop.deleteBlocked.${blocker}`)).join('\n'),
-      );
-      return;
-    }
+    if (deactivate.isPending) return;
     Alert.alert(t('vendorShop.deleteConfirmTitle'), t('vendorShop.deleteConfirmBody'), [
       { text: t('vendorMarketing.cancel'), style: 'cancel' },
       {
         text: t('vendorShop.deleteShop'),
         style: 'destructive',
         onPress: () => {
-          useVendorShopStore.getState().requestDeletion(userId, Date.now());
-          toast(t('vendorShop.deleteRequested'), 'success');
+          deactivate.mutate(undefined, {
+            onSuccess: () => {
+              toast(t('vendorShop.deleteRequested'), 'success');
+              // The account can no longer sign in: nothing is left to do here.
+              signOut();
+            },
+            onError: (error) => {
+              const blockers = deactivationBlockersOf(error);
+              if (blockers !== null) {
+                Alert.alert(
+                  t('vendorShop.deleteBlockedTitle'),
+                  blockers.map((blocker) => t(`vendorShop.deleteBlocked.${blocker}`)).join('\n'),
+                );
+                return;
+              }
+              const offline = error instanceof ApiError && error.code === 'NETWORK_ERROR';
+              toast(
+                t(offline ? 'vendorShop.deleteErrors.network' : 'vendorShop.deleteErrors.failed'),
+                'error',
+              );
+            },
+          });
         },
       },
     ]);
@@ -560,38 +565,14 @@ export default function VendorSettingsScreen() {
       </Section>
 
       <Section title={t('vendorShop.privacyTitle')}>
-        {deletionRequest === null ? (
-          <>
-            <Text className="text-sm text-gray-500">{t('vendorShop.deleteHint')}</Text>
-            <Button
-              testID="settings-delete-shop"
-              label={t('vendorShop.deleteShop')}
-              variant="destructive"
-              onPress={deleteShop}
-            />
-          </>
-        ) : (
-          <>
-            <Text
-              className="text-base font-semibold text-red-700"
-              testID="settings-deletion-pending"
-            >
-              {t('vendorShop.deletePending', {
-                date: formatNepalDateTime(deletionRequest.requestedAt).slice(0, 10),
-              })}
-            </Text>
-            <Text className="text-sm text-gray-500">{t('vendorShop.deletePendingNote')}</Text>
-            <Button
-              testID="settings-delete-cancel"
-              label={t('vendorShop.deleteCancel')}
-              variant="secondary"
-              onPress={() => {
-                useVendorShopStore.getState().cancelDeletion();
-                toast(t('vendorShop.deleteCancelled'), 'success');
-              }}
-            />
-          </>
-        )}
+        <Text className="text-sm text-gray-500">{t('vendorShop.deleteHint')}</Text>
+        <Button
+          testID="settings-delete-shop"
+          label={t(deactivate.isPending ? 'vendorShop.deleting' : 'vendorShop.deleteShop')}
+          variant="destructive"
+          disabled={deactivate.isPending}
+          onPress={deleteShop}
+        />
       </Section>
 
       <Button

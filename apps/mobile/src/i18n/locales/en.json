@@ -479,7 +479,8 @@
     "offline": "Offline",
     "toggleLabel": "Shop is taking orders",
     "offlineBanner": "Your shop is set to Offline. Switch to Online to take new orders.",
-    "panBanner": "Add your PAN and delivery settings to keep your shop visible. Tap to open Shop settings.",
+    "panBanner": "Add your PAN to keep your shop visible. Tap to open Shop settings.",
+    "documentBanner": "Upload your PAN certificate so your payouts can be released. Tap to open Shop settings.",
     "openSettings": "Shop settings",
     "settingsTitle": "Shop settings",
     "taxTitle": "Tax identity",
@@ -601,11 +602,18 @@
     "deleteBlockedTitle": "Your shop can't be deleted yet",
     "deleteBlocked": {
       "NEGATIVE_BALANCE": "Your ledger balance is negative. Clear your dues first.",
-      "ACTIVE_ORDERS": "You have active orders. Complete or reject them first."
+      "ACTIVE_ORDERS": "You have active orders. Complete or reject them first.",
+      "PENDING_PAYOUT": "A payout to your bank is still in progress. Wait until it is settled.",
+      "AD_FEES_DUE": "An ad fee is still owed. It is taken from your next earnings; try again after that."
     },
     "deleteConfirmTitle": "Delete your shop account?",
-    "deleteConfirmBody": "Your shop goes offline now and the account is marked for deletion. Invoices and financial records are kept for as long as the law requires.",
-    "deleteRequested": "Deletion requested. Your shop is offline.",
+    "deleteConfirmBody": "Your shop closes now and you are signed out. You cannot sign in again: only Hamro Pasal support can reopen the shop. Running ads are cancelled and campaigns left. Invoices and financial records are kept for as long as the law requires.",
+    "deleteRequested": "Your shop account is closed.",
+    "deleting": "Closing your shop…",
+    "deleteErrors": {
+      "network": "No connection. Your shop was not closed.",
+      "failed": "Couldn't close your shop. Try again."
+    },
     "deletePending": "Deletion requested on {{date}}",
     "deletePendingNote": "Recorded on this phone for now. You can still cancel the request.",
     "deleteCancel": "Cancel deletion request",

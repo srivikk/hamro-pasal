@@ -85,6 +85,8 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   VENDOR_DELETION_REQUESTED: 'vendor',
   // Phase 36: the vendor closed its shop; the row is kept (soft delete).
   VENDOR_DEACTIVATED: 'vendor',
+  // Phase 37: a Super Admin reopened a shop its vendor had closed.
+  VENDOR_REACTIVATED: 'vendor',
   VENDOR_SUSPENDED_BY_ADMIN: 'vendor',
   VENDOR_RESTORED_BY_ADMIN: 'vendor',
   // Shop settings (SPEC Dual-Fulfillment)

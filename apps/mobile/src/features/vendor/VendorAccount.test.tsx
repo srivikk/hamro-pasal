@@ -1,16 +1,17 @@
 import type { VendorOrderView } from '@hamro-pasal/shared-types';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
+import { http, HttpResponse } from 'msw';
 import { Alert, type AlertButton } from 'react-native';
 
 import VendorSettingsScreen from '../../../app/(vendor)/settings';
-import { useAuthStore } from '../../store/useAuthStore';
+import { selectHasSession, useAuthStore } from '../../store/useAuthStore';
 import { useProfileStore } from '../../store/useProfileStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useVendorBoardStore } from '../../store/useVendorBoardStore';
 import { useVendorShopStore } from '../../store/useVendorShopStore';
 import { accessTokenFor } from '../../test/access-tokens';
-import { vendorOrder, walletBalance } from '../../test/api-fixtures';
-import { setupApiTestEnvironment } from '../../test/msw';
+import { walletBalance } from '../../test/api-fixtures';
+import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
 import { createTestQueryClient, renderWithProviders } from '../../test/render';
 import { shopDeletionBlockers } from './shop-deletion';
 import { vendorOrdersQueryKey } from './useVendorOrders';
@@ -19,7 +20,6 @@ import { vendorWalletBalanceQueryKey } from './useVendorWallet';
 setupApiTestEnvironment();
 
 const VENDOR_USER_ID = '9f1c2a10-0000-4000-8000-0000000000aa';
-const shop = () => useVendorShopStore.getState();
 const toast = () => useToastStore.getState().toast;
 
 let alert: jest.SpiedFunction<typeof Alert.alert>;
@@ -117,94 +117,129 @@ describe('shop deletion rules', () => {
 });
 
 describe('Shop settings: Delete Shop Account', () => {
-  it('refuses while the ledger balance is negative, saying why', () => {
-    renderSettings({ balanceNpr: -100 });
-
-    fireEvent.press(screen.getByTestId('settings-delete-shop'));
-
-    expect(lastAlert().title).toBe("Your shop can't be deleted yet");
-    expect(lastAlert().message).toBe('Your ledger balance is negative. Clear your dues first.');
-    expect(lastAlert().buttons).toEqual([]); // nothing to confirm
-    expect(shop().deletionRequest).toBeNull();
-  });
-
-  it('refuses while the shop has active orders', () => {
-    renderSettings({ balanceNpr: 500, orders: [vendorOrder({ state: 'PREPARING' })] });
-
-    fireEvent.press(screen.getByTestId('settings-delete-shop'));
-
-    expect(lastAlert().message).toBe('You have active orders. Complete or reject them first.');
-    expect(shop().deletionRequest).toBeNull();
-  });
-
-  it('counts a fleet order still waiting for its rider as active, and names both reasons', () => {
-    useVendorBoardStore
-      .getState()
-      .recordDeparted(vendorOrder({ state: 'OUT_FOR_DELIVERY', fulfillment: 'PLATFORM_FLEET' }));
-    renderSettings({ balanceNpr: -2500 });
-
-    fireEvent.press(screen.getByTestId('settings-delete-shop'));
-
-    expect(lastAlert().message).toBe(
-      'Your ledger balance is negative. Clear your dues first.\nYou have active orders. Complete or reject them first.',
+  const PATH = '/api/vendor/account/deactivate';
+  const closed = {
+    vendor_id: '7b1f0c8e-0000-4000-8000-0000000000aa',
+    status: 'DEACTIVATED',
+    deactivated_at: '2026-10-09T06:15:00.000Z',
+    cancelled_ad_count: 1,
+    returned_npr: 0,
+    closed_opt_in_count: 0,
+    wallet_balance_npr: 0,
+  };
+  /** Serves the route and records what it was sent. */
+  function serve(answer: () => Response = () => HttpResponse.json(closed)) {
+    const bodies: unknown[] = [];
+    server.use(
+      http.post(apiUrl(PATH), async ({ request }) => {
+        bodies.push(await request.json());
+        return answer();
+      }),
     );
-  });
+    return bodies;
+  }
+  const refusal = (blockers: string[]) => () =>
+    HttpResponse.json(
+      { error: { code: 'SHOP_NOT_DEACTIVATABLE', message: 'no', details: { blockers } } },
+      { status: 409 },
+    );
+  const signedIn = () => selectHasSession(useAuthStore.getState());
 
-  it('does not count an order already delivered', () => {
-    useVendorBoardStore.getState().recordDeparted(vendorOrder({ state: 'DELIVERED' }));
-    renderSettings({ balanceNpr: 0 });
+  it('asks to confirm first, and sends nothing on Cancel', () => {
+    const bodies = serve();
+    renderSettings();
 
     fireEvent.press(screen.getByTestId('settings-delete-shop'));
 
     expect(lastAlert().title).toBe('Delete your shop account?');
-  });
-
-  it('asks to confirm when clear, and changes nothing on Cancel', () => {
-    renderSettings({ balanceNpr: 0, orders: [] });
-
-    fireEvent.press(screen.getByTestId('settings-delete-shop'));
-    expect(lastAlert().buttons.map((button) => button.text)).toEqual([
-      'Cancel',
-      'Delete Shop Account',
-    ]);
+    expect(lastAlert().message).toContain('You cannot sign in again');
     pressAlertButton('Cancel');
-
-    expect(shop()).toMatchObject({ deletionRequest: null, online: true });
-    expect(screen.getByTestId('settings-delete-shop')).toBeOnTheScreen();
+    expect(bodies).toEqual([]);
+    expect(signedIn()).toBe(true);
   });
 
-  it('on confirmation marks the account for deletion and takes the shop offline', () => {
-    renderSettings({ balanceNpr: 0, orders: [] });
+  it('on confirmation closes the shop on the server and signs the vendor out', async () => {
+    const bodies = serve();
+    renderSettings();
 
     fireEvent.press(screen.getByTestId('settings-delete-shop'));
     pressAlertButton('Delete Shop Account');
 
-    expect(shop().deletionRequest).toMatchObject({ userId: VENDOR_USER_ID });
-    expect(shop().online).toBe(false);
-    expect(screen.getByTestId('settings-deletion-pending')).toHaveTextContent(
-      /Deletion requested on \d{4}-\d{2}-\d{2}/,
-    );
-    expect(screen.queryByTestId('settings-delete-shop')).not.toBeOnTheScreen();
-    expect(toast()?.message).toBe('Deletion requested. Your shop is offline.');
-    // A soft delete: the vendor is still signed in and can change their mind.
-    expect(useAuthStore.getState().refreshToken).toBe('r.jwt');
+    await waitFor(() => {
+      expect(signedIn()).toBe(false);
+    });
+    expect(bodies).toEqual([{ confirm: true }]);
+    expect(toast()).toMatchObject({ message: 'Your shop account is closed.', tone: 'success' });
   });
 
-  it('lets the vendor cancel the request', () => {
-    shop().requestDeletion(VENDOR_USER_ID, Date.now());
+  it('names every reason the server gives, and leaves the vendor signed in', async () => {
+    serve(refusal(['NEGATIVE_BALANCE', 'ACTIVE_ORDERS', 'PENDING_PAYOUT', 'AD_FEES_DUE']));
     renderSettings();
 
-    fireEvent.press(screen.getByTestId('settings-delete-cancel'));
+    fireEvent.press(screen.getByTestId('settings-delete-shop'));
+    pressAlertButton('Delete Shop Account');
 
-    expect(shop().deletionRequest).toBeNull();
-    expect(screen.getByTestId('settings-delete-shop')).toBeOnTheScreen();
+    await waitFor(() => {
+      expect(lastAlert().title).toBe("Your shop can't be deleted yet");
+    });
+    expect(lastAlert().message.split('\n')).toEqual([
+      'Your ledger balance is negative. Clear your dues first.',
+      'You have active orders. Complete or reject them first.',
+      'A payout to your bank is still in progress. Wait until it is settled.',
+      'An ad fee is still owed. It is taken from your next earnings; try again after that.',
+    ]);
+    expect(signedIn()).toBe(true);
+    expect(screen.getByTestId('settings-delete-shop')).toBeEnabled();
   });
 
-  it("never shows another account's request", () => {
-    shop().requestDeletion('another-vendor-user', Date.now());
+  it('shows only the reason that applies', async () => {
+    serve(refusal(['ACTIVE_ORDERS']));
     renderSettings();
 
-    expect(screen.queryByTestId('settings-deletion-pending')).not.toBeOnTheScreen();
-    expect(screen.getByTestId('settings-delete-shop')).toBeOnTheScreen();
+    fireEvent.press(screen.getByTestId('settings-delete-shop'));
+    pressAlertButton('Delete Shop Account');
+
+    await waitFor(() => {
+      expect(lastAlert().message).toBe('You have active orders. Complete or reject them first.');
+    });
+  });
+
+  it('says so when the shop could not be closed, and never signs out for it', async () => {
+    let answer: () => Response = () => HttpResponse.error();
+    const bodies = serve(() => answer());
+    renderSettings();
+
+    fireEvent.press(screen.getByTestId('settings-delete-shop'));
+    pressAlertButton('Delete Shop Account');
+    await waitFor(() => {
+      expect(toast()).toMatchObject({
+        message: 'No connection. Your shop was not closed.',
+        tone: 'error',
+      });
+    });
+
+    answer = () =>
+      HttpResponse.json(
+        { error: { code: 'INTERNAL_SERVER_ERROR', message: 'x' } },
+        { status: 500 },
+      );
+    fireEvent.press(screen.getByTestId('settings-delete-shop'));
+    pressAlertButton('Delete Shop Account');
+    await waitFor(() => {
+      expect(toast()).toMatchObject({ message: "Couldn't close your shop. Try again." });
+    });
+
+    // A refusal without readable reasons is not shown as an empty list.
+    answer = () =>
+      HttpResponse.json(
+        { error: { code: 'SHOP_NOT_DEACTIVATABLE', message: 'x' } },
+        { status: 409 },
+      );
+    fireEvent.press(screen.getByTestId('settings-delete-shop'));
+    pressAlertButton('Delete Shop Account');
+    await waitFor(() => {
+      expect(bodies).toHaveLength(3);
+    });
+    expect(signedIn()).toBe(true);
   });
 });

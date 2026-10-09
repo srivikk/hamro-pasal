@@ -4,16 +4,14 @@ import { http, HttpResponse } from 'msw';
 
 import VendorDashboardScreen from '../../../app/(vendor)/dashboard';
 import { VENDOR_ORDERS_PATH } from '../../api/vendor-orders';
-import { useAuthStore } from '../../store/useAuthStore';
 import { useToastStore } from '../../store/useToastStore';
 import { useVendorBoardStore } from '../../store/useVendorBoardStore';
 import { useVendorShopStore } from '../../store/useVendorShopStore';
-import { accessTokenFor } from '../../test/access-tokens';
 import { errorBody, NEW_ORDER_ID, vendorOrder, vendorOrderList } from '../../test/api-fixtures';
 import { mockAudio, resetMockAudio } from '../../test/fake-audio';
 import { FakeSocket } from '../../test/fake-socket';
 import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
-import { renderWithProviders } from '../../test/render';
+import { createTestQueryClient, renderWithProviders } from '../../test/render';
 import type { BoardStage } from './order-board';
 import type * as VendorOrderMocksModule from './vendor-order-mocks';
 import { buildMockOrder, MOCK_ORDER_INTERVAL_MS } from './vendor-order-mocks';
@@ -349,44 +347,70 @@ describe('vendor board: Ready for Pickup waits for the cancellation window', () 
 });
 
 describe('vendor board: the PAN reminder', () => {
-  const VENDOR_USER_ID = '9f1c2a10-0000-4000-8000-0000000000aa';
+  const identity = (overrides: Record<string, unknown>) => {
+    server.use(
+      http.get(apiUrl('/api/vendor/tax-identity'), () =>
+        HttpResponse.json({
+          vendor_id: '7b1f0c8e-0000-4000-8000-0000000000aa',
+          tax_id: null,
+          is_vat_registered: false,
+          legal_name: null,
+          registered_address: null,
+          status: 'LIVE',
+          pan_verified_at: null,
+          has_pan_document: false,
+          ...overrides,
+        }),
+      ),
+    );
+  };
 
-  it('asks a shop without saved settings for its PAN and opens Shop settings', () => {
+  it('asks a shop the server holds no PAN for, and opens Shop settings', async () => {
+    identity({});
     renderWithProviders(<VendorDashboardScreen />);
+    // Nothing is claimed before the server has answered.
+    expect(screen.queryByTestId('vendor-pan-banner')).not.toBeOnTheScreen();
 
-    fireEvent.press(screen.getByTestId('vendor-pan-banner'));
+    const banner = await screen.findByTestId('vendor-pan-banner');
+    expect(banner).toHaveTextContent(/^Add your PAN to keep your shop visible/);
+    fireEvent.press(banner);
 
     expect(router.push).toHaveBeenCalledWith('/settings');
   });
 
-  it('is gone once this account has saved its settings, and back for another account', () => {
-    useAuthStore.getState().setSession({
-      accessToken: accessTokenFor('VENDOR', VENDOR_USER_ID),
-      refreshToken: 'r.jwt',
-    });
-    useVendorShopStore.getState().saveSettings(
-      {
-        taxId: '301234567',
-        fulfillmentMode: 'SELF_DELIVERY',
-        deliveryScope: 'NATION_WIDE',
-        radiusKm: null,
-        serviceablePalikas: [],
-        baseDeliveryFeeNpr: 0,
-        perKmFeeNpr: 0,
-        freeDeliveryAboveNpr: null,
-      },
-      VENDOR_USER_ID,
-    );
-    const first = renderWithProviders(<VendorDashboardScreen />);
-    expect(screen.queryByTestId('vendor-pan-banner')).not.toBeOnTheScreen();
-    first.unmount();
-
-    useAuthStore.getState().setSession({
-      accessToken: accessTokenFor('VENDOR', 'another-vendor-user'),
-      refreshToken: 'r.jwt',
-    });
+  it('asks for the certificate once the PAN is saved', async () => {
+    identity({ tax_id: '302118845' });
     renderWithProviders(<VendorDashboardScreen />);
 
-    expect(screen.getByTestId('vendor-pan-banner')).toBeOnTheScreen();
+    expect(await screen.findByTestId('vendor-pan-banner')).toHaveTextContent(
+      /^Upload your PAN certificate so your payouts can be released/,
+    );
+  });
+
+  it('is gone once the PAN and its document are on file, whatever this phone once saved', async () => {
+    identity({ tax_id: '302118845', has_pan_document: true });
+    useVendorShopStore.setState({ stored: null });
+    const queryClient = createTestQueryClient();
+    renderWithProviders(<VendorDashboardScreen />, { queryClient });
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData(['vendor', 'tax-identity'])).toBeDefined();
+    });
+    expect(screen.queryByTestId('vendor-pan-banner')).not.toBeOnTheScreen();
+  });
+
+  it('stays silent when the server cannot be asked', async () => {
+    server.use(
+      http.get(apiUrl('/api/vendor/tax-identity'), () =>
+        HttpResponse.json({ error: { code: 'FORBIDDEN', message: 'no' } }, { status: 403 }),
+      ),
+    );
+    const queryClient = createTestQueryClient();
+    renderWithProviders(<VendorDashboardScreen />, { queryClient });
+
+    await waitFor(() => {
+      expect(queryClient.getQueryState(['vendor', 'tax-identity'])?.status).toBe('error');
+    });
+    expect(screen.queryByTestId('vendor-pan-banner')).not.toBeOnTheScreen();
   });
 });

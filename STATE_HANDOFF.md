@@ -1,4 +1,4 @@
-# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery; Phase 32 retroactive invoices, the invoice PDF, vendor offers CRUD; Phase 33 discount stacking in checkout, Devanagari in the PDF, vendor invoices / offers and the customer quote wired; Phase 34 S3-compatible storage, image compression, promotion image upload, vendor PAN document; Phase 35 strict KYC, Vendor App tax identity, vendor analytics, notification events in the outbox; Phase 36 vendor notice consumer, delivery settings wired, shop deactivation)
+# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery; Phase 32 retroactive invoices, the invoice PDF, vendor offers CRUD; Phase 33 discount stacking in checkout, Devanagari in the PDF, vendor invoices / offers and the customer quote wired; Phase 34 S3-compatible storage, image compression, promotion image upload, vendor PAN document; Phase 35 strict KYC, Vendor App tax identity, vendor analytics, notification events in the outbox; Phase 36 vendor notice consumer, delivery settings wired, shop deactivation; Phase 37 Delete Shop Account wired, PAN reminder from the server, admin reactivation)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
 work without re-deriving it. It describes the tree at the end of **Phase 23 (End-to-End System Audit & Failure Mode Hardening)**, the last planned development phase, on top of Phase 22 (Financial Reconciliation & Payouts), 21 (Rider Dispatch &
@@ -1099,6 +1099,50 @@ for order state changes only (Phase 20, §8M; no chat, wallet or rider pushes, n
 escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8Z.38 Phase 37: Delete Shop Account wired, the PAN reminder from the server, admin reactivation (2026-10-09)
+
+`apps/api`, `apps/admin`, `apps/mobile`, one audit action in shared-types. **No migration, no
+new dependency.** Not run on a device or in a browser.
+
+**Confirmed by the user (2026-10-09):** a deactivation closes opt-ins as `OPTED_OUT`; a vendor
+cannot withdraw a deactivation (SPEC amendment of §8Z.37 stands); reopening is the admin's.
+
+| Asked                                                  | Built                                                                                  | Why                                                                                                  |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| reminder reads `has_pan_document` or `pan_verified_at` | shown for a missing PAN, then for a missing certificate; **not** for an unverified one | Verification is the Super Admin's step: a vendor who uploaded its certificate has nothing left to do |
+| "Reactivate" on the "Vendor Detail page"               | on the vendor's row of the **Vendors tab** (`#/vendors`)                               | The admin app has no vendor detail page; the row is where Suspend / Restore already are              |
+| back to LIVE (or SUSPENDED_COMPLIANCE without a PAN)   | as asked, whatever the shop's status was before it closed                              | The status before a deactivation is not stored (it is in the audit trail)                            |
+
+- **`POST /api/admin/vendors/:id/reactivate`** (SUPER_ADMIN, no body) → `200 { vendor, previous_status: "DEACTIVATED" }`
+  (the override response shape). `409 VENDOR_STATUS_CONFLICT` for a shop that is not
+  DEACTIVATED (also a second press), `404 VENDOR_NOT_FOUND`, `400`. `AdminVendorService.reactivate`:
+  one transaction under the vendor row `FOR UPDATE`; `LIVE` with a PAN, else
+  `SUSPENDED_COMPLIANCE` remembering `LIVE` (the PAN save then lifts it and writes
+  `vendor.compliance_restored`); audit `VENDOR_REACTIVATED` (47 actions). The account can sign in
+  again at once. **Cancelled ads and closed opt-ins stay closed**; no event or notice is written.
+- **Admin app:** a DEACTIVATED row offers **Reactivate** (two-step, like Suspend / Restore) with a
+  note of what it does; `overrideVendor(id, 'REACTIVATE')`.
+- **Vendor App, Delete Shop Account** (`app/(vendor)/settings.tsx`, `api/vendor-account.ts`):
+  confirm (the text now says it is final and signs out) → `POST /api/vendor/account/deactivate
+{ confirm: true }` → success: toast and **sign out**. `409 SHOP_NOT_DEACTIVATABLE`: an alert
+  with one line per reason the server named (`NEGATIVE_BALANCE`, `ACTIVE_ORDERS`,
+  `PENDING_PAYOUT`, `AD_FEES_DUE`); the vendor stays signed in. No connection / other failure: a
+  toast, never a sign-out. The phone-side pre-check, the "deletion requested" state and "Cancel
+  deletion request" are gone from the screen. **Left in the code, unused by any screen:**
+  `features/vendor/shop-deletion.ts` and `useVendorShopStore.deletionRequest` (with their tests).
+- **Dashboard reminder** (`app/(vendor)/dashboard.tsx`): reads `GET /api/vendor/tax-identity`
+  (the query the settings screen uses, so a save there updates it at once). Nothing is shown
+  until the server answers, or when it cannot be asked. `useShopSettings` is no longer read by
+  the dashboard; the phone's copy of the settings is now read only by the settings form before
+  the server's values arrive.
+
+**Tests.** `pnpm typecheck` / `pnpm lint` 16 of 16. Mobile **1560** in 103 suites, all passing
+(the deletion and reminder tests rewritten over msw). Admin 303, shared-types 362. API
+integration `vendor-deactivation-api` **32** (+5: reopened LIVE with its audit entry and sign-in
+back; without a PAN, then lifted by the PAN save; ads and opt-ins stay closed; five presses reopen
+once; roles, 404, 400) and `admin-vendors-api`, all passing. `vite build` succeeds. **Not rerun
+for this phase:** the full API integration suite, the worker suites, mutation checks.
 
 ## 8Z.37 Phase 36: vendor notice consumer, `vendor.compliance_restored`, delivery settings wired in the Vendor App, shop deactivation (2026-10-09)
 

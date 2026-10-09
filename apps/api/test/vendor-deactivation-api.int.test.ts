@@ -627,6 +627,114 @@ describe('Vendor deactivation API', () => {
     });
   });
 
+  describe('POST /api/admin/vendors/:id/reactivate', () => {
+    const reactivate = (vendorId: string, token: string | null = admin) => {
+      const req = request(t.app).post(`/api/admin/vendors/${vendorId}/reactivate`);
+      return token === null ? req : req.set('authorization', token);
+    };
+
+    it('reopens a closed shop with a PAN as LIVE, audits it, and the vendor can sign in again', async () => {
+      const { vendorId, userId, token } = await shop({ balance: 250 });
+      await db.update(vendors).set({ tax_id: '302118845' }).where(eq(vendors.id, vendorId));
+      expect((await deactivate(token)).status).toBe(200);
+      const [user] = await db.select().from(users).where(eq(users.id, userId));
+      const send = () => request(t.app).post('/api/auth/otp/send').send({ phone: user?.phone });
+      expect((await send()).status).toBe(403);
+
+      const res = await reactivate(vendorId);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        previous_status: 'DEACTIVATED',
+        vendor: { id: vendorId, status: 'LIVE', wallet_balance_npr: 250 },
+      });
+      expect(await vendorRow(vendorId)).toMatchObject({
+        status: 'LIVE',
+        status_before_compliance_suspension: null,
+      });
+      expect((await audit(vendorId)).at(-1)).toMatchObject({
+        action: 'VENDOR_REACTIVATED',
+        actor_user_id: adminId,
+        actor_role: 'SUPER_ADMIN',
+        before_state: { status: 'DEACTIVATED' },
+        after_state: { status: 'LIVE', has_pan: true },
+      });
+      expect((await send()).status).toBe(200);
+    });
+
+    it('reopens a shop without a PAN as SUSPENDED_COMPLIANCE, which saving the PAN then lifts', async () => {
+      const { vendorId, token } = await shop();
+      expect((await deactivate(token)).status).toBe(200);
+
+      const res = await reactivate(vendorId);
+
+      expect(res.status).toBe(200);
+      expect(await vendorRow(vendorId)).toMatchObject({
+        status: 'SUSPENDED_COMPLIANCE',
+        status_before_compliance_suspension: 'LIVE',
+      });
+      // No path sets LIVE without a PAN; the vendor's own save brings the shop back.
+      const saved = await request(t.app)
+        .put('/api/vendor/tax-identity')
+        .set('authorization', token)
+        .send({ tax_id: '302118845', is_vat_registered: false });
+      expect(saved.status).toBe(200);
+      expect((await vendorRow(vendorId)).status).toBe('LIVE');
+    });
+
+    it('leaves the ads and opt-ins that closed with the shop closed', async () => {
+      const { vendorId, token } = await shop({ model: 'COD_CREDIT', balance: 400 });
+      const purchase = await ad(token, { billing: 'PER_ORDER_PREMIUM', price: 25, budget: 300 });
+      await optedIn(token);
+      expect((await deactivate(token)).status).toBe(200);
+
+      expect((await reactivate(vendorId)).status).toBe(200);
+
+      expect((await adRow(purchase.id))?.status).toBe('CANCELLED');
+      expect((await optInsOf(vendorId))[0]?.status).toBe('OPTED_OUT');
+      expect((await vendorRow(vendorId)).wallet_balance_npr).toBe(400);
+    });
+
+    it('refuses any shop that is not deactivated, and reopens one once under five requests', async () => {
+      const live = await shop();
+      const refused = await reactivate(live.vendorId);
+      expect(refused.status).toBe(409);
+      expect(errorOf(refused).code).toBe('VENDOR_STATUS_CONFLICT');
+      expect((await vendorRow(live.vendorId)).status).toBe('LIVE');
+
+      const closed = await shop();
+      await db.update(vendors).set({ tax_id: '302118845' }).where(eq(vendors.id, closed.vendorId));
+      expect((await deactivate(closed.token)).status).toBe(200);
+      const answers = await Promise.all(
+        Array.from({ length: 5 }, () => reactivate(closed.vendorId)),
+      );
+
+      expect(answers.map((res) => res.status).sort()).toEqual([200, 409, 409, 409, 409]);
+      const entries = (await audit(closed.vendorId)).filter(
+        (entry) => entry.action === 'VENDOR_REACTIVATED',
+      );
+      expect(entries).toHaveLength(1);
+    });
+
+    it('serves Super Admins only, and answers 404 / 400 for an unknown or malformed id', async () => {
+      const { vendorId, token } = await shop();
+      expect((await deactivate(token)).status).toBe(200);
+
+      expect((await reactivate(vendorId, null)).status).toBe(401);
+      // The vendor cannot reopen its own shop.
+      expect((await reactivate(vendorId, token)).status).toBe(403);
+      expect((await reactivate(vendorId, bearer(await createUser(db), 'CUSTOMER'))).status).toBe(
+        403,
+      );
+      expect((await vendorRow(vendorId)).status).toBe('DEACTIVATED');
+
+      const unknown = await reactivate(randomUUID());
+      expect(unknown.status).toBe(404);
+      expect(errorOf(unknown).code).toBe('VENDOR_NOT_FOUND');
+      expect((await reactivate('not-a-uuid')).status).toBe(400);
+    });
+  });
+
   describe('vendor.compliance_restored', () => {
     const save = (token: string, taxId = '302118845') =>
       request(t.app)

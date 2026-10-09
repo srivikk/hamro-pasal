@@ -514,10 +514,11 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 ## Vendor App delivery settings and shop deactivation (2026-10-09, STATE_HANDOFF.md §8Z.37)
 
 - [x] **Delivery settings wired:** the Vendor App reads `GET /api/vendor/delivery-settings` and saves with `PUT`; the form shows the server's answer. Save is off until the server's settings have loaded.
-- [ ] The dashboard's "Add your PAN" reminder still reads the phone's copy of the settings, not the server's tax identity.
+- [x] **The dashboard reminder reads the server's tax identity (2026-10-09, §8Z.38):** a missing PAN, then a missing certificate; nothing for an unverified one.
 - [x] **`POST /api/vendor/account/deactivate { confirm: true }`** → `200 { vendor_id, status: DEACTIVATED, deactivated_at, cancelled_ad_count, returned_npr, closed_opt_in_count, wallet_balance_npr }`, also on repeat; `409 SHOP_NOT_DEACTIVATABLE` (`details.blockers`: `NEGATIVE_BALANCE`, `ACTIVE_ORDERS`, `PENDING_PAYOUT`, `AD_FEES_DUE`). Migration 0038 (`vendor_status` + `DEACTIVATED`). Running ads are cancelled, live opt-ins closed as `OPTED_OUT`, device tokens removed; the account can no longer sign in (`403 ACCOUNT_DEACTIVATED`). **This replaces the deletion-request routes of 6.10**, which were never built. SPEC vendor flow 23 amended.
-- [ ] **Vendor App:** the "Delete Shop Account" button still records a request on the phone only; wire it to the route and drop "Cancel deletion request".
-- [ ] A Super Admin route and screen to reactivate a shop (not specified).
+- [x] **Vendor App "Delete Shop Account" wired (2026-10-09, §8Z.38):** confirm, the route, the server's reasons in an alert, sign-out on success.
+- [x] **`POST /api/admin/vendors/:id/reactivate` and the Reactivate button on the Vendors tab (2026-10-09, §8Z.38):** LIVE with a PAN, else SUSPENDED_COMPLIANCE; `409 VENDOR_STATUS_CONFLICT` otherwise; audited.
+- [ ] A notice to the vendor that its shop was reopened; whether a reopened shop should return to the status it had before it closed.
 
 ## Cloud storage (2026-10-09, STATE_HANDOFF.md §8Z.35)
 

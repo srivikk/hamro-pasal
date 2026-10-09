@@ -12,7 +12,12 @@ import {
 } from '@hamro-pasal/shared-types';
 import { asc, eq } from 'drizzle-orm';
 
-import type { AdminOverride, WalletService } from '../wallet/wallet-service';
+import {
+  AdminVendorNotFoundError,
+  VendorStatusConflictError,
+  type AdminOverride,
+  type WalletService,
+} from '../wallet/wallet-service';
 
 export type AdminVendorRow = typeof vendors.$inferSelect;
 
@@ -71,6 +76,52 @@ export class AdminVendorService {
     context: AuditContext = NO_AUDIT_CONTEXT,
   ): Promise<AdminOverrideResult> {
     return this.override(context, (tx) => this.wallet.restoreByAdmin(tx, vendorId, adminUserId));
+  }
+
+  /**
+   * Phase 37: reopens a shop its vendor closed (SPEC vendor flow 23: only a Super Admin can).
+   * One transaction under the vendor row lock, with its audit entry. The shop returns LIVE, or
+   * SUSPENDED_COMPLIANCE (remembering LIVE) when it has no PAN: no path sets LIVE without one,
+   * and saving the PAN then brings it back by itself. The account can sign in again at once.
+   * Ads and campaign opt-ins closed with the shop stay closed: the vendor buys and joins anew.
+   */
+  reactivate(
+    adminUserId: string,
+    vendorId: string,
+    context: AuditContext = NO_AUDIT_CONTEXT,
+  ): Promise<{ vendor: AdminVendorRow; previousStatus: 'DEACTIVATED' }> {
+    return this.db.transaction(async (tx) => {
+      const [before] = await tx
+        .select()
+        .from(vendors)
+        .where(eq(vendors.id, vendorId))
+        .for('update');
+      if (before === undefined) throw new AdminVendorNotFoundError(vendorId);
+      if (before.status !== 'DEACTIVATED') {
+        throw new VendorStatusConflictError(vendorId, before.status, 'RESTORE');
+      }
+      const hasPan = before.tax_id !== null;
+      const [vendor] = await tx
+        .update(vendors)
+        .set(
+          hasPan
+            ? { status: 'LIVE' }
+            : { status: 'SUSPENDED_COMPLIANCE', status_before_compliance_suspension: 'LIVE' },
+        )
+        .where(eq(vendors.id, vendorId))
+        .returning();
+      if (vendor === undefined) throw new Error(`Vendor ${vendorId} vanished`);
+      await recordAuditLog(tx, {
+        actor: { kind: 'USER', user_id: adminUserId, role: 'SUPER_ADMIN' },
+        action: 'VENDOR_REACTIVATED',
+        entityId: vendorId,
+        vendorId,
+        beforeState: { status: before.status },
+        afterState: { status: vendor.status, has_pan: hasPan },
+        context,
+      });
+      return { vendor, previousStatus: 'DEACTIVATED' as const };
+    });
   }
 
   private override(

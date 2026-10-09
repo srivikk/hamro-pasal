@@ -369,6 +369,21 @@ export function adminRouter({
     res.json(body);
   });
 
+  /** Phase 37: reopens a DEACTIVATED shop (LIVE, or SUSPENDED_COMPLIANCE without a PAN). */
+  router.post('/vendors/:id/reactivate', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const { vendor, previousStatus } = await vendors.reactivate(
+      authOf(req).userId,
+      id,
+      auditContextOf(req, res),
+    );
+    const body: AdminVendorOverrideResponseBody = {
+      vendor: adminVendorView(vendor),
+      previous_status: previousStatus,
+    };
+    res.json(body);
+  });
+
   router.get('/finance/payouts', async (req, res) => {
     const query = parseInput(adminPayoutListQuerySchema, { ...req.query });
     const page = await payouts.list(query);

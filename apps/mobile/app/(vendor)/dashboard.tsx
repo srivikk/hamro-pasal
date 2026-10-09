@@ -22,7 +22,7 @@ import {
   type BoardStage,
 } from '../../src/features/vendor/order-board';
 import { OrderStageTabs } from '../../src/features/vendor/OrderStageTabs';
-import { useShopSettings } from '../../src/features/vendor/useShopSettings';
+import { useTaxIdentityQuery } from '../../src/features/vendor/usePanDocument';
 import {
   useMinuteClock,
   useVendorOrderSimulator,
@@ -148,7 +148,17 @@ export default function VendorDashboardScreen() {
   useVendorAlarm(ringing);
 
   const online = useVendorShopStore((state) => state.online);
-  const settings = useShopSettings();
+  // Phase 37: the reminder follows what the server holds, not what this phone once saved. It
+  // shows only once the answer is in: for a missing PAN, then for a missing certificate.
+  const identity = useTaxIdentityQuery().data;
+  const reminder =
+    identity === undefined
+      ? null
+      : identity.tax_id === null
+        ? 'panBanner'
+        : identity.has_pan_document
+          ? null
+          : 'documentBanner';
   const toast = useToastStore((store) => store.show);
   const mocks = useVendorBoardStore((state) => state.mocks);
   const departed = useVendorBoardStore((state) => state.departed);
@@ -308,7 +318,7 @@ export default function VendorDashboardScreen() {
           <Text className="text-sm font-semibold text-white">{t('vendorShop.offlineBanner')}</Text>
         </View>
       )}
-      {settings === null ? (
+      {reminder === null ? null : (
         <Pressable
           testID="vendor-pan-banner"
           accessibilityRole="button"
@@ -317,9 +327,11 @@ export default function VendorDashboardScreen() {
             router.push('/settings');
           }}
         >
-          <Text className="text-sm font-semibold text-amber-900">{t('vendorShop.panBanner')}</Text>
+          <Text className="text-sm font-semibold text-amber-900">
+            {t(`vendorShop.${reminder}`)}
+          </Text>
         </Pressable>
-      ) : null}
+      )}
       {live === undefined && query.isError ? (
         <View className="bg-amber-50 px-4 py-2" testID="vendor-live-unavailable">
           <Text className="text-sm text-amber-900">{t('vendorDashboard.liveUnavailable')}</Text>

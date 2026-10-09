@@ -16,7 +16,7 @@ const VENDORS_KEY = ['admin', 'vendors'] as const;
 
 interface Override {
   readonly id: string;
-  readonly action: 'SUSPEND' | 'RESTORE';
+  readonly action: 'SUSPEND' | 'RESTORE' | 'REACTIVATE';
 }
 
 /**
@@ -166,10 +166,15 @@ function VendorRow({
   readonly error: string | null;
   readonly onAsk: () => void;
   readonly onCancel: () => void;
-  readonly onConfirm: (action: 'SUSPEND' | 'RESTORE') => void;
+  readonly onConfirm: (action: 'SUSPEND' | 'RESTORE' | 'REACTIVATE') => void;
 }) {
   const button = vendorAction(vendor, limit);
-  const label = button.action === 'SUSPEND' ? 'Suspend' : 'Restore';
+  const label =
+    button.action === 'SUSPEND'
+      ? 'Suspend'
+      : button.action === 'RESTORE'
+        ? 'Restore'
+        : 'Reactivate';
 
   return (
     <tr>

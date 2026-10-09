@@ -11,6 +11,7 @@ import { LanguageToggle } from '../../src/features/settings/LanguageToggle';
 import { useWhatsAppOptIn } from '../../src/features/settings/useWhatsAppOptIn';
 import { formatNepalDateTime } from '../../src/features/vendor/invoice-math';
 import { MOCK_PALIKAS } from '../../src/features/vendor/mock-palikas';
+import { PanDocumentCard } from '../../src/features/vendor/PanDocumentCard';
 import { useShopDeletionCheck } from '../../src/features/vendor/shop-deletion';
 import {
   addPalika,
@@ -126,8 +127,12 @@ function Field({
  * (language, WhatsApp updates) and the request to delete the shop account. Opened from the gear in the Vendor App
  * header.
  *
- * TODO: send it to the server (`PUT /api/vendor/tax-identity`, `PUT /api/vendor/delivery-settings`,
- * STATE_HANDOFF.md §8Z.11–12). Until those exist the settings are saved on the phone only.
+ * The PAN document (Phase 34) is the one part that goes to the server: PanDocumentCard uploads it
+ * to `POST /api/vendor/tax-identity/document` and reads its standing back.
+ *
+ * TODO: send the rest (`PUT /api/vendor/tax-identity` for the PAN number itself,
+ * `PUT /api/vendor/delivery-settings`; both routes exist). Until then the form below is saved on
+ * the phone only.
  */
 export default function VendorSettingsScreen() {
   const { t } = useTranslation();
@@ -213,6 +218,7 @@ export default function VendorSettingsScreen() {
             update({ taxId: sanitizeTaxIdInput(text) });
           }}
         />
+        <PanDocumentCard />
       </Section>
 
       <Section title={t('vendorShop.modeTitle')}>

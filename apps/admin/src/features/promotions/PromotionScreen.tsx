@@ -7,10 +7,13 @@ import { nepalDay } from '../campaigns/campaign-rules';
 import {
   emptyPromotionForm,
   formFromPromotion,
+  PROMOTION_IMAGE_ACCEPT,
   PROMOTION_PHASE_LABELS,
   PROMOTION_PLACEMENT_LABELS,
   PROMOTION_TARGET_LABELS,
   promotionActionErrorMessage,
+  promotionImageProblem,
+  promotionImageUploadError,
   promotionPhase,
   promotionPlacements,
   promotionRows,
@@ -19,6 +22,7 @@ import {
   SPONSORSHIP_AVAILABLE,
   TARGET_FIELD,
   targetLabel,
+  unusedUploads,
   validatePromotionForm,
   visibilityRequest,
   withTargetType,
@@ -39,7 +43,8 @@ type Editor =
  * customer app's Home. A promotion opens a shop or filters Home; it never changes a price. One is
  * marked as an ad only together with the purchase a vendor made in the Ad Marketplace: the form
  * takes that purchase's id and the server checks it (`SPONSORSHIP_AVAILABLE`).
- * Reads and writes /api/admin/promotions.
+ * Reads and writes /api/admin/promotions. Artwork is a file the admin picks: it is uploaded to
+ * POST /api/admin/promotions/image at once and the promotion saves the URL that comes back.
  */
 export function PromotionScreen() {
   const api = useAdminApi();
@@ -143,6 +148,9 @@ export function PromotionScreen() {
                 return (
                   <tr key={promotion.id}>
                     <td>
+                      {promotion.image_url !== null && (
+                        <img className="thumb promo-thumb" src={promotion.image_url} alt="" />
+                      )}
                       <strong>{promotion.title ?? 'Artwork only'}</strong>{' '}
                       {promotion.is_sponsored && <span className="badge promo-ad">Ad</span>}
                       {promotion.subtitle !== null && (
@@ -271,10 +279,59 @@ function PromotionModal({
 
   const api = useAdminApi();
   const queryClient = useQueryClient();
+  // Every image uploaded while this form is open. One the form does not end up saving is deleted
+  // from the bucket when it closes; the server refuses to delete one a promotion uses.
+  const uploaded = useRef<string[]>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const releaseUnused = (savedUrl: string | null) => {
+    for (const url of unusedUploads(uploaded.current, savedUrl)) {
+      // Best effort: a failure leaves an unused object in the bucket, nothing on screen.
+      api.discardPromotionImage(url).catch(() => undefined);
+    }
+    uploaded.current = [];
+  };
+  const close = () => {
+    releaseUnused(null);
+    onClose();
+  };
+
+  const upload = useMutation({
+    mutationFn: (file: File) => api.uploadPromotionImage(file),
+    onMutate: () => {
+      setUploadError(null);
+    },
+    onSuccess: ({ url }) => {
+      uploaded.current.push(url);
+      setValues((current) => ({ ...current, imageUrl: url }));
+      setFieldErrors(({ imageUrl: _cleared, ...rest }) => rest);
+    },
+    onError: (error) => {
+      setUploadError(promotionImageUploadError(error));
+    },
+    onSettled: () => {
+      // The same file can be chosen again after a failure.
+      if (fileInput.current !== null) fileInput.current.value = '';
+    },
+  });
+  const chooseImage = (file: File | undefined) => {
+    if (file === undefined || upload.isPending) return;
+    const problem = promotionImageProblem(file);
+    if (problem !== null) {
+      setUploadError(problem);
+      if (fileInput.current !== null) fileInput.current.value = '';
+      return;
+    }
+    upload.mutate(file);
+  };
+
   const save = useMutation({
     mutationFn: (request: PromotionWrite) =>
       editing === null ? api.createPromotion(request) : api.updatePromotion(editing.id, request),
-    onSuccess: onSaved,
+    onSuccess: ({ promotion }) => {
+      releaseUnused(promotion.image_url);
+      onSaved();
+    },
     onError: (error) => {
       const refusal = promotionSaveError(error, values.targetType);
       if (refusal.field === null) setFormError(refusal.message);
@@ -295,7 +352,8 @@ function PromotionModal({
 
   const submit = (event: SyntheticEvent) => {
     event.preventDefault();
-    if (save.isPending) return;
+    // Not while an image is on its way: the promotion would be saved without it.
+    if (save.isPending || upload.isPending) return;
     setFormError(null);
     const result = validatePromotionForm(values);
     if (!result.ok) {
@@ -321,7 +379,7 @@ function PromotionModal({
       ref={dialogRef}
       className="modal modal-wide"
       aria-labelledby={`${formId}-title-heading`}
-      onClose={onClose}
+      onClose={close}
     >
       <form onSubmit={submit} noValidate>
         <h2 id={`${formId}-title-heading`}>
@@ -386,16 +444,51 @@ function PromotionModal({
         />
         {errorOf('subtitle')}
 
-        <label htmlFor={field('imageUrl')}>{carousel ? 'Image URL' : 'Image URL (optional)'}</label>
-        <input
-          id={field('imageUrl')}
-          type="url"
-          value={values.imageUrl}
-          placeholder="https://…"
-          onChange={(event) => {
-            change({ imageUrl: event.target.value });
-          }}
-        />
+        <fieldset className="photos" aria-busy={upload.isPending}>
+          <legend>{carousel ? 'Image' : 'Image (optional)'}</legend>
+          {values.imageUrl !== '' && (
+            <div className="promo-preview">
+              <img src={values.imageUrl} alt="The promotion’s image" />
+              <button
+                type="button"
+                className="button ghost"
+                disabled={upload.isPending}
+                onClick={() => {
+                  change({ imageUrl: '' });
+                }}
+              >
+                Remove image
+              </button>
+            </div>
+          )}
+          <label htmlFor={field('imageUrl')} className="visually-hidden">
+            {values.imageUrl === '' ? 'Choose an image' : 'Choose another image'}
+          </label>
+          <input
+            ref={fileInput}
+            id={field('imageUrl')}
+            type="file"
+            accept={PROMOTION_IMAGE_ACCEPT}
+            disabled={upload.isPending}
+            onChange={(event) => {
+              chooseImage(event.target.files?.[0]);
+            }}
+          />
+          {upload.isPending ? (
+            <span className="uploading" role="status">
+              <span className="spinner" aria-hidden="true" /> Uploading…
+            </span>
+          ) : (
+            <span className="muted small">
+              JPEG, PNG or WebP, at most 5 MB. It is stored as WebP, at most 1200 px wide.
+            </span>
+          )}
+          {uploadError !== null && (
+            <span className="error small" role="alert">
+              {uploadError}
+            </span>
+          )}
+        </fieldset>
         {errorOf('imageUrl')}
 
         <div className="field-pair">
@@ -510,10 +603,14 @@ function PromotionModal({
         )}
 
         <div className="modal-actions">
-          <button type="button" className="button ghost" onClick={onClose}>
+          <button type="button" className="button ghost" onClick={close}>
             Cancel
           </button>
-          <button type="submit" className="button primary" disabled={save.isPending}>
+          <button
+            type="submit"
+            className="button primary"
+            disabled={save.isPending || upload.isPending}
+          >
             {save.isPending ? 'Saving…' : editing === null ? 'Create' : 'Save'}
           </button>
         </div>

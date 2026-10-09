@@ -21,6 +21,7 @@ apps/mobile/ios/
 
 # Local uploads (dispute evidence, product photos): stand-in for Cloudflare R2
 apps/api/uploads/
+apps/api/uploads-private/
 
 # OS / editor
 .DS_Store

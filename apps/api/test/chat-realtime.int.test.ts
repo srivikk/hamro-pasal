@@ -36,6 +36,7 @@ import {
   TEST_UPLOADS_DIR,
   type TestApp,
 } from './support/http';
+import { photo } from './support/images';
 
 /**
  * Phase 9: the Socket.io /chat namespace on two API instances joined by the Redis adapter, against
@@ -256,7 +257,7 @@ describe('dispute chat (/chat)', () => {
 
   it('carries evidence uploaded through POST /api/uploads/dispute-evidence', async () => {
     const { customerId, vendorUserId, orderId, pii } = await dispute();
-    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+    const jpeg = await photo();
     const uploaded = bodyOf(
       disputeEvidenceUploadResponseSchema,
       await request(t.app)
@@ -367,7 +368,7 @@ describe('dispute chat (/chat)', () => {
 
     it('a photo-only first message opens the dispute with a placeholder reason', async () => {
       const { customerId, orderId } = await dispute();
-      const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+      const jpeg = await photo();
       const uploaded = bodyOf(
         disputeEvidenceUploadResponseSchema,
         await request(t.app)

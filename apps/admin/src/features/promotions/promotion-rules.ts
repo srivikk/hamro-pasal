@@ -3,6 +3,8 @@ import {
   adPurchaseMismatchReasonSchema,
   MAX_DISCOUNT_TAG_LENGTH,
   MAX_PROMOTION_DISPLAY_ORDER,
+  MAX_PROMOTION_IMAGE_BYTES,
+  PRODUCT_IMAGE_CONTENT_TYPES,
   promotionPlacements,
   promotionPlacementSchema,
   promotionTargetTypes,
@@ -204,7 +206,7 @@ export function validatePromotionForm(values: PromotionFormValues): PromotionFor
         errors.imageUrl =
           values.placement === 'CAROUSEL' && blankToNull(values.imageUrl) === null
             ? 'A carousel banner needs its image.'
-            : 'Enter a full http(s) address.';
+            : 'This image address is not valid. Upload the image again.';
         break;
       case 'target_value':
         errors.targetValue =
@@ -361,4 +363,44 @@ export function promotionActionErrorMessage(error: unknown): string {
     return 'That promotion no longer exists. The list has been refreshed.';
   }
   return promotionSaveError(error, '').message;
+}
+
+/** What the file picker accepts: the types the server stores (it checks the bytes again). */
+export const PROMOTION_IMAGE_ACCEPT = PRODUCT_IMAGE_CONTENT_TYPES.join(',');
+
+/**
+ * Why a chosen file cannot be uploaded as promotion artwork, or null. The server decides again
+ * from the file's own bytes; this only spares a request that would be refused.
+ */
+export function promotionImageProblem(file: {
+  readonly name: string;
+  readonly type: string;
+  readonly size: number;
+}): string | null {
+  const allowed: readonly string[] = PRODUCT_IMAGE_CONTENT_TYPES;
+  if (!allowed.includes(file.type)) return `${file.name} is not a JPEG, PNG or WebP image.`;
+  if (file.size === 0) return `${file.name} is empty.`;
+  if (file.size > MAX_PROMOTION_IMAGE_BYTES) return `${file.name} is larger than 5 MB.`;
+  return null;
+}
+
+/** What to tell the admin when the upload itself is refused. */
+export function promotionImageUploadError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.code === 'NETWORK_ERROR') return 'The API cannot be reached. Try again.';
+    if (error.code === 'FILE_TOO_LARGE') return 'The image is larger than 5 MB.';
+    if (error.code === 'UNSUPPORTED_MEDIA_TYPE') {
+      return 'This file is not a readable JPEG, PNG or WebP image.';
+    }
+  }
+  return 'The image could not be uploaded. Try again.';
+}
+
+/**
+ * The images uploaded while a form was open that it did not end up saving: each is deleted from
+ * the bucket when the form closes. `savedUrl` is the image the saved promotion uses (null when
+ * the form was cancelled, or the promotion has no image).
+ */
+export function unusedUploads(uploaded: readonly string[], savedUrl: string | null): string[] {
+  return [...new Set(uploaded)].filter((url) => url !== savedUrl);
 }

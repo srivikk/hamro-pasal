@@ -17,6 +17,8 @@ import {
 } from '@hamro-pasal/shared-types';
 import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 
+import type { PromotionImageStorage } from '../uploads/promotion-image-storage';
+
 export type PromotionRow = typeof homePromotions.$inferSelect;
 
 export class PromotionNotFoundError extends Error {
@@ -54,6 +56,14 @@ export class AdPurchaseMismatchError extends Error {
   ) {
     super(MISMATCH_MESSAGES[reason]);
     this.name = 'AdPurchaseMismatchError';
+  }
+}
+
+/** The uploaded image is the artwork of a saved promotion: it cannot be discarded. */
+export class PromotionImageInUseError extends Error {
+  constructor(readonly url: string) {
+    super('This image is used by a promotion');
+    this.name = 'PromotionImageInUseError';
   }
 }
 
@@ -103,9 +113,54 @@ function columnsOf(input: PromotionWrite) {
  * A promotion is sponsored only through the purchase of the vendor who bought the placement
  * (`assertSponsorship`): a running purchase of a carousel ad, by the shop the promotion targets,
  * covering the promotion's dates. Anything else is 422 AD_PURCHASE_MISMATCH with `details.reason`.
+ *
+ * Artwork (Phase 34). An uploaded image belongs to the promotions that name it. When an update
+ * names another image, or the promotion is deleted, the old object is deleted from the bucket
+ * **after the commit**, and only if no other promotion still names it. A URL this API did not
+ * issue (one pasted from elsewhere) is never touched. A failed delete is logged and leaves an
+ * orphan object; it never fails the request, whose database change already stands.
  */
 export class PromotionService {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly images: PromotionImageStorage,
+  ) {}
+
+  /**
+   * DELETE /api/admin/promotions/image: an image that was uploaded and then not used (the form was
+   * cancelled, or another file was chosen). Refused while a promotion names it.
+   */
+  async discardImage(url: string): Promise<void> {
+    if (!this.images.owns(url)) return;
+    if (await this.imageInUse(url)) throw new PromotionImageInUseError(url);
+    await this.images.deleteFile(url);
+  }
+
+  private async imageInUse(url: string): Promise<boolean> {
+    const [user] = await this.db
+      .select({ id: homePromotions.id })
+      .from(homePromotions)
+      .where(eq(homePromotions.image_url, url))
+      .limit(1);
+    return user !== undefined;
+  }
+
+  /** After a commit: drops the artwork no promotion names any more. Never throws. */
+  private async releaseImage(url: string | null): Promise<void> {
+    if (url === null || !this.images.owns(url)) return;
+    try {
+      if (!(await this.imageInUse(url))) await this.images.deleteFile(url);
+    } catch (error: unknown) {
+      console.warn(
+        JSON.stringify({
+          storage: 'orphan_object',
+          kind: 'promotion_image',
+          url,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  }
 
   /** Every promotion, hidden and ended ones included: the carousel first, each by its order. */
   list(): Promise<PromotionRow[]> {
@@ -228,13 +283,13 @@ export class PromotionService {
   }
 
   /** Replaces every field. */
-  update(
+  async update(
     adminUserId: string,
     promotionId: string,
     input: PromotionWrite,
     context: AuditContext = NO_AUDIT_CONTEXT,
   ): Promise<PromotionRow> {
-    return this.db.transaction(async (tx) => {
+    const { before, after } = await this.db.transaction(async (tx) => {
       const before = await lockPromotion(tx, promotionId);
       await assertWritable(tx, input);
       const [after] = await tx
@@ -255,17 +310,19 @@ export class PromotionService {
           context,
         });
       }
-      return after;
+      return { before, after };
     });
+    if (before.image_url !== after.image_url) await this.releaseImage(before.image_url);
+    return after;
   }
 
   /** Removes the promotion; its audit entry keeps what it was. */
-  remove(
+  async remove(
     adminUserId: string,
     promotionId: string,
     context: AuditContext = NO_AUDIT_CONTEXT,
   ): Promise<void> {
-    return this.db.transaction(async (tx) => {
+    const removed = await this.db.transaction(async (tx) => {
       const before = await lockPromotion(tx, promotionId);
       await tx.delete(homePromotions).where(eq(homePromotions.id, promotionId));
       await recordAuditLog(tx, {
@@ -277,7 +334,9 @@ export class PromotionService {
         afterState: { deleted: true },
         context,
       });
+      return before;
     });
+    await this.releaseImage(removed.image_url);
   }
 }
 

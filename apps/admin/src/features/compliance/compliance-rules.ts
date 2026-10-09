@@ -161,3 +161,20 @@ export function verifyErrorMessage(error: unknown): string {
   }
   return 'The verification could not be saved. Try again.';
 }
+
+/** What to tell the admin when a vendor's PAN document cannot be shown. */
+export function panDocumentErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    switch (error.code) {
+      case 'PAN_DOCUMENT_NOT_FOUND':
+        return 'This vendor has no document on file any more. Refresh the list.';
+      case 'VENDOR_NOT_FOUND':
+        return 'This vendor no longer exists.';
+      case 'NETWORK_ERROR':
+        return 'The API cannot be reached. Try again.';
+      default:
+        break;
+    }
+  }
+  return 'The document could not be loaded. Try again.';
+}

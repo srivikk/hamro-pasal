@@ -1,6 +1,6 @@
 import type { AdminComplianceVendorListResponseBody } from '@hamro-pasal/shared-types';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { ApiError } from '../../api/client';
 import { useAdminApi } from '../../app-context';
@@ -10,6 +10,7 @@ import {
   complianceRows,
   countByStanding,
   PAN_STANDING_LABELS,
+  panDocumentErrorMessage,
   panStandingOf,
   replaceComplianceVendor,
   verifyButton,
@@ -33,6 +34,7 @@ export function ComplianceScreen() {
   const [search, setSearch] = useState('');
   const [confirming, setConfirming] = useState<string | null>(null);
   const [errors, setErrors] = useState<Readonly<Record<string, string>>>({});
+  const [viewing, setViewing] = useState<ComplianceVendorView | null>(null);
 
   const query = useQuery({
     queryKey: COMPLIANCE_KEY,
@@ -148,6 +150,9 @@ export function ComplianceScreen() {
                   busy={verify.isPending}
                   saving={verify.isPending && verify.variables === vendor.id}
                   error={errors[vendor.id] ?? null}
+                  onViewDocument={() => {
+                    setViewing(vendor);
+                  }}
                   onAsk={() => {
                     setConfirming(vendor.id);
                   }}
@@ -163,7 +168,92 @@ export function ComplianceScreen() {
           </table>
         </div>
       )}
+
+      {viewing !== null && (
+        <PanDocumentDialog
+          key={viewing.id}
+          vendor={viewing}
+          onClose={() => {
+            setViewing(null);
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+/**
+ * The vendor's uploaded PAN document. It lives in a private bucket: the image is fetched through
+ * the API with the admin's token and shown from memory, and that copy is dropped when the dialog
+ * closes.
+ */
+function PanDocumentDialog({
+  vendor,
+  onClose,
+}: {
+  readonly vendor: ComplianceVendorView;
+  readonly onClose: () => void;
+}) {
+  const api = useAdminApi();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [state, setState] = useState<
+    | { readonly status: 'loading' }
+    | { readonly status: 'ready'; readonly url: string }
+    | { readonly status: 'error'; readonly message: string }
+  >({ status: 'loading' });
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog !== null && !dialog.open) dialog.showModal();
+  }, []);
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    api
+      .getVendorPanDocument(vendor.id)
+      .then((blob) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setState({ status: 'ready', url: objectUrl });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setState({ status: 'error', message: panDocumentErrorMessage(error) });
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
+    };
+  }, [api, vendor.id]);
+
+  return (
+    <dialog ref={dialogRef} className="modal modal-wide document-view" onClose={onClose}>
+      <h2>PAN document of {vendor.business_name}</h2>
+      <p className="muted">
+        PAN on file:{' '}
+        {vendor.tax_id === null ? 'none' : <span className="mono">{vendor.tax_id}</span>}. Check
+        that the number and the name on the document match before verifying.
+      </p>
+      {state.status === 'loading' && (
+        <p className="uploading" role="status">
+          <span className="spinner" aria-hidden="true" /> Loading the document…
+        </p>
+      )}
+      {state.status === 'error' && (
+        <p className="error" role="alert">
+          {state.message}
+        </p>
+      )}
+      {state.status === 'ready' && (
+        <img src={state.url} alt={`PAN document uploaded by ${vendor.business_name}`} />
+      )}
+      <div className="modal-actions">
+        <button type="button" className="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </dialog>
   );
 }
 
@@ -173,6 +263,7 @@ function ComplianceRow({
   busy,
   saving,
   error,
+  onViewDocument,
   onAsk,
   onCancel,
   onConfirm,
@@ -183,6 +274,7 @@ function ComplianceRow({
   readonly busy: boolean;
   readonly saving: boolean;
   readonly error: string | null;
+  readonly onViewDocument: () => void;
   readonly onAsk: () => void;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
@@ -220,6 +312,13 @@ function ComplianceRow({
           {vendor.tax_id !== null &&
             (vendor.is_vat_registered ? ' · VAT registered' : ' · PAN only')}
         </div>
+        {vendor.has_pan_document ? (
+          <button type="button" className="link" onClick={onViewDocument}>
+            View document
+          </button>
+        ) : (
+          <div className="muted small">No document uploaded</div>
+        )}
       </td>
       <td>
         {confirming ? (

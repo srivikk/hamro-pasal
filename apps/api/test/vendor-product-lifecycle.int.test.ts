@@ -31,14 +31,18 @@ import {
   TEST_UPLOADS_DIR,
   type TestApp,
 } from './support/http';
+import { describeImage, paddedTo, photo } from './support/images';
 
-/** An image signature followed by padding up to `size` bytes. */
-function imageOfSize(size: number, signature: readonly number[] = [0xff, 0xd8, 0xff]): Buffer {
-  const bytes = Buffer.alloc(size, 0x20);
-  Buffer.from(signature).copy(bytes);
-  return bytes;
+const PNG_SIGNATURE = 'png';
+let baseImages: Record<'jpeg' | 'png', Buffer>;
+beforeAll(async () => {
+  baseImages = { jpeg: await photo(), png: await photo({ format: 'png' }) };
+});
+
+/** A real image, padded after its end up to `size` bytes (a smaller size gives the image itself). */
+function imageOfSize(size: number, kind: 'jpeg' | 'png' = 'jpeg'): Buffer {
+  return paddedTo(baseImages[kind], size);
 }
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 interface UploadFile {
   readonly bytes: Buffer;
@@ -383,20 +387,22 @@ describe('Vendor product lifecycle API', () => {
       expect(product.image_urls).toHaveLength(1);
       const [url] = product.image_urls;
       expect(url).toMatch(
-        new RegExp(`^${TEST_UPLOADS_BASE_URL}/product-images/${productId}/[0-9a-f-]{36}\\.jpg$`),
+        new RegExp(`^${TEST_UPLOADS_BASE_URL}/product-images/${productId}/[0-9a-f-]{36}\\.webp$`),
       );
       expect((await rowOf(productId)).image_urls).toEqual([url]);
       const [name] = await storedFiles(productId);
       expect(url?.endsWith(`/${name ?? ''}`)).toBe(true);
-      await expect(
-        readFile(join(TEST_UPLOADS_DIR, 'product-images', productId, name ?? '')),
-      ).resolves.toEqual(bytes);
+      // Re-encoded before it is stored (SPEC infrastructure §6): WebP, never the bytes as sent.
+      const onDisk = await readFile(
+        join(TEST_UPLOADS_DIR, 'product-images', productId, name ?? ''),
+      );
+      expect(await describeImage(onDisk)).toMatchObject({ format: 'webp', width: 64, height: 48 });
 
       const served = await request(testApp.app).get(new URL(url ?? '').pathname);
       expect(served.status).toBe(200);
-      expect(served.headers['content-type']).toBe('image/jpeg');
+      expect(served.headers['content-type']).toBe('image/webp');
       expect(served.headers['x-content-type-options']).toBe('nosniff');
-      expect(Buffer.from(served.body as Buffer)).toEqual(bytes);
+      expect(Buffer.from(served.body as Buffer)).toEqual(onDisk);
     });
 
     it('appends several photos of one request in order, after the ones already there', async () => {
@@ -414,8 +420,8 @@ describe('Vendor product lifecycle API', () => {
       const urls = bodyOf(vendorProductResponseSchema, res).product.image_urls;
       expect(urls).toHaveLength(3);
       expect(urls[0]).toBe('https://cdn.hamropasal.test/p/first.webp');
-      expect(urls[1]).toMatch(/\.jpg$/);
-      expect(urls[2]).toMatch(/\.png$/);
+      expect(urls[1]).toMatch(/\.webp$/);
+      expect(urls[2]).toMatch(/\.webp$/);
       expect(await storedFiles(productId)).toHaveLength(2);
     });
 

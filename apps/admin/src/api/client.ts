@@ -51,6 +51,11 @@ export interface ApiClient {
    * session is then in the store), false when it does not. Rejects when the API cannot be reached.
    */
   restoreSession(): Promise<boolean>;
+  /**
+   * A GET whose answer is a file, not JSON (a vendor's PAN document): the bytes as a Blob, with
+   * the same token renewal as `request`. The API marks such answers `no-store`.
+   */
+  download(path: string): Promise<Blob>;
 }
 
 /** The body as JSON, or null when it is empty or not JSON (then the contract check reports it). */
@@ -186,28 +191,60 @@ export function createApiClient(options: {
     return refreshInFlight;
   }
 
+  async function sendDownload(path: string, accessToken: string): Promise<Blob> {
+    let response: Response;
+    try {
+      response = await options.fetch(buildUrl(baseUrl, path, undefined), {
+        method: 'GET',
+        headers: { authorization: `Bearer ${accessToken}` },
+        credentials: 'same-origin',
+      });
+    } catch (error: unknown) {
+      throw new ApiError(
+        0,
+        CLIENT_ERROR_CODES.NETWORK_ERROR,
+        error instanceof Error ? error.message : 'Network request failed',
+      );
+    }
+    if (response.ok) return response.blob();
+    const parsed = errorBodySchema.safeParse(parseJson(await response.text()));
+    if (parsed.success) {
+      const { code, message, details } = parsed.data.error;
+      throw new ApiError(response.status, code, message, details);
+    }
+    throw new ApiError(
+      response.status,
+      CLIENT_ERROR_CODES.UNEXPECTED_RESPONSE,
+      `HTTP ${String(response.status)}`,
+    );
+  }
+
+  /** Runs a call with the access token, renewing it once on a 401 UNAUTHENTICATED. */
+  async function authorized<T>(call: (accessToken: string) => Promise<T>): Promise<T> {
+    const token = session.getState().session?.accessToken ?? null;
+    if (token === null) {
+      throw new ApiError(401, CLIENT_ERROR_CODES.NOT_SIGNED_IN, 'Sign in first');
+    }
+    try {
+      return await call(token);
+    } catch (error: unknown) {
+      // Only an expired/invalid token is renewed; any other 401 is the answer itself.
+      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      if (error.code !== 'UNAUTHENTICATED') throw error;
+      const current = session.getState().session?.accessToken ?? null;
+      const renewed = current !== null && current !== token ? current : await refreshAccessToken();
+      if (renewed === null) throw error;
+      return call(renewed);
+    }
+  }
+
   return {
     publicRequest: (request) => send(request, null),
 
     restoreSession: async () => (await refreshAccessToken()) !== null,
 
-    async request(request) {
-      const token = session.getState().session?.accessToken ?? null;
-      if (token === null) {
-        throw new ApiError(401, CLIENT_ERROR_CODES.NOT_SIGNED_IN, 'Sign in first');
-      }
-      try {
-        return await send(request, token);
-      } catch (error: unknown) {
-        // Only an expired/invalid token is renewed; any other 401 is the answer itself.
-        if (!(error instanceof ApiError) || error.status !== 401) throw error;
-        if (error.code !== 'UNAUTHENTICATED') throw error;
-        const current = session.getState().session?.accessToken ?? null;
-        const renewed =
-          current !== null && current !== token ? current : await refreshAccessToken();
-        if (renewed === null) throw error;
-        return send(request, renewed);
-      }
-    },
+    request: (request) => authorized((token) => send(request, token)),
+
+    download: (path) => authorized((token) => sendDownload(path, token)),
   };
 }

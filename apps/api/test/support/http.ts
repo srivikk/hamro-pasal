@@ -13,8 +13,7 @@ import { esewaHmacBase64, esewaSignatureMessage } from '../../src/payments/esewa
 import type { OtpStoreOptions } from '../../src/auth/otp-store';
 import type { FetchLike } from '../../src/payments/gateway-http';
 import { MockSmsGateway, type OutboundSms, type SmsGateway } from '@hamro-pasal/sms';
-import { LocalEvidenceStorage } from '../../src/uploads/evidence-storage';
-import { LocalProductImageStorage } from '../../src/uploads/product-image-storage';
+import { localFileStorage, type FileStorage } from '../../src/uploads/storage-from-env';
 import { testDatabase, testRedisPool } from './fixtures';
 
 export const ACCESS_SECRET = 'integration-access-secret-0123456789abcdef';
@@ -50,6 +49,8 @@ export const TEST_UPLOADS_DIR = join(
   `hamro-pasal-api-test-uploads-${String(process.pid)}`,
 );
 export const TEST_UPLOADS_BASE_URL = 'http://localhost:4000/uploads';
+/** Private documents (KYC) land beside it, in a directory the app never serves. */
+export const TEST_PRIVATE_UPLOADS_DIR = `${TEST_UPLOADS_DIR}-private`;
 
 export interface TestApp {
   readonly app: Express;
@@ -68,6 +69,9 @@ export function buildTestApp(
     /** A shorter staleness bound for rider positions. */
     riderLocationMaxAgeMs?: number;
     uploadsDir?: string;
+    privateUploadsDir?: string;
+    /** Replaces one or more of the local storages (a store that fails, an S3 stand-in). */
+    fileStorage?: Partial<FileStorage>;
     /** Defaults to MOCK so wallet tests can top up. */
     walletTopUpMode?: WalletTopUpMode;
     /** MOCK_SERVICES: serves POST /api/test/mock-payment. */
@@ -108,14 +112,12 @@ export function buildTestApp(
         ? {}
         : { riderLocationOptions: { maxAgeMs: options.riderLocationMaxAgeMs } }),
       sms,
-      evidence: new LocalEvidenceStorage(
+      ...localFileStorage(
         options.uploadsDir ?? TEST_UPLOADS_DIR,
+        options.privateUploadsDir ?? TEST_PRIVATE_UPLOADS_DIR,
         TEST_UPLOADS_BASE_URL,
       ),
-      productImages: new LocalProductImageStorage(
-        options.uploadsDir ?? TEST_UPLOADS_DIR,
-        TEST_UPLOADS_BASE_URL,
-      ),
+      ...(options.fileStorage ?? {}),
     },
   );
   return { app: createApp(container), container, sms };

@@ -46,6 +46,7 @@ const live: ComplianceVendorView = {
   tax_id: '301456789',
   is_vat_registered: false,
   pan_verified_at: null,
+  has_pan_document: false,
 };
 
 const swept: ComplianceVendorView = {

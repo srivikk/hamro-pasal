@@ -148,6 +148,11 @@ export const complianceVendorViewSchema = z
      * its bank account while this is null.
      */
     pan_verified_at: z.iso.datetime().nullable(),
+    /**
+     * Phase 34: the vendor uploaded its PAN document (read it at
+     * GET /api/admin/vendors/:id/pan-document). False for a response from before the field.
+     */
+    has_pan_document: z.boolean().default(false),
   })
   .refine((vendor) => vendor.status !== 'SUSPENDED_COMPLIANCE' || vendor.restore_status !== null, {
     message: 'A compliance suspension remembers the status it returns to',

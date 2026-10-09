@@ -194,6 +194,7 @@ Full schemas and contracts: STATE_HANDOFF.md §8Z.3. The app shows these from mo
   - `rating_*` = public CUSTOMER_TO_VENDOR reviews only (the double blind must hold).
 - [ ] **`GET /api/vendors?sort=`** `relevance | delivery_time | rating | cost_low_to_high | cost_high_to_low`, applied in SQL inside each section before the 100 cap, unknown values last.
 - [x] **`home_promotions` table and the admin CRUD (2026-10-08, migration 0025, STATE_HANDOFF.md §8Z.24):** `GET / POST /api/admin/promotions`, `PUT / DELETE /api/admin/promotions/:id`, each write audited. `target_value` by type (SHOP a uuid of a LIVE vendor, CATEGORY the slug of a category active with all its ancestors, DISCOUNT_TAG a label of 1–40 characters); `422 PROMOTION_TARGET_NOT_FOUND`. **No promotion can be sponsored yet:** `ad_purchases` does not exist, so a purchase id is `422 AD_PURCHASE_MISMATCH` and the database refuses one too. Still open on the line below: the public `GET /api/home/promotions` and the image upload. The admin tab is wired (2026-10-08, §8Z.25), with a Delete button and **no sponsorship input** until `ad_purchases` exists.
+- [x] **Image upload (2026-10-09, STATE_HANDOFF.md §8Z.35):** `POST /api/admin/promotions/image` (multipart, one `image` part, 5 MB; stored as WebP, 1200 px, under 300 KB) → `201 { url }`; `DELETE /api/admin/promotions/image { url }` for an upload no promotion used (`409 PROMOTION_IMAGE_IN_USE`). A promotion's artwork is deleted from the bucket when it is replaced or the promotion is deleted. The admin form has a file picker with a preview.
 - [ ] **`home_promotions` table, public `GET /api/home/promotions`, admin CRUD + image upload, a Promotions tab in the admin app.** Contract in STATE_HANDOFF.md §8Z.4:
   - `placement`: `CAROUSEL` | `FEATURED`.
   - `target_type`: `SHOP` | `CATEGORY` | `DISCOUNT_TAG` | null, with `target_value` = vendor id, category slug, or offer label.
@@ -320,7 +321,9 @@ Rules: SPEC.md Dual-Fulfillment "Delivery Modularity", Vendor Pricing "Billing C
 - [x] **`PUT /api/vendor/tax-identity`** (VENDOR, own shop, any status). **Built 2026-10-08** (STATE_HANDOFF.md §8Z.19): the PAN save, the compliance lift in the same transaction, the verification cleared on a changed PAN, audit entries `TAX_IDENTITY_SAVED` and `PAN_VERIFICATION_CLEARED`. The response also carries `legal_name`, `registered_address`, `compliance_suspension_lifted`, `pan_verified_at`.
   - [x] **Issuing the invoices that were waiting (2026-10-08, §8Z.33):** the first PAN issues, in its own transaction and in delivery order, the invoice of every DELIVERED order of the shop that has none; the response carries `waiting_invoices_issued`; audit `WAITING_INVOICES_ISSUED`.
   - [ ] **Not built with it:** the `vendor.restored` event (its payload is the debt restore’s: it needs its own event and SMS / push template).
-  - [ ] **Not built: uploading the PAN document itself.** The endpoint stores the number. A document vault (R2, KYC uploads) does not exist, so today a Super Admin has nothing to open when verifying.
+  - [x] **The PAN document (2026-10-09, migration 0036, §8Z.35):** `POST /api/vendor/tax-identity/document` (multipart, one `document` part) stores it in the **private** bucket (`vendors.pan_document_url` holds the object key, never a public URL), replaces an earlier one and deletes its object; replacing the document of a verified PAN clears the verification. `GET /api/vendor/tax-identity` (what is on file, `has_pan_document`), `GET /api/admin/vendors/:id/pan-document` (the image, for the admin's check), `has_pan_document` on the compliance list. The Vendor App uploads from the camera or the gallery; the admin Compliance tab opens the document.
+    - [ ] **The app still does not send the PAN number** (`PUT /api/vendor/tax-identity`): the settings form saves it on the phone. Until it does, a document uploaded from the app belongs to a shop the server holds no PAN for.
+    - [ ] To decide: require a document before `pan-verification`; drop the document when the PAN number changes.
   - Body `{ tax_id, is_vat_registered, legal_name?, registered_address? }` → `200 { vendor_id, tax_id, is_vat_registered, status }`.
   - `400 VALIDATION_FAILED` for anything but nine digits.
   - Same transaction, vendor row lock: a `SUSPENDED_COMPLIANCE` shop returns to `status_before_compliance_suspension`; write `vendor.restored`; issue the invoices its delivered orders were waiting for (6.4).
@@ -495,9 +498,19 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 4. **The vendor side of campaigns:** routes (§8Z.26) and the Vendor App's Campaigns section (§8Z.28) are done. Left: a notice to shops whose opt-in a terms change voided.
 5. **Scheduled jobs:** `SETTLEMENT_PAYOUT_RUN` (blocked on the transfer rail), the Free-plan reversion and its 7-day notice in `BILLING_CYCLE_RENEWAL`, `vendor.suspended_for_compliance` SMS / push, the "one gate for LIVE", then `vendors_live_tax_identity_check`.
 6. **Retire vendor payout requests** (6.11) with the legacy Payouts tab and the Vendor Portal's request form.
-7. **Public promotions:** `GET /api/home/promotions` and the customer app's switch are done (2026-10-08, §8Z.29). Left: the image upload, and `offer_tags` on shops.
+7. **Public promotions:** `GET /api/home/promotions` and the customer app's switch are done (2026-10-08, §8Z.29); the image upload on 2026-10-09 (§8Z.35). Left: `offer_tags` on shops.
 8. The discount engine (section 5 step 2) is **done 2026-10-09 (§8Z.34)**: vendor offers stack with campaigns in the quote and checkout, on the order, in settlement and on the invoice, and both apps are wired. Left of step 2: `payment_session` in the checkout response. Fiscal invoicing (6.4): the waiting invoices, the list, the PDF and its Devanagari font are done; left are the detail read, the customer's and admin's reads and Credit / Debit Notes.
 9. **A device run of the new screens**, after rebuilding the development client (expo-file-system, expo-sharing): the cart on a real quote, the two refusal dialogs, the invoice download and share sheet.
+
+## Cloud storage (2026-10-09, STATE_HANDOFF.md §8Z.35)
+
+- [x] **S3-compatible storage** (`@aws-sdk/client-s3`; Cloudflare R2 or AWS S3): `STORAGE_DRIVER=S3` with a public bucket (`S3_PUBLIC_BUCKET` behind `S3_PUBLIC_BASE_URL`) and a private one (`S3_PRIVATE_BUCKET`, KYC). `LOCAL` (disk) stays for development and is refused in production.
+- [x] **Compression on the server** (`sharp`): every uploaded image is stored as WebP, at most 1200 px, under 300 KB; types are checked by the file's own bytes.
+- [x] **`deleteFile(url)`** on every storage; replaced PAN documents, replaced or deleted promotion artwork and dropped product photos are deleted from the bucket.
+- [ ] **Before production:** create the two buckets (the private one without public access), set the eight `S3_*` variables, and do one real upload, read and delete: the S3 store is tested against an in-memory stand-in only.
+- [ ] **Move the existing files:** URLs stored before the switch point at `/uploads` on the API host.
+- [ ] A sweep for objects no row names (failed deletes and crashes are logged, not cleaned up).
+- [ ] The API image must install `sharp` for its own platform (not a `node_modules` copied from Windows).
 
 ## Suggested build order
 

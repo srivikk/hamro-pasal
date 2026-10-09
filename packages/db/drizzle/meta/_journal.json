@@ -253,6 +253,13 @@
       "when": 1791481921350,
       "tag": "0035_order_vendor_offer",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1791487524297,
+      "tag": "0036_vendor_kyc_docs",
+      "breakpoints": true
     }
   ]
 }

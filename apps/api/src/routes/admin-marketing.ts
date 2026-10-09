@@ -3,6 +3,9 @@ import {
   adProductUpdateRequestSchema,
   campaignWriteRequestSchema,
   idParamSchema,
+  MAX_PROMOTION_IMAGE_BYTES,
+  PROMOTION_IMAGE_FILE_FIELD,
+  promotionImageDeleteRequestSchema,
   promotionWriteRequestSchema,
   type AdminAdProductListResponseBody,
   type AdminAdProductResponseBody,
@@ -13,6 +16,7 @@ import {
   type AdminPromotionResponseBody,
   type AdminPromotionView,
   type AdProductView,
+  type PromotionImageUploadResponseBody,
 } from '@hamro-pasal/shared-types';
 import type { Router } from 'express';
 
@@ -22,11 +26,14 @@ import { parseInput } from '../http/validate';
 import type { AdProductRow, AdProductService } from '../marketing/ad-product-service';
 import type { CampaignService, CampaignWithCount } from '../marketing/campaign-service';
 import type { PromotionRow, PromotionService } from '../marketing/promotion-service';
+import { missingFile, singleImageUpload, storedImageOf } from '../uploads/image-upload';
+import type { PromotionImageStorage } from '../uploads/promotion-image-storage';
 
 export interface AdminMarketingServices {
   readonly campaigns: CampaignService;
   readonly adProducts: AdProductService;
   readonly promotions: PromotionService;
+  readonly promotionImages: PromotionImageStorage;
 }
 
 export function adminCampaignView({ campaign, optInCount }: CampaignWithCount): AdminCampaignView {
@@ -91,8 +98,10 @@ export function adminPromotionView(promotion: PromotionRow): AdminPromotionView 
  */
 export function mountAdminMarketing(
   router: Router,
-  { campaigns, adProducts, promotions }: AdminMarketingServices,
+  { campaigns, adProducts, promotions, promotionImages }: AdminMarketingServices,
 ): void {
+  const promotionImage = singleImageUpload(PROMOTION_IMAGE_FILE_FIELD, MAX_PROMOTION_IMAGE_BYTES);
+
   router.get('/campaigns', async (_req, res) => {
     const body: AdminCampaignListResponseBody = {
       campaigns: (await campaigns.list()).map(adminCampaignView),
@@ -173,6 +182,35 @@ export function mountAdminMarketing(
       ),
     };
     res.status(201).json(body);
+  });
+
+  /**
+   * Phase 34: multipart/form-data with one `image` part (JPEG, PNG or WebP by its own bytes, at
+   * most 5 MB). The image is re-encoded (WebP, 1200 px, under 300 KB), stored in the public
+   * bucket, and its absolute public URL returned, to be sent as a promotion's `image_url`.
+   * Registered before `/promotions/:id` so "image" is never read as an id.
+   */
+  router.post('/promotions/image', promotionImage, async (req, res) => {
+    const { file } = req;
+    if (file === undefined) {
+      throw missingFile(PROMOTION_IMAGE_FILE_FIELD, 'An image file is required');
+    }
+    const image = await storedImageOf(file.buffer, 'A promotion image');
+    const body: PromotionImageUploadResponseBody = {
+      url: await promotionImages.save(image.bytes, image.contentType),
+    };
+    res.status(201).json(body);
+  });
+
+  /**
+   * An image that was uploaded and then not used (the form was cancelled, or another file was
+   * chosen): deleted from the bucket. 409 while a promotion names it; a URL this API did not
+   * issue is left alone. 204 also when it was already gone.
+   */
+  router.delete('/promotions/image', async (req, res) => {
+    const { url } = parseInput(promotionImageDeleteRequestSchema, req.body);
+    await promotions.discardImage(url);
+    res.status(204).end();
   });
 
   router.put('/promotions/:id', async (req, res) => {

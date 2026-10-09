@@ -6,7 +6,7 @@ import {
 import type { ErrorRequestHandler } from 'express';
 import { MulterError } from 'multer';
 
-import { PanMissingError } from '../admin/admin-compliance-service';
+import { PanDocumentNotFoundError, PanMissingError } from '../admin/admin-compliance-service';
 import {
   SettlementChangeBlockedError,
   SettlementModelRequestDecidedError,
@@ -93,6 +93,7 @@ import {
 } from '../marketing/campaign-service';
 import {
   AdPurchaseMismatchError,
+  PromotionImageInUseError,
   PromotionNotFoundError,
   PromotionTargetNotFoundError,
 } from '../marketing/promotion-service';
@@ -470,6 +471,12 @@ export function toHttpError(error: unknown): HttpError {
   if (error instanceof PanMissingError) {
     return new HttpError(409, 'PAN_MISSING', 'The vendor has no PAN on file to verify');
   }
+  if (error instanceof PanDocumentNotFoundError) {
+    return new HttpError(404, 'PAN_DOCUMENT_NOT_FOUND', 'The vendor has uploaded no PAN document');
+  }
+  if (error instanceof PromotionImageInUseError) {
+    return new HttpError(409, 'PROMOTION_IMAGE_IN_USE', error.message);
+  }
   if (error instanceof AdminVendorNotFoundError) {
     return new HttpError(404, 'VENDOR_NOT_FOUND', 'Vendor not found');
   }
@@ -557,7 +564,7 @@ export function toHttpError(error: unknown): HttpError {
     return new HttpError(422, 'DISPUTE_WINDOW_CLOSED', error.message);
   }
   if (error instanceof MulterError) {
-    // Dispute evidence and product photos share the 5 MB limit.
+    // Every image upload (evidence, product photos, promotion art, PAN documents) is 5 MB.
     if (error.code === 'LIMIT_FILE_SIZE') {
       return new HttpError(413, 'FILE_TOO_LARGE', 'Images may be at most 5 MB', {
         max_bytes: MAX_DISPUTE_EVIDENCE_BYTES,

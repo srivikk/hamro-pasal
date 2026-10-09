@@ -27,6 +27,14 @@ export type WalletTopUpMode = (typeof walletTopUpModes)[number];
 export const ivrProviders = ['MOCK', 'DISABLED'] as const;
 export type IvrProvider = (typeof ivrProviders)[number];
 
+/**
+ * Where uploaded files live (SPEC infrastructure section 3). S3 is any S3-compatible bucket
+ * (Cloudflare R2, AWS S3). LOCAL writes to the API host's disk and serves the public files itself:
+ * development and tests only, refused in production.
+ */
+export const storageDrivers = ['LOCAL', 'S3'] as const;
+export type StorageDriver = (typeof storageDrivers)[number];
+
 export const kafkaSaslMechanisms = ['plain', 'scram-sha-256', 'scram-sha-512'] as const;
 export type KafkaSaslMechanism = (typeof kafkaSaslMechanisms)[number];
 
@@ -142,6 +150,22 @@ export const serverEnvSchema = z
     // host's LAN address when a phone or emulator has to load the images.
     UPLOADS_DIR: optionalNonEmpty,
     UPLOADS_PUBLIC_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
+    // LOCAL only: where private documents (KYC) are kept. Never inside UPLOADS_DIR, which is
+    // served. Default: uploads-private/ at the API root.
+    UPLOADS_PRIVATE_DIR: optionalNonEmpty,
+
+    // Phase 34: the S3-compatible buckets (STORAGE_DRIVER=S3). Two buckets: the public one is
+    // read through S3_PUBLIC_BASE_URL (the CDN or the bucket's public domain); the private one
+    // (KYC documents) has no public access and is read only through the API.
+    STORAGE_DRIVER: z.enum(storageDrivers).default('LOCAL'),
+    S3_ENDPOINT: z.url({ protocol: /^https?$/ }).optional(),
+    S3_REGION: nonEmpty.default('auto'),
+    S3_ACCESS_KEY_ID: optionalNonEmpty,
+    S3_SECRET_ACCESS_KEY: optionalNonEmpty,
+    S3_PUBLIC_BUCKET: optionalNonEmpty,
+    S3_PRIVATE_BUCKET: optionalNonEmpty,
+    S3_PUBLIC_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
+    S3_FORCE_PATH_STYLE: z.stringbool().default(false),
 
     // Vendor wallet top-ups (Phase 12.5).
     WALLET_TOP_UP_MODE: z.enum(walletTopUpModes).default('DISABLED'),
@@ -217,6 +241,46 @@ export const serverEnvSchema = z
         message: 'Only https origins may call the API in production',
       });
     }
+    if (env.STORAGE_DRIVER === 'S3') {
+      requireKeys(
+        ['S3_PUBLIC_BUCKET', 'S3_PRIVATE_BUCKET', 'S3_PUBLIC_BASE_URL'],
+        'STORAGE_DRIVER=S3',
+      );
+      if (env.S3_PUBLIC_BUCKET !== undefined && env.S3_PUBLIC_BUCKET === env.S3_PRIVATE_BUCKET) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['S3_PRIVATE_BUCKET'],
+          message: 'KYC documents need their own bucket, without public access',
+        });
+      }
+      // Both or neither: without them the SDK's own credential chain is used (an instance role).
+      if ((env.S3_ACCESS_KEY_ID === undefined) !== (env.S3_SECRET_ACCESS_KEY === undefined)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['S3_SECRET_ACCESS_KEY'],
+          message: 'Set S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY together',
+        });
+      }
+      if (
+        env.NODE_ENV === 'production' &&
+        env.S3_PUBLIC_BASE_URL !== undefined &&
+        !env.S3_PUBLIC_BASE_URL.startsWith('https://')
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['S3_PUBLIC_BASE_URL'],
+          message: 'Public files are served over https in production',
+        });
+      }
+    } else if (env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['STORAGE_DRIVER'],
+        message:
+          'LOCAL keeps uploads on the disk of the API host; production needs STORAGE_DRIVER=S3',
+      });
+    }
+
     if (env.WALLET_TOP_UP_MODE === 'MOCK' && env.NODE_ENV === 'production') {
       ctx.addIssue({
         code: 'custom',

@@ -10,6 +10,7 @@ import { eq, sql } from 'drizzle-orm';
 import request from 'supertest';
 
 import { createOrder, createUser, createVendor, markDelivered } from './support/fixtures';
+import { describeImage, noisyJpeg, paddedTo, photo } from './support/images';
 import {
   bearer,
   bodyOf,
@@ -20,13 +21,11 @@ import {
   type TestApp,
 } from './support/http';
 
-/** A JPEG signature followed by `size - 3` bytes of padding. */
+let baseJpeg: Buffer;
+
+/** A real JPEG, padded after its end up to `size` bytes (a smaller size gives the image itself). */
 function jpegOfSize(size: number): Buffer {
-  const bytes = Buffer.alloc(size, 0x20);
-  bytes[0] = 0xff;
-  bytes[1] = 0xd8;
-  bytes[2] = 0xff;
-  return bytes;
+  return paddedTo(baseJpeg, size);
 }
 
 /**
@@ -36,8 +35,9 @@ function jpegOfSize(size: number): Buffer {
 describe('dispute evidence uploads', () => {
   let t: TestApp;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     t = buildTestApp();
+    baseJpeg = await photo();
   });
 
   afterAll(async () => {
@@ -92,17 +92,49 @@ describe('dispute evidence uploads', () => {
 
     expect(res.status).toBe(201);
     const body = bodyOf(disputeEvidenceUploadResponseSchema, res);
-    expect(body.content_type).toBe('image/jpeg');
+    // Stored as WebP whatever was sent (SPEC infrastructure §6).
+    expect(body.content_type).toBe('image/webp');
     expect(body.url).toMatch(
-      new RegExp(`^${TEST_UPLOADS_BASE_URL}/dispute-evidence/${orderId}/[0-9a-f-]{36}\\.jpg$`),
+      new RegExp(`^${TEST_UPLOADS_BASE_URL}/dispute-evidence/${orderId}/[0-9a-f-]{36}\\.webp$`),
     );
     expect(t.container.evidence.isEvidenceUrl(orderId, body.url)).toBe(true);
 
     const served = await request(t.app).get(new URL(body.url).pathname);
     expect(served.status).toBe(200);
-    expect(served.headers['content-type']).toBe('image/jpeg');
+    expect(served.headers['content-type']).toBe('image/webp');
     expect(served.headers['x-content-type-options']).toBe('nosniff');
-    expect(Buffer.from(served.body as Buffer)).toEqual(bytes);
+    expect(await describeImage(Buffer.from(served.body as Buffer))).toMatchObject({
+      format: 'webp',
+      width: 64,
+      height: 48,
+    });
+  });
+
+  it('stores a large photo at 1200 px at most and under 300 KB', async () => {
+    const { customerId, orderId } = await deliveredOrder();
+    const bytes = await noisyJpeg();
+    expect(bytes.length).toBeGreaterThan(1024 * 1024);
+
+    const res = await upload(customerId, { order_id: orderId }, { bytes });
+
+    expect(res.status).toBe(201);
+    const { url } = bodyOf(disputeEvidenceUploadResponseSchema, res);
+    const served = await request(t.app).get(new URL(url).pathname);
+    const stored = await describeImage(Buffer.from(served.body as Buffer));
+    expect(stored).toMatchObject({ format: 'webp', width: 1200, height: 900 });
+    expect(stored.bytes).toBeLessThan(300 * 1024);
+  });
+
+  it('refuses a file that only carries an image signature (415), storing nothing', async () => {
+    const { customerId, orderId } = await deliveredOrder();
+    const fake = Buffer.alloc(2048, 0x20);
+    Buffer.from([0xff, 0xd8, 0xff]).copy(fake);
+
+    const res = await upload(customerId, { order_id: orderId }, { bytes: fake });
+
+    expect(res.status).toBe(415);
+    expect(errorOf(res).code).toBe('UNSUPPORTED_MEDIA_TYPE');
+    expect(await storedFiles(orderId)).toEqual([]);
   });
 
   it('accepts exactly 5 MB and rejects anything larger (413), storing nothing', async () => {

@@ -55,6 +55,37 @@ export const taxIdentityResponseSchema = z.strictObject({
 });
 export type TaxIdentityResponseBody = z.infer<typeof taxIdentityResponseSchema>;
 
+/**
+ * GET /api/vendor/tax-identity (Phase 34): what the shop has on file. The document itself is
+ * never part of a JSON body; `has_pan_document` says whether one was uploaded.
+ */
+export const taxIdentityViewSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  tax_id: panSchema.nullable(),
+  is_vat_registered: z.boolean(),
+  legal_name: z.string().nullable(),
+  registered_address: z.string().nullable(),
+  status: vendorStatusSchema,
+  pan_verified_at: z.iso.datetime().nullable(),
+  has_pan_document: z.boolean(),
+});
+export type TaxIdentityView = z.infer<typeof taxIdentityViewSchema>;
+
+/**
+ * POST /api/vendor/tax-identity/document (multipart, one `document` image): the shop's standing
+ * after the upload. Replacing the document of a verified PAN clears the verification
+ * (`verification_cleared`): the Super Admin's check was of the document that is now gone.
+ */
+export const panDocumentUploadResponseSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  has_pan_document: z.literal(true),
+  /** True when this upload took the place of an earlier document. */
+  replaced: z.boolean(),
+  verification_cleared: z.boolean(),
+  pan_verified_at: z.iso.datetime().nullable(),
+});
+export type PanDocumentUploadResponseBody = z.infer<typeof panDocumentUploadResponseSchema>;
+
 export const MAX_DELIVERY_RADIUS_KM = 100;
 export const MAX_SERVICEABLE_PALIKAS = 30;
 export const MAX_PALIKA_NAME_LENGTH = 80;

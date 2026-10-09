@@ -29,6 +29,8 @@ import {
   panVerificationResponseSchema,
   payoutRequestResponseSchema,
   PRODUCT_IMAGE_FILE_FIELD,
+  PROMOTION_IMAGE_FILE_FIELD,
+  promotionImageUploadResponseSchema,
   settlementPayoutResponseSchema,
   vendorFinanceLedgerResponseSchema,
   vendorProductListResponseSchema,
@@ -72,6 +74,7 @@ import {
   type PayoutTransferState,
   type PricingPlanCreate,
   type PricingPlanUpdate,
+  type PromotionImageUploadResponseBody,
   type PromotionWrite,
   type SettlementPayoutRequest,
   type SettlementPayoutResponseBody,
@@ -180,6 +183,15 @@ export interface AdminApi {
   /** PUT: replaces every field. */
   updatePromotion(id: string, input: PromotionWrite): Promise<AdminPromotionResponseBody>;
   deletePromotion(id: string): Promise<void>;
+  /**
+   * Phase 34. multipart/form-data: the file as the one `image` part. Answers the stored image's
+   * public URL, to send as a promotion's `image_url`.
+   */
+  uploadPromotionImage(file: File): Promise<PromotionImageUploadResponseBody>;
+  /** An uploaded image no promotion ended up using. Refused (409) while one uses it. */
+  discardPromotionImage(url: string): Promise<void>;
+  /** Phase 34: the PAN document a vendor uploaded (the bucket is private: read through the API). */
+  getVendorPanDocument(vendorId: string): Promise<Blob>;
   /** Phase 27: vendors' settlement model change requests, pending first. */
   listModelChangeRequests(): Promise<AdminModelChangeRequestListResponseBody>;
   /** No body: the shop moves to the model it asked for. An admin cannot name another. */
@@ -481,6 +493,26 @@ export function createAdminApi(client: ApiClient): AdminApi {
         schema: adminModelChangeDecisionResponseSchema,
         body: { reason },
       }),
+    uploadPromotionImage: (file) => {
+      const form = new FormData();
+      form.append(PROMOTION_IMAGE_FILE_FIELD, file, file.name);
+      return client.request({
+        method: 'POST',
+        path: '/api/admin/promotions/image',
+        schema: promotionImageUploadResponseSchema,
+        body: form,
+      });
+    },
+    discardPromotionImage: async (url) => {
+      await client.request({
+        method: 'DELETE',
+        path: '/api/admin/promotions/image',
+        schema: z.null(),
+        body: { url },
+      });
+    },
+    getVendorPanDocument: (vendorId) =>
+      client.download(`/api/admin/vendors/${encodeURIComponent(vendorId)}/pan-document`),
     deletePromotion: async (id) => {
       // 204 No Content: the client reads an empty body as null.
       await client.request({

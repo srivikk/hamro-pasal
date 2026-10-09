@@ -16,6 +16,7 @@
     "test:integration": "jest --config jest.integration.config.js --runInBand"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1147.0",
     "@hamro-pasal/db": "workspace:*",
     "@hamro-pasal/ledger": "workspace:*",
     "@hamro-pasal/shared-types": "workspace:*",
@@ -29,6 +30,7 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.4.0",
     "pdfkit": "^0.20.2",
+    "sharp": "^0.35.5",
     "socket.io": "^4.8.4",
     "zod": "^4.6.5"
   },

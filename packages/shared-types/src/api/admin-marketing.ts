@@ -292,6 +292,20 @@ export type AdminPromotionResponseBody = z.infer<typeof adminPromotionResponseSc
  * One promotion as GET /api/home/promotions serves it to the customer app: what to draw and where
  * a tap leads. No dates, order or admin fields. `is_sponsored` draws the "Ad" badge.
  */
+/**
+ * POST /api/admin/promotions/image (multipart, one `image` part): the stored image's public URL,
+ * to send as a promotion's `image_url`.
+ */
+export const promotionImageUploadResponseSchema = z.strictObject({
+  url: z.url({ protocol: /^https?$/ }),
+});
+export type PromotionImageUploadResponseBody = z.infer<typeof promotionImageUploadResponseSchema>;
+
+/** DELETE /api/admin/promotions/image: an uploaded image that no promotion ended up using. */
+export const promotionImageDeleteRequestSchema = z.strictObject({
+  url: z.url({ protocol: /^https?$/ }),
+});
+
 export const homePromotionViewSchema = z.strictObject({
   id: z.uuid(),
   placement: promotionPlacementSchema,

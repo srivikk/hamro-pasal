@@ -236,6 +236,7 @@ export function complianceVendorView({
     tax_id: vendor.tax_id,
     is_vat_registered: vendor.is_vat_registered,
     pan_verified_at: vendor.pan_verified_at?.toISOString() ?? null,
+    has_pan_document: vendor.pan_document_url !== null,
   };
 }
 
@@ -472,6 +473,22 @@ export function adminRouter({
       ),
     };
     res.json(body);
+  });
+
+  /**
+   * Phase 34: the PAN document a vendor uploaded, for the Super Admin's check. The private
+   * bucket has no public URL: the image is streamed here, behind the admin's token, `no-store`.
+   */
+  router.get('/vendors/:id/pan-document', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const document = await compliance.panDocument(id);
+    res
+      .status(200)
+      .setHeader('Content-Type', document.contentType)
+      .setHeader('Content-Length', String(document.bytes.length))
+      .setHeader('Content-Disposition', 'inline; filename="pan-document"')
+      .setHeader('X-Content-Type-Options', 'nosniff')
+      .end(document.bytes);
   });
 
   /** Phase 26. Every vendor's PAN standing, grouped worst first (the Compliance screen). */

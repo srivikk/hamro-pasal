@@ -10,12 +10,14 @@ import { generateFiscalInvoice, InvoiceNotIssuableError } from '@hamro-pasal/led
 import type {
   AuditActor,
   AuditContext,
+  DisputeEvidenceContentType,
   TaxIdentityRequest,
   VendorStatus,
 } from '@hamro-pasal/shared-types';
 import { and, asc, eq, notExists, sql } from 'drizzle-orm';
 
 import { VendorAccountNotFoundError } from '../orders/vendor-order-service';
+import type { KycDocumentStorage } from '../uploads/kyc-document-storage';
 
 export type VendorRow = typeof vendors.$inferSelect;
 
@@ -25,6 +27,14 @@ export interface TaxIdentityResult {
   readonly complianceSuspensionLifted: boolean;
   /** Invoices this save issued for orders delivered while the shop had no PAN. */
   readonly waitingInvoicesIssued: number;
+}
+
+export interface PanDocumentResult {
+  readonly vendor: VendorRow;
+  /** The upload took the place of an earlier document (which was then deleted). */
+  readonly replaced: boolean;
+  /** It replaced the document of a verified PAN: payouts wait for a new check. */
+  readonly verificationCleared: boolean;
 }
 
 /**
@@ -38,7 +48,129 @@ export interface TaxIdentityResult {
  * compliance still delivers its open orders, and those deliveries could name no seller.
  */
 export class VendorComplianceService {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly documents: KycDocumentStorage,
+  ) {}
+
+  /** What the caller's shop has on file (GET /api/vendor/tax-identity). */
+  async taxIdentity(vendorUserId: string): Promise<VendorRow> {
+    const [vendor] = await this.db.select().from(vendors).where(eq(vendors.user_id, vendorUserId));
+    if (vendor === undefined) throw new VendorAccountNotFoundError(vendorUserId);
+    return vendor;
+  }
+
+  /**
+   * Stores the shop's PAN document (Phase 34) and points `pan_document_url` at it.
+   *
+   * The object and the row are in two systems, so the order of the three steps is the guarantee:
+   *
+   * 1. **Put the new object first**, under a key nothing refers to yet.
+   * 2. **One transaction** under the vendor row lock: the row now names the new key, with its
+   *    audit entry. If it fails, the new object is deleted and the old one was never touched.
+   * 3. **Only after the commit**, delete the object the row named before.
+   *
+   * The row therefore never names a missing object. What can be left behind is an object nothing
+   * names (a delete that failed, or a crash between two steps): it is logged, costs storage, and
+   * is invisible. Two uploads at once queue on the row lock, and the second deletes the first's.
+   *
+   * Replacing the document of a verified PAN clears the verification in the same transaction:
+   * the Super Admin checked the document that is being deleted, not this one. Payouts wait for
+   * the new check; the shop keeps trading (SPEC core 10). A first document clears nothing.
+   */
+  async uploadPanDocument(
+    actor: AuditActor & { kind: 'USER' },
+    image: { readonly bytes: Buffer; readonly contentType: DisputeEvidenceContentType },
+    context: AuditContext,
+  ): Promise<PanDocumentResult> {
+    const [shop] = await this.db
+      .select({ id: vendors.id })
+      .from(vendors)
+      .where(eq(vendors.user_id, actor.user_id));
+    if (shop === undefined) throw new VendorAccountNotFoundError(actor.user_id);
+
+    const key = await this.documents.savePanDocument(shop.id, image.bytes, image.contentType);
+    let saved: { result: PanDocumentResult; previousKey: string | null };
+    try {
+      saved = await this.db.transaction(async (tx) => {
+        const [before] = await tx
+          .select()
+          .from(vendors)
+          .where(eq(vendors.id, shop.id))
+          .for('update');
+        if (before === undefined) throw new VendorAccountNotFoundError(actor.user_id);
+        const replaced = before.pan_document_url !== null;
+        const verificationCleared = replaced && before.pan_verified_at !== null;
+
+        const [after] = await tx
+          .update(vendors)
+          .set({
+            pan_document_url: key,
+            ...(verificationCleared
+              ? { pan_verified_at: null, pan_verified_by_user_id: null }
+              : {}),
+          })
+          .where(eq(vendors.id, before.id))
+          .returning();
+        if (after === undefined) throw new Error(`Vendor ${before.id} vanished`);
+
+        await recordAuditLog(tx, {
+          actor,
+          action: 'PAN_DOCUMENT_UPLOADED',
+          entityId: before.id,
+          vendorId: before.id,
+          beforeState: { pan_document_url: before.pan_document_url },
+          afterState: { pan_document_url: key, size_bytes: image.bytes.length },
+          context,
+        });
+        if (verificationCleared) {
+          await recordAuditLog(tx, {
+            actor,
+            action: 'PAN_VERIFICATION_CLEARED',
+            entityId: before.id,
+            vendorId: before.id,
+            beforeState: {
+              tax_id: before.tax_id,
+              pan_verified_at: before.pan_verified_at?.toISOString() ?? null,
+              pan_verified_by_user_id: before.pan_verified_by_user_id,
+            },
+            afterState: {
+              tax_id: after.tax_id,
+              pan_verified_at: null,
+              pan_verified_by_user_id: null,
+              reason: 'PAN_DOCUMENT_REPLACED',
+            },
+            context,
+          });
+        }
+        return {
+          result: { vendor: after, replaced, verificationCleared },
+          previousKey: before.pan_document_url,
+        };
+      });
+    } catch (error: unknown) {
+      await this.discard(key);
+      throw error;
+    }
+    if (saved.previousKey !== null) await this.discard(saved.previousKey);
+    return saved.result;
+  }
+
+  /** Deletes an object nothing names any more. Never throws: the request's outcome stands. */
+  private async discard(key: string): Promise<void> {
+    try {
+      await this.documents.deleteFile(key);
+    } catch (error: unknown) {
+      console.warn(
+        JSON.stringify({
+          storage: 'orphan_object',
+          kind: 'pan_document',
+          key,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  }
 
   /**
    * One transaction under the vendor row lock (the lock every wallet journal and admin override

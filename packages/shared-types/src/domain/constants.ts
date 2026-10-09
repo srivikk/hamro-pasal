@@ -104,6 +104,21 @@ export const MAX_PRODUCT_IMAGE_BYTES = 5 * 1024 * 1024;
 export const PRODUCT_IMAGE_CONTENT_TYPES = DISPUTE_EVIDENCE_CONTENT_TYPES;
 /** The multipart field that carries the photos of POST /api/vendor/products/:id/images. */
 export const PRODUCT_IMAGE_FILE_FIELD = 'images';
+/*
+ * Phase 34: every uploaded image is re-encoded by the server before it is stored (SPEC
+ * infrastructure section 6): WebP, at most 1200 px on its longer side, under 300 KB.
+ */
+export const STORED_IMAGE_MAX_DIMENSION = 1200;
+export const STORED_IMAGE_MAX_BYTES = 300 * 1024;
+export const STORED_IMAGE_CONTENT_TYPE = 'image/webp';
+/** Largest image accepted by POST /api/admin/promotions/image, before re-encoding (5 MB). */
+export const MAX_PROMOTION_IMAGE_BYTES = 5 * 1024 * 1024;
+/** The multipart field that carries the image of POST /api/admin/promotions/image. */
+export const PROMOTION_IMAGE_FILE_FIELD = 'image';
+/** Largest PAN document accepted by POST /api/vendor/tax-identity/document (5 MB). */
+export const MAX_PAN_DOCUMENT_BYTES = 5 * 1024 * 1024;
+/** The multipart field that carries the document of POST /api/vendor/tax-identity/document. */
+export const PAN_DOCUMENT_FILE_FIELD = 'document';
 export const MAX_PRODUCT_PRICE_NPR = 1_000_000;
 export const MAX_PRODUCT_STOCK_QUANTITY = 1_000_000;
 /** The unit of a product whose vendor named none (and of every product created before Phase 17). */

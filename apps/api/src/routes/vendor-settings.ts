@@ -2,16 +2,21 @@ import {
   billingChangeRequestSchema,
   deliverySettingsRequestSchema,
   idParamSchema,
+  MAX_PAN_DOCUMENT_BYTES,
+  PAN_DOCUMENT_FILE_FIELD,
   taxIdentityRequestSchema,
   type AuditActor,
   type BillingChangeResponseBody,
   type DeliverySettingsResponseBody,
+  type PanDocumentUploadResponseBody,
   type TaxIdentityResponseBody,
+  type TaxIdentityView,
 } from '@hamro-pasal/shared-types';
 import { Router, type Request } from 'express';
 
 import { auditActorOf, auditContextOf } from '../http/request-context';
 import { parseInput } from '../http/validate';
+import { missingFile, singleImageUpload, storedImageOf } from '../uploads/image-upload';
 import type { VendorBillingService } from '../vendor/vendor-billing-service';
 import type { VendorComplianceService } from '../vendor/vendor-compliance-service';
 import {
@@ -67,9 +72,53 @@ export function vendorSettingsRouter({
   deliverySettings,
 }: VendorSettingsServices): Router {
   const router = Router();
+  const panDocument = singleImageUpload(PAN_DOCUMENT_FILE_FIELD, MAX_PAN_DOCUMENT_BYTES);
   router.use((_req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     next();
+  });
+
+  /** Phase 34: what the shop has on file. Whether a document was uploaded, never the document. */
+  router.get('/tax-identity', async (req, res) => {
+    const vendor = await compliance.taxIdentity(vendorActor(req).user_id);
+    const body: TaxIdentityView = {
+      vendor_id: vendor.id,
+      tax_id: vendor.tax_id,
+      is_vat_registered: vendor.is_vat_registered,
+      legal_name: vendor.legal_name,
+      registered_address: vendor.registered_address,
+      status: vendor.status,
+      pan_verified_at: vendor.pan_verified_at?.toISOString() ?? null,
+      has_pan_document: vendor.pan_document_url !== null,
+    };
+    res.json(body);
+  });
+
+  /**
+   * Phase 34: multipart/form-data with one `document` part, a photo of the PAN certificate (JPEG,
+   * PNG or WebP by its own bytes, at most 5 MB). It is re-encoded, stored in the private bucket,
+   * and takes the place of an earlier document, which is then deleted. The response never
+   * carries where it is stored.
+   */
+  router.post('/tax-identity/document', panDocument, async (req, res) => {
+    const { file } = req;
+    if (file === undefined) {
+      throw missingFile(PAN_DOCUMENT_FILE_FIELD, 'A photo of the PAN document is required');
+    }
+    const image = await storedImageOf(file.buffer, 'The PAN document');
+    const { vendor, replaced, verificationCleared } = await compliance.uploadPanDocument(
+      vendorActor(req),
+      image,
+      auditContextOf(req, res),
+    );
+    const body: PanDocumentUploadResponseBody = {
+      vendor_id: vendor.id,
+      has_pan_document: true,
+      replaced,
+      verification_cleared: verificationCleared,
+      pan_verified_at: vendor.pan_verified_at?.toISOString() ?? null,
+    };
+    res.status(201).json(body);
   });
 
   /** Saving the PAN lifts a compliance suspension in the same transaction (SPEC core 10). */

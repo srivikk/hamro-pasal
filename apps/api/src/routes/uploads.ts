@@ -10,7 +10,8 @@ import type { DisputeService } from '../disputes/dispute-service';
 import { authOf } from '../http/auth';
 import { HttpError } from '../http/errors';
 import { parseInput } from '../http/validate';
-import { sniffEvidenceType, type EvidenceStorage } from '../uploads/evidence-storage';
+import type { EvidenceStorage } from '../uploads/evidence-storage';
+import { storedImageOf } from '../uploads/image-upload';
 
 /** The multipart part that carries the image. */
 export const EVIDENCE_FILE_FIELD = 'file';
@@ -43,15 +44,9 @@ export function uploadsRouter(disputes: DisputeService, storage: EvidenceStorage
     const auth = authOf(req);
     await disputes.assertAccess({ userId: auth.userId, role: auth.role }, orderId);
 
-    const contentType = sniffEvidenceType(file.buffer);
-    if (contentType === null) {
-      throw new HttpError(
-        415,
-        'UNSUPPORTED_MEDIA_TYPE',
-        'Evidence must be a JPEG, PNG or WebP image',
-      );
-    }
-    const stored = await storage.save(orderId, file.buffer, contentType);
+    // Stored as WebP, at most 1200 px and under 300 KB, whatever was sent (SPEC infrastructure §6).
+    const image = await storedImageOf(file.buffer, 'Evidence');
+    const stored = await storage.save(orderId, image.bytes, image.contentType);
     const body: DisputeEvidenceUploadResponseBody = {
       url: stored.url,
       content_type: stored.contentType,

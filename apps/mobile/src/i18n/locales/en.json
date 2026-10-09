@@ -485,6 +485,43 @@
     "taxTitle": "Tax identity",
     "taxId": "PAN / VAT number",
     "taxIdHint": "Nine digits. It is printed on every invoice.",
+    "document": {
+      "title": "PAN document",
+      "hint": "Upload a clear photo of your PAN certificate. Hamro Pasal checks it before paying out your earnings.",
+      "statusMissing": "No document uploaded yet.",
+      "statusPending": "Document uploaded. Waiting for Hamro Pasal to verify it.",
+      "statusVerified": "Verified on {{date}}.",
+      "statusUnknown": "Couldn't check your document right now.",
+      "retryStatus": "Check again",
+      "takePhoto": "Take a photo",
+      "fromGallery": "Choose from gallery",
+      "replaceFromGallery": "Replace from gallery",
+      "preparing": "Preparing the photo…",
+      "uploading": "Uploading…",
+      "uploaded": "PAN document uploaded.",
+      "replacedVerified": "PAN document replaced. Payouts wait until the new one is verified.",
+      "previewLabel": "The photo you just uploaded",
+      "replaceTitle": "Replace your verified document?",
+      "replaceVerifiedBody": "Your current document is verified. If you replace it, payouts are paused until Hamro Pasal verifies the new one. Your shop keeps taking orders.",
+      "replaceConfirm": "Replace it",
+      "permission": {
+        "title": "Permission needed",
+        "camera": "Hamro Pasal needs your camera to photograph your PAN document.",
+        "library": "Hamro Pasal needs access to your photos so you can choose a picture of your PAN document.",
+        "tryAgain": "Without it your shop cannot be verified to go LIVE and be paid. Please allow it when asked.",
+        "openSettingsHint": "Without it your shop cannot be verified to go LIVE and be paid. You can allow it in your phone’s Settings.",
+        "openSettings": "Open Settings",
+        "ok": "OK"
+      },
+      "errors": {
+        "tooLarge": "The photo is too large. Take it again from a little further away.",
+        "notAnImage": "That file isn't a photo we can read. Try another one.",
+        "network": "Couldn't reach the server. Check your connection and try again.",
+        "generic": "Couldn't upload the document. Try again.",
+        "cameraUnavailable": "The camera couldn't be opened on this phone. Choose a photo from the gallery instead.",
+        "libraryUnavailable": "That photo couldn't be opened. Choose another one."
+      }
+    },
     "modeTitle": "Delivery mode",
     "mode": {
       "SELF_DELIVERY": "Self delivery",

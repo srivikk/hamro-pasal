@@ -76,11 +76,11 @@ import { KhaltiService } from './payments/khalti/khalti-service';
 import { MockPaymentService } from './payments/mock-payment-service';
 import { PaymentConfirmationService } from './payments/payment-confirmation';
 import { ReviewService } from './reviews/review-service';
-import { LocalEvidenceStorage, type EvidenceStorage } from './uploads/evidence-storage';
-import {
-  LocalProductImageStorage,
-  type ProductImageStorage,
-} from './uploads/product-image-storage';
+import type { EvidenceStorage } from './uploads/evidence-storage';
+import type { KycDocumentStorage } from './uploads/kyc-document-storage';
+import type { ProductImageStorage } from './uploads/product-image-storage';
+import type { PromotionImageStorage } from './uploads/promotion-image-storage';
+import { fileStorageFromEnv } from './uploads/storage-from-env';
 
 export interface ApiConfig {
   readonly accessTokenSecret: string;
@@ -107,10 +107,14 @@ export interface Infrastructure {
   readonly deliveryOtpOptions?: DeliveryOtpAttemptOptions;
   /** Tests only: a shorter staleness bound for rider positions. */
   readonly riderLocationOptions?: RiderLocationStoreOptions;
-  /** Where dispute evidence images are stored (local disk until Cloudflare R2 is wired). */
+  /** Where dispute evidence images are stored (the public bucket; local disk in development). */
   readonly evidence: EvidenceStorage;
-  /** Where product photos are stored (the same local directory until R2 is wired). */
+  /** Where product photos are stored (the same bucket or directory). */
   readonly productImages: ProductImageStorage;
+  /** Phase 34: Home promotion artwork (the same bucket or directory). */
+  readonly promotionImages: PromotionImageStorage;
+  /** Phase 34: vendors' KYC documents, in the private store that nothing serves. */
+  readonly kycDocuments: KycDocumentStorage;
   /**
    * The invoice PDF's Devanagari font. Left out: read from apps/api/assets/fonts. Null: none
    * (invoices print Latin text only, and production refuses to print).
@@ -215,18 +219,19 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     vendorFinance: new VendorFinanceService(infra.db, ledger),
     adminPayouts: new AdminPayoutService(infra.db, ledger),
     vendorBilling: new VendorBillingService(infra.db),
-    vendorCompliance: new VendorComplianceService(infra.db),
+    vendorCompliance: new VendorComplianceService(infra.db, infra.kycDocuments),
     vendorDeliverySettings: new VendorDeliverySettingsService(infra.db),
     adminAuditLogs: new AuditLogService(infra.db),
     adminLogistics: new LogisticsSettingsService(infra.db),
-    adminCompliance: new AdminComplianceService(infra.db),
+    adminCompliance: new AdminComplianceService(infra.db, infra.kycDocuments),
     adminSettlements: new AdminSettlementService(infra.db, ledger),
     adminPricingPlans: new PricingPlanService(infra.db),
     campaigns: new CampaignService(infra.db),
     settlementModelRequests: new SettlementModelRequestService(infra.db),
     adProducts: new AdProductService(infra.db),
     adPurchases: new AdPurchaseService(infra.db, ledger),
-    promotions: new PromotionService(infra.db),
+    promotions: new PromotionService(infra.db, infra.promotionImages),
+    promotionImages: infra.promotionImages,
     vendorBankAccounts: new VendorBankAccountService(infra.db),
     vendorInvoices: new VendorInvoiceService(
       infra.db,
@@ -250,20 +255,22 @@ function otpPepper(accessTokenSecret: string): Buffer {
 }
 
 /**
- * Where uploads go when UPLOADS_DIR is unset: `uploads/` at the API root (apps/api/uploads,
- * git-ignored). This file sits in src/ (tsx) or dist/ (node), one level below that root.
+ * Where public uploads go under STORAGE_DRIVER=LOCAL when UPLOADS_DIR is unset: `uploads/` at
+ * the API root (apps/api/uploads, git-ignored). This file sits in src/ (tsx) or dist/ (node), one
+ * level below that root.
  */
 export const DEFAULT_UPLOADS_DIR = resolve(__dirname, '..', 'uploads');
+/** The same for private documents (KYC): beside the served directory, never inside it. */
+export const DEFAULT_PRIVATE_UPLOADS_DIR = resolve(__dirname, '..', 'uploads-private');
 
 export function buildContainerFromEnv(env: ServerEnv): ApiContainer {
-  const uploadsDir = env.UPLOADS_DIR ?? DEFAULT_UPLOADS_DIR;
-  const uploadsBaseUrl =
-    env.UPLOADS_PUBLIC_BASE_URL ?? `http://localhost:${String(env.API_PORT)}/uploads`;
   return buildContainer(apiConfigFromEnv(env), {
     db: createDatabase(env.DATABASE_URL),
     redisPool: new RedisConnectionPool(() => new Redis(env.REDIS_URL), 20),
     sms: smsGatewayFromEnv(env),
-    evidence: new LocalEvidenceStorage(uploadsDir, uploadsBaseUrl),
-    productImages: new LocalProductImageStorage(uploadsDir, uploadsBaseUrl),
+    ...fileStorageFromEnv(env, {
+      publicDir: DEFAULT_UPLOADS_DIR,
+      privateDir: DEFAULT_PRIVATE_UPLOADS_DIR,
+    }),
   });
 }

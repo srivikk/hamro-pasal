@@ -39,7 +39,7 @@ import type {
 import { authOf } from '../http/auth';
 import { HttpError } from '../http/errors';
 import { parseInput } from '../http/validate';
-import { sniffEvidenceType } from '../uploads/evidence-storage';
+import { storedImageOf } from '../uploads/image-upload';
 
 export function categoryView(row: CategoryRow): CategoryView {
   return {
@@ -218,17 +218,10 @@ export function vendorProductsRouter(products: ProductService): Router {
         ],
       });
     }
-    const images = files.map((file): ProductImageUpload => {
-      const contentType = sniffEvidenceType(file.buffer);
-      if (contentType === null) {
-        throw new HttpError(
-          415,
-          'UNSUPPORTED_MEDIA_TYPE',
-          'Product photos must be JPEG, PNG or WebP images',
-        );
-      }
-      return { bytes: file.buffer, contentType };
-    });
+    // Every file is checked and re-encoded (WebP, 1200 px, under 300 KB) before any is stored:
+    // one bad file refuses the whole request with nothing written.
+    const images: ProductImageUpload[] = [];
+    for (const file of files) images.push(await storedImageOf(file.buffer, 'Product photos'));
     const body: VendorProductResponseBody = {
       product: vendorProductView(await products.addImages(authOf(req).userId, id, images)),
     };

@@ -67,6 +67,7 @@ import {
   LocalProductImageStorage,
   type ProductImageStorage,
 } from './uploads/product-image-storage';
+import type { PromotionImageStorage } from './uploads/promotion-image-storage';
 
 export interface ApiServices {
   readonly accessTokenSecret: string;
@@ -92,6 +93,8 @@ export interface ApiServices {
   readonly products: ProductService;
   /** Phase 19: where product photos are stored (served statically when it is the local disk). */
   readonly productImages: ProductImageStorage;
+  /** Phase 34: where Home promotion artwork is stored (the admin's image upload). */
+  readonly promotionImages: PromotionImageStorage;
   /** Phase 20: Expo push tokens of signed-in devices. */
   readonly deviceTokens: DeviceTokenService;
   /** Phase 22: vendor earnings and payout requests, and the Super Admin's decisions on them. */
@@ -165,6 +168,7 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
           campaigns: services.campaigns,
           adProducts: services.adProducts,
           promotions: services.promotions,
+          promotionImages: services.promotionImages,
         },
         settlementModelRequests: services.settlementModelRequests,
       }),
@@ -271,8 +275,10 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       notificationsRouter(services.deviceTokens),
     );
     app.use('/api/uploads', customerAuth, uploadsRouter(services.disputes, services.evidence));
-    // Development stand-in for the R2/CDN origin: dispute evidence and product photos are served
-    // as static files. Both storages normally share one directory and path, mounted once.
+    // STORAGE_DRIVER=LOCAL only (development, tests): the API stands in for the bucket's public
+    // origin and serves the public uploads directory as static files. Evidence, product photos
+    // and promotion artwork share that one directory and path, mounted once. With S3 nothing is
+    // mounted: files are read from the CDN. Private documents (KYC) are never under this root.
     const mounted = new Set<string>();
     for (const storage of [services.evidence, services.productImages]) {
       if (!(

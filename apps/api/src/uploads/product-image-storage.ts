@@ -1,19 +1,12 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
 import type { DisputeEvidenceContentType } from '@hamro-pasal/shared-types';
+
+import { LocalObjectStore, type ObjectStore } from './object-store';
+import { mountPathOf, PublicFileArea } from './public-files';
 
 /** The image types of a product photo are the ones accepted as dispute evidence. */
 export type ProductImageContentType = DisputeEvidenceContentType;
 
-const EXTENSIONS: Record<ProductImageContentType, string> = {
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-};
-
-/** Where product photos live (Cloudflare R2 in production, SPEC infrastructure §3). */
+/** Where product photos live (an S3-compatible bucket, SPEC infrastructure §3). */
 export interface ProductImageStorage {
   /** Stores one photo of `productId` and returns the public URL to keep in `image_urls`. */
   save(productId: string, bytes: Buffer, contentType: ProductImageContentType): Promise<string>;
@@ -22,51 +15,55 @@ export interface ProductImageStorage {
    * or another product's) is left alone, and so is a file that is already gone.
    */
   remove(productId: string, url: string): Promise<void>;
+  /**
+   * Deletes a product photo this storage issued, whichever product it belonged to; false (and
+   * nothing deleted) for any other URL.
+   */
+  deleteFile(url: string): Promise<boolean>;
 }
 
 /**
- * Local stand-in for R2 (Phase 19): writes `<rootDir>/product-images/<productId>/<uuid>.<ext>` and
- * hands out `<publicBaseUrl>/product-images/<productId>/<uuid>.<ext>`, which the API serves
+ * Product photos in an object store: `product-images/<productId>/<uuid>.<ext>`, read at
+ * `<publicBaseUrl>/product-images/<productId>/<uuid>.<ext>`.
+ */
+export class ObjectProductImageStorage implements ProductImageStorage {
+  private readonly files: PublicFileArea;
+
+  constructor(store: ObjectStore, publicBaseUrl: string) {
+    this.files = new PublicFileArea(store, publicBaseUrl, 'product-images');
+  }
+
+  get publicBaseUrl(): string {
+    return this.files.publicBaseUrl;
+  }
+
+  save(productId: string, bytes: Buffer, contentType: ProductImageContentType): Promise<string> {
+    return this.files.save(productId, bytes, contentType);
+  }
+
+  async remove(productId: string, url: string): Promise<void> {
+    await this.files.deleteFile(url, productId);
+  }
+
+  deleteFile(url: string): Promise<boolean> {
+    return this.files.deleteFile(url);
+  }
+}
+
+/**
+ * Development and tests (Phase 19): the same layout under `rootDir`, which the API serves
  * statically (see createApp). It shares `rootDir` and the base URL with LocalEvidenceStorage.
  */
-export class LocalProductImageStorage implements ProductImageStorage {
-  readonly publicBaseUrl: string;
-
+export class LocalProductImageStorage extends ObjectProductImageStorage {
   constructor(
     readonly rootDir: string,
     publicBaseUrl: string,
   ) {
-    this.publicBaseUrl = publicBaseUrl.replace(/\/+$/, '');
+    super(new LocalObjectStore(rootDir), publicBaseUrl);
   }
 
   /** The path the API must serve `rootDir` under, taken from the public base URL. */
   get mountPath(): string {
-    const path = new URL(this.publicBaseUrl).pathname.replace(/\/+$/, '');
-    return path === '' ? '/' : path;
-  }
-
-  async save(
-    productId: string,
-    bytes: Buffer,
-    contentType: ProductImageContentType,
-  ): Promise<string> {
-    const name = `${randomUUID()}.${EXTENSIONS[contentType]}`;
-    const directory = join(this.rootDir, 'product-images', productId);
-    await mkdir(directory, { recursive: true });
-    await writeFile(join(directory, name), bytes, { flag: 'wx' });
-    return `${this.prefix(productId)}${name}`;
-  }
-
-  async remove(productId: string, url: string): Promise<void> {
-    const prefix = this.prefix(productId);
-    if (!url.startsWith(prefix)) return;
-    const name = url.slice(prefix.length);
-    // Only a name this storage generates: nothing in a URL can point outside the directory.
-    if (!/^[0-9a-f-]{36}\.(jpg|png|webp)$/.test(name)) return;
-    await rm(join(this.rootDir, 'product-images', productId, name), { force: true });
-  }
-
-  private prefix(productId: string): string {
-    return `${this.publicBaseUrl}/product-images/${productId}/`;
+    return mountPathOf(this.publicBaseUrl);
   }
 }

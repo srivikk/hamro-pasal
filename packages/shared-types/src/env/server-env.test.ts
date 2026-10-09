@@ -76,7 +76,15 @@ describe('parseServerEnv', () => {
   });
 
   it('allows only https origins in production', () => {
-    const production = { ...validEnv, NODE_ENV: 'production' };
+    // Production keeps its files in a bucket (Phase 34): the local disk is refused there.
+    const production = {
+      ...validEnv,
+      NODE_ENV: 'production',
+      STORAGE_DRIVER: 'S3',
+      S3_PUBLIC_BUCKET: 'hp-public',
+      S3_PRIVATE_BUCKET: 'hp-private',
+      S3_PUBLIC_BASE_URL: 'https://cdn.hamropasal.np',
+    };
     expect(
       parseServerEnv({ ...production, CORS_ALLOWED_ORIGINS: 'https://admin.hamropasal.np' })
         .CORS_ALLOWED_ORIGINS,

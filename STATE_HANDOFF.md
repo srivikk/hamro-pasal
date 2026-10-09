@@ -1,4 +1,4 @@
-# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery; Phase 32 retroactive invoices, the invoice PDF, vendor offers CRUD; Phase 33 discount stacking in checkout, Devanagari in the PDF, vendor invoices / offers and the customer quote wired)
+# Hamro Pasal: State Handoff (Phases 0–23 complete; Phase 24 local test harness; Phases 25–26 backend; Phase 27 admin wiring; Phase 28 vendor ad purchases; Phase 29 checkout settlement rules, ad charging at delivery, the payout run; Phase 30 payout finalisation, reconciliation ad premium, fiscal invoice header; Phase 31 campaign discounts and the complete invoice issued at delivery; Phase 32 retroactive invoices, the invoice PDF, vendor offers CRUD; Phase 33 discount stacking in checkout, Devanagari in the PDF, vendor invoices / offers and the customer quote wired; Phase 34 S3-compatible storage, image compression, promotion image upload, vendor PAN document)
 
 This file tells a fresh agent session exactly what exists in this repository, so it can resume
 work without re-deriving it. It describes the tree at the end of **Phase 23 (End-to-End System Audit & Failure Mode Hardening)**, the last planned development phase, on top of Phase 22 (Financial Reconciliation & Payouts), 21 (Rider Dispatch &
@@ -1099,6 +1099,263 @@ for order state changes only (Phase 20, §8M; no chat, wallet or rider pushes, n
 escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock** adapter only
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
+
+## 8Z.35 Phase 34: S3-compatible storage, server-side image compression, promotion image upload, vendor PAN document (KYC) (2026-10-09)
+
+`packages/shared-types`, `packages/db`, `apps/api`, `apps/admin`, `apps/mobile`. Migration
+**0036**. New dependencies: `@aws-sdk/client-s3` and `sharp` (API), `expo-image-manipulator`
+(mobile, native: **the development client must be rebuilt**; the camera permission string in
+`app.json` is new too). SPEC.md was not changed. **Not run against a real bucket, a browser or a
+device**; the dev database needs `pnpm db:migrate`.
+
+### Asked vs built (documented contracts and SPEC kept)
+
+| Asked                                                  | Built                                                                                                                                                                    | Why                                                                                                                                                                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pan_document_url` "to securely store the location"    | the column, holding the **object key** of the document in a **private** bucket (`kyc/pan/<vendor>/<uuid>.webp`); no response ever carries it                             | A PAN certificate is an identity document. A URL on the public CDN would be readable by anyone who obtained it, for good. The bytes are reachable only through the API, behind the Super Admin's token |
+| (not asked) a way to see the document                  | `GET /api/admin/vendors/:id/pan-document` (streams the image), `has_pan_document` on the compliance list, a "View document" dialog on the Compliance tab                 | Without it the upload verifies nothing: §8Z.19 recorded "a Super Admin has nothing to open when verifying"                                                                                             |
+| (not asked) reading what is on file                    | `GET /api/vendor/tax-identity`                                                                                                                                           | The Vendor App has to know whether a document is on file and whether it is verified (it warns before replacing a verified one)                                                                         |
+| "stream uploads directly to the cloud bucket"          | one `PutObject` per image with the bytes as its body, from memory. No temporary file, no multipart upload                                                                | The compression rule needs the whole image in memory to re-encode it and to measure the result; what is then sent is under 300 KB                                                                      |
+| one bucket                                             | **two**: `S3_PUBLIC_BUCKET` (behind `S3_PUBLIC_BASE_URL`) and `S3_PRIVATE_BUCKET`; the env refuses the same name for both                                                | Public/private is a bucket setting on R2, not a per-object one                                                                                                                                         |
+| replace local disk storage                             | `STORAGE_DRIVER=LOCAL \| S3`. LOCAL stays for development and tests and **is refused with `NODE_ENV=production`**                                                        | Local runs and 900 integration tests need no bucket. Production on a container's disk loses every file on redeploy                                                                                     |
+| `deleteFile(url)`                                      | on every storage. It deletes **only** a URL that storage issued (its base URL, its area, a generated `<uuid>.<ext>` name); anything else returns false and sends nothing | `image_url` and `image_urls` accept any http(s) URL: a pasted link must never become a delete in our bucket                                                                                            |
+| (not asked) cleaning up an upload that was never saved | `DELETE /api/admin/promotions/image { url }` (409 while a promotion uses it); the admin form calls it on Cancel and for replaced tries                                   | An image is uploaded before its promotion is saved; a cancelled form would otherwise leave an object nothing names                                                                                     |
+| "compress the image on the client-side"                | `expo-image-manipulator`: longer side to 1200 px, JPEG at 75%. The server re-encodes it once more to WebP                                                                | SPEC infrastructure §6 names `react-native-compressor`; the request named Expo's tool, which needs no extra native module beyond itself. The stored format is the server's in either case              |
+| compress "before final storage, as per SPEC"           | applied to **every** image upload: dispute evidence, product photos, promotion art, PAN documents                                                                        | SPEC's rule is not per route. **Behaviour change:** evidence and product photos are now stored as `.webp` (`content_type: image/webp`); files stored earlier keep their names and are still deletable  |
+
+### Decided here, to confirm
+
+- **Replacing the document of a verified PAN clears the verification** (payouts wait for a new
+  check; the shop keeps trading). The Super Admin checked the document that is being deleted. A
+  first document on an already verified PAN (the seeded shops) clears nothing. The Vendor App asks
+  before it replaces a verified document.
+- **Verification does not require a document.** `POST …/pan-verification` still needs only a PAN
+  on file (the seed verifies shops that have none). Requiring one is a one-line change.
+- **A changed PAN number keeps the uploaded document.** The verification is already cleared by
+  the PAN change; the admin sees the old document beside the new number.
+- **LOCAL is refused in production** (above).
+
+### Migration 0036 (`0036_vendor_kyc_docs.sql`)
+
+`vendors.pan_document_url text NULL` + CHECK `vendors_pan_document_url_check` (null or
+non-blank). In `vendorSchema` and `contract.ts`. No backfill.
+
+### Storage (`apps/api/src/uploads/`)
+
+```
+routes ── storedImageOf (sniff → sharp) ──▶ EvidenceStorage / ProductImageStorage /
+                                            PromotionImageStorage / KycDocumentStorage
+                                                   │ PublicFileArea (URL ⇄ key)   │ key only
+                                                   ▼                               ▼
+                                            ObjectStore: LocalObjectStore | S3ObjectStore
+```
+
+| File                         | What                                                                                                                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `object-store.ts`            | `ObjectStore { put, get, delete }`; `LocalObjectStore(rootDir)`; `S3ObjectStore(client, bucket)` (PutObject / GetObject / DeleteObject); `assertObjectKey` refuses any key the storages do not generate |
+| `public-files.ts`            | `PublicFileArea(store, publicBaseUrl, area)`: `save` → URL, `keyOf(url, scope?)`, `deleteFile(url, scope?)`; `Cache-Control: public, max-age=31536000, immutable` (names are random and never reused)   |
+| `evidence-storage.ts`        | `ObjectEvidenceStorage` (+ `deleteFile`); `LocalEvidenceStorage` is the same over a directory                                                                                                           |
+| `product-image-storage.ts`   | `ObjectProductImageStorage` (`remove(productId, url)` scoped, `deleteFile(url)`); `LocalProductImageStorage`                                                                                            |
+| `promotion-image-storage.ts` | `promotions/<uuid>.webp`; `save`, `owns`, `deleteFile`                                                                                                                                                  |
+| `kyc-document-storage.ts`    | private store: `savePanDocument` → key, `read(key)`, `deleteFile(key)`; `Cache-Control: private, no-store`                                                                                              |
+| `storage-from-env.ts`        | `localFileStorage`, `s3FileStorage(client, { publicBucket, privateBucket, publicBaseUrl })`, `fileStorageFromEnv`                                                                                       |
+| `image-compression.ts`       | `compressImage(bytes, limits?)`                                                                                                                                                                         |
+| `image-upload.ts`            | `singleImageUpload(field, maxBytes)` (multer: memory, `fileSize`, `files: 1`, `fields: 0`, `parts: 1`), `storedImageOf(bytes, what)`                                                                    |
+
+- **Keys:** `dispute-evidence/<order>/<uuid>.webp`, `product-images/<product>/<uuid>.webp`,
+  `promotions/<uuid>.webp` (public bucket); `kyc/pan/<vendor>/<uuid>.webp` (private bucket).
+- **LOCAL:** public files under `UPLOADS_DIR` (served at `/uploads` as before); KYC documents
+  under `UPLOADS_PRIVATE_DIR` (default `apps/api/uploads-private`, git-ignored), which nothing
+  serves. **S3:** the API mounts no static directory; files are read from `S3_PUBLIC_BASE_URL`.
+- **Env** (`serverEnvSchema`, `.env.example`): `STORAGE_DRIVER`, `S3_ENDPOINT` (R2:
+  `https://<account>.r2.cloudflarestorage.com`; empty for AWS), `S3_REGION` (default `auto`),
+  `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY` (both or neither: without them the SDK's own chain,
+  e.g. a task role), `S3_PUBLIC_BUCKET`, `S3_PRIVATE_BUCKET`, `S3_PUBLIC_BASE_URL` (https in
+  production), `S3_FORCE_PATH_STYLE` (MinIO), `UPLOADS_PRIVATE_DIR`.
+- **Bucket setup the code assumes:** the public bucket is readable at `S3_PUBLIC_BASE_URL` (an R2
+  custom domain or `r2.dev`); the private bucket has no public access. The API key needs
+  PutObject, GetObject and DeleteObject on both. No ACL is ever sent.
+- The worker parses the same env and builds no storage.
+
+### Compression (`compressImage`, SPEC infrastructure §6)
+
+1. The type is the file's own signature (`sniffEvidenceType`: JPEG, PNG, WebP), never the declared
+   Content-Type or name: else `415 UNSUPPORTED_MEDIA_TYPE`.
+2. sharp must decode it as one of those three (a signature followed by junk, a GIF, an SVG: 415).
+   A decoded image over 50 megapixels is refused before it is inflated.
+3. Turned upright from its EXIF orientation; **all metadata dropped** (camera, time, GPS).
+4. Longer side to 1200 px (`fit: inside`, never enlarged), WebP at quality 75.
+5. Still 300 KB or more: quality 65, 55, 45, 35; then the picture is scaled down by a fifth and the
+   steps repeat, down to 320 px. Nothing at or over 300 KB is ever stored
+   (`422 IMAGE_NOT_COMPRESSIBLE`; not reachable with a real photo).
+6. An animated image is stored as its first frame.
+
+Measured: a 6 MB JPEG of random noise (the worst case) → 1200 × 960 WebP, 280 KB, at quality 45.
+The upload limit before compression stays 5 MB per image (`413 FILE_TOO_LARGE`).
+
+### Routes
+
+```jsonc
+// POST /api/admin/promotions/image        SUPER_ADMIN · multipart, one `image` part (≤ 5 MB)
+//   201 { "url": "https://cdn…/promotions/<uuid>.webp" }
+//   400 VALIDATION_FAILED (no file) · 400 MALFORMED_REQUEST (another field, a second file, a wrong part name)
+//   413 FILE_TOO_LARGE · 415 UNSUPPORTED_MEDIA_TYPE
+// DELETE /api/admin/promotions/image { "url" }   → 204 (also when gone, or not ours) · 409 PROMOTION_IMAGE_IN_USE
+// POST /api/vendor/tax-identity/document  VENDOR (own shop, any status) · multipart, one `document` part (≤ 5 MB)
+//   201 { "vendor_id", "has_pan_document": true, "replaced": false, "verification_cleared": false, "pan_verified_at": null }
+//   the same refusals · 404 VENDOR_NOT_FOUND
+// GET  /api/vendor/tax-identity           VENDOR
+//   200 { "vendor_id", "tax_id" | null, "is_vat_registered", "legal_name", "registered_address", "status",
+//         "pan_verified_at" | null, "has_pan_document" }
+// GET  /api/admin/vendors/:id/pan-document   SUPER_ADMIN → 200 image/webp (no-store, nosniff)
+//   404 PAN_DOCUMENT_NOT_FOUND (none uploaded, or its object is gone) · 404 VENDOR_NOT_FOUND
+// GET  /api/admin/compliance/vendors      each vendor gains "has_pan_document" (defaults to false)
+```
+
+`/promotions/image` is registered before `/promotions/:id`. Contracts: shared-types
+`api/admin-marketing.ts`, `api/vendor-settings.ts`, `api/admin-governance.ts`; constants
+`STORED_IMAGE_MAX_DIMENSION` 1200, `STORED_IMAGE_MAX_BYTES` 300 KB, `PROMOTION_IMAGE_FILE_FIELD`,
+`PAN_DOCUMENT_FILE_FIELD`, `MAX_PROMOTION_IMAGE_BYTES`, `MAX_PAN_DOCUMENT_BYTES`. Audit action
+`PAN_DOCUMENT_UPLOADED` (on `vendor`; 44 actions).
+
+### S3 lifecycle: what is deleted, when, and what a failure leaves
+
+The bucket and PostgreSQL cannot commit together, so every flow is ordered so that **a row never
+names a missing object**. The worst outcome is an object nothing names: it costs storage, is
+logged (`{"storage":"orphan_object","kind":…}` on `console.warn`), and is invisible.
+
+**PAN document** (`VendorComplianceService.uploadPanDocument`):
+
+| Step                                                                                                                                 | If it fails                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| 1. `PutObject` the new document under a new key                                                                                      | 500. Row and old document untouched                                |
+| 2. One transaction, vendor row `FOR UPDATE`: `pan_document_url` = new key, verification cleared if it replaced a verified one, audit | 500. **The new object is deleted**; row and old document untouched |
+| 3. After the commit: `DeleteObject` the key the row named before                                                                     | 201 all the same. The old object stays as a logged orphan          |
+
+- Two uploads at once queue on the row lock; the second sees the first's key as "previous" and
+  deletes it. Five simultaneous uploads leave exactly one object, the one the row names (tested).
+- A crash between steps 1 and 2, or 2 and 3, also leaves one orphan. **Nothing sweeps orphans.**
+
+**Promotion artwork** (`PromotionService`):
+
+| Event                                         | Effect on the bucket                                                                                          |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `PUT` names another image (or none)           | after the commit, the old image is deleted **if no other promotion names it** and it is one this API issued   |
+| `DELETE` a promotion                          | the same, for its image                                                                                       |
+| `PUT` with the same image, or a refused write | nothing                                                                                                       |
+| the form is cancelled, or a try is replaced   | the admin app calls `DELETE /api/admin/promotions/image`; the server refuses while a promotion uses the image |
+| a delete fails                                | the request still succeeds (the row is already changed); logged orphan                                        |
+
+**Product photos** (unchanged logic, now on the bucket): a `PUT` that drops a photo deletes its
+object; a refused upload (the 8-photo limit, a race) deletes what it had just stored; one bad
+file in a request stores nothing. **Dispute evidence** is never deleted: a transcript keeps its
+photos (`deleteFile` exists and is unused).
+
+### Admin app
+
+- **Promotions:** the URL field is a file picker (`accept` JPEG / PNG / WebP; type and 5 MB
+  checked before the request). Choosing a file uploads at once: a spinner and "Uploading…", then
+  a thumbnail with **Remove image**. Save is disabled while an upload is on its way. The table
+  shows each promotion's thumbnail. An image already saved as an external URL is shown and kept
+  until removed or replaced; a URL can no longer be typed.
+- **Compliance:** "View document" (or "No document uploaded") under each PAN. The dialog fetches
+  the image with the admin's token (`ApiClient.download`, same 401 renewal as every call), shows
+  it from an object URL and revokes that URL on close.
+
+### Vendor App (`app/(vendor)/settings.tsx` → `features/vendor/PanDocumentCard.tsx`)
+
+- In the Tax identity section: the document's standing (none / awaiting verification / verified
+  on a date, from `GET /api/vendor/tax-identity`), **Take a photo** and **Choose from gallery**
+  ("Replace from gallery" once one is on file).
+- **Permissions** (`pan-document.ts#pickPanDocument`): the camera or photo permission is
+  requested only when its button is pressed. Refused → an alert that says what it is for and
+  that the shop cannot be verified to go LIVE and be paid without it. If the system will not ask
+  again (`canAskAgain: false`), the alert offers **Open Settings** (`Linking.openSettings`). The
+  other source stays usable. "Limited" photo access is enough.
+- **Compression** (`preparePanDocument`): longer side to 1200 px (never enlarged), JPEG at 75%,
+  before the upload. The picker itself runs at quality 1 so there is one lossy step.
+- While preparing and uploading: a spinner, both buttons disabled. The photo just sent is shown
+  as the preview (the stored document is private and is not fetched back).
+- Replacing a **verified** document asks first ("payouts are paused until Hamro Pasal verifies the
+  new one"). Failures are worded (too large, not a photo, no connection, camera unavailable) and
+  never retried automatically.
+- `app.json`: `cameraPermission` was `false`; it is now a sentence, and `photosPermission`
+  mentions the PAN document.
+
+### Open
+
+- **The PAN number itself is still saved on the phone only.** The settings form does not call
+  `PUT /api/vendor/tax-identity`, so a vendor can upload a document from the app while the server
+  holds no PAN for it, and an admin then cannot verify (`409 PAN_MISSING`). Wiring that PUT (it
+  needs `is_vat_registered`, which the form has no field for) is the next step for a working
+  KYC flow from the app. `GET /api/vendor/tax-identity` now exists to read the current values.
+- **Not run against a real bucket.** `S3ObjectStore` is tested through an in-memory stand-in for
+  the SDK client (`test/support/fake-s3.ts`); R2's own behaviour (the endpoint, signing, a
+  DeleteObject on a missing key) is taken from the S3 API, not observed. Do one upload, read and
+  delete against the real buckets before relying on it.
+- **Existing files are not migrated.** URLs already in `image_urls` / chat attachments point at
+  `…/uploads/…` on the API host. Switching to S3 stops the API serving them: copy
+  `apps/api/uploads` into the public bucket and rewrite the stored URLs, or keep the old host up.
+- **Orphans are logged, not swept.** A lifecycle rule cannot tell an orphan from a live object; a
+  periodic "objects no row names" job would.
+- The private document is proxied through the API (≤ 300 KB each). A presigned URL would take
+  the bytes off the API; it would also make a shareable link, which is why it was not done.
+- The vendor cannot view its stored document, only the photo it just took.
+- No rate limit on uploads. An admin can upload promotion images without limit.
+- `sharp` ships a native binary per platform: the API image must install dependencies **inside**
+  the target image (or with `--os=linux --cpu=x64`), not copy `node_modules` from a Windows host.
+- The admin screens and the mobile card were not opened in a browser or on a device. The new
+  Nepali strings are unreviewed.
+
+### Tests
+
+- **API unit 193** in 21 suites (+35): `image-compression.test.ts` (12: the three inputs to WebP,
+  1200 px both orientations, never enlarged, **6 MB of noise under 300 KB**, quality before size,
+  giving up over the limit, EXIF orientation applied and metadata gone, alpha kept, six kinds of
+  non-image refused), `cloud-storage.test.ts` (23: key validation, the local store, **the S3
+  commands as sent** (bucket, key, body, length, type, cache policy), public vs private bucket,
+  `deleteFile` for issued URLs and **twelve URLs it must refuse without sending anything**, the
+  env: default, S3, incomplete or unsafe configurations, production).
+- **API integration 915** in 54 suites; 914 passed in the full run. The failure,
+  `deliveries-api` "accepts the right code again once the lockout has run out", is the known
+  timing flake. New `kyc-and-cloud-storage.int.test.ts` (43, the whole API on the in-memory S3 +
+  real PostgreSQL): the promotion upload (stored as WebP on the CDN URL, a large banner at
+  1200 px under 300 KB, type by bytes, 5 MB vs one byte more, malformed requests, roles, a
+  refused PutObject); **artwork deleted on replace, on removal and with the promotion; kept on
+  an unchanged edit, while another promotion uses it, and for a URL not ours; a failed delete
+  leaves a logged orphan and the edit stands**; the discard route; the PAN document (private
+  bucket only, key in the row, audit entry, never in a response; compression; replace with
+  **Put then Delete in that order**; verification cleared on replace only; five uploads at once;
+  another shop untouched; a compliance-suspended shop); **the three failure cases** (bucket
+  refuses the put, the database refuses the row (a temporary trigger), the bucket cannot delete);
+  refusals and roles; the tax identity read; the admin's document read (bytes, headers, the
+  replaced one, three 404s, closed to the vendor); the local disk keeps KYC outside `/uploads`;
+  product photos and evidence on the bucket.
+  - Updated for stored WebP: `uploads-api` (+2), `vendor-product-lifecycle`, `chat-realtime`.
+    Their fake "signature + padding" images became real ones (`test/support/images.ts`).
+- db integration **170** (migrations 0000–0036 from scratch, the contract).
+- shared-types **348** (one env test now names a bucket for production).
+- Admin **303** in 11 suites (+11, `promotion-images.test.ts`): the picker's checks, the unused
+  upload rule, the three endpoints' wiring (FormData with no Content-Type, DELETE with the URL,
+  the Blob download and its token renewal), the compliance contract. `vite build` succeeds.
+- Mobile **1524** in 101 suites, 1523 passed in the full run; the failure is `ReviewPrompt.test.tsx`, the known flake under the parallel run. New (+25, `PanDocument.test.tsx`, msw + mocked picker and
+  manipulator): the resize rule and the 75% JPEG; the permission asked per source and only on
+  press; **both refusals worded, Open Settings only when the system will not ask again, the other
+  source still working**; cancel; gallery and camera uploads as multipart with the token; busy
+  state and no second upload; the verified-document warning; four failure messages and no
+  automatic retry; the status read failing; Nepali.
+- `pnpm typecheck` and `pnpm lint` 16 of 16.
+- **Mutation-checked, 21 of 21 killed:** the old PAN object not deleted (5 fail), the new one kept
+  after a failed transaction (1), verification kept on replace (1) or cleared on a first document
+  (1), no row lock (1); artwork deleted while still used (1), an in-use image discardable (1),
+  not released on delete (2), a failed delete failing the request (1); `deleteFile` accepting any
+  name (1) or ignoring the owner (4), KYC in the public bucket (3); compression returning the
+  first encode (3), enlarging (5), ignoring orientation (1), accepting any decodable format (1);
+  no size limit (2), extra fields accepted (2), uploads stored uncompressed (4); the admin read
+  answering without a document (1); the local store without key validation (1).
+- **A test-harness trap worth knowing:** on Windows, an `fs` error thrown inside Jest's sandbox
+  is not `instanceof Error` of the test's realm. `LocalObjectStore.get` first read "file not
+  found" as an unknown failure; it now checks the error's shape.
 
 ## 8Z.34 Phase 33: discount stacking in checkout, Devanagari in the invoice PDF, Vendor App invoices and offers wired, customer checkout on the real quote (2026-10-09)
 
@@ -7853,6 +8110,8 @@ the only voice call is the 90 s escalation's (`IVR_PROVIDER=MOCK`, §8H), unchan
 - **Not run against the real Expo service or a device.**
 
 ## 8L. Vendor catalogue management and local uploads (Phase 19)
+
+> **Updated by §8Z.35 (2026-10-09):** uploads go to an S3-compatible bucket in production (`STORAGE_DRIVER=S3`); every image is re-encoded to WebP (1200 px, under 300 KB) before it is stored, so "file on disk = bytes sent" and the `.jpg` / `.png` names below no longer hold.
 
 SPEC vendor flow step 3 (the vendor's SKUs), implicit requirement 5 (catalog photos) and §3
 (inventory). Code: `apps/api/src/catalog/product-service.ts` (`update`, `hide`, `addImages`),

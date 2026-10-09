@@ -310,7 +310,7 @@ describe('promotion form', () => {
     });
     expect(validatePromotionForm({ ...form, imageUrl: 'dashain.webp' })).toEqual({
       ok: false,
-      errors: { imageUrl: 'Enter a full http(s) address.' },
+      errors: { imageUrl: 'This image address is not valid. Upload the image again.' },
     });
     expect(
       validatePromotionForm({ ...form, placement: 'FEATURED', title: ' ', imageUrl: '' }),

@@ -48,6 +48,19 @@ export const server = setupServer(
       }),
     );
   }),
+  // The vendor's Shop settings always ask what tax identity is on file; nothing by default.
+  http.get(apiUrl('/api/vendor/tax-identity'), () =>
+    HttpResponse.json({
+      vendor_id: '7b1f0c8e-0000-4000-8000-0000000000aa',
+      tax_id: null,
+      is_vat_registered: false,
+      legal_name: null,
+      registered_address: null,
+      status: 'LIVE',
+      pan_verified_at: null,
+      has_pan_document: false,
+    }),
+  ),
   // The shop page reads its products' categories from the public list; none by default.
   http.get(apiUrl('/api/products'), () => HttpResponse.json({ products: [], next_cursor: null })),
   ...accountMockHandlers({ baseUrl: API_URL }),

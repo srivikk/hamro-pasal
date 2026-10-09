@@ -8,6 +8,10 @@ import { accessTokenFor } from '../../test/access-tokens';
 import { renderWithProviders } from '../../test/render';
 import { VendorOnlineToggle } from './VendorOnlineToggle';
 
+// The PAN document card talks to the API and has its own tests (PanDocument.test.tsx); this
+// file is about the form, which is saved on the phone.
+jest.mock('./PanDocumentCard', () => ({ PanDocumentCard: () => null }));
+
 const VENDOR_USER_ID = '9f1c2a10-0000-4000-8000-0000000000aa';
 
 const field = (testID: string) => screen.queryByTestId(testID);

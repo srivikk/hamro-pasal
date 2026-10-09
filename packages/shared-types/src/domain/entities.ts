@@ -136,6 +136,11 @@ export const vendorSchema = z.strictObject({
   /** A Super Admin's check of the PAN document. Null freezes payouts, never trading. */
   pan_verified_at: z.date().nullable(),
   pan_verified_by_user_id: z.uuid().nullable(),
+  /**
+   * Phase 34: where the uploaded PAN document lives in the private document store (its object
+   * key). Never a public URL and never sent to a client: it is read through the API.
+   */
+  pan_document_url: nonEmptyTextSchema.nullable(),
   /** The municipalities a CITY_WIDE shop serves; always contains its own Palika. */
   serviceable_palikas: z.array(nonEmptyTextSchema).min(1),
   /** SELF_DELIVERY only: per kilometre (RADIUS_BOUND), and the subtotal that makes delivery free. */

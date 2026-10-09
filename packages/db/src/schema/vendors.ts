@@ -77,6 +77,9 @@ export const vendors = pgTable(
     // in the transaction that saves a different PAN.
     pan_verified_at: timestamp({ withTimezone: true, mode: 'date' }),
     pan_verified_by_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
+    // Phase 34: the uploaded PAN document's object key in the private document store. Not a
+    // public URL: the object is read only through the API (the vendor's upload, the admin's view).
+    pan_document_url: text(),
     // Phase 25, Delivery Modularity (SPEC §2). The CITY_WIDE tier: Palika names, the shop's own
     // always among them (the vendors_default_serviceable_palikas trigger fills an empty list).
     serviceable_palikas: text()
@@ -161,6 +164,10 @@ export const vendors = pgTable(
     check(
       'vendors_compliance_restore_status_check',
       sql`${t.status_before_compliance_suspension} IS NULL OR ${t.status_before_compliance_suspension}::text NOT IN ('SUSPENDED', 'SUSPENDED_COMPLIANCE')`,
+    ),
+    check(
+      'vendors_pan_document_url_check',
+      sql`${t.pan_document_url} IS NULL OR btrim(${t.pan_document_url}) <> ''`,
     ),
     check('vendors_tax_id_check', sql`${t.tax_id} IS NULL OR ${t.tax_id} ~ '^[0-9]{9}$'`),
     check('vendors_legal_name_check', sql`${t.legal_name} IS NULL OR btrim(${t.legal_name}) <> ''`),

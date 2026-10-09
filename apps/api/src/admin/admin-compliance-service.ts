@@ -12,6 +12,7 @@ import {
 } from '@hamro-pasal/shared-types';
 import { and, asc, eq, sql } from 'drizzle-orm';
 
+import type { KycDocumentStorage, StoredDocument } from '../uploads/kyc-document-storage';
 import { AdminVendorNotFoundError } from '../wallet/wallet-service';
 
 type VendorRow = typeof vendors.$inferSelect;
@@ -30,6 +31,14 @@ export class PanMissingError extends Error {
   }
 }
 
+/** The vendor uploaded no PAN document (or its object is gone from the store). */
+export class PanDocumentNotFoundError extends Error {
+  constructor(readonly vendorId: string) {
+    super(`Vendor ${vendorId} has no PAN document on file`);
+    this.name = 'PanDocumentNotFoundError';
+  }
+}
+
 /**
  * The Super Admin's side of PAN compliance (SPEC core section 10, "PAN verification").
  *
@@ -38,7 +47,32 @@ export class PanMissingError extends Error {
  * (VendorComplianceService), and that same transaction clears this stamp when the PAN changes.
  */
 export class AdminComplianceService {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly documents: KycDocumentStorage,
+  ) {}
+
+  /**
+   * The vendor's uploaded PAN document, for the Super Admin's check (Phase 34). The bucket is
+   * private: this read, behind the admin's token, is the only way to the bytes.
+   */
+  async panDocument(vendorId: string): Promise<StoredDocument> {
+    const [vendor] = await this.db
+      .select({ key: vendors.pan_document_url })
+      .from(vendors)
+      .where(eq(vendors.id, vendorId));
+    if (vendor === undefined) throw new AdminVendorNotFoundError(vendorId);
+    if (vendor.key === null) throw new PanDocumentNotFoundError(vendorId);
+    const document = await this.documents.read(vendor.key);
+    if (document === null) {
+      // The row names an object the store does not have: never expected (see uploadPanDocument).
+      console.error(
+        JSON.stringify({ storage: 'missing_object', kind: 'pan_document', vendor_id: vendorId }),
+      );
+      throw new PanDocumentNotFoundError(vendorId);
+    }
+    return document;
+  }
 
   /**
    * Every vendor with its PAN on file and when a compliance suspension began, by business name

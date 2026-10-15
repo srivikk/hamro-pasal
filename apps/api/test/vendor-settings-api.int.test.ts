@@ -364,6 +364,7 @@ describe('Vendor settings API', () => {
         municipality_palika_string: 'Kathmandu Metropolitan City',
         base_delivery_fee_npr: 50,
         delivery_fee_per_km_npr: 0,
+        min_order_value: 0,
         free_delivery_above_npr: null,
         platform: {
           self_delivery_enabled: true,

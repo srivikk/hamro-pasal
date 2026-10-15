@@ -571,6 +571,41 @@ describe('Cart screen: the server’s quote (POST /api/cart/quote)', () => {
     expect(screen.queryByTestId('cart-saved')).toBeNull();
   });
 
+  it('says how much more is needed for free delivery, then that it is free (step 7.2)', async () => {
+    let remaining = 299;
+    quoteWith(() =>
+      cartQuote({ free_delivery_threshold_npr: 1000, free_delivery_remaining_npr: remaining }),
+    );
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
+    const view = renderWithProviders(<CartScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cart-free-delivery')).toHaveTextContent(
+        'Add Rs. 299 more for free delivery',
+      );
+    });
+
+    view.unmount();
+    remaining = 0;
+    renderWithProviders(<CartScreen />);
+    await waitFor(() => {
+      expect(screen.getByTestId('cart-free-delivery')).toHaveTextContent(
+        'You get free delivery on this order',
+      );
+    });
+  });
+
+  it('shows no free-delivery line for a shop without the offer', async () => {
+    quoteWith(() => cartQuote());
+    useCartStore.getState().addItem(THAMEL_VENDOR, TEN, 2);
+    renderWithProviders(<CartScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cart-total')).toHaveTextContent('TotalRs. 2400');
+    });
+    expect(screen.queryByTestId('cart-free-delivery')).toBeNull();
+  });
+
   it('prices the cart again when a quantity changes, and never shows the old quote for the new cart', async () => {
     const received = quoteWith(() => {
       const quantity = useCartStore.getState().lines[0]?.quantity ?? 0;

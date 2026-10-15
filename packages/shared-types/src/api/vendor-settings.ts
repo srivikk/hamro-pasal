@@ -98,6 +98,8 @@ export const MAX_DELIVERY_RADIUS_KM = 100;
 export const MAX_SERVICEABLE_PALIKAS = 30;
 export const MAX_PALIKA_NAME_LENGTH = 80;
 export const MAX_VENDOR_DELIVERY_FEE_NPR = 100_000;
+/** Step 7.2: the highest minimum order value a vendor may set (SPEC core 11). */
+export const MAX_VENDOR_MIN_ORDER_VALUE_NPR = 50_000;
 
 const fee = z.number().min(0).multipleOf(0.01).max(MAX_VENDOR_DELIVERY_FEE_NPR);
 
@@ -134,6 +136,16 @@ export const deliverySettingsRequestSchema = z
     delivery_fee_per_km_npr: fee,
     /** Delivery is free at or above this subtotal; null for no threshold. */
     free_delivery_above_npr: fee.positive().nullable(),
+    /**
+     * Step 7.2 (SPEC core 11): the shop's minimum order value, under either mode. Optional so an
+     * app build from before the field keeps working: omitted means "keep what is stored".
+     */
+    min_order_value: z
+      .number()
+      .min(0)
+      .multipleOf(0.01)
+      .max(MAX_VENDOR_MIN_ORDER_VALUE_NPR)
+      .optional(),
   })
   .refine((s) => (s.delivery_scope === 'RADIUS_BOUND') === (s.radius_km !== null), {
     path: ['radius_km'],
@@ -163,6 +175,18 @@ export const deliverySettingsRequestSchema = z
       path: ['base_delivery_fee_npr'],
       message: 'The platform sets the charge for PLATFORM_FLEET deliveries',
     },
+  )
+  // Free delivery below the minimum order could never apply (SPEC core 11). When the minimum is
+  // omitted the server checks against the stored one (422 FREE_DELIVERY_BELOW_MINIMUM_ORDER).
+  .refine(
+    (s) =>
+      s.min_order_value === undefined ||
+      s.free_delivery_above_npr === null ||
+      s.free_delivery_above_npr > s.min_order_value,
+    {
+      path: ['free_delivery_above_npr'],
+      message: 'Free delivery must start above the minimum order value',
+    },
   );
 export type DeliverySettingsRequest = z.infer<typeof deliverySettingsRequestSchema>;
 
@@ -178,6 +202,8 @@ export const deliverySettingsResponseSchema = z.strictObject({
   base_delivery_fee_npr: z.number().min(0),
   delivery_fee_per_km_npr: z.number().min(0),
   free_delivery_above_npr: z.number().positive().nullable(),
+  /** Step 7.2. Defaults to 0 so an app build reads an older API's answer. */
+  min_order_value: z.number().min(0).default(0),
   /** The Super Admin's switches. With both off (the Emergency Stop) no shop takes orders. */
   platform: z.strictObject({
     self_delivery_enabled: z.boolean(),

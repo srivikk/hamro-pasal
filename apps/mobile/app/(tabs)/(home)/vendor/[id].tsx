@@ -184,6 +184,7 @@ export default function VendorMenuScreen() {
               extras={vendorExtras(vendor)}
               distanceKm={distanceKm}
               serviceable={serviceable}
+              freeDeliveryAboveNpr={vendor.free_delivery_above_npr}
               favourite={isFavourite}
               onToggleFavourite={() => {
                 const extras = vendorExtras(vendor);

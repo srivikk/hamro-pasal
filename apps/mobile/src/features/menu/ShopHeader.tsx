@@ -24,6 +24,7 @@ export function ShopHeader({
   extras,
   distanceKm,
   serviceable,
+  freeDeliveryAboveNpr = null,
   favourite,
   onToggleFavourite,
   search,
@@ -38,6 +39,8 @@ export function ShopHeader({
   /** Null when the feed that knows it is not on the device (the page was opened directly). */
   distanceKm: number | null;
   serviceable: boolean;
+  /** Step 7.2: "Free delivery on orders over Rs. X"; null when the shop offers none. */
+  freeDeliveryAboveNpr?: number | null;
   /** Whether the customer has saved this shop. */
   favourite: boolean;
   onToggleFavourite: () => void;
@@ -161,6 +164,18 @@ export function ShopHeader({
           <Ionicons name="pricetag" size={16} color={colors.brand} />
           <Text className="text-sm font-extrabold text-red-700" numberOfLines={1}>
             {extras.top_offer}
+          </Text>
+        </View>
+      )}
+
+      {freeDeliveryAboveNpr === null ? null : (
+        <View
+          testID="shop-free-delivery"
+          className="mx-4 mt-3 flex-row items-center gap-2 self-start rounded-full border border-green-100 bg-green-50 px-4 py-2"
+        >
+          <Ionicons name="bicycle" size={16} color={colors.success} />
+          <Text className="text-sm font-bold text-green-700" numberOfLines={1}>
+            {t('menu.freeDeliveryOver', { amount: freeDeliveryAboveNpr })}
           </Text>
         </View>
       )}

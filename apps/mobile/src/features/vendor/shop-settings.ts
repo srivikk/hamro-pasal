@@ -10,6 +10,8 @@ export const MAX_RADIUS_KM = 100;
 export const MAX_SERVICEABLE_PALIKAS = 30;
 export const MAX_PALIKA_NAME_LENGTH = 80;
 export const MAX_FEE_NPR = 100_000;
+/** Step 7.2: the highest minimum order value a shop may set (the API refuses more). */
+export const MAX_MIN_ORDER_NPR = 50_000;
 
 /** `PLATFORM_FLEET` is the platform's delivery; the app labels it "Platform delivery". */
 export const FULFILLMENT_CHOICES = ['SELF_DELIVERY', 'PLATFORM_FLEET'] as const;
@@ -36,8 +38,12 @@ export const shopSettingsSchema = z.strictObject({
   baseDeliveryFeeNpr: feeSchema,
   perKmFeeNpr: feeSchema,
   freeDeliveryAboveNpr: z.number().positive().max(MAX_FEE_NPR).nullable(),
+  /** Step 7.2: under either mode. Settings saved before the field read as 0. */
+  minOrderValueNpr: z.number().min(0).max(MAX_MIN_ORDER_NPR).default(0),
 });
 export type ShopSettings = z.infer<typeof shopSettingsSchema>;
+/** What the store accepts: fields with a default may be left out. */
+export type ShopSettingsInput = z.input<typeof shopSettingsSchema>;
 
 /** The form's fields as typed. */
 export interface ShopSettingsForm {
@@ -49,11 +55,12 @@ export interface ShopSettingsForm {
   baseFee: string;
   perKmFee: string;
   freeAbove: string;
+  minOrder: string;
 }
 
 export type ShopSettingsField =
-  'taxId' | 'radiusKm' | 'palikas' | 'baseFee' | 'perKmFee' | 'freeAbove';
-export type ShopSettingsError = 'taxId' | 'radius' | 'palikas' | 'amount';
+  'taxId' | 'radiusKm' | 'palikas' | 'baseFee' | 'perKmFee' | 'freeAbove' | 'minOrder';
+export type ShopSettingsError = 'taxId' | 'radius' | 'palikas' | 'amount' | 'freeBelowMinimum';
 export type ShopSettingsErrors = Partial<Record<ShopSettingsField, ShopSettingsError>>;
 
 export type ShopSettingsResult =
@@ -73,6 +80,7 @@ export const DEFAULT_SHOP_SETTINGS_FORM: ShopSettingsForm = {
   baseFee: '0',
   perKmFee: '0',
   freeAbove: '',
+  minOrder: '0',
 };
 
 /** The form for saved settings, or the defaults for a shop that has saved none. */
@@ -88,6 +96,7 @@ export function formFromSettings(settings: ShopSettings | null): ShopSettingsFor
     baseFee: String(settings.baseDeliveryFeeNpr),
     perKmFee: String(settings.perKmFeeNpr),
     freeAbove: settings.freeDeliveryAboveNpr === null ? '' : String(settings.freeDeliveryAboveNpr),
+    minOrder: String(settings.minOrderValueNpr),
   };
 }
 
@@ -154,6 +163,7 @@ export function deliveryRequestOf(settings: DeliverySettings): DeliverySettingsD
     base_delivery_fee_npr: settings.baseDeliveryFeeNpr,
     delivery_fee_per_km_npr: settings.perKmFeeNpr,
     free_delivery_above_npr: settings.freeDeliveryAboveNpr,
+    min_order_value: settings.minOrderValueNpr,
   };
 }
 
@@ -176,6 +186,7 @@ export function formFromDeliveryResponse(
     perKmFee: String(server.delivery_fee_per_km_npr),
     freeAbove:
       server.free_delivery_above_npr === null ? '' : String(server.free_delivery_above_npr),
+    minOrder: String(server.min_order_value),
   };
 }
 
@@ -228,6 +239,19 @@ export function validateDeliverySettings(form: ShopSettingsForm): DeliverySettin
     }
   }
 
+  // The minimum order applies under either mode; blank means none (0).
+  const minOrderValueNpr = parseAmount(form.minOrder) ?? 0;
+  if (Number.isNaN(minOrderValueNpr) || minOrderValueNpr > MAX_MIN_ORDER_NPR) {
+    errors.minOrder = 'amount';
+  } else if (
+    errors.freeAbove === undefined &&
+    freeDeliveryAboveNpr !== null &&
+    freeDeliveryAboveNpr <= minOrderValueNpr
+  ) {
+    // Free delivery below the minimum order could never apply (the API refuses it too).
+    errors.freeAbove = 'freeBelowMinimum';
+  }
+
   if (Object.keys(errors).length > 0) return { ok: false, errors };
   return {
     ok: true,
@@ -239,6 +263,7 @@ export function validateDeliverySettings(form: ShopSettingsForm): DeliverySettin
       baseDeliveryFeeNpr,
       perKmFeeNpr,
       freeDeliveryAboveNpr,
+      minOrderValueNpr,
     },
   };
 }

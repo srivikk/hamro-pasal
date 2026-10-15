@@ -2,7 +2,11 @@ import { z } from 'zod';
 import { create, type Mutate, type StoreApi, type UseBoundStore } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 
-import { shopSettingsSchema, type ShopSettings } from '../features/vendor/shop-settings';
+import {
+  shopSettingsSchema,
+  type ShopSettings,
+  type ShopSettingsInput,
+} from '../features/vendor/shop-settings';
 import { mmkvStateStorage } from '../storage/mmkv-state-storage';
 import { getSecureStorage } from '../storage/secure-mmkv';
 
@@ -25,7 +29,7 @@ export interface VendorShopState {
   /** PAN, delivery mode, scope and charges, with the account they belong to. */
   stored: StoredShopSettings | null;
   setOnline: (online: boolean) => void;
-  saveSettings: (settings: ShopSettings, userId: string | null) => void;
+  saveSettings: (settings: ShopSettingsInput, userId: string | null) => void;
 }
 
 export type PersistedVendorShopState = Pick<VendorShopState, 'online' | 'stored'>;

@@ -81,6 +81,7 @@ export function feedVendorView(vendor: CatalogVendor): FeedVendor {
     municipality_palika_string: vendor.municipalityPalika,
     min_order_value: vendor.minOrderValue,
     base_delivery_fee_npr: vendor.baseDeliveryFee,
+    free_delivery_above_npr: vendor.freeDeliveryAboveNpr,
     fulfillment_mode: vendor.fulfillmentMode,
     location: vendor.location,
   };

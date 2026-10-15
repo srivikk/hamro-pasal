@@ -32,6 +32,7 @@ const mockNewShop = () => ({
   base_delivery_fee_npr: 0,
   delivery_fee_per_km_npr: 0,
   free_delivery_above_npr: null as number | null,
+  min_order_value: 0,
   platform: {
     self_delivery_enabled: true,
     platform_fleet_enabled: true,
@@ -54,6 +55,7 @@ jest.mock('./useDeliverySettings', () => ({
         base_delivery_fee_npr: number;
         delivery_fee_per_km_npr: number;
         free_delivery_above_npr: number | null;
+        min_order_value?: number;
       },
       options?: { onSuccess?: (result: unknown) => void },
     ) => {
@@ -258,6 +260,7 @@ describe('Shop settings: saving', () => {
         baseDeliveryFeeNpr: 40,
         perKmFeeNpr: 12.5,
         freeDeliveryAboveNpr: 2000,
+        minOrderValueNpr: 0,
       },
     });
     first.unmount();
@@ -286,6 +289,7 @@ describe('Shop settings: saving', () => {
       baseDeliveryFeeNpr: 0,
       perKmFeeNpr: 0,
       freeDeliveryAboveNpr: null,
+      minOrderValueNpr: 0,
     });
   });
 

@@ -41,6 +41,7 @@ interface Settings {
   base_delivery_fee_npr: number;
   delivery_fee_per_km_npr: number;
   free_delivery_above_npr: number | null;
+  min_order_value: number;
   platform: {
     self_delivery_enabled: boolean;
     platform_fleet_enabled: boolean;
@@ -59,6 +60,7 @@ const settings = (overrides: Partial<Settings> = {}): Settings => ({
   base_delivery_fee_npr: 0,
   delivery_fee_per_km_npr: 0,
   free_delivery_above_npr: null,
+  min_order_value: 0,
   platform: {
     self_delivery_enabled: true,
     platform_fleet_enabled: true,
@@ -166,6 +168,7 @@ describe('delivery settings: form and wire format', () => {
       base_delivery_fee_npr: 40,
       delivery_fee_per_km_npr: 12.5,
       free_delivery_above_npr: 2000,
+      min_order_value: 0,
     });
   });
 
@@ -269,6 +272,7 @@ describe('Shop settings: delivery settings on the server', () => {
       base_delivery_fee_npr: 40,
       delivery_fee_per_km_npr: 12.5,
       free_delivery_above_npr: 2000,
+      min_order_value: 0,
     });
     expect(screen.getByTestId('settings-radius')).toHaveDisplayValue('7.5');
     expect(screen.getByTestId('settings-base-fee')).toHaveDisplayValue('40');
@@ -334,6 +338,7 @@ describe('Shop settings: delivery settings on the server', () => {
       base_delivery_fee_npr: 0,
       delivery_fee_per_km_npr: 0,
       free_delivery_above_npr: null,
+      min_order_value: 0,
     });
   });
 
@@ -517,6 +522,7 @@ describe('Shop settings: delivery settings on the server', () => {
           baseDeliveryFeeNpr: 40,
           perKmFeeNpr: 0,
           freeDeliveryAboveNpr: null,
+          minOrderValueNpr: 0,
         },
       });
     });

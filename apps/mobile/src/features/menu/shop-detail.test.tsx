@@ -154,6 +154,22 @@ describe('Shop page header', () => {
     expect(screen.queryByTestId('shop-eta')).toBeNull();
   });
 
+  it('shows the shop’s free-delivery threshold, and nothing when it has none (step 7.2)', async () => {
+    const menu = vendorMenu();
+    serveShop({ ...menu, vendor: { ...menu.vendor, free_delivery_above_npr: 1000 } });
+    const view = renderShop();
+
+    expect(await screen.findByTestId('shop-free-delivery')).toHaveTextContent(
+      'Free delivery on orders over Rs. 1000',
+    );
+
+    view.unmount();
+    serveShop();
+    renderShop();
+    await screen.findByTestId('shop-card');
+    expect(screen.queryByTestId('shop-free-delivery')).toBeNull();
+  });
+
   it('is a plain card when the shop has no rating, offer or banner', async () => {
     jest.mocked(vendorExtras).mockReturnValue(NO_VENDOR_EXTRAS);
     renderShop();

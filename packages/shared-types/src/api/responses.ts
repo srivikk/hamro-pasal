@@ -148,6 +148,12 @@ export const feedVendorSchema = z.strictObject({
   municipality_palika_string: z.string().min(1),
   min_order_value: z.number().nonnegative(),
   base_delivery_fee_npr: z.number().nonnegative(),
+  /**
+   * Step 7.2: "Free delivery on orders over Rs. X" on the shop page and its card. Null when the
+   * shop has none, or under platform delivery (the platform's charge has no threshold). Defaults
+   * to null so an app build reads an older API as "no offer".
+   */
+  free_delivery_above_npr: z.number().positive().nullable().default(null),
   fulfillment_mode: vendorFulfillmentModeSchema,
   location: geoPointSchema,
 });
@@ -623,6 +629,13 @@ export const cartQuoteResponseSchema = z.strictObject({
   /** The campaign, applied to what is left after the vendor offer (id = the campaign). */
   platform_promo: quoteDiscountSchema.nullable(),
   delivery_fee_npr: z.number().min(0),
+  /**
+   * Step 7.2: the subtotal at which this shop's delivery becomes free, and how much more the cart
+   * needs to reach it (0 once reached). Both null when the shop offers no free delivery. Default
+   * null, so an app build reads an older API as "no offer".
+   */
+  free_delivery_threshold_npr: z.number().positive().nullable().default(null),
+  free_delivery_remaining_npr: z.number().min(0).nullable().default(null),
   /** Shop to delivery pin, great-circle, rounded to the metre. */
   distance_km: z.number().min(0),
   total_npr: z.number().min(0),

@@ -501,6 +501,19 @@ export default function VendorSettingsScreen() {
         ) : null}
       </Section>
 
+      <Section title={t('vendorShop.minOrderTitle')}>
+        <Field
+          testID="settings-min-order"
+          label={t('vendorShop.minOrder')}
+          hint={t('vendorShop.minOrderHint')}
+          value={form.minOrder}
+          error={errorOf('minOrder')}
+          onChangeText={(text) => {
+            update({ minOrder: sanitizeAmountInput(text) });
+          }}
+        />
+      </Section>
+
       {selfDelivery ? (
         <Section title={t('vendorShop.chargesTitle')}>
           <Field

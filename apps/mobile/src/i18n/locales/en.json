@@ -87,7 +87,9 @@
     "promoDiscount": "Hamro Pasal Promo",
     "estimatedTotal": "Estimated total",
     "pricing": "Checking the price…",
-    "deliveryUnavailable": "Delivery is unavailable right now. You can order when it is back."
+    "deliveryUnavailable": "Delivery is unavailable right now. You can order when it is back.",
+    "freeDeliveryRemaining": "Add Rs. {{amount, localizedNumber}} more for free delivery",
+    "freeDeliveryReached": "You get free delivery on this order"
   },
   "cartBanner": {
     "view": "View Cart",
@@ -155,7 +157,8 @@
     "offerLabel": "Offer: {{offer}}",
     "viewPhoto": "View photo of {{name}}",
     "photoOf": "Photo of {{name}}",
-    "closePhoto": "Close photo"
+    "closePhoto": "Close photo",
+    "freeDeliveryOver": "Free delivery on orders over Rs. {{amount, localizedNumber}}"
   },
   "checkout": {
     "reservedTitle": "Items reserved",
@@ -590,7 +593,8 @@
       "taxId": "Enter your 9-digit PAN.",
       "radius": "Enter a radius between 0 and 100 km.",
       "palikas": "Add at least one municipality.",
-      "amount": "Enter an amount in rupees."
+      "amount": "Enter an amount in rupees.",
+      "freeBelowMinimum": "Free delivery must start above your minimum order value."
     },
     "palikaSearch": "Search municipalities",
     "palikaNone": "No municipality matches.",
@@ -617,7 +621,10 @@
     "deletePending": "Deletion requested on {{date}}",
     "deletePendingNote": "Recorded on this phone for now. You can still cancel the request.",
     "deleteCancel": "Cancel deletion request",
-    "deleteCancelled": "Deletion request cancelled. Switch Online to take orders again."
+    "deleteCancelled": "Deletion request cancelled. Switch Online to take orders again.",
+    "minOrderTitle": "Minimum order",
+    "minOrder": "Minimum order value (Rs.)",
+    "minOrderHint": "Customers cannot order less than this. Leave 0 for no minimum."
   },
   "vendorCatalogue": {
     "sampleNote": "Sample catalogue on this phone. Changes are not sent to the server yet.",

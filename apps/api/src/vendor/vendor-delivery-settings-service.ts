@@ -14,6 +14,7 @@ import {
 } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 
+import { HttpError } from '../http/errors';
 import { VendorAccountNotFoundError } from '../orders/vendor-order-service';
 import type { VendorRow } from './vendor-compliance-service';
 
@@ -98,7 +99,20 @@ export class VendorDeliverySettingsService {
         base_delivery_fee_npr: input.base_delivery_fee_npr,
         delivery_fee_per_km_npr: input.delivery_fee_per_km_npr,
         free_delivery_above_npr: input.free_delivery_above_npr,
+        // Step 7.2. Omitted by an app build from before the field: the stored value is kept.
+        min_order_value: input.min_order_value ?? before.min_order_value,
       };
+      if (
+        next.free_delivery_above_npr !== null &&
+        next.free_delivery_above_npr <= next.min_order_value
+      ) {
+        throw new HttpError(
+          422,
+          'FREE_DELIVERY_BELOW_MINIMUM_ORDER',
+          'Free delivery must start above the minimum order value',
+          { min_order_value: next.min_order_value },
+        );
+      }
       const beforeState = deliveryState(before);
       if (JSON.stringify(beforeState) === JSON.stringify(next)) {
         return { vendor: before, platform };
@@ -140,7 +154,7 @@ function servedPalikas(ownPalika: string, input: DeliverySettingsRequest): strin
   return [ownPalika, ...others];
 }
 
-/** The seven settings, in one fixed key order (it is also how "unchanged" is decided). */
+/** The eight settings, in one fixed key order (it is also how "unchanged" is decided). */
 function deliveryState(vendor: VendorRow) {
   return {
     fulfillment_mode: vendor.fulfillment_mode,
@@ -150,6 +164,7 @@ function deliveryState(vendor: VendorRow) {
     base_delivery_fee_npr: vendor.base_delivery_fee_npr,
     delivery_fee_per_km_npr: vendor.delivery_fee_per_km_npr,
     free_delivery_above_npr: vendor.free_delivery_above_npr,
+    min_order_value: vendor.min_order_value,
   };
 }
 

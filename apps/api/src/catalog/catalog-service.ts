@@ -37,6 +37,8 @@ export interface CatalogVendor {
   readonly municipalityPalika: string;
   readonly minOrderValue: number;
   readonly baseDeliveryFee: number;
+  /** Step 7.2: free delivery from this subtotal; null when none, or under platform delivery. */
+  readonly freeDeliveryAboveNpr: number | null;
   readonly fulfillmentMode: VendorFulfillmentMode;
   readonly location: GeoPoint;
   /** Geodesic distance from the customer (WGS 84 spheroid), in metres. */
@@ -166,6 +168,7 @@ export class CatalogService {
       municipality_palika_string: vendors.municipality_palika_string,
       min_order_value: vendors.min_order_value,
       base_delivery_fee_npr: vendors.base_delivery_fee_npr,
+      free_delivery_above_npr: vendors.free_delivery_above_npr,
       fulfillment_mode: vendors.fulfillment_mode,
       location: vendors.location,
       distance_m:
@@ -268,6 +271,7 @@ function toCatalogVendor(row: {
   municipality_palika_string: string;
   min_order_value: number;
   base_delivery_fee_npr: number;
+  free_delivery_above_npr: number | null;
   fulfillment_mode: VendorFulfillmentMode;
   location: GeoPoint;
   distance_m: number;
@@ -282,6 +286,9 @@ function toCatalogVendor(row: {
     municipalityPalika: row.municipality_palika_string,
     minOrderValue: row.min_order_value,
     baseDeliveryFee: row.base_delivery_fee_npr,
+    // The platform's charge has no threshold: a fleet shop's stored one (always null) is not shown.
+    freeDeliveryAboveNpr:
+      row.fulfillment_mode === 'SELF_DELIVERY' ? row.free_delivery_above_npr : null,
     fulfillmentMode: row.fulfillment_mode,
     location: row.location,
     distanceM: row.distance_m,

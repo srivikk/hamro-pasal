@@ -9,6 +9,7 @@ import {
   deliveryListResponseSchema,
   deliveryResponseSchema,
   feedResponseSchema,
+  feedVendorSchema,
   lockStatusResponseSchema,
   orderDetailResponseSchema,
   otpVerifyResponseSchema,
@@ -116,9 +117,15 @@ describe('feed and menu schemas', () => {
     municipality_palika_string: 'Kathmandu Metropolitan City',
     min_order_value: 500,
     base_delivery_fee_npr: 50,
+    free_delivery_above_npr: null,
     fulfillment_mode: 'SELF_DELIVERY',
     location: { x: 85.3123, y: 27.7154 },
   };
+
+  it('reads a vendor from before step 7.2 as offering no free delivery', () => {
+    const { free_delivery_above_npr: _omitted, ...older } = vendor;
+    expect(feedVendorSchema.parse(older).free_delivery_above_npr).toBeNull();
+  });
 
   it('accept a partitioned feed', () => {
     const body = {

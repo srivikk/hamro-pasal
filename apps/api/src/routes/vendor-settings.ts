@@ -45,6 +45,7 @@ function deliverySettingsView({
     base_delivery_fee_npr: vendor.base_delivery_fee_npr,
     delivery_fee_per_km_npr: vendor.delivery_fee_per_km_npr,
     free_delivery_above_npr: vendor.free_delivery_above_npr,
+    min_order_value: vendor.min_order_value,
     platform: {
       self_delivery_enabled: platform.selfDeliveryEnabled,
       platform_fleet_enabled: platform.platformFleetEnabled,

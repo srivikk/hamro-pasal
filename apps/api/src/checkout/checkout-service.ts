@@ -118,6 +118,8 @@ export interface PlacedOrder {
 export interface CartQuote {
   readonly priced: PricedCart;
   readonly distanceKm: number;
+  /** Step 7.2: the shop's free-delivery threshold; null when none, or under platform delivery. */
+  readonly freeDeliveryThresholdNpr: number | null;
   /** False when delivery is switched off, for everyone or for this shop: checkout would refuse. */
   readonly deliveryAvailable: boolean;
   readonly paymentOptions: readonly {
@@ -381,6 +383,8 @@ export class CheckoutService {
     return {
       priced,
       distanceKm,
+      freeDeliveryThresholdNpr:
+        vendor.fulfillment_mode === 'SELF_DELIVERY' ? vendor.free_delivery_above_npr : null,
       deliveryAvailable,
       paymentOptions: paymentMethods.map((method) => {
         if (!deliveryAvailable) {

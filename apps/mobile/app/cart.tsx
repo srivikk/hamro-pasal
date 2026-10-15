@@ -328,6 +328,16 @@ export default function CartScreen() {
             {t('paymentOptions.saved', { amount: bill.savedNpr })}
           </Text>
         ) : null}
+        {/* Step 7.2: the server's count of what is left to free delivery (judged on the subtotal). */}
+        {quote.data?.free_delivery_remaining_npr == null ? null : (
+          <Text className="text-sm font-semibold text-green-700" testID="cart-free-delivery">
+            {quote.data.free_delivery_remaining_npr > 0
+              ? t('cart.freeDeliveryRemaining', {
+                  amount: quote.data.free_delivery_remaining_npr,
+                })
+              : t('cart.freeDeliveryReached')}
+          </Text>
+        )}
         {deliveryOff ? (
           <Text className="text-sm font-semibold text-red-700" testID="cart-delivery-unavailable">
             {t('cart.deliveryUnavailable')}

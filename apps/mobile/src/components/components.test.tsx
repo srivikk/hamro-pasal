@@ -15,6 +15,7 @@ const vendor: FeedEntry['vendor'] = {
   municipality_palika_string: 'Kathmandu Metropolitan City',
   min_order_value: 500,
   base_delivery_fee_npr: 50,
+  free_delivery_above_npr: null,
   fulfillment_mode: 'SELF_DELIVERY',
   location: { x: 85.3123, y: 27.7154 },
 };

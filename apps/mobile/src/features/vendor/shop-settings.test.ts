@@ -8,10 +8,14 @@ import {
 import {
   addPalika,
   DEFAULT_SHOP_SETTINGS_FORM,
+  deliveryRequestOf,
+  MAX_MIN_ORDER_NPR,
+  validateDeliverySettings,
   formFromSettings,
   MAX_SERVICEABLE_PALIKAS,
   sanitizeAmountInput,
   sanitizeTaxIdInput,
+  shopSettingsSchema,
   validateShopSettings,
   type ShopSettings,
   type ShopSettingsForm,
@@ -32,6 +36,7 @@ const SETTINGS: ShopSettings = {
   baseDeliveryFeeNpr: 0,
   perKmFeeNpr: 0,
   freeDeliveryAboveNpr: null,
+  minOrderValueNpr: 0,
 };
 
 describe('PAN input', () => {
@@ -262,5 +267,41 @@ describe('useVendorShopStore', () => {
     expect(settingsFor(stored, 'vendor-user-2')).toBeNull();
     expect(settingsFor(stored, null)).toBeNull();
     expect(settingsFor(null, 'vendor-user-1')).toBeNull();
+  });
+});
+
+describe('the minimum order value (step 7.2)', () => {
+  const form = (minOrder: string, freeAbove = ''): ShopSettingsForm => ({
+    ...DEFAULT_SHOP_SETTINGS_FORM,
+    minOrder,
+    freeAbove,
+  });
+
+  it('is sent with the delivery settings, blank meaning none', () => {
+    const result = validateDeliverySettings(form('500', '1000'));
+    if (!result.ok) throw new Error('expected valid settings');
+    expect(deliveryRequestOf(result.settings)).toMatchObject({
+      min_order_value: 500,
+      free_delivery_above_npr: 1000,
+    });
+    const blank = validateDeliverySettings(form(''));
+    expect(blank.ok && blank.settings.minOrderValueNpr).toBe(0);
+  });
+
+  it('refuses free delivery at or below it, and more than the maximum', () => {
+    expect(validateDeliverySettings(form('1000', '1000'))).toEqual({
+      ok: false,
+      errors: { freeAbove: 'freeBelowMinimum' },
+    });
+    expect(validateDeliverySettings(form(String(MAX_MIN_ORDER_NPR + 1)))).toEqual({
+      ok: false,
+      errors: { minOrder: 'amount' },
+    });
+    expect(validateDeliverySettings(form(String(MAX_MIN_ORDER_NPR))).ok).toBe(true);
+  });
+
+  it('reads settings saved before the field as no minimum', () => {
+    const { minOrderValueNpr: _dropped, ...older } = SETTINGS;
+    expect(shopSettingsSchema.parse(older).minOrderValueNpr).toBe(0);
   });
 });

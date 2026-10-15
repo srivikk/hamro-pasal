@@ -11,6 +11,7 @@ import { Router } from 'express';
 import type { CheckoutService } from '../checkout/checkout-service';
 import { authOf } from '../http/auth';
 import { pricedCartView } from '../checkout/pricing';
+import { toNpr, toPaisa } from '../ledger/money';
 import { parseInput } from '../http/validate';
 import { lockView, orderView } from './views';
 
@@ -24,6 +25,14 @@ export function cartRouter(checkout: CheckoutService): Router {
     const quote = await checkout.quote(authOf(req).userId, request);
     const body: CartQuoteResponseBody = {
       ...pricedCartView(quote.priced),
+      // Judged on the subtotal before discounts, as the delivery charge is (SPEC core 2).
+      free_delivery_threshold_npr: quote.freeDeliveryThresholdNpr,
+      free_delivery_remaining_npr:
+        quote.freeDeliveryThresholdNpr === null
+          ? null
+          : toNpr(
+              Math.max(0, toPaisa(quote.freeDeliveryThresholdNpr) - quote.priced.subtotalPaisa),
+            ),
       distance_km: Math.round(quote.distanceKm * 1000) / 1000,
       delivery_available: quote.deliveryAvailable,
       payment_options: [...quote.paymentOptions],

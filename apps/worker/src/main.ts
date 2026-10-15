@@ -29,6 +29,7 @@ import { mockPushLogFromEnv, pushGatewayFromEnv } from './push/mock-push';
 import { OutboxRelay } from './outbox/outbox-relay';
 import { allTimerQueues, createTimerQueues, registerMidnightJobs } from './queues/definitions';
 import { createProcessors, createTimerHandlers } from './queues/processors';
+import { VendorAcceptanceExpiryService } from './sla/vendor-acceptance-expiry';
 import { VendorEscalationService } from './sla/vendor-escalation';
 import { VendorDebtReconciliationService } from './wallet/vendor-debt-reconciliation';
 
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
   const processors = createProcessors(
     createTimerHandlers({
       escalation: new VendorEscalationService(db),
+      acceptanceExpiry: new VendorAcceptanceExpiryService(db),
       debtReconciliation: new VendorDebtReconciliationService(db),
       complianceSweep: new ComplianceSweepService(db),
       billingRenewal: new BillingCycleRenewalService(db),

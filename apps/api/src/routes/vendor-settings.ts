@@ -1,5 +1,8 @@
 import {
+  availabilityRequestSchema,
   billingChangeRequestSchema,
+  openingHoursRequestSchema,
+  type OpeningHoursResponseBody,
   deliverySettingsRequestSchema,
   idParamSchema,
   MAX_PAN_DOCUMENT_BYTES,
@@ -17,6 +20,7 @@ import { Router, type Request } from 'express';
 import { auditActorOf, auditContextOf } from '../http/request-context';
 import { parseInput } from '../http/validate';
 import { missingFile, singleImageUpload, storedImageOf } from '../uploads/image-upload';
+import type { VendorAvailabilityService } from '../vendor/vendor-availability-service';
 import type { VendorBillingService } from '../vendor/vendor-billing-service';
 import type { VendorComplianceService } from '../vendor/vendor-compliance-service';
 import {
@@ -26,6 +30,8 @@ import {
 } from '../vendor/vendor-delivery-settings-service';
 
 export interface VendorSettingsServices {
+  /** Step 7.3: opening hours and the Open / Closed switch. */
+  readonly availability: VendorAvailabilityService;
   readonly billing: VendorBillingService;
   readonly compliance: VendorComplianceService;
   readonly deliverySettings: VendorDeliverySettingsService;
@@ -70,6 +76,7 @@ function vendorActor(req: Request): AuditActor & { kind: 'USER' } {
 export function vendorSettingsRouter({
   billing,
   compliance,
+  availability,
   deliverySettings,
 }: VendorSettingsServices): Router {
   const router = Router();
@@ -141,6 +148,33 @@ export function vendorSettingsRouter({
       has_pan_document: vendor.pan_document_url !== null,
     };
     res.json(body);
+  });
+
+  // Step 7.3 (SPEC core 11): the weekly hours, and the switch over them.
+  router.get('/opening-hours', async (req, res) => {
+    const { vendorId, ranges } = await availability.hours(vendorActor(req).user_id);
+    const body: OpeningHoursResponseBody = { vendor_id: vendorId, ranges };
+    res.json(body);
+  });
+
+  router.put('/opening-hours', async (req, res) => {
+    const input = parseInput(openingHoursRequestSchema, req.body);
+    const { vendorId, ranges } = await availability.setHours(
+      vendorActor(req),
+      input.ranges,
+      auditContextOf(req, res),
+    );
+    const body: OpeningHoursResponseBody = { vendor_id: vendorId, ranges };
+    res.json(body);
+  });
+
+  router.get('/availability', async (req, res) => {
+    res.json(await availability.availability(vendorActor(req).user_id));
+  });
+
+  router.put('/availability', async (req, res) => {
+    const input = parseInput(availabilityRequestSchema, req.body);
+    res.json(await availability.setAvailability(vendorActor(req), input, auditContextOf(req, res)));
   });
 
   router.get('/delivery-settings', async (req, res) => {

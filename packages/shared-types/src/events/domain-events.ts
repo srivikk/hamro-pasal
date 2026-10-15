@@ -210,6 +210,17 @@ export const vendorReactivatedPayloadSchema = z.strictObject({
   reactivated_at: z.iso.datetime(),
 });
 
+/**
+ * Step 7.3 (SPEC core 11): the shop missed or rejected too many orders in a row and was paused.
+ * Written once per pause, in the transaction of the order that crossed the threshold.
+ */
+export const vendorAutoPausedPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  vendor_phone: nepalPhoneSchema,
+  missed_orders: z.number().int().positive(),
+  paused_at: z.iso.datetime(),
+});
+
 /** SPEC core 8 (Phase 35): an ad's paid period is over. Written once, when it becomes ENDED. */
 export const marketingAdEndedPayloadSchema = z.strictObject({
   ad_purchase_id: z.uuid(),
@@ -341,6 +352,10 @@ export const vendorReactivatedEventSchema = envelope(
   'vendor.reactivated',
   vendorReactivatedPayloadSchema,
 );
+export const vendorAutoPausedEventSchema = envelope(
+  'vendor.auto_paused',
+  vendorAutoPausedPayloadSchema,
+);
 export const marketingAdEndedEventSchema = envelope(
   'marketing.ad_ended',
   marketingAdEndedPayloadSchema,
@@ -368,6 +383,7 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   vendorComplianceRestoredEventSchema,
   vendorDeactivatedEventSchema,
   vendorReactivatedEventSchema,
+  vendorAutoPausedEventSchema,
   marketingAdEndedEventSchema,
   marketingAdPausedEventSchema,
   marketingCampaignTermsChangedEventSchema,
@@ -388,6 +404,7 @@ export type VendorSuspendedForComplianceEvent = z.infer<
 export type VendorComplianceRestoredEvent = z.infer<typeof vendorComplianceRestoredEventSchema>;
 export type VendorDeactivatedEvent = z.infer<typeof vendorDeactivatedEventSchema>;
 export type VendorReactivatedEvent = z.infer<typeof vendorReactivatedEventSchema>;
+export type VendorAutoPausedEvent = z.infer<typeof vendorAutoPausedEventSchema>;
 export type MarketingAdEndedEvent = z.infer<typeof marketingAdEndedEventSchema>;
 export type MarketingAdPausedEvent = z.infer<typeof marketingAdPausedEventSchema>;
 export type MarketingCampaignTermsChangedEvent = z.infer<
@@ -414,6 +431,7 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'vendor.compliance_restored': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.deactivated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.reactivated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.auto_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_ended': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.campaign_terms_changed': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,

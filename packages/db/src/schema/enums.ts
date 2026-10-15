@@ -1,5 +1,6 @@
 import {
   accountStatuses,
+  availabilityOverrides,
   deadLetterStatuses,
   deliveryStates,
   deliveryScopes,
@@ -47,3 +48,4 @@ export const languagePreferenceEnum = pgEnum('language_preference', languagePref
 export const accountStatusEnum = pgEnum('account_status', accountStatuses);
 export const notificationAudienceEnum = pgEnum('notification_audience', notificationAudiences);
 export const notificationSourceEnum = pgEnum('notification_source', notificationSources);
+export const availabilityOverrideEnum = pgEnum('availability_override', availabilityOverrides);

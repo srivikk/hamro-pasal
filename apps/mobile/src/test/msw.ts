@@ -11,6 +11,7 @@ import { useCartStore } from '../store/useCartStore';
 import { useCheckoutStore } from '../store/useCheckoutStore';
 import { toNpr, toPaisa } from '../lib/money';
 import { cartQuote, THAMEL_ADDRESS, vendorMenu } from './api-fixtures';
+import { useVendorShopStore } from '../store/useVendorShopStore';
 
 export const apiUrl = (path: string): string => `${API_URL}${path}`;
 
@@ -28,6 +29,20 @@ export const apiUrl = (path: string): string => `${API_URL}${path}`;
  *   account, so every sign-in test would otherwise need its own handler. The same handlers a
  *   development build can run on the device (src/mocks).
  */
+function availabilityAnswer(mode: 'AUTO' | 'OPEN' | 'CLOSED') {
+  const open = mode !== 'CLOSED';
+  return {
+    vendor_id: '7b1f0c8e-0000-4000-8000-0000000000aa',
+    mode,
+    override_until: null,
+    has_hours: false,
+    auto_paused_at: null,
+    consecutive_missed_orders: 0,
+    open_now: open,
+    closed_reason: open ? null : 'OVERRIDE',
+  };
+}
+
 export const server = setupServer(
   http.get(apiUrl('/api/categories'), () => HttpResponse.json({ categories: [] })),
   // Home always asks for the admin's promotions; none by default.
@@ -81,6 +96,15 @@ export const server = setupServer(
       fulfillment_mode_enabled: true,
     }),
   ),
+  // Step 7.3: the header's switch. Answers what the phone already believes, so a test that set
+  // the shop offline on the phone keeps seeing it offline; a PUT is answered as the server would.
+  http.get(apiUrl('/api/vendor/availability'), () =>
+    HttpResponse.json(availabilityAnswer(useVendorShopStore.getState().online ? 'AUTO' : 'CLOSED')),
+  ),
+  http.put(apiUrl('/api/vendor/availability'), async ({ request }) => {
+    const { mode } = (await request.json()) as { mode: 'AUTO' | 'OPEN' | 'CLOSED' };
+    return HttpResponse.json(availabilityAnswer(mode));
+  }),
   // The shop page reads its products' categories from the public list; none by default.
   http.get(apiUrl('/api/products'), () => HttpResponse.json({ products: [], next_cursor: null })),
   ...accountMockHandlers({ baseUrl: API_URL }),

@@ -150,7 +150,13 @@ describe('feed and menu schemas', () => {
       delivery_available: true,
     };
 
-    expect(feedResponseSchema.parse(body)).toEqual(body);
+    // Step 7.3: an older server's entries read as open (open_now true, no closed reason).
+    const open = { open_now: true, closed_reason: null };
+    expect(feedResponseSchema.parse(body)).toEqual({
+      ...body,
+      serviceable: body.serviceable.map((entry) => ({ ...entry, ...open })),
+      explore_further: body.explore_further.map((entry) => ({ ...entry, ...open })),
+    });
   });
 
   it('reject vendor fields the feed must not expose', () => {

@@ -1,7 +1,7 @@
 import { enqueueDomainEvent, orders, outboxEvents, vendors, type Database } from '@hamro-pasal/db';
 import {
   VENDOR_ACCEPTANCE_TIMEOUT_MS,
-  type VendorAcceptanceTimeoutJob,
+  type VendorAcceptanceTimeoutJobInput,
 } from '@hamro-pasal/shared-types';
 import { and, eq } from 'drizzle-orm';
 
@@ -33,7 +33,7 @@ export class VendorEscalationService {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  escalateIfUnanswered(job: VendorAcceptanceTimeoutJob): Promise<VendorEscalationOutcome> {
+  escalateIfUnanswered(job: VendorAcceptanceTimeoutJobInput): Promise<VendorEscalationOutcome> {
     return this.db.transaction(async (tx) => {
       const [row] = await tx
         .select({ order: orders, vendorPhone: vendors.phone })

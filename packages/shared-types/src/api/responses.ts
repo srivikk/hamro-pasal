@@ -11,6 +11,7 @@ import {
   paymentMethodSchema,
   paymentStatusSchema,
   reviewDirectionSchema,
+  shopClosedReasonSchema,
   userRoleSchema,
   vendorFulfillmentModeSchema,
   vendorStatusSchema,
@@ -175,6 +176,12 @@ export const feedEntrySchema = z.strictObject({
    * exactly these. Defaults to false, so a response from before the field reads as "not an ad".
    */
   is_sponsored: z.boolean().default(false),
+  /**
+   * Step 7.3: false while the shop is outside its opening hours, switched Closed, or auto-paused;
+   * it is then listed as closed with carts disabled. Default true for an older API.
+   */
+  open_now: z.boolean().default(true),
+  closed_reason: shopClosedReasonSchema.nullable().default(null),
 });
 export type FeedEntry = z.infer<typeof feedEntrySchema>;
 
@@ -219,6 +226,9 @@ export const vendorMenuSchema = z.strictObject({
    * the Emergency Stop). The menu can be browsed; nothing can be ordered.
    */
   delivery_available: z.boolean().default(true),
+  /** Step 7.3: as on the feed entry. Default true for an older API. */
+  open_now: z.boolean().default(true),
+  closed_reason: shopClosedReasonSchema.nullable().default(null),
   products: z.array(menuProductSchema),
 });
 export type VendorMenu = z.infer<typeof vendorMenuSchema>;

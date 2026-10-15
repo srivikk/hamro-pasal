@@ -152,11 +152,15 @@ export default function VendorMenuScreen() {
   };
 
   // Why nothing can be ordered right now; also what the detail sheet says instead of adding.
+  // Step 7.3: outside its hours, switched Closed, or auto-paused, the shop takes no order.
+  const closed = !menu.data.open_now;
   const blocked = !serviceable
     ? t('menu.notServiceable')
-    : checkoutPending
-      ? t('menu.checkoutPending')
-      : null;
+    : closed
+      ? t(menu.data.closed_reason === 'AUTO_PAUSED' ? 'menu.paused' : 'menu.closedNow')
+      : checkoutPending
+        ? t('menu.checkoutPending')
+        : null;
   const banner = blocked ?? notice;
   // The empty search field suggests this shop's own subcategories, one at a time.
   const categoryHints = sections

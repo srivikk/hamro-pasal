@@ -472,7 +472,8 @@ describe('orderPushNotificationConsumer', () => {
     await handlers.get('order.lifecycle')?.(kafkaMessage(event));
 
     expect(published).toHaveLength(1); // the Socket.io fan-out went out
-    expect(scheduled).toEqual([event.payload.order_id]); // the 90 s timer was scheduled
+    // The 90 s escalation and the 5-minute expiry were scheduled (step 7.3).
+    expect(scheduled).toEqual([event.payload.order_id, event.payload.order_id]);
     expect(expo.calls).toHaveLength(1); // the push was attempted, and its failure swallowed
     expect(errors).toHaveBeenCalledTimes(1);
     errors.mockRestore();

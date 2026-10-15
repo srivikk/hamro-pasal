@@ -1,6 +1,6 @@
 import { VENDOR_WALLET_HARD_FLOOR_NPR } from '@hamro-pasal/shared-types';
 import { sql } from 'drizzle-orm';
-import { boolean, check, pgTable, timestamp } from 'drizzle-orm/pg-core';
+import { boolean, check, integer, pgTable, timestamp } from 'drizzle-orm/pg-core';
 
 import { npr } from './columns';
 
@@ -16,10 +16,22 @@ export const platformSettings = pgTable(
     platform_fleet_enabled: boolean().notNull().default(true),
     // What a customer pays for a platform fleet delivery.
     platform_delivery_fee_npr: npr().notNull().default(50),
+    // Step 7.3 (SPEC core 11): checkout stops this many minutes before a shop closes, and this
+    // many missed or rejected orders in a row pause a shop.
+    last_order_minutes_before_close: integer().notNull().default(15),
+    auto_pause_threshold: integer().notNull().default(3),
     updated_at: timestamp({ withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (t) => [
     check('platform_settings_singleton_check', sql`${t.id}`),
+    check(
+      'platform_settings_last_order_check',
+      sql`${t.last_order_minutes_before_close} BETWEEN 0 AND 120`,
+    ),
+    check(
+      'platform_settings_auto_pause_threshold_check',
+      sql`${t.auto_pause_threshold} BETWEEN 1 AND 20`,
+    ),
     check('platform_settings_delivery_fee_check', sql`${t.platform_delivery_fee_npr} >= 0`),
     // Configurable, but never looser than the hard floor enforced on vendors.
     check(

@@ -1,12 +1,5 @@
-import {
-  enqueueDomainEvent,
-  orderAddresses,
-  orderItems,
-  orders,
-  products,
-  type Database,
-  type Transaction,
-} from '@hamro-pasal/db';
+import { orderAddresses, orderItems, orders, type Database } from '@hamro-pasal/db';
+import { cancelPlacedOrder } from '@hamro-pasal/ledger';
 import {
   ORDER_CANCELLATION_WINDOW_SECONDS,
   type Order,
@@ -17,9 +10,6 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { OrderNotFoundError } from '../checkout/checkout-service';
 import type { InventoryLockService } from '../inventory/inventory-lock-service';
-import { toNpr } from '../ledger/money';
-import { orderTotalPaisa } from '../payments/payment-confirmation';
-import { enqueueOrderStateChanged } from './order-events';
 
 /** Customer journey 8: the 60 s window, measured on the database clock, has closed. */
 export class CancellationWindowExpiredError extends Error {
@@ -140,60 +130,8 @@ export class OrderService {
   }
 }
 
-/**
- * Cancels an order that was placed (its stock already permanently decremented), inside the
- * caller's transaction, which must hold the order row `FOR UPDATE`. Shared by the customer's
- * cancellation and the vendor's rejection, so both have identical effects:
- *   - the stock is added back per order line;
- *   - the state becomes CANCELED and `order.state_changed` is written to the outbox;
- *   - a PAID order is flagged `refund_required` and `order.canceled_refund_due` is written in
- *     the same commit (the escrow refund flow consumes it).
- */
-export async function cancelPlacedOrder(tx: Transaction, order: Order): Promise<Order> {
-  const lines = await tx
-    .select({ productId: orderItems.product_id, quantity: orderItems.quantity })
-    .from(orderItems)
-    .where(eq(orderItems.order_id, order.id))
-    .orderBy(asc(orderItems.product_id)); // stable lock order across concurrent restocks
-  for (const line of lines) {
-    await tx
-      .update(products)
-      .set({ stock_quantity: sql`${products.stock_quantity} + ${line.quantity}` })
-      .where(and(eq(products.id, line.productId), eq(products.vendor_id, order.vendor_id)));
-  }
-
-  const refundRequired = order.payment_status === 'PAID';
-  const [canceled] = await tx
-    .update(orders)
-    .set({ state: 'CANCELED', refund_required: refundRequired })
-    .where(eq(orders.id, order.id))
-    .returning();
-  if (canceled === undefined) {
-    throw new Error(`Order ${order.id} disappeared during cancellation`);
-  }
-  // Every cancellation, COD included, is announced (the refund event below is extra).
-  await enqueueOrderStateChanged(tx, order.state, canceled);
-
-  if (refundRequired) {
-    if (canceled.payment_method === 'COD' || canceled.payment_gateway_ref === null) {
-      throw new Error(`Order ${order.id} is PAID without a gateway payment`);
-    }
-    await enqueueDomainEvent(tx, {
-      type: 'order.canceled_refund_due',
-      aggregateId: canceled.id,
-      payload: {
-        order_id: canceled.id,
-        vendor_id: canceled.vendor_id,
-        customer_id: canceled.customer_id,
-        payment_method: canceled.payment_method,
-        payment_gateway_ref: canceled.payment_gateway_ref,
-        refund_amount_npr: toNpr(orderTotalPaisa(canceled)),
-        canceled_at: canceled.updated_at.toISOString(),
-      },
-    });
-  }
-  return canceled;
-}
+/** Moved to @hamro-pasal/ledger in step 7.3 (the worker's 5-minute auto-cancel shares it). */
+export { cancelPlacedOrder };
 
 /**
  * After a cancellation commits. Claiming the lock already deleted it; this only clears a hold whose

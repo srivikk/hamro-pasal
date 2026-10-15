@@ -277,10 +277,15 @@ describe('vendor acceptance SLA (real PostgreSQL + BullMQ)', () => {
       await scheduler().handle(await placedMessage(orderId, vendorId, placedAt));
 
       const job = await queues.vendorAcceptance.getJob(orderId);
-      expect(job?.data).toEqual({ order_id: orderId, vendor_id: vendorId });
+      expect(job?.data).toEqual({ order_id: orderId, vendor_id: vendorId, kind: 'ESCALATE' });
       expect(await job?.getState()).toBe('delayed');
       const firesAt = (job?.timestamp ?? 0) + (job?.opts.delay ?? 0);
       expect(Math.abs(firesAt - (placedAt.getTime() + 90_000))).toBeLessThan(1_000);
+      // Step 7.3: the 5-minute expiry is its own job, keyed apart from the escalation.
+      const expire = await queues.vendorAcceptance.getJob(`expire-${orderId}`);
+      expect(expire?.data).toEqual({ order_id: orderId, vendor_id: vendorId, kind: 'EXPIRE' });
+      const expiresAt = (expire?.timestamp ?? 0) + (expire?.opts.delay ?? 0);
+      expect(Math.abs(expiresAt - (placedAt.getTime() + 300_000))).toBeLessThan(1_000);
       expect(firesAt - before).toBeGreaterThan(85_000);
       expect(await escalations(orderId)).toEqual([]);
 

@@ -67,6 +67,7 @@ import { vendorFinanceRouter } from './routes/vendor-finance';
 import { vendorInvoicesRouter, vendorOffersRouter } from './routes/vendor-invoices-offers';
 import { vendorOrdersRouter } from './routes/vendor-orders';
 import { vendorSettingsRouter } from './routes/vendor-settings';
+import type { VendorAvailabilityService } from './vendor/vendor-availability-service';
 import { vendorWalletRouter } from './routes/vendor-wallet';
 import { vendorsRouter } from './routes/vendors';
 import { LocalEvidenceStorage, type EvidenceStorage } from './uploads/evidence-storage';
@@ -114,6 +115,7 @@ export interface ApiServices {
   readonly vendorBilling: VendorBillingService;
   readonly vendorCompliance: VendorComplianceService;
   readonly vendorDeliverySettings: VendorDeliverySettingsService;
+  readonly vendorAvailability: VendorAvailabilityService;
   /** Phase 26: the audit trail's read side, the logistics settings and PAN verification. */
   readonly adminAuditLogs: AuditLogService;
   readonly adminLogistics: LogisticsSettingsService;
@@ -254,6 +256,7 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
         billing: services.vendorBilling,
         compliance: services.vendorCompliance,
         deliverySettings: services.vendorDeliverySettings,
+        availability: services.vendorAvailability,
       }),
     );
     // Before the customer catalogue under /api/vendors, which would otherwise claim these paths.

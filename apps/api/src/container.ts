@@ -32,6 +32,7 @@ import { VendorBillingService } from './vendor/vendor-billing-service';
 import { VendorComplianceService } from './vendor/vendor-compliance-service';
 import { VendorDeactivationService } from './vendor/vendor-deactivation-service';
 import { VendorDeliverySettingsService } from './vendor/vendor-delivery-settings-service';
+import { VendorAvailabilityService } from './vendor/vendor-availability-service';
 import { RedisKeyedMutex } from './infra/redis-mutex';
 import { RedisConnectionPool } from './infra/redis-pool';
 import {
@@ -227,6 +228,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     vendorBilling: new VendorBillingService(infra.db),
     vendorCompliance: new VendorComplianceService(infra.db, infra.kycDocuments),
     vendorDeliverySettings: new VendorDeliverySettingsService(infra.db),
+    vendorAvailability: new VendorAvailabilityService(infra.db),
     adminAuditLogs: new AuditLogService(infra.db),
     adminLogistics: new LogisticsSettingsService(infra.db),
     adminCompliance: new AdminComplianceService(infra.db, infra.kycDocuments),

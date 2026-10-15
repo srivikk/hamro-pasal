@@ -281,6 +281,13 @@
       "when": 1792063929739,
       "tag": "0039_step1_foundations",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1792069460583,
+      "tag": "0040_opening_hours_auto_pause",
+      "breakpoints": true
     }
   ]
 }

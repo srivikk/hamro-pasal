@@ -37,7 +37,7 @@ import { toNpr, toPaisa } from '../ledger/money';
 import { reviewIsPublic } from '../reviews/review-visibility';
 import { enqueueOrderStateChanged } from '../orders/order-events';
 import { generateDeliveryOtp, hashDeliveryOtp } from './delivery-otp';
-import { deliversTo, enabledModes } from '../catalog/catalog-service';
+import { closedReason, deliversTo, enabledModes } from '../catalog/catalog-service';
 import {
   CheckoutRejectedError,
   priceCart,
@@ -426,6 +426,16 @@ export class CheckoutService {
         );
       }
       throw new CheckoutRejectedError('VENDOR_UNAVAILABLE', 'This vendor is not accepting orders');
+    }
+    // Step 7.3: outside its hours, switched Closed, or auto-paused, a shop takes no order.
+    const [open] = await this.db
+      .select({ reason: closedReason() })
+      .from(vendors)
+      .where(eq(vendors.id, vendor.id));
+    if (open?.reason != null) {
+      throw new CheckoutRejectedError('VENDOR_UNAVAILABLE', 'This shop is closed right now', {
+        reason: open.reason,
+      });
     }
     const address = request.delivery_address;
     const [area] = await this.db

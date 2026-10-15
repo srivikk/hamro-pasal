@@ -21,6 +21,7 @@ export type VendorNoticeEvent = Extract<
       | 'vendor.compliance_restored'
       | 'vendor.deactivated'
       | 'vendor.reactivated'
+      | 'vendor.auto_paused'
       | 'marketing.ad_ended'
       | 'marketing.ad_paused'
       | 'marketing.campaign_terms_changed';
@@ -32,6 +33,7 @@ const NOTICE_EVENT_TYPES: ReadonlySet<string> = new Set<VendorNoticeEvent['event
   'vendor.compliance_restored',
   'vendor.deactivated',
   'vendor.reactivated',
+  'vendor.auto_paused',
   'marketing.ad_ended',
   'marketing.ad_paused',
   'marketing.campaign_terms_changed',
@@ -179,6 +181,16 @@ function wordingOf(event: VendorNoticeEvent): Wording {
         push: {
           title: 'Your shop is reopened',
           body: 'It stays offline until a PAN is on file. Please sign in and add your PAN in Shop settings.',
+        },
+      };
+    case 'vendor.auto_paused':
+      return {
+        sms:
+          `Hamro Pasal: your shop is paused because ${String(event.payload.missed_orders)} orders in a ` +
+          'row were not accepted. Please open the app and switch your shop back on when you are ready.',
+        push: {
+          title: 'Your shop is paused',
+          body: `${String(event.payload.missed_orders)} orders in a row were not accepted. Please switch your shop back on when ready.`,
         },
       };
     case 'marketing.ad_ended': {

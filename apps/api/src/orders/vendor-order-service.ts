@@ -14,6 +14,7 @@ import {
   type OrderItem,
   type OrderState,
 } from '@hamro-pasal/shared-types';
+import { recordMissedOrder, resetMissedOrders } from '@hamro-pasal/ledger';
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 
 import { OrderNotFoundError } from '../checkout/checkout-service';
@@ -181,6 +182,8 @@ export class VendorOrderService {
         .returning();
       if (accepted === undefined) throw new Error(`Order ${orderId} disappeared during accept`);
       await enqueueOrderStateChanged(tx, order.state, accepted);
+      // Step 7.3: an accepted order ends a run of missed ones (Auto-Pause counts in a row).
+      await resetMissedOrders(tx, order.vendor_id);
       return { order: accepted, replayed: false };
     });
   }
@@ -197,7 +200,14 @@ export class VendorOrderService {
       if (order.state === 'CANCELED') return { order, replayed: true };
       if (order.state !== 'PLACED')
         throw new OrderDecisionConflictError(orderId, 'reject', order.state);
-      return { order: await cancelPlacedOrder(tx, order), replayed: false };
+      const canceled = await cancelPlacedOrder(tx, order);
+      // Step 7.3: a rejection counts as missed; the third in a row pauses the shop.
+      await recordMissedOrder(tx, order.vendor_id, {
+        kind: 'USER',
+        user_id: vendorUserId,
+        role: 'VENDOR',
+      });
+      return { order: canceled, replayed: false };
     });
     if (!result.replayed) await releaseLingeringHold(this.locks, result.order);
     return result;

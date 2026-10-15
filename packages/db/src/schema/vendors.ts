@@ -16,7 +16,9 @@ import {
   jsonb,
   numeric,
   pgTable,
+  smallint,
   text,
+  time,
   timestamp,
   unique,
   uuid,
@@ -25,6 +27,7 @@ import {
 import { categories } from './categories';
 import { createdAt, geoPoint, npr, primaryId, updatedAt } from './columns';
 import {
+  availabilityOverrideEnum,
   deliveryScopeEnum,
   fulfillmentModeEnum,
   paymentMethodEnum,
@@ -106,6 +109,12 @@ export const vendors = pgTable(
     settlement_model: settlementModelEnum().notNull().default('PLATFORM_ESCROW'),
     billing_cycle_started_at: timestamp({ withTimezone: true, mode: 'date' }),
     billing_cycle_ends_at: timestamp({ withTimezone: true, mode: 'date' }),
+    // Step 7.3 (SPEC core 11). Whether the shop is open is derived from these and the opening
+    // hours on every read; nothing flips a flag at opening or closing time.
+    availability_override: availabilityOverrideEnum().notNull().default('NONE'),
+    availability_override_until: timestamp({ withTimezone: true, mode: 'date' }),
+    auto_paused_at: timestamp({ withTimezone: true, mode: 'date' }),
+    consecutive_missed_orders: integer().notNull().default(0),
     created_at: createdAt(),
     updated_at: updatedAt(),
   },
@@ -203,6 +212,11 @@ export const vendors = pgTable(
       'vendors_billing_cycle_check',
       sql`(${t.billing_cycle_started_at} IS NULL) = (${t.billing_cycle_ends_at} IS NULL) AND (${t.billing_cycle_ends_at} IS NULL OR ${t.billing_cycle_ends_at} > ${t.billing_cycle_started_at})`,
     ),
+    check(
+      'vendors_availability_override_check',
+      sql`${t.availability_override} <> 'NONE' OR ${t.availability_override_until} IS NULL`,
+    ),
+    check('vendors_consecutive_missed_orders_check', sql`${t.consecutive_missed_orders} >= 0`),
     check('vendors_delivery_fee_per_km_check', sql`${t.delivery_fee_per_km_npr} >= 0`),
     check(
       'vendors_free_delivery_above_check',
@@ -272,3 +286,27 @@ export const products = pgTable(
  * GIN index to serve it.
  */
 export const productSearchDocument = sql`to_tsvector('simple', ${products.name} || ' ' || coalesce(${products.description}, ''))`;
+
+/**
+ * Step 7.3 (SPEC core 11): a shop's weekly opening hours, Asia/Kathmandu wall clock. A range whose
+ * closing time is before its opening time runs past midnight and belongs to the weekday it starts
+ * on. No row at all means "no hours": the shop is open whenever its switch is on.
+ */
+export const vendorOpeningHours = pgTable(
+  'vendor_opening_hours',
+  {
+    id: primaryId(),
+    vendor_id: uuid()
+      .notNull()
+      .references(() => vendors.id, { onDelete: 'cascade' }),
+    weekday: smallint().notNull(),
+    opens_at: time().notNull(),
+    closes_at: time().notNull(),
+    created_at: createdAt(),
+  },
+  (t) => [
+    index('vendor_opening_hours_vendor_idx').on(t.vendor_id, t.weekday),
+    check('vendor_opening_hours_weekday_check', sql`${t.weekday} BETWEEN 0 AND 6`),
+    check('vendor_opening_hours_range_check', sql`${t.opens_at} <> ${t.closes_at}`),
+  ],
+);

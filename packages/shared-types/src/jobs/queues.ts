@@ -16,6 +16,8 @@ export const JOB_QUEUES = {
 export type JobQueueName = (typeof JOB_QUEUES)[keyof typeof JOB_QUEUES];
 
 export const VENDOR_ACCEPTANCE_TIMEOUT_MS = 90 * 1000;
+/** Step 7.3 (decided 2026-10-15): the acceptance window; an order still PLACED is cancelled. */
+export const VENDOR_ACCEPTANCE_EXPIRY_MS = 5 * 60 * 1000;
 export const GHOST_CUSTOMER_TIMER_MS = 8 * 60 * 1000;
 
 /** Nepal Standard Time (UTC+05:45). "Midnight" in SPEC means Kathmandu midnight. */
@@ -69,8 +71,15 @@ export type MidnightTask = z.infer<typeof midnightTaskSchema>;
 export const vendorAcceptanceTimeoutJobSchema = z.strictObject({
   order_id: z.uuid(),
   vendor_id: z.uuid(),
+  /**
+   * Step 7.3: ESCALATE at 90 s (the IVR / SMS alert), EXPIRE at 5 minutes (the order is cancelled
+   * and counts as missed). A job from before the field is an escalation.
+   */
+  kind: z.enum(['ESCALATE', 'EXPIRE']).default('ESCALATE'),
 });
 export type VendorAcceptanceTimeoutJob = z.infer<typeof vendorAcceptanceTimeoutJobSchema>;
+/** What a scheduler is given: `kind` may be left out (an escalation). */
+export type VendorAcceptanceTimeoutJobInput = z.input<typeof vendorAcceptanceTimeoutJobSchema>;
 
 export const ghostCustomerTimerJobSchema = z.strictObject({
   order_id: z.uuid(),

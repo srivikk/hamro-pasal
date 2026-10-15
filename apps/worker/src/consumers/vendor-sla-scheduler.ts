@@ -1,4 +1,8 @@
-import { KAFKA_TOPICS, type VendorAcceptanceTimeoutJob } from '@hamro-pasal/shared-types';
+import {
+  KAFKA_TOPICS,
+  type VendorAcceptanceTimeoutJob,
+  type VendorAcceptanceTimeoutJobInput,
+} from '@hamro-pasal/shared-types';
 import type { Queue } from 'bullmq';
 
 import { scheduleVendorAcceptanceTimeout, vendorAcceptanceDelayMs } from '../queues/definitions';
@@ -7,7 +11,7 @@ import type { KafkaConsumerDefinition } from './types';
 
 /** Schedules the 90 s acceptance timer of one order (a BullMQ delayed job keyed by order id). */
 export interface VendorAcceptanceTimerScheduler {
-  schedule(job: VendorAcceptanceTimeoutJob, placedAt: Date): Promise<void>;
+  schedule(job: VendorAcceptanceTimeoutJobInput, placedAt: Date): Promise<void>;
 }
 
 /** The BullMQ implementation: the job fires at placed_at + 90 s (at once if that has passed). */
@@ -17,11 +21,11 @@ export class BullVendorAcceptanceTimers implements VendorAcceptanceTimerSchedule
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  schedule(job: VendorAcceptanceTimeoutJob, placedAt: Date): Promise<void> {
+  schedule(job: VendorAcceptanceTimeoutJobInput, placedAt: Date): Promise<void> {
     return scheduleVendorAcceptanceTimeout(
       this.queue,
       job,
-      vendorAcceptanceDelayMs(placedAt, this.now()),
+      vendorAcceptanceDelayMs(placedAt, this.now(), job.kind ?? 'ESCALATE'),
     );
   }
 }
@@ -60,10 +64,11 @@ export function vendorSlaSchedulerConsumer(deps: VendorSlaSchedulerDeps): KafkaC
         onInvalid(`order ${payload.order_id} became PLACED without placed_at`);
         return;
       }
-      await deps.timers.schedule(
-        { order_id: payload.order_id, vendor_id: payload.vendor_id },
-        new Date(payload.placed_at),
-      );
+      const placedAt = new Date(payload.placed_at);
+      const order = { order_id: payload.order_id, vendor_id: payload.vendor_id };
+      // 90 s: the IVR / SMS alert. Step 7.3: 5 minutes, the order is cancelled and counts as missed.
+      await deps.timers.schedule({ ...order, kind: 'ESCALATE' }, placedAt);
+      await deps.timers.schedule({ ...order, kind: 'EXPIRE' }, placedAt);
     },
   };
 }

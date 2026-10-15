@@ -58,6 +58,8 @@ describe('VendorCard', () => {
           serviceable: true,
           delivery_available: true,
           is_sponsored: false,
+          open_now: true,
+          closed_reason: null,
         }}
         onPress={onPress}
       />,
@@ -74,6 +76,28 @@ describe('VendorCard', () => {
     expect(onPress).toHaveBeenCalledWith('vendor-1');
   });
 
+  it('marks a shop closed by its hours, and still opens it for browsing (step 7.3)', () => {
+    const onPress = jest.fn();
+    renderWithProviders(
+      <VendorCard
+        entry={{
+          vendor,
+          distance_km: 1.26,
+          serviceable: true,
+          delivery_available: true,
+          is_sponsored: false,
+          open_now: false,
+          closed_reason: 'HOURS',
+        }}
+        onPress={onPress}
+      />,
+    );
+
+    expect(screen.getByTestId('vendor-closed-vendor-1')).toHaveTextContent('Closed now');
+    fireEvent.press(screen.getByTestId('vendor-card-vendor-1'));
+    expect(onPress).toHaveBeenCalledWith('vendor-1');
+  });
+
   it('is disabled and badged in Explore Further', () => {
     const onPress = jest.fn();
     renderWithProviders(
@@ -84,6 +108,8 @@ describe('VendorCard', () => {
           serviceable: false,
           delivery_available: true,
           is_sponsored: false,
+          open_now: true,
+          closed_reason: null,
         }}
         onPress={onPress}
       />,
@@ -106,6 +132,8 @@ describe('VendorCard', () => {
           serviceable: true,
           delivery_available: true,
           is_sponsored: false,
+          open_now: true,
+          closed_reason: null,
         }}
       />,
       {
@@ -131,6 +159,8 @@ describe('VendorCard', () => {
           serviceable: true,
           delivery_available: true,
           is_sponsored: false,
+          open_now: true,
+          closed_reason: null,
         }}
       />,
     );

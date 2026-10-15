@@ -91,6 +91,10 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   VENDOR_RESTORED_BY_ADMIN: 'vendor',
   // Shop settings (SPEC Dual-Fulfillment)
   DELIVERY_SETTINGS_CHANGED: 'vendor',
+  // Step 7.3: opening hours, the Open / Closed switch, and Auto-Pause.
+  OPENING_HOURS_CHANGED: 'vendor',
+  AVAILABILITY_CHANGED: 'vendor',
+  VENDOR_AUTO_PAUSED: 'vendor',
   // Where payouts are sent (SPEC core 5). The account number is masked in every state.
   BANK_ACCOUNT_ADDED: 'vendor_bank_account',
   BANK_ACCOUNT_UPDATED: 'vendor_bank_account',

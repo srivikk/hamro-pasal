@@ -107,6 +107,15 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
             />
           </Pressable>
         ) : null}
+        {/* Step 7.3: closed by its hours, its switch or Auto-Pause; it can still be browsed. */}
+        {!entry.open_now ? (
+          <View
+            testID={`vendor-closed-${vendor.id}`}
+            className="absolute bottom-3 left-3 rounded-md bg-gray-900/80 px-2 py-0.5"
+          >
+            <Text className="text-xs font-bold text-white">{t('vendor.closedNow')}</Text>
+          </View>
+        ) : null}
         {entry.is_sponsored || extras.is_sponsored ? (
           // Paid placement must be recognisable as such: a small, quiet label on the cover.
           <View

@@ -11,6 +11,7 @@ import {
 } from './constants';
 import {
   accountStatusSchema,
+  availabilityOverrideSchema,
   deliveryScopeSchema,
   disputeStatusSchema,
   fulfillmentModeSchema,
@@ -168,6 +169,13 @@ export const vendorSchema = z.strictObject({
   /** Null until LIVE. The cycle ends at the first instant of the next BS month (Nepal Time). */
   billing_cycle_started_at: z.date().nullable(),
   billing_cycle_ends_at: z.date().nullable(),
+  /** Step 7.3: the switch over the opening hours; NONE follows them. */
+  availability_override: availabilityOverrideSchema,
+  /** When the override ends (the next scheduled boundary); null for an indefinite one. */
+  availability_override_until: z.date().nullable(),
+  /** Set by Auto-Pause; cleared when the vendor resumes. */
+  auto_paused_at: z.date().nullable(),
+  consecutive_missed_orders: z.number().int().min(0),
   created_at: z.date(),
   updated_at: z.date(),
 });
@@ -437,6 +445,10 @@ export const platformSettingsSchema = z.strictObject({
   platform_fleet_enabled: z.boolean(),
   /** What a customer pays for a platform fleet delivery. */
   platform_delivery_fee_npr: nonNegativeNprSchema,
+  /** Step 7.3: checkout stops this many minutes before a shop closes. */
+  last_order_minutes_before_close: z.number().int().min(0).max(120),
+  /** Step 7.3: consecutive missed or rejected orders that pause a shop. */
+  auto_pause_threshold: z.number().int().min(1).max(20),
   updated_at: z.date(),
 });
 export type PlatformSettings = z.infer<typeof platformSettingsSchema>;

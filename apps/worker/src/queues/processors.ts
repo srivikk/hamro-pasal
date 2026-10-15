@@ -16,6 +16,7 @@ import type {
   OrderReconciliationService,
   ReconciliationDiscrepancy,
 } from '../finance/order-reconciliation';
+import type { VendorAcceptanceExpiryService } from '../sla/vendor-acceptance-expiry';
 import type { VendorEscalationService } from '../sla/vendor-escalation';
 import type {
   DebtSuspension,
@@ -29,6 +30,8 @@ import type {
  */
 export interface TimerHandlers {
   onVendorAcceptanceTimeout(job: VendorAcceptanceTimeoutJob): Promise<void>;
+  /** Step 7.3: the 5-minute expiry (the job's kind is EXPIRE). */
+  onVendorAcceptanceExpiry(job: VendorAcceptanceTimeoutJob): Promise<void>;
   onGhostCustomerTimerElapsed(job: GhostCustomerTimerJob): Promise<void>;
   runMidnightTask(task: MidnightTask): Promise<void>;
   /** Phase 28: the hourly upkeep of ad purchases. */
@@ -41,7 +44,10 @@ export interface TimerHandlers {
 export function createProcessors(handlers: TimerHandlers) {
   return {
     vendorAcceptance: async (job: Job): Promise<void> => {
-      await handlers.onVendorAcceptanceTimeout(vendorAcceptanceTimeoutJobSchema.parse(job.data));
+      const data = vendorAcceptanceTimeoutJobSchema.parse(job.data);
+      await (data.kind === 'EXPIRE'
+        ? handlers.onVendorAcceptanceExpiry(data)
+        : handlers.onVendorAcceptanceTimeout(data));
     },
     ghostCustomer: async (job: Job): Promise<void> => {
       await handlers.onGhostCustomerTimerElapsed(ghostCustomerTimerJobSchema.parse(job.data));
@@ -118,6 +124,8 @@ export function createTimerHandlers(deps: {
   readonly marketingSweep?: Pick<MarketingStatusSweepService, 'run'>;
   /** Phase 29. Optional like those above. */
   readonly settlementPayoutRun?: Pick<SettlementPayoutRunService, 'run'>;
+  /** Step 7.3. Optional like those above. */
+  readonly acceptanceExpiry?: Pick<VendorAcceptanceExpiryService, 'cancelIfUnanswered'>;
 }): TimerHandlers {
   return {
     ...pendingImplementationHandlers,
@@ -179,6 +187,17 @@ export function createTimerHandlers(deps: {
           return pendingImplementationHandlers.runMidnightTask(task);
       }
     },
+    onVendorAcceptanceExpiry: async (job) => {
+      if (deps.acceptanceExpiry === undefined) {
+        return pendingImplementationHandlers.onVendorAcceptanceExpiry(job);
+      }
+      const outcome = await deps.acceptanceExpiry.cancelIfUnanswered(job);
+      if (outcome.kind === 'CANCELLED') {
+        console.warn(
+          `[worker] order ${job.order_id} unanswered for 5 minutes: cancelled${outcome.paused ? ', shop auto-paused' : ''}`,
+        );
+      }
+    },
     onVendorAcceptanceTimeout: async (job) => {
       const outcome = await deps.escalation.escalateIfUnanswered(job);
       if (outcome === 'ESCALATED') {
@@ -202,6 +221,13 @@ export const pendingImplementationHandlers: TimerHandlers = {
   },
   onVendorAcceptanceTimeout: (job) => {
     console.warn('[worker] vendor acceptance timeout fired (escalation not implemented yet)', job);
+    return Promise.resolve();
+  },
+  onVendorAcceptanceExpiry: (job) => {
+    console.warn(
+      '[worker] vendor acceptance expiry fired (auto-cancel not wired in this worker)',
+      job,
+    );
     return Promise.resolve();
   },
   onGhostCustomerTimerElapsed: (job) => {

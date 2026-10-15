@@ -127,3 +127,11 @@ export const DEFAULT_PRODUCT_UNIT = 'piece';
 /** Step 7.1: a vendor's permanent public code, "HPV-" and at least five digits (HPV-00042). */
 export const VENDOR_CODE_PATTERN = /^HPV-[0-9]{5,}$/;
 export const VENDOR_CODE_PREFIX = 'HPV-';
+
+/** Step 7.3 (decided 2026-10-15): an order unanswered this long is cancelled and counts as missed. */
+export const VENDOR_ACCEPTANCE_EXPIRY_SECONDS = 300;
+/** Defaults of the two Superadmin settings (platform_settings). */
+export const DEFAULT_AUTO_PAUSE_THRESHOLD = 3;
+export const DEFAULT_LAST_ORDER_MINUTES_BEFORE_CLOSE = 15;
+/** Ranges per weekday in a shop's opening hours. */
+export const MAX_OPENING_RANGES_PER_DAY = 3;

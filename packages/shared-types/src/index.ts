@@ -24,6 +24,7 @@ export * from './api/notifications';
 export * from './api/me';
 export * from './api/settlement-model-requests';
 export * from './api/vendor-account';
+export * from './api/vendor-availability';
 export * from './api/vendor-ads';
 export * from './api/vendor-analytics';
 export * from './api/vendor-banking';

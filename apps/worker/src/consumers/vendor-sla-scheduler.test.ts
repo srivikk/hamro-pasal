@@ -86,13 +86,20 @@ describe('vendorSlaSchedulerConsumer', () => {
     expect(setup().consumer.topic).toBe('order.lifecycle');
   });
 
-  it('starts the 90 s timer, anchored on placed_at, when an order becomes PLACED', async () => {
+  it('starts the 90 s escalation and the 5-minute expiry, anchored on placed_at, when an order becomes PLACED', async () => {
     const { consumer, timers } = setup();
 
     await consumer.handle(message(JSON.stringify(stateChanged('PENDING_PAYMENT', 'PLACED'))));
 
     expect(timers.scheduled).toEqual([
-      { job: { order_id: orderId, vendor_id: vendorId }, placedAt: new Date(PLACED_AT) },
+      {
+        job: { order_id: orderId, vendor_id: vendorId, kind: 'ESCALATE' },
+        placedAt: new Date(PLACED_AT),
+      },
+      {
+        job: { order_id: orderId, vendor_id: vendorId, kind: 'EXPIRE' },
+        placedAt: new Date(PLACED_AT),
+      },
     ]);
   });
 
@@ -164,8 +171,27 @@ describe('BullVendorAcceptanceTimers', () => {
     expect(added).toEqual([
       {
         name: 'vendor-acceptance-timeout',
-        data: { order_id: orderId, vendor_id: vendorId },
+        data: { order_id: orderId, vendor_id: vendorId, kind: 'ESCALATE' },
         opts: expect.objectContaining({ jobId: orderId, delay: 86_000 }) as unknown,
+      },
+    ]);
+  });
+
+  it('adds the expiry under its own id, firing at placed_at + 5 minutes (step 7.3)', async () => {
+    const { queue, added } = recordingQueue();
+    const now = new Date(Date.parse(PLACED_AT) + 4_000);
+    const timers = new BullVendorAcceptanceTimers(queue, () => now);
+
+    await timers.schedule(
+      { order_id: orderId, vendor_id: vendorId, kind: 'EXPIRE' },
+      new Date(PLACED_AT),
+    );
+
+    expect(added).toEqual([
+      {
+        name: 'vendor-acceptance-timeout',
+        data: { order_id: orderId, vendor_id: vendorId, kind: 'EXPIRE' },
+        opts: expect.objectContaining({ jobId: `expire-${orderId}`, delay: 296_000 }) as unknown,
       },
     ]);
   });

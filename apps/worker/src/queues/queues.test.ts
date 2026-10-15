@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import type { VendorAcceptanceTimeoutJob } from '@hamro-pasal/shared-types';
 import type { Job } from 'bullmq';
 
 import {
@@ -25,6 +26,7 @@ function handlers() {
     runMidnightTask: jest.fn<Promise<void>, Parameters<TimerHandlers['runMidnightTask']>>(),
     runMarketingStatusSweep: jest.fn<Promise<void>, []>(),
     runSettlementPayoutRun: jest.fn<Promise<void>, []>(),
+    onVendorAcceptanceExpiry: jest.fn<Promise<void>, [VendorAcceptanceTimeoutJob]>(),
   };
   for (const mock of Object.values(mocks)) mock.mockResolvedValue(undefined);
   const impl: TimerHandlers = mocks;
@@ -56,7 +58,11 @@ describe('processors', () => {
   it('pass validated payloads to their handlers', async () => {
     const { mocks, impl } = handlers();
     const processors = createProcessors(impl);
-    const vendorJob = { order_id: randomUUID(), vendor_id: randomUUID() };
+    const vendorJob = {
+      order_id: randomUUID(),
+      vendor_id: randomUUID(),
+      kind: 'ESCALATE' as const,
+    };
     const ghostJob = { order_id: randomUUID(), driver_user_id: randomUUID() };
 
     await processors.vendorAcceptance(job(vendorJob));
@@ -113,7 +119,11 @@ describe('createTimerHandlers', () => {
   it('runs the escalation for a fired vendor acceptance timer', async () => {
     const escalateIfUnanswered = jest.fn().mockResolvedValue('ESCALATED');
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const vendorJob = { order_id: randomUUID(), vendor_id: randomUUID() };
+    const vendorJob = {
+      order_id: randomUUID(),
+      vendor_id: randomUUID(),
+      kind: 'ESCALATE' as const,
+    };
 
     await createTimerHandlers({
       escalation: { escalateIfUnanswered },
@@ -137,6 +147,7 @@ describe('createTimerHandlers', () => {
       }).onVendorAcceptanceTimeout({
         order_id: randomUUID(),
         vendor_id: randomUUID(),
+        kind: 'ESCALATE',
       }),
     ).rejects.toThrow('database down');
   });

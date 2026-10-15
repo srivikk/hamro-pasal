@@ -8,11 +8,13 @@ import {
   NEPAL_TIMEZONE,
   SETTLEMENT_PAYOUT_CRON_PATTERN,
   SETTLEMENT_PAYOUT_RUN_TASK,
+  VENDOR_ACCEPTANCE_EXPIRY_MS,
   VENDOR_ACCEPTANCE_TIMEOUT_MS,
   type GhostCustomerTimerJob,
   type MidnightMaintenanceJob,
   type MidnightTask,
   type VendorAcceptanceTimeoutJob,
+  type VendorAcceptanceTimeoutJobInput,
 } from '@hamro-pasal/shared-types';
 import { Queue, type ConnectionOptions, type JobsOptions } from 'bullmq';
 
@@ -56,8 +58,11 @@ export function allTimerQueues(queues: TimerQueues): Queue[] {
 export function vendorAcceptanceTimeoutOptions(
   orderId: string,
   delayMs: number = VENDOR_ACCEPTANCE_TIMEOUT_MS,
+  kind: 'ESCALATE' | 'EXPIRE' = 'ESCALATE',
 ): JobsOptions {
-  return { jobId: orderId, delay: delayMs, attempts: 3, ...RETENTION };
+  // One job of each kind per order; BullMQ refuses ':' in a custom id.
+  const jobId = kind === 'EXPIRE' ? `expire-${orderId}` : orderId;
+  return { jobId, delay: delayMs, attempts: 3, ...RETENTION };
 }
 
 export function ghostCustomerTimerOptions(orderId: string): JobsOptions {
@@ -70,13 +75,13 @@ export function ghostCustomerTimerOptions(orderId: string): JobsOptions {
  */
 export async function scheduleVendorAcceptanceTimeout(
   queue: Queue<VendorAcceptanceTimeoutJob>,
-  data: VendorAcceptanceTimeoutJob,
+  data: VendorAcceptanceTimeoutJobInput,
   delayMs: number = VENDOR_ACCEPTANCE_TIMEOUT_MS,
 ): Promise<void> {
   await queue.add(
     JOB_QUEUES.VENDOR_ACCEPTANCE_TIMEOUT,
-    data,
-    vendorAcceptanceTimeoutOptions(data.order_id, delayMs),
+    { ...data, kind: data.kind ?? 'ESCALATE' },
+    vendorAcceptanceTimeoutOptions(data.order_id, delayMs, data.kind ?? 'ESCALATE'),
   );
 }
 
@@ -85,8 +90,13 @@ export async function scheduleVendorAcceptanceTimeout(
  * negative. The deadline is anchored on the order's `placed_at` (when the alarm started), not on
  * when the worker heard about it, so outbox/Kafka lag does not stretch the SLA.
  */
-export function vendorAcceptanceDelayMs(placedAt: Date, now: Date): number {
-  return Math.max(0, placedAt.getTime() + VENDOR_ACCEPTANCE_TIMEOUT_MS - now.getTime());
+export function vendorAcceptanceDelayMs(
+  placedAt: Date,
+  now: Date,
+  kind: 'ESCALATE' | 'EXPIRE' = 'ESCALATE',
+): number {
+  const window = kind === 'EXPIRE' ? VENDOR_ACCEPTANCE_EXPIRY_MS : VENDOR_ACCEPTANCE_TIMEOUT_MS;
+  return Math.max(0, placedAt.getTime() + window - now.getTime());
 }
 
 /** Vendor interacted in time. Returns false if the timer already fired or never existed. */

@@ -38,7 +38,7 @@ describe('timer queues (real Redis)', () => {
       await scheduleVendorAcceptanceTimeout(queues.vendorAcceptance, data);
 
       const job = await queues.vendorAcceptance.getJob(data.order_id);
-      expect(job?.data).toEqual(data);
+      expect(job?.data).toEqual({ ...data, kind: 'ESCALATE' });
       expect(await job?.getState()).toBe('delayed');
       expect(job?.opts.delay).toBe(90_000);
       const firesAt = (job?.timestamp ?? 0) + (job?.opts.delay ?? 0);
@@ -141,6 +141,7 @@ describe('timer queues (real Redis)', () => {
         resolveFired(job);
         return Promise.resolve();
       },
+      onVendorAcceptanceExpiry: () => Promise.resolve(),
       onGhostCustomerTimerElapsed: () => Promise.resolve(),
       runMidnightTask: () => Promise.resolve(),
       runMarketingStatusSweep: () => Promise.resolve(),
@@ -159,7 +160,7 @@ describe('timer queues (real Redis)', () => {
       // Fast-forward instead of waiting 90 s: promote the delayed job to waiting.
       await (await queues.vendorAcceptance.getJob(data.order_id))?.promote();
 
-      await expect(fired).resolves.toEqual(data);
+      await expect(fired).resolves.toEqual({ ...data, kind: 'ESCALATE' });
     } finally {
       await worker.close();
     }

@@ -37,7 +37,8 @@
     "sponsored": "विज्ञापन",
     "sponsoredLabel": "प्रायोजित",
     "ratingCountShort": "({{count, localizedNumber}})",
-    "ratingCountShortPlus": "({{count, localizedNumber}}+)"
+    "ratingCountShortPlus": "({{count, localizedNumber}}+)",
+    "closedNow": "अहिले बन्द"
   },
   "cart": {
     "itemCount_one": "{{count, localizedNumber}} वटा सामान",
@@ -158,7 +159,9 @@
     "viewPhoto": "{{name}} को फोटो हेर्नुहोस्",
     "photoOf": "{{name}} को फोटो",
     "closePhoto": "फोटो बन्द गर्नुहोस्",
-    "freeDeliveryOver": "रु. {{amount, localizedNumber}} भन्दा माथिको अर्डरमा नि:शुल्क डेलिभरी"
+    "freeDeliveryOver": "रु. {{amount, localizedNumber}} भन्दा माथिको अर्डरमा नि:शुल्क डेलिभरी",
+    "closedNow": "यो पसल अहिले बन्द छ। हेर्न सक्नुहुन्छ, अर्डर गर्न सक्नुहुन्न।",
+    "paused": "यो पसल अहिले रोकिएको छ। हेर्न सक्नुहुन्छ, अर्डर गर्न सक्नुहुन्न।"
   },
   "checkout": {
     "reservedTitle": "सामानहरू आरक्षित भए",
@@ -624,7 +627,9 @@
     "deleteCancelled": "मेटाउने अनुरोध रद्द भयो। फेरि अर्डर लिन अनलाइन गर्नुहोस्।",
     "minOrderTitle": "न्यूनतम अर्डर",
     "minOrder": "न्यूनतम अर्डर रकम (रु.)",
-    "minOrderHint": "ग्राहकले यो भन्दा कम अर्डर गर्न सक्दैनन्। न्यूनतम नचाहिए ० राख्नुहोस्।"
+    "minOrderHint": "ग्राहकले यो भन्दा कम अर्डर गर्न सक्दैनन्। न्यूनतम नचाहिए ० राख्नुहोस्।",
+    "paused": "रोकिएको",
+    "availabilityFailed": "पसलको स्थिति बदल्न सकिएन। जडान जाँचेर फेरि प्रयास गर्नुहोस्।"
   },
   "vendorCatalogue": {
     "sampleNote": "यो फोनमा रहेको नमुना सूची। परिवर्तनहरू अझै सर्भरमा पठाइँदैनन्।",

@@ -94,6 +94,8 @@ export function feedEntryView(vendor: CatalogVendor): FeedEntry {
     serviceable: vendor.serviceable,
     delivery_available: vendor.deliveryAvailable,
     is_sponsored: vendor.sponsored === true,
+    open_now: vendor.closedReason === null,
+    closed_reason: vendor.closedReason,
   };
 }
 
@@ -110,6 +112,8 @@ export function menuView(menu: CatalogMenu): VendorMenu {
     vendor: feedVendorView(menu.vendor),
     serviceable: menu.vendor.serviceable,
     delivery_available: menu.vendor.deliveryAvailable,
+    open_now: menu.vendor.closedReason === null,
+    closed_reason: menu.vendor.closedReason,
     products: menu.products.map((p) => ({
       id: p.id,
       name: p.name,

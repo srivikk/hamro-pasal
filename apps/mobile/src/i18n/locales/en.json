@@ -37,7 +37,8 @@
     "sponsored": "Ad",
     "sponsoredLabel": "Sponsored",
     "ratingCountShort": "({{count, localizedNumber}})",
-    "ratingCountShortPlus": "({{count, localizedNumber}}+)"
+    "ratingCountShortPlus": "({{count, localizedNumber}}+)",
+    "closedNow": "Closed now"
   },
   "cart": {
     "itemCount_one": "{{count, localizedNumber}} item",
@@ -158,7 +159,9 @@
     "viewPhoto": "View photo of {{name}}",
     "photoOf": "Photo of {{name}}",
     "closePhoto": "Close photo",
-    "freeDeliveryOver": "Free delivery on orders over Rs. {{amount, localizedNumber}}"
+    "freeDeliveryOver": "Free delivery on orders over Rs. {{amount, localizedNumber}}",
+    "closedNow": "This shop is closed right now. You can browse, but not order.",
+    "paused": "This shop is paused right now. You can browse, but not order."
   },
   "checkout": {
     "reservedTitle": "Items reserved",
@@ -624,7 +627,9 @@
     "deleteCancelled": "Deletion request cancelled. Switch Online to take orders again.",
     "minOrderTitle": "Minimum order",
     "minOrder": "Minimum order value (Rs.)",
-    "minOrderHint": "Customers cannot order less than this. Leave 0 for no minimum."
+    "minOrderHint": "Customers cannot order less than this. Leave 0 for no minimum.",
+    "paused": "Paused",
+    "availabilityFailed": "Couldn't change your shop. Check your connection and try again."
   },
   "vendorCatalogue": {
     "sampleNote": "Sample catalogue on this phone. Changes are not sent to the server yet.",

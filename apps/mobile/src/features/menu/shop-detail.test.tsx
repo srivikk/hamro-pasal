@@ -154,6 +154,21 @@ describe('Shop page header', () => {
     expect(screen.queryByTestId('shop-eta')).toBeNull();
   });
 
+  it('says a closed or paused shop takes no order, and blocks Add (step 7.3)', async () => {
+    serveShop({ ...vendorMenu(), open_now: false, closed_reason: 'HOURS' });
+    const view = renderShop();
+    expect(await screen.findByTestId('menu-banner')).toHaveTextContent(
+      'This shop is closed right now. You can browse, but not order.',
+    );
+    view.unmount();
+
+    serveShop({ ...vendorMenu(), open_now: false, closed_reason: 'AUTO_PAUSED' });
+    renderShop();
+    expect(await screen.findByTestId('menu-banner')).toHaveTextContent(
+      'This shop is paused right now. You can browse, but not order.',
+    );
+  });
+
   it('shows the shop’s free-delivery threshold, and nothing when it has none (step 7.2)', async () => {
     const menu = vendorMenu();
     serveShop({ ...menu, vendor: { ...menu.vendor, free_delivery_above_npr: 1000 } });

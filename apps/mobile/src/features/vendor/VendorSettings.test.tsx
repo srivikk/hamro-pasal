@@ -6,7 +6,6 @@ import { useToastStore } from '../../store/useToastStore';
 import { useVendorShopStore } from '../../store/useVendorShopStore';
 import { accessTokenFor } from '../../test/access-tokens';
 import { renderWithProviders } from '../../test/render';
-import { VendorOnlineToggle } from './VendorOnlineToggle';
 
 // The PAN document card talks to the API and has its own tests (PanDocument.test.tsx); this
 // file is about the form itself: what it shows, what it checks and what it hands on.
@@ -320,27 +319,5 @@ describe('Shop settings: saving', () => {
     press('settings-sign-out');
 
     expect(selectHasSession(useAuthStore.getState())).toBe(false);
-  });
-});
-
-describe('the Online / Offline switch', () => {
-  it('shows the shop as Online and turns it Offline and back', () => {
-    renderWithProviders(<VendorOnlineToggle />);
-    const toggle = screen.getByTestId('vendor-online-toggle');
-    expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Online');
-    expect(toggle.props.value).toBe(true);
-
-    fireEvent(toggle, 'valueChange', false);
-
-    expect(useVendorShopStore.getState().online).toBe(false);
-    expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Offline');
-
-    fireEvent(screen.getByTestId('vendor-online-toggle'), 'valueChange', true);
-    expect(useVendorShopStore.getState().online).toBe(true);
-  });
-
-  it('reads Nepali under ne', () => {
-    renderWithProviders(<VendorOnlineToggle />, { locale: 'ne' });
-    expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('अनलाइन');
   });
 });

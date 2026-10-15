@@ -298,3 +298,13 @@ export type NotificationAudience = z.infer<typeof notificationAudienceSchema>;
 export const notificationSources = ['ADMIN', 'SYSTEM'] as const;
 export const notificationSourceSchema = z.enum(notificationSources);
 export type NotificationSource = z.infer<typeof notificationSourceSchema>;
+
+/** Step 7.3: the vendor's switch over its opening hours (SPEC core 11). */
+export const availabilityOverrides = ['NONE', 'OPEN', 'CLOSED'] as const;
+export const availabilityOverrideSchema = z.enum(availabilityOverrides);
+export type AvailabilityOverride = z.infer<typeof availabilityOverrideSchema>;
+
+/** Why an orderable-looking shop takes no order right now. */
+export const shopClosedReasons = ['HOURS', 'OVERRIDE', 'AUTO_PAUSED'] as const;
+export const shopClosedReasonSchema = z.enum(shopClosedReasons);
+export type ShopClosedReason = z.infer<typeof shopClosedReasonSchema>;

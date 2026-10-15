@@ -29,6 +29,7 @@ import { mockPushLogFromEnv, pushGatewayFromEnv } from './push/mock-push';
 import { OutboxRelay } from './outbox/outbox-relay';
 import { allTimerQueues, createTimerQueues, registerMidnightJobs } from './queues/definitions';
 import { createProcessors, createTimerHandlers } from './queues/processors';
+import { NotifyMeService } from './notifications/notify-me';
 import { VendorAcceptanceExpiryService } from './sla/vendor-acceptance-expiry';
 import { VendorEscalationService } from './sla/vendor-escalation';
 import { VendorDebtReconciliationService } from './wallet/vendor-debt-reconciliation';
@@ -54,6 +55,12 @@ async function main(): Promise<void> {
   replayer.start();
   lifecycle.register(() => replayer.stop());
 
+  // Pushes go to https://exp.host/--/api/v2/push/send for every registered device.
+  // MOCK_SERVICES=true: no request is made and each order push is logged as "[MOCK PUSH] -> …".
+  const push = pushGatewayFromEnv(env);
+  // Step 7.4: Notify Me, from its outbox events and from the 5-minute sweep.
+  const notifyMe = new NotifyMeService(db, push);
+
   // BullMQ timers and crons
   const connection = buildBullConnection(env.REDIS_URL);
   const queues = createTimerQueues(connection);
@@ -63,6 +70,7 @@ async function main(): Promise<void> {
     createTimerHandlers({
       escalation: new VendorEscalationService(db),
       acceptanceExpiry: new VendorAcceptanceExpiryService(db),
+      notifyMe,
       debtReconciliation: new VendorDebtReconciliationService(db),
       complianceSweep: new ComplianceSweepService(db),
       billingRenewal: new BillingCycleRenewalService(db),
@@ -105,9 +113,6 @@ async function main(): Promise<void> {
   });
   // SMS_PROVIDER=MOCK logs "[sms:mock] to +977…: <text>" instead of calling the provider.
   const sms = smsGatewayFromEnv(env);
-  // Pushes go to https://exp.host/--/api/v2/push/send for every registered device.
-  // MOCK_SERVICES=true: no request is made and each order push is logged as "[MOCK PUSH] -> …".
-  const push = pushGatewayFromEnv(env);
   const pushRecipients = new DatabasePushRecipients(db);
   const consumers = buildConsumers({
     redis,
@@ -132,6 +137,7 @@ async function main(): Promise<void> {
       notificationAdapterFromEnv(env, { sms, push, recipients: pushRecipients }),
     ),
     vendorContacts: new DatabaseVendorContacts(db),
+    notifyMe,
   });
   if (consumers.length > 0) {
     const handlers = routeByTopic(consumers);

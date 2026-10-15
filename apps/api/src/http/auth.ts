@@ -42,3 +42,22 @@ export function authOf(req: Request): AccessTokenClaims {
   }
   return req.auth;
 }
+
+/**
+ * Reads a bearer token when one is sent, for public routes that add the caller's own details
+ * (step 7.4: the menu's Notify Me flags). A missing or invalid token is simply a guest.
+ */
+export function optionalAuth(secret: string): RequestHandler {
+  return (req, _res, next) => {
+    const header = req.get('authorization');
+    const match = header === undefined ? null : /^Bearer ([A-Za-z0-9._-]+)$/.exec(header);
+    if (match?.[1] !== undefined) {
+      try {
+        req.auth = verifyAccessToken(match[1], secret);
+      } catch {
+        // A guest: an expired token must not make a public page fail.
+      }
+    }
+    next();
+  };
+}

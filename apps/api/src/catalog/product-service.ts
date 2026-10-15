@@ -1,9 +1,11 @@
 import {
   categories,
+  enqueueDomainEvent,
   products,
   productSearchDocument,
   vendors,
   type Database,
+  type Transaction,
 } from '@hamro-pasal/db';
 import {
   ADMIN_PRODUCT_LIST_DEFAULT_LIMIT,
@@ -165,13 +167,19 @@ export class ProductService {
     stockQuantity: number,
   ): Promise<ProductRow> {
     const vendorId = await this.vendorIdOf(vendorUserId);
-    const [updated] = await this.db
-      .update(products)
-      .set({ stock_quantity: stockQuantity })
-      .where(and(eq(products.id, productId), eq(products.vendor_id, vendorId)))
-      .returning();
-    if (updated === undefined) throw new ProductNotFoundError(productId);
-    return updated;
+    const scope = and(eq(products.id, productId), eq(products.vendor_id, vendorId));
+    return this.db.transaction(async (tx) => {
+      const before = await orderableBefore(tx, scope);
+      if (before === undefined) throw new ProductNotFoundError(productId);
+      const [updated] = await tx
+        .update(products)
+        .set({ stock_quantity: stockQuantity })
+        .where(scope)
+        .returning();
+      if (updated === undefined) throw new ProductNotFoundError(productId);
+      await announceIfBackInStock(tx, before, updated);
+      return updated;
+    });
   }
 
   /**
@@ -198,11 +206,17 @@ export class ProductService {
     const { image_urls: imageUrls, ...fields } = input;
     let updated: ProductRow | undefined;
     try {
-      [updated] = await this.db
-        .update(products)
-        .set(imageUrls === undefined ? fields : { ...fields, image_urls: imageUrls })
-        .where(scope)
-        .returning();
+      updated = await this.db.transaction(async (tx) => {
+        const before = await orderableBefore(tx, scope);
+        const [row] = await tx
+          .update(products)
+          .set(imageUrls === undefined ? fields : { ...fields, image_urls: imageUrls })
+          .where(scope)
+          .returning();
+        // Showing a hidden product with stock again is a restock for whoever waits for it.
+        if (before !== undefined && row !== undefined) await announceIfBackInStock(tx, before, row);
+        return row;
+      });
     } catch (error: unknown) {
       if (isUniqueViolation(error, 'products_vendor_id_name_key')) {
         throw new ProductNameTakenError(input.name);
@@ -390,12 +404,18 @@ export class ProductService {
 
   /** PATCH /api/admin/products/:id/active: the Super Admin shows or hides one product. */
   async setActive(productId: string, isActive: boolean): Promise<AdminProductRow> {
-    const [updated] = await this.db
-      .update(products)
-      .set({ is_active: isActive })
-      .where(eq(products.id, productId))
-      .returning({ id: products.id });
-    if (updated === undefined) throw new ProductNotFoundError(productId);
+    await this.db.transaction(async (tx) => {
+      const scope = eq(products.id, productId);
+      const before = await orderableBefore(tx, scope);
+      if (before === undefined) throw new ProductNotFoundError(productId);
+      const [updated] = await tx
+        .update(products)
+        .set({ is_active: isActive })
+        .where(scope)
+        .returning();
+      if (updated === undefined) throw new ProductNotFoundError(productId);
+      await announceIfBackInStock(tx, before, updated);
+    });
     const [row] = await this.adminRows(eq(products.id, productId), 1);
     if (row === undefined) throw new ProductNotFoundError(productId);
     return row;
@@ -459,4 +479,39 @@ function inActiveSubtree(categoryId: string): SQL {
     )
     SELECT id FROM subtree
   )`;
+}
+
+/** Whether a product can be ordered: shown, with stock (Notify Me waits for exactly this). */
+function isOrderable(product: { is_active: boolean; stock_quantity: number }): boolean {
+  return product.is_active && product.stock_quantity > 0;
+}
+
+/** The product's standing before a change, its row locked so two changes cannot both announce. */
+async function orderableBefore(
+  tx: Transaction,
+  scope: SQL | undefined,
+): Promise<boolean | undefined> {
+  const [row] = await tx
+    .select({ is_active: products.is_active, stock_quantity: products.stock_quantity })
+    .from(products)
+    .where(scope)
+    .for('update');
+  return row === undefined ? undefined : isOrderable(row);
+}
+
+/**
+ * Step 7.4 (SPEC core 11): a product that could not be ordered and now can writes
+ * `product.back_in_stock` in the same transaction; the worker tells the customers waiting.
+ */
+async function announceIfBackInStock(
+  tx: Transaction,
+  wasOrderable: boolean,
+  after: ProductRow,
+): Promise<void> {
+  if (wasOrderable || !isOrderable(after)) return;
+  await enqueueDomainEvent(tx, {
+    type: 'product.back_in_stock',
+    aggregateId: after.id,
+    payload: { product_id: after.id, vendor_id: after.vendor_id },
+  });
 }

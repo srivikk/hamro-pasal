@@ -3,6 +3,8 @@ import {
   JOB_QUEUES,
   HOURLY_CRON_PATTERN,
   MARKETING_STATUS_SWEEP_TASK,
+  NOTIFY_ME_SWEEP_CRON_PATTERN,
+  NOTIFY_ME_SWEEP_TASK,
   MIDNIGHT_CRON_PATTERN,
   midnightTasks,
   NEPAL_TIMEZONE,
@@ -166,6 +168,16 @@ export async function registerMidnightJobs(queue: Queue<MidnightMaintenanceJob>)
       opts: { attempts: 3, ...RETENTION },
     },
   );
+  // Step 7.4: the Notify Me sweep, every 5 minutes.
+  await queue.upsertJobScheduler(
+    NOTIFY_ME_SWEEP_SCHEDULER_ID,
+    { pattern: NOTIFY_ME_SWEEP_CRON_PATTERN, tz: NEPAL_TIMEZONE },
+    {
+      name: NOTIFY_ME_SWEEP_TASK,
+      data: { task: NOTIFY_ME_SWEEP_TASK },
+      opts: { attempts: 3, ...RETENTION },
+    },
+  );
   // The weekly payout run (Phase 29, SPEC core 5): Tuesday 02:00 Nepal Time.
   await queue.upsertJobScheduler(
     SETTLEMENT_PAYOUT_SCHEDULER_ID,
@@ -179,4 +191,5 @@ export async function registerMidnightJobs(queue: Queue<MidnightMaintenanceJob>)
 }
 
 export const MARKETING_SWEEP_SCHEDULER_ID = 'marketing-status-sweep';
+export const NOTIFY_ME_SWEEP_SCHEDULER_ID = 'notify-me-sweep';
 export const SETTLEMENT_PAYOUT_SCHEDULER_ID = 'settlement-payout-run';

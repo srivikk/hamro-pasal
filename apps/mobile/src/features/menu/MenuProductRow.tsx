@@ -12,7 +12,8 @@ import { colors } from '../../theme/colors';
  * One product of a shop's menu.
  * - The thumbnail opens the photo full screen; a product without a photo (or whose photo does
  *   not load) shows the default placeholder instead (not pressable).
- * - A sold-out product has "OUT OF STOCK" over its thumbnail and no Add button at all.
+ * - A sold-out product has "OUT OF STOCK" over its thumbnail and, instead of Add, "Notify Me"
+ *   (step 7.4): one notice when it is back, then the request is used up.
  * - The name and price open the item detail sheet.
  * - "Add" puts one in the cart and turns into a "- n +" control, so the quantity can be changed
  *   or the item removed right here.
@@ -27,6 +28,7 @@ export function MenuProductRow({
   onViewPhoto,
   onAdd,
   onRemoveOne,
+  onNotifyMe,
 }: {
   product: MenuProduct;
   imageUrl: string | null;
@@ -42,6 +44,8 @@ export function MenuProductRow({
   onAdd: () => void;
   /** One fewer; at one, the item leaves the cart. */
   onRemoveOne: () => void;
+  /** Sold out: ask (or stop asking) to be told when it is back. */
+  onNotifyMe?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const disabled = !serviceable || frozen;
@@ -78,7 +82,31 @@ export function MenuProductRow({
         </Text>
       </Pressable>
 
-      {product.stock_quantity === 0 ? null : inCart === 0 ? (
+      {product.stock_quantity === 0 ? (
+        onNotifyMe === undefined ? null : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${t(product.is_alerted ? 'notifyMe.on' : 'notifyMe.action')} ${product.name}`}
+            accessibilityState={{ selected: product.is_alerted }}
+            testID={`menu-notify-${product.id}`}
+            className={`flex-row items-center gap-1 rounded-xl border px-3 py-2 active:opacity-70 ${
+              product.is_alerted ? 'border-brand bg-brand-light' : 'border-gray-300 bg-white'
+            }`}
+            onPress={onNotifyMe}
+          >
+            <Ionicons
+              name={product.is_alerted ? 'notifications' : 'notifications-outline'}
+              size={16}
+              color={product.is_alerted ? colors.brand : colors.inactive}
+            />
+            <Text
+              className={`text-xs font-bold ${product.is_alerted ? 'text-brand' : 'text-gray-700'}`}
+            >
+              {t(product.is_alerted ? 'notifyMe.on' : 'notifyMe.action')}
+            </Text>
+          </Pressable>
+        )
+      ) : inCart === 0 ? (
         <Button
           label={t('menu.add')}
           size="sm"

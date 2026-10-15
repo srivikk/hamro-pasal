@@ -2,6 +2,7 @@ import type { BillingCycleRenewalService } from '../billing/billing-cycle-renewa
 import type { ComplianceSweepService } from '../compliance/compliance-sweep';
 import type { SettlementPayoutRunService } from '../finance/settlement-payout-run';
 import type { MarketingStatusSweepService } from '../marketing/marketing-status-sweep';
+import type { NotifyMeService } from '../notifications/notify-me';
 import {
   ghostCustomerTimerJobSchema,
   midnightMaintenanceJobSchema,
@@ -38,6 +39,8 @@ export interface TimerHandlers {
   runMarketingStatusSweep(): Promise<void>;
   /** Phase 29: the Tuesday 02:00 payout run. */
   runSettlementPayoutRun(): Promise<void>;
+  /** Step 7.4: the 5-minute Notify Me sweep. */
+  runNotifyMeSweep(): Promise<void>;
 }
 
 /** Payloads are validated at the boundary: a malformed job fails loudly (and is retained). */
@@ -56,6 +59,7 @@ export function createProcessors(handlers: TimerHandlers) {
       const { task } = midnightMaintenanceJobSchema.parse(job.data);
       if (task === 'MARKETING_STATUS_SWEEP') return handlers.runMarketingStatusSweep();
       if (task === 'SETTLEMENT_PAYOUT_RUN') return handlers.runSettlementPayoutRun();
+      if (task === 'NOTIFY_ME_SWEEP') return handlers.runNotifyMeSweep();
       return handlers.runMidnightTask(task);
     },
   };
@@ -126,6 +130,8 @@ export function createTimerHandlers(deps: {
   readonly settlementPayoutRun?: Pick<SettlementPayoutRunService, 'run'>;
   /** Step 7.3. Optional like those above. */
   readonly acceptanceExpiry?: Pick<VendorAcceptanceExpiryService, 'cancelIfUnanswered'>;
+  /** Step 7.4. Optional like those above. */
+  readonly notifyMe?: Pick<NotifyMeService, 'sweep'>;
 }): TimerHandlers {
   return {
     ...pendingImplementationHandlers,
@@ -141,6 +147,15 @@ export function createTimerHandlers(deps: {
       console.info(
         `[worker] settlement payout run (cut-off ${summary.cutoff.toISOString()}): ${String(summary.paid.length)} vendor(s) paid Rs. ${String(total / 100)}; skipped ${JSON.stringify(summary.skipped)}`,
       );
+    },
+    runNotifyMeSweep: async () => {
+      if (deps.notifyMe === undefined) return pendingImplementationHandlers.runNotifyMeSweep();
+      const summary = await deps.notifyMe.sweep();
+      if (summary.notified > 0) {
+        console.info(
+          `[worker] notify-me sweep: ${String(summary.notified)} customer(s) told about ${String(summary.products)} product(s) and ${String(summary.shops)} shop(s)`,
+        );
+      }
     },
     runMarketingStatusSweep: async () => {
       if (deps.marketingSweep === undefined) {
@@ -217,6 +232,10 @@ export const pendingImplementationHandlers: TimerHandlers = {
   },
   runMarketingStatusSweep: () => {
     console.warn('[worker] marketing status sweep fired (not wired in this worker)');
+    return Promise.resolve();
+  },
+  runNotifyMeSweep: () => {
+    console.warn('[worker] notify-me sweep fired (not wired in this worker)');
     return Promise.resolve();
   },
   onVendorAcceptanceTimeout: (job) => {

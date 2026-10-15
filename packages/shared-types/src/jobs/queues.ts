@@ -87,7 +87,19 @@ export const ghostCustomerTimerJobSchema = z.strictObject({
 });
 export type GhostCustomerTimerJob = z.infer<typeof ghostCustomerTimerJobSchema>;
 
+/**
+ * Step 7.4 (SPEC core 11): every 5 minutes on the maintenance queue, the Notify Me requests whose
+ * product or shop became orderable without an event (a shop opening by its hours) are used up.
+ */
+export const NOTIFY_ME_SWEEP_TASK = 'NOTIFY_ME_SWEEP';
+export const NOTIFY_ME_SWEEP_CRON_PATTERN = '*/5 * * * *';
+
 export const midnightMaintenanceJobSchema = z.strictObject({
-  task: z.enum([...midnightTasks, MARKETING_STATUS_SWEEP_TASK, SETTLEMENT_PAYOUT_RUN_TASK]),
+  task: z.enum([
+    ...midnightTasks,
+    MARKETING_STATUS_SWEEP_TASK,
+    SETTLEMENT_PAYOUT_RUN_TASK,
+    NOTIFY_ME_SWEEP_TASK,
+  ]),
 });
 export type MidnightMaintenanceJob = z.infer<typeof midnightMaintenanceJobSchema>;

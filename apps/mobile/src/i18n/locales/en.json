@@ -1171,5 +1171,17 @@
     "confirm": "Delete Account",
     "requested": "Your account deletion request was received.",
     "failed": "Couldn't reach the server. Please try again."
+  },
+  "notifyMe": {
+    "action": "Notify Me",
+    "on": "Notifying",
+    "shopAction": "Notify me when it opens",
+    "shopOn": "We'll tell you when it opens",
+    "added": "We'll let you know.",
+    "removed": "You will not be notified.",
+    "limit": "You can wait for at most 50 products and shops. Remove one first.",
+    "alreadyAvailable": "It is available now.",
+    "failed": "Couldn't save that. Check your connection and try again.",
+    "signIn": "Sign in to get notified."
   }
 }

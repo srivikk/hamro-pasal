@@ -34,7 +34,7 @@ export const CLIENT_ERROR_CODES = {
 } as const;
 
 interface ApiRequest<T> {
-  method: 'GET' | 'POST' | 'PATCH' | 'PUT';
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   /** Path under the API base URL, starting with `/`. */
   path: string;
   query?: Record<string, string>;
@@ -42,9 +42,11 @@ interface ApiRequest<T> {
   body?: unknown;
   /**
    * Defaults to true: send `Authorization: Bearer` and refuse to call without a token. Only the
-   * sign-in endpoints (which is how a token is obtained) pass false.
+   * sign-in endpoints (which is how a token is obtained) pass false. 'optional' (public reads
+   * that add the caller's own details, step 7.4) sends the token in memory, if any, and never
+   * refreshes or refuses.
    */
-  authenticated?: boolean;
+  authenticated?: boolean | 'optional';
   /** Response body contract; the body is validated before it reaches the caller. */
   schema: z.ZodType<T>;
 }
@@ -229,6 +231,9 @@ async function runRefresh(): Promise<string | null> {
  */
 export async function apiRequest<T>(request: ApiRequest<T>): Promise<T> {
   if (request.authenticated === false) return send(request, null);
+  if (request.authenticated === 'optional') {
+    return send(request, useAuthStore.getState().accessToken);
+  }
 
   let token = useAuthStore.getState().accessToken ?? (await refreshAccessToken());
   if (token === null) {

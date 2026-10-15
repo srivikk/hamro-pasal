@@ -93,6 +93,12 @@ describe('timer queues (real Redis)', () => {
       expect(untilNext).toBeGreaterThan(0);
       expect(untilNext).toBeLessThanOrEqual(60 * 60 * 1000);
 
+      // Step 7.4: the Notify Me sweep, every 5 minutes.
+      const notifyMe = all.filter((s) => s.key === 'notify-me-sweep');
+      expect(notifyMe).toHaveLength(1);
+      expect(notifyMe[0]).toMatchObject({ pattern: '*/5 * * * *', name: 'NOTIFY_ME_SWEEP' });
+      expect((notifyMe[0]?.next ?? 0) - Date.now()).toBeLessThanOrEqual(5 * 60 * 1000);
+
       // The weekly payout run (Phase 29): Tuesday 02:00 Nepal Time, which is Monday 20:15 UTC.
       const weekly = all.filter((s) => s.key === 'settlement-payout-run');
       expect(weekly).toHaveLength(1);
@@ -109,7 +115,10 @@ describe('timer queues (real Redis)', () => {
       expect(nextRun.getTime() - Date.now()).toBeLessThanOrEqual(7 * 24 * 60 * 60 * 1000);
 
       const schedulers = all.filter(
-        (s) => s.key !== 'marketing-status-sweep' && s.key !== 'settlement-payout-run',
+        (s) =>
+          s.key !== 'marketing-status-sweep' &&
+          s.key !== 'settlement-payout-run' &&
+          s.key !== 'notify-me-sweep',
       );
       expect(schedulers.map((s) => s.key).sort()).toEqual([
         'billing-cycle-renewal',
@@ -146,6 +155,7 @@ describe('timer queues (real Redis)', () => {
       runMidnightTask: () => Promise.resolve(),
       runMarketingStatusSweep: () => Promise.resolve(),
       runSettlementPayoutRun: () => Promise.resolve(),
+      runNotifyMeSweep: () => Promise.resolve(),
     };
     const worker = new Worker(
       queues.vendorAcceptance.name,

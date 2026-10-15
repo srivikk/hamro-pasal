@@ -213,6 +213,8 @@ export const menuProductSchema = z.strictObject({
    * public product list does. Other customers' 600 s checkout locks are not subtracted.
    */
   stock_quantity: z.number().int().nonnegative(),
+  /** Step 7.4: the signed-in customer asked to be told when it is back. False for a guest. */
+  is_alerted: z.boolean().default(false),
 });
 export type MenuProduct = z.infer<typeof menuProductSchema>;
 
@@ -229,6 +231,8 @@ export const vendorMenuSchema = z.strictObject({
   /** Step 7.3: as on the feed entry. Default true for an older API. */
   open_now: z.boolean().default(true),
   closed_reason: shopClosedReasonSchema.nullable().default(null),
+  /** Step 7.4: the signed-in customer asked to be told when this shop opens. */
+  is_alerted: z.boolean().default(false),
   products: z.array(menuProductSchema),
 });
 export type VendorMenu = z.infer<typeof vendorMenuSchema>;

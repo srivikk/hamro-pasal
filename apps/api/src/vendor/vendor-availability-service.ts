@@ -1,5 +1,7 @@
 import {
+  enqueueDomainEvent,
   recordAuditLog,
+  vendorClosedReason,
   vendorOpeningHours,
   vendors,
   type Database,
@@ -15,7 +17,6 @@ import {
 } from '@hamro-pasal/shared-types';
 import { asc, eq } from 'drizzle-orm';
 
-import { closedReason } from '../catalog/catalog-service';
 import { VendorAccountNotFoundError } from '../orders/vendor-order-service';
 
 type VendorRow = typeof vendors.$inferSelect;
@@ -123,7 +124,16 @@ export class VendorAvailabilityService {
         afterState: stateOf(after),
         context,
       });
-      return this.view(tx, after);
+      const view = await this.view(tx, after);
+      // Step 7.4: customers waiting for this shop are told at once, not at the next sweep.
+      if (resume && view.open_now) {
+        await enqueueDomainEvent(tx, {
+          type: 'vendor.opened',
+          aggregateId: after.id,
+          payload: { vendor_id: after.id, opened_at: new Date().toISOString() },
+        });
+      }
+      return view;
     });
   }
 
@@ -132,7 +142,7 @@ export class VendorAvailabilityService {
     vendor: VendorRow,
   ): Promise<AvailabilityResponseBody> {
     const [row] = await executor
-      .select({ reason: closedReason() })
+      .select({ reason: vendorClosedReason() })
       .from(vendors)
       .where(eq(vendors.id, vendor.id));
     const running =

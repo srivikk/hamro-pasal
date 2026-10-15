@@ -225,13 +225,22 @@ describe('vendors API', () => {
       expect(body.vendor.id).toBe(vendorId);
       expect(body.serviceable).toBe(true);
       expect(body.products).toEqual([
-        { id: tea, name: 'A Ilam Tea 500g', price_npr: 450, in_stock: true, stock_quantity: 10 },
+        // Step 7.4: a guest waits for nothing.
+        {
+          id: tea,
+          name: 'A Ilam Tea 500g',
+          price_npr: 450,
+          in_stock: true,
+          stock_quantity: 10,
+          is_alerted: false,
+        },
         {
           id: rice,
           name: 'B Basmati Rice 5kg',
           price_npr: 1150,
           in_stock: false,
           stock_quantity: 0,
+          is_alerted: false,
         },
       ]);
     });

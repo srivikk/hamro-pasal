@@ -158,14 +158,15 @@ describe('Shop page header', () => {
     serveShop({ ...vendorMenu(), open_now: false, closed_reason: 'HOURS' });
     const view = renderShop();
     expect(await screen.findByTestId('menu-banner')).toHaveTextContent(
-      'This shop is closed right now. You can browse, but not order.',
+      // Step 7.4: followed by its Notify Me button.
+      /^This shop is closed right now. You can browse, but not order./,
     );
     view.unmount();
 
     serveShop({ ...vendorMenu(), open_now: false, closed_reason: 'AUTO_PAUSED' });
     renderShop();
     expect(await screen.findByTestId('menu-banner')).toHaveTextContent(
-      'This shop is paused right now. You can browse, but not order.',
+      /^This shop is paused right now. You can browse, but not order./,
     );
   });
 

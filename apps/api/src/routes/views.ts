@@ -1,3 +1,4 @@
+import type { MenuAlerts } from '../account/alert-service';
 import { orderTotalPaisa, toNpr } from '@hamro-pasal/ledger';
 import type {
   DeliveryConfirmedResponseBody,
@@ -107,19 +108,21 @@ export function feedView(feed: VendorFeed): FeedResponse {
   };
 }
 
-export function menuView(menu: CatalogMenu): VendorMenu {
+export function menuView(menu: CatalogMenu, alerts?: MenuAlerts): VendorMenu {
   return {
     vendor: feedVendorView(menu.vendor),
     serviceable: menu.vendor.serviceable,
     delivery_available: menu.vendor.deliveryAvailable,
     open_now: menu.vendor.closedReason === null,
     closed_reason: menu.vendor.closedReason,
+    is_alerted: alerts?.shop ?? false,
     products: menu.products.map((p) => ({
       id: p.id,
       name: p.name,
       price_npr: p.priceNpr,
       in_stock: p.inStock,
       stock_quantity: p.stockQuantity,
+      is_alerted: alerts?.productIds.has(p.id) ?? false,
     })),
   };
 }

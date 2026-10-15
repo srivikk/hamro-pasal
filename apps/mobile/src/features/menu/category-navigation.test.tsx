@@ -206,9 +206,30 @@ describe('Home: "What\'s on your mind?" category filter', () => {
 describe('groupMenu', () => {
   const categories = categoryList().categories;
   const menu = [
-    { id: NOODLES.id, name: 'Noodles', price_npr: 600, in_stock: true, stock_quantity: 20 },
-    { id: RICE.id, name: 'Rice', price_npr: 1150, in_stock: true, stock_quantity: 12 },
-    { id: MUSTARD_OIL_ID, name: 'Oil', price_npr: 320, in_stock: false, stock_quantity: 0 },
+    {
+      id: NOODLES.id,
+      name: 'Noodles',
+      price_npr: 600,
+      in_stock: true,
+      stock_quantity: 20,
+      is_alerted: false,
+    },
+    {
+      id: RICE.id,
+      name: 'Rice',
+      price_npr: 1150,
+      in_stock: true,
+      stock_quantity: 12,
+      is_alerted: false,
+    },
+    {
+      id: MUSTARD_OIL_ID,
+      name: 'Oil',
+      price_npr: 320,
+      in_stock: false,
+      stock_quantity: 0,
+      is_alerted: false,
+    },
   ];
 
   it('groups by subcategory in the taxonomy’s order, with unknown products last', () => {

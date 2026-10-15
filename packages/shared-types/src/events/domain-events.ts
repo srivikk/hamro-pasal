@@ -221,6 +221,25 @@ export const vendorAutoPausedPayloadSchema = z.strictObject({
   paused_at: z.iso.datetime(),
 });
 
+/**
+ * Step 7.4 (SPEC core 11, Notify Me): a product became orderable again (active with stock), written
+ * in the transaction of the change. The customers waiting for it are told once, even if it sells
+ * out again before the notice goes (SPEC edge case 22).
+ */
+export const productBackInStockPayloadSchema = z.strictObject({
+  product_id: z.uuid(),
+  vendor_id: z.uuid(),
+});
+
+/**
+ * Step 7.4: the vendor lifted an Auto-Pause or switched the shop on and it is open now. Opening
+ * by the clock writes nothing; the Notify Me sweep finds those shops instead.
+ */
+export const vendorOpenedPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  opened_at: z.iso.datetime(),
+});
+
 /** SPEC core 8 (Phase 35): an ad's paid period is over. Written once, when it becomes ENDED. */
 export const marketingAdEndedPayloadSchema = z.strictObject({
   ad_purchase_id: z.uuid(),
@@ -356,6 +375,11 @@ export const vendorAutoPausedEventSchema = envelope(
   'vendor.auto_paused',
   vendorAutoPausedPayloadSchema,
 );
+export const productBackInStockEventSchema = envelope(
+  'product.back_in_stock',
+  productBackInStockPayloadSchema,
+);
+export const vendorOpenedEventSchema = envelope('vendor.opened', vendorOpenedPayloadSchema);
 export const marketingAdEndedEventSchema = envelope(
   'marketing.ad_ended',
   marketingAdEndedPayloadSchema,
@@ -384,6 +408,8 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   vendorDeactivatedEventSchema,
   vendorReactivatedEventSchema,
   vendorAutoPausedEventSchema,
+  productBackInStockEventSchema,
+  vendorOpenedEventSchema,
   marketingAdEndedEventSchema,
   marketingAdPausedEventSchema,
   marketingCampaignTermsChangedEventSchema,
@@ -405,6 +431,8 @@ export type VendorComplianceRestoredEvent = z.infer<typeof vendorComplianceResto
 export type VendorDeactivatedEvent = z.infer<typeof vendorDeactivatedEventSchema>;
 export type VendorReactivatedEvent = z.infer<typeof vendorReactivatedEventSchema>;
 export type VendorAutoPausedEvent = z.infer<typeof vendorAutoPausedEventSchema>;
+export type ProductBackInStockEvent = z.infer<typeof productBackInStockEventSchema>;
+export type VendorOpenedEvent = z.infer<typeof vendorOpenedEventSchema>;
 export type MarketingAdEndedEvent = z.infer<typeof marketingAdEndedEventSchema>;
 export type MarketingAdPausedEvent = z.infer<typeof marketingAdPausedEventSchema>;
 export type MarketingCampaignTermsChangedEvent = z.infer<
@@ -432,6 +460,8 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'vendor.deactivated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.reactivated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.auto_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'product.back_in_stock': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.opened': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_ended': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.campaign_terms_changed': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,

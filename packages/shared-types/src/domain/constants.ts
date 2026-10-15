@@ -135,3 +135,8 @@ export const DEFAULT_AUTO_PAUSE_THRESHOLD = 3;
 export const DEFAULT_LAST_ORDER_MINUTES_BEFORE_CLOSE = 15;
 /** Ranges per weekday in a shop's opening hours. */
 export const MAX_OPENING_RANGES_PER_DAY = 3;
+
+/** Step 7.4 (SPEC core 11): Notify Me requests one customer may have waiting, products and shops. */
+export const MAX_ALERTS_PER_USER = 50;
+/** Customers told per batch (one notification centre message and one push call each). */
+export const ALERT_NOTICE_BATCH_SIZE = 100;

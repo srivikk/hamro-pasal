@@ -8,6 +8,7 @@ import {
   platformSettings,
   products,
   reviews,
+  vendorClosedReason,
   vendorOffers,
   vendors,
   type Database,
@@ -37,7 +38,7 @@ import { toNpr, toPaisa } from '../ledger/money';
 import { reviewIsPublic } from '../reviews/review-visibility';
 import { enqueueOrderStateChanged } from '../orders/order-events';
 import { generateDeliveryOtp, hashDeliveryOtp } from './delivery-otp';
-import { closedReason, deliversTo, enabledModes } from '../catalog/catalog-service';
+import { deliversTo, enabledModes } from '../catalog/catalog-service';
 import {
   CheckoutRejectedError,
   priceCart,
@@ -429,7 +430,7 @@ export class CheckoutService {
     }
     // Step 7.3: outside its hours, switched Closed, or auto-paused, a shop takes no order.
     const [open] = await this.db
-      .select({ reason: closedReason() })
+      .select({ reason: vendorClosedReason() })
       .from(vendors)
       .where(eq(vendors.id, vendor.id));
     if (open?.reason != null) {

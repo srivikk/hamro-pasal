@@ -149,7 +149,14 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
       HttpResponse.json(
         vendorMenu({
           products: [
-            { id: RICE.id, name: RICE.name, price_npr: 1150, in_stock: true, stock_quantity: 0 },
+            {
+              id: RICE.id,
+              name: RICE.name,
+              price_npr: 1150,
+              in_stock: true,
+              stock_quantity: 0,
+              is_alerted: false,
+            },
           ],
         }),
       ),
@@ -226,6 +233,7 @@ describe('Vendor menu screen (GET /api/vendors/:id/products)', () => {
               price_npr: 900,
               in_stock: true,
               stock_quantity: 14,
+              is_alerted: false,
             },
           ],
         }),

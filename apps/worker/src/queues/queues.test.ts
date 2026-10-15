@@ -26,6 +26,7 @@ function handlers() {
     runMidnightTask: jest.fn<Promise<void>, Parameters<TimerHandlers['runMidnightTask']>>(),
     runMarketingStatusSweep: jest.fn<Promise<void>, []>(),
     runSettlementPayoutRun: jest.fn<Promise<void>, []>(),
+    runNotifyMeSweep: jest.fn<Promise<void>, []>(),
     onVendorAcceptanceExpiry: jest.fn<Promise<void>, [VendorAcceptanceTimeoutJob]>(),
   };
   for (const mock of Object.values(mocks)) mock.mockResolvedValue(undefined);
@@ -72,6 +73,14 @@ describe('processors', () => {
     expect(mocks.onVendorAcceptanceTimeout).toHaveBeenCalledWith(vendorJob);
     expect(mocks.onGhostCustomerTimerElapsed).toHaveBeenCalledWith(ghostJob);
     expect(mocks.runMidnightTask).toHaveBeenCalledWith('SUBSCRIPTION_DOWNGRADE');
+  });
+
+  it('routes the 5-minute Notify Me sweep to its own handler (step 7.4)', async () => {
+    const { mocks, impl } = handlers();
+    await createProcessors(impl).midnight(job({ task: 'NOTIFY_ME_SWEEP' }));
+
+    expect(mocks.runNotifyMeSweep).toHaveBeenCalledTimes(1);
+    expect(mocks.runMidnightTask).not.toHaveBeenCalled();
   });
 
   it('fail malformed jobs without calling the handler', async () => {

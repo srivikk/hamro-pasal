@@ -57,6 +57,7 @@ import { CampaignService } from './marketing/campaign-service';
 import { SettlementModelRequestService } from './settlement/settlement-model-request-service';
 import { PromotionService } from './marketing/promotion-service';
 import { MeService } from './account/me-service';
+import { AlertService } from './account/alert-service';
 import { NotificationCentreService } from './account/notification-centre-service';
 import { DeviceTokenService } from './notifications/device-token-service';
 import { VendorTopUpService } from './wallet/vendor-top-up-service';
@@ -223,6 +224,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     deviceTokens: new DeviceTokenService(infra.db),
     me: new MeService(infra.db),
     notificationCentre: new NotificationCentreService(infra.db),
+    alerts: new AlertService(infra.db),
     vendorFinance: new VendorFinanceService(infra.db, ledger),
     adminPayouts: new AdminPayoutService(infra.db, ledger),
     vendorBilling: new VendorBillingService(infra.db),

@@ -15,7 +15,7 @@ import type { DisputeService } from './disputes/dispute-service';
 import type { AdminPayoutService } from './finance/admin-payout-service';
 import type { AdminSettlementService } from './finance/admin-settlement-service';
 import type { VendorFinanceService } from './finance/vendor-finance-service';
-import { requireAuth } from './http/auth';
+import { optionalAuth, requireAuth } from './http/auth';
 import { strictCors } from './http/cors';
 import { errorHandler, HttpError } from './http/errors';
 import { requestId } from './http/request-context';
@@ -27,6 +27,7 @@ import type { VendorInvoiceService } from './invoices/vendor-invoice-service';
 import type { CampaignService } from './marketing/campaign-service';
 import type { PromotionService } from './marketing/promotion-service';
 import type { MeService } from './account/me-service';
+import type { AlertService } from './account/alert-service';
 import type { NotificationCentreService } from './account/notification-centre-service';
 import type { DeviceTokenService } from './notifications/device-token-service';
 import type { DeliveryService } from './deliveries/delivery-service';
@@ -49,6 +50,7 @@ import { cartRouter } from './routes/cart';
 import { categoriesRouter, productsRouter, vendorProductsRouter } from './routes/catalog';
 import { deliveriesRouter } from './routes/deliveries';
 import { orderChatRouter } from './routes/order-chat';
+import { alertsRouter } from './routes/alerts';
 import { meRouter } from './routes/me';
 import { notificationsRouter } from './routes/notifications';
 import { testRouter } from './routes/mock-services';
@@ -108,6 +110,8 @@ export interface ApiServices {
   /** Step 7.1: the signed-in account and its notification centre. */
   readonly me: MeService;
   readonly notificationCentre: NotificationCentreService;
+  /** Step 7.4: Notify Me requests. */
+  readonly alerts: AlertService;
   /** Phase 22: vendor earnings and payout requests, and the Super Admin's decisions on them. */
   readonly vendorFinance: VendorFinanceService;
   readonly adminPayouts: AdminPayoutService;
@@ -270,8 +274,13 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       requireAuth(services.accessTokenSecret, ['VENDOR']),
       vendorWalletRouter(services.vendorWallet, services.vendorTopUps),
     );
-    // Public reads (guest browsing): the feed and a LIVE shop's menu need no token.
-    app.use('/api/vendors', vendorsRouter(services.catalog));
+    // Public reads (guest browsing): the feed and a LIVE shop's menu need no token. A signed-in
+    // customer's menu also carries its Notify Me flags (step 7.4).
+    app.use(
+      '/api/vendors',
+      optionalAuth(services.accessTokenSecret),
+      vendorsRouter(services.catalog, services.alerts),
+    );
     app.use(
       '/api/deliveries',
       requireAuth(services.accessTokenSecret, ['DRIVER']),
@@ -301,6 +310,8 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       requireAuth(services.accessTokenSecret),
       notificationsRouter(services.deviceTokens),
     );
+    // Step 7.4. Before /api/me: Notify Me is the customer's own.
+    app.use('/api/me/alerts', customerAuth, alertsRouter(services.alerts));
     // Step 7.1. Any role: the account's own record and its notification centre.
     app.use(
       '/api/me',

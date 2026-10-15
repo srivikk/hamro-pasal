@@ -1,3 +1,4 @@
+export * from './alerts';
 export * from './audit';
 export * from './banking';
 export * from './billing';

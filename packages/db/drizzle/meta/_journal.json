@@ -288,6 +288,13 @@
       "when": 1792069460583,
       "tag": "0040_opening_hours_auto_pause",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792073451637,
+      "tag": "0041_notify_me_alerts",
+      "breakpoints": true
     }
   ]
 }

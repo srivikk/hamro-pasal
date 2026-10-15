@@ -208,7 +208,14 @@ export function menuProduct(
   priceNpr: number,
   stock: number,
 ): MenuProduct {
-  return { id, name, price_npr: priceNpr, in_stock: stock > 0, stock_quantity: stock };
+  return {
+    id,
+    name,
+    price_npr: priceNpr,
+    in_stock: stock > 0,
+    stock_quantity: stock,
+    is_alerted: false,
+  };
 }
 
 export function vendorMenu(overrides: Partial<VendorMenu> = {}): VendorMenu {

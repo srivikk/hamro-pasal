@@ -24,7 +24,11 @@ import {
 import { MenuProductRow } from '../../../../src/features/menu/MenuProductRow';
 import { ProductDetailSheet } from '../../../../src/features/menu/ProductDetailSheet';
 import { ShopHeader } from '../../../../src/features/menu/ShopHeader';
-import { useVendorMenuQuery } from '../../../../src/features/menu/useVendorMenuQuery';
+import { useNotifyMe } from '../../../../src/features/menu/useNotifyMe';
+import {
+  useVendorMenuQuery,
+  vendorMenuQueryKey,
+} from '../../../../src/features/menu/useVendorMenuQuery';
 import { vendorExtras } from '../../../../src/features/promo/mock-promotions';
 import { formatLocalizedNumber } from '../../../../src/i18n/format-number';
 import { useAuthStore } from '../../../../src/store/useAuthStore';
@@ -52,6 +56,8 @@ export default function VendorMenuScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const location = useCustomerLocation();
   const menu = useVendorMenuQuery(id, location);
+  // Step 7.4: Notify Me for a sold-out product or a closed shop.
+  const notifyMe = useNotifyMe(vendorMenuQueryKey(id, location));
   const queryClient = useQueryClient();
   const cartVendorId = useCartStore((state) => state.vendor?.id ?? null);
   const lines = useCartStore((state) => state.lines);
@@ -211,6 +217,21 @@ export default function VendorMenuScreen() {
             {banner === null ? null : (
               <View className="mx-4 mt-4 rounded-xl bg-amber-50 p-3" testID="menu-banner">
                 <Text className="text-sm text-amber-900">{banner}</Text>
+                {serviceable && closed ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: menu.data.is_alerted }}
+                    testID="menu-notify-shop"
+                    className="mt-2 self-start rounded-lg bg-white px-3 py-1.5 active:opacity-70"
+                    onPress={() => {
+                      notifyMe.toggle({ kind: 'shop', id: vendor.id }, menu.data.is_alerted);
+                    }}
+                  >
+                    <Text className="text-sm font-bold text-amber-900">
+                      {t(menu.data.is_alerted ? 'notifyMe.shopOn' : 'notifyMe.shopAction')}
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
             )}
           </>
@@ -257,6 +278,9 @@ export default function VendorMenuScreen() {
                 setNotice(null);
                 // At one, this takes the item out of the cart and "Add" comes back.
                 setQuantity(product.id, inCart - 1);
+              }}
+              onNotifyMe={() => {
+                notifyMe.toggle({ kind: 'product', id: product.id }, product.is_alerted);
               }}
             />
           );

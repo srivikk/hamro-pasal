@@ -51,7 +51,8 @@ export function fetchVendorMenu(vendorId: string, location: CustomerLocation): P
     method: 'GET',
     path: vendorProductsPath(vendorId),
     query: locationQuery(location),
-    authenticated: false,
+    // Step 7.4: a signed-in customer's menu also says what it asked to be told about.
+    authenticated: 'optional',
     schema: vendorMenuSchema,
   });
 }

@@ -167,7 +167,8 @@ describe('GET /api/vendors/:id/products', () => {
     const menu = await fetchVendorMenu(THAMEL_VENDOR.id, THAMEL_FALLBACK_LOCATION);
 
     expect(received[0]?.url.pathname).toBe(`/api/vendors/${THAMEL_VENDOR.id}/products`);
-    expect(received[0]?.headers.get('authorization')).toBeNull();
+    // Step 7.4: the token in memory goes along, for the menu's Notify Me flags.
+    expect(received[0]?.headers.get('authorization')).toMatch(/^Bearer /);
     expect(queryOf(received[0])).toMatchObject({ lat: '27.7154', lng: '85.3123' });
     expect(menu.products.map((p) => p.in_stock)).toEqual([true, true, false]);
     expect(menu.products.map((p) => p.stock_quantity)).toEqual([20, 12, 0]);

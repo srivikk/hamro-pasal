@@ -13,6 +13,9 @@ import {
 import { eq } from 'drizzle-orm';
 import request from 'supertest';
 
+import { LedgerService, settleDisputeHold } from '../src/ledger/ledger-service';
+import { WalletService } from '../src/wallet/wallet-service';
+
 import {
   balanceOf,
   createOrder,
@@ -89,6 +92,14 @@ describe('vendor wallet API', () => {
     return order.id;
   }
 
+  /** Step 7.3: day 8, the prepaid order's held earnings reach the wallet. */
+  async function released(vendorId: string, orderId: string): Promise<void> {
+    const ledger = new LedgerService(new WalletService());
+    await db().transaction((tx) =>
+      settleDisputeHold(tx, ledger, { orderId, vendorId, refundPaisa: 0 }),
+    );
+  }
+
   /** A prepaid order captured into escrow and left in `state` (not delivered, so not settled). */
   async function inEscrow(
     vendorId: string,
@@ -127,6 +138,8 @@ describe('vendor wallet API', () => {
         suspension_limit_npr: -2000,
         pending_escrow_npr: 0,
         pending_escrow_order_count: 0,
+        dispute_hold_npr: 0,
+        dispute_hold_order_count: 0,
       });
     });
 
@@ -191,8 +204,10 @@ describe('vendor wallet API', () => {
 
       expect(body.pending_escrow_npr).toBe(1850);
       expect(body.pending_escrow_order_count).toBe(2);
-      // The settled prepaid order is in the wallet instead: 1000 − 100 + 50.
-      expect(body.wallet_balance_npr).toBe(950);
+      // Step 7.3: the delivered prepaid order (1000 − 100 + 50) waits in the dispute hold for 7 days.
+      expect(body.wallet_balance_npr).toBe(0);
+      expect(body.dispute_hold_npr).toBe(950);
+      expect(body.dispute_hold_order_count).toBe(1);
     });
   });
 
@@ -228,7 +243,8 @@ describe('vendor wallet API', () => {
 
     it('labels payouts from prepaid and fleet COD settlements', async () => {
       const v = await vendor();
-      await settled(v.vendorId, { paymentMethod: 'KHALTI' }); // +950
+      // +950, once its 7-day hold is released (step 7.3).
+      await released(v.vendorId, await settled(v.vendorId, { paymentMethod: 'KHALTI' }));
       await settled(v.vendorId, { fulfillment: 'PLATFORM_FLEET' }); // COD via rider: +900
 
       const { entries } = bodyOf(vendorWalletLedgerResponseSchema, await getLedger(v.userId));

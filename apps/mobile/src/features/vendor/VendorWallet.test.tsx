@@ -346,6 +346,25 @@ describe('the balance card', () => {
     );
   });
 
+  it('shows delivered prepaid earnings held for their 7-day window (step 7.3)', async () => {
+    serve(walletBalance({ dispute_hold_npr: 950, dispute_hold_order_count: 1 }));
+
+    await renderWallet();
+
+    expect(await screen.findByTestId('wallet-dispute-hold')).toHaveTextContent(
+      'Rs. 950 from 1 delivered order(s) is held for 7 days after delivery, then added to your balance.',
+    );
+  });
+
+  it('says nothing about a hold when nothing is held', async () => {
+    serve(walletBalance({ pending_escrow_npr: 1850, pending_escrow_order_count: 2 }));
+
+    await renderWallet();
+
+    await screen.findByTestId('wallet-pending-escrow');
+    expect(screen.queryByTestId('wallet-dispute-hold')).toBeNull();
+  });
+
   it('offers a retry when the balance cannot be loaded', async () => {
     server.use(
       http.get(apiUrl(VENDOR_WALLET_BALANCE_PATH), () =>

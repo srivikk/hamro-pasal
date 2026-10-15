@@ -249,6 +249,7 @@ export function settlementVendorView(settlement: SettlementVendor): SettlementVe
     settlement_model: vendor.settlement_model,
     available_for_payout_npr: settlement.availableForPayoutNpr,
     pending_escrow_npr: settlement.pendingEscrowNpr,
+    dispute_hold_npr: settlement.disputeHoldNpr,
     tax_id: vendor.tax_id,
     pan_verified_at: vendor.pan_verified_at?.toISOString() ?? null,
     primary_bank_account:

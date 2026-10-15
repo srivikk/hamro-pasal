@@ -93,6 +93,11 @@ describe('timer queues (real Redis)', () => {
       expect(untilNext).toBeGreaterThan(0);
       expect(untilNext).toBeLessThanOrEqual(60 * 60 * 1000);
 
+      // Step 7.3: the day-8 release, hourly at half past.
+      const release = all.filter((s) => s.key === 'dispute-hold-release');
+      expect(release).toHaveLength(1);
+      expect(release[0]).toMatchObject({ pattern: '30 * * * *', name: 'DISPUTE_HOLD_RELEASE' });
+
       // Step 7.4: the Notify Me sweep, every 5 minutes.
       const notifyMe = all.filter((s) => s.key === 'notify-me-sweep');
       expect(notifyMe).toHaveLength(1);
@@ -118,7 +123,8 @@ describe('timer queues (real Redis)', () => {
         (s) =>
           s.key !== 'marketing-status-sweep' &&
           s.key !== 'settlement-payout-run' &&
-          s.key !== 'notify-me-sweep',
+          s.key !== 'notify-me-sweep' &&
+          s.key !== 'dispute-hold-release',
       );
       expect(schedulers.map((s) => s.key).sort()).toEqual([
         'billing-cycle-renewal',
@@ -156,6 +162,7 @@ describe('timer queues (real Redis)', () => {
       runMarketingStatusSweep: () => Promise.resolve(),
       runSettlementPayoutRun: () => Promise.resolve(),
       runNotifyMeSweep: () => Promise.resolve(),
+      runDisputeHoldRelease: () => Promise.resolve(),
     };
     const worker = new Worker(
       queues.vendorAcceptance.name,

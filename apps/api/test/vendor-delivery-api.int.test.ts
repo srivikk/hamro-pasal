@@ -215,7 +215,8 @@ describe('vendor self-delivery handoff API', () => {
       expect((await deliver(s.vendorUserId, orderId, otp)).status).toBe(200);
 
       expect(await settlementsOf(orderId)).toHaveLength(1);
-      expect(await balanceOf(db(), { vendorId: s.vendorId })).toBe(950);
+      // Step 7.3: held for 7 days after delivery before it reaches the wallet.
+      expect(await balanceOf(db(), { holdVendorId: s.vendorId })).toBe(950);
     });
 
     it('answers a repeated delivery with the same success, settled once', async () => {

@@ -94,12 +94,21 @@ export type GhostCustomerTimerJob = z.infer<typeof ghostCustomerTimerJobSchema>;
 export const NOTIFY_ME_SWEEP_TASK = 'NOTIFY_ME_SWEEP';
 export const NOTIFY_ME_SWEEP_CRON_PATTERN = '*/5 * * * *';
 
+/**
+ * Step 7.3 (SPEC core 6): hourly on the maintenance queue, a prepaid order held earnings move to
+ * the vendor wallet once its 7-day window has closed without an escalation.
+ */
+export const DISPUTE_HOLD_RELEASE_TASK = 'DISPUTE_HOLD_RELEASE';
+/** Hourly, at half past (the marketing sweep runs on the hour). */
+export const DISPUTE_HOLD_RELEASE_CRON_PATTERN = '30 * * * *';
+
 export const midnightMaintenanceJobSchema = z.strictObject({
   task: z.enum([
     ...midnightTasks,
     MARKETING_STATUS_SWEEP_TASK,
     SETTLEMENT_PAYOUT_RUN_TASK,
     NOTIFY_ME_SWEEP_TASK,
+    DISPUTE_HOLD_RELEASE_TASK,
   ]),
 });
 export type MidnightMaintenanceJob = z.infer<typeof midnightMaintenanceJobSchema>;

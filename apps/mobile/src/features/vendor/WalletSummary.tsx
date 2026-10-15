@@ -163,6 +163,16 @@ export function WalletSummary({
           </View>
         ) : null}
 
+        {/* Step 7.3: delivered prepaid earnings wait 7 days after delivery before they are payable. */}
+        {balance.dispute_hold_order_count > 0 ? (
+          <Text className="text-sm text-gray-500" testID="wallet-dispute-hold">
+            {t('vendorWallet.disputeHold', {
+              amount: balance.dispute_hold_npr,
+              count: balance.dispute_hold_order_count,
+            })}
+          </Text>
+        ) : null}
+
         {model === 'DIRECT_PREPAID' ? (
           <View className="gap-1">
             <Text className="text-sm text-gray-500" testID="wallet-reserve">

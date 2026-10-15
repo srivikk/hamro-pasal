@@ -330,7 +330,8 @@ describe('campaign discounts and the invoice at delivery', () => {
 
       await delivered(s, order);
 
-      expect(await balanceOf(db, { vendorId: s.vendorId })).toBe(905);
+      // Step 7.3: a delivered prepaid order is credited to the dispute hold for 7 days.
+      expect(await balanceOf(db, { holdVendorId: s.vendorId })).toBe(905);
       expect((await balanceOf(db, 'PLATFORM_REVENUE')) ?? 0).toBe((revenueBefore ?? 0) + 95);
       // The platform's half of the discount is its marketing cost.
       expect(await promoExpense()).toBe(promoBefore - 50);

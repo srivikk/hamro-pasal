@@ -40,7 +40,7 @@ export type PostResult =
 /** Account types with exactly one account that is opened by the first journal naming it. */
 type LazySingletonAccountType = Extract<
   LedgerAccountType,
-  'PAYOUT_CLEARING' | 'AD_REVENUE' | 'AD_BUDGET_CLEARING' | 'PROMO_EXPENSE'
+  'PAYOUT_CLEARING' | 'AD_REVENUE' | 'AD_BUDGET_CLEARING' | 'PROMO_EXPENSE' | 'REFUND_CLEARING'
 >;
 
 /** pg_advisory_xact_lock key serialising the opening of those accounts. */
@@ -147,6 +147,7 @@ export class LedgerService {
             vendor_id: account.vendor_id,
             driver_user_id: account.driver_user_id,
             gateway: account.gateway,
+            hold_vendor_id: account.hold_vendor_id,
             amount_npr: toNpr(posting.amountPaisa),
             balance_after_npr: account.balance_npr,
           };
@@ -167,7 +168,10 @@ export class LedgerService {
         case 'AD_REVENUE':
         case 'AD_BUDGET_CLEARING':
         case 'PROMO_EXPENSE':
+        case 'REFUND_CLEARING':
           return eq(ledgerAccounts.account_type, ref.type);
+        case 'VENDOR_DISPUTE_HOLD':
+          return eq(ledgerAccounts.hold_vendor_id, ref.vendorId);
         case 'GATEWAY_CLEARING':
           return eq(ledgerAccounts.gateway, ref.gateway);
         case 'VENDOR_WALLET':
@@ -180,11 +184,19 @@ export class LedgerService {
     if (ref.type === 'DRIVER_WALLET') {
       await this.ensureDriverAccount(tx, ref.driverUserId);
     }
+    if (ref.type === 'VENDOR_DISPUTE_HOLD') {
+      // Step 7.3: opened by the vendor's first prepaid delivery (or anything else naming it).
+      await tx
+        .insert(ledgerAccounts)
+        .values({ account_type: 'VENDOR_DISPUTE_HOLD', hold_vendor_id: ref.vendorId })
+        .onConflictDoNothing({ target: ledgerAccounts.hold_vendor_id });
+    }
     if (
       ref.type === 'PAYOUT_CLEARING' ||
       ref.type === 'AD_REVENUE' ||
       ref.type === 'AD_BUDGET_CLEARING' ||
-      ref.type === 'PROMO_EXPENSE'
+      ref.type === 'PROMO_EXPENSE' ||
+      ref.type === 'REFUND_CLEARING'
     ) {
       await this.ensureSingletonAccount(tx, ref.type);
     }

@@ -26,6 +26,8 @@ function balanceBody(balance: VendorWalletBalance): VendorWalletBalanceResponseB
     suspension_limit_npr: balance.suspensionLimitNpr,
     pending_escrow_npr: balance.pendingEscrowNpr,
     pending_escrow_order_count: balance.pendingEscrowOrderCount,
+    dispute_hold_npr: balance.disputeHoldNpr,
+    dispute_hold_order_count: balance.disputeHoldOrderCount,
   };
 }
 

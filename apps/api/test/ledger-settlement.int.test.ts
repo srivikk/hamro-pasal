@@ -118,7 +118,7 @@ describe('double-entry settlement', () => {
       );
     });
 
-    it('splits prepaid self-delivery escrow into vendor wallet and platform revenue', async () => {
+    it('splits prepaid self-delivery escrow into the vendor dispute hold and platform revenue', async () => {
       const vendorId = await createVendor(db);
       const order = await createOrder(db, { vendorId, customerId, paymentMethod: 'ESEWA' });
       await settlement.capturePayment(order.id);
@@ -129,7 +129,9 @@ describe('double-entry settlement', () => {
       );
 
       expect(moved).toEqual({ SYSTEM_ESCROW: -1050, PLATFORM_REVENUE: 100 });
-      expect(await balanceOf(db, { vendorId })).toBe(950);
+      // Step 7.3: a delivered prepaid order is credited to the dispute hold for 7 days.
+      expect(await balanceOf(db, { holdVendorId: vendorId })).toBe(950);
+      expect(await balanceOf(db, { vendorId })).toBe(0);
       const events = await outboxFor(db, order.id);
       const settled = events
         .map((e) => ledgerMutatedPayloadSchema.parse(e.payload))
@@ -151,7 +153,7 @@ describe('double-entry settlement', () => {
 
       await settlement.settleOrder(order.id);
 
-      expect(await balanceOf(db, { vendorId })).toBe(900);
+      expect(await balanceOf(db, { holdVendorId: vendorId })).toBe(900);
       expect(await balanceOf(db, { driverUserId: driverId })).toBe(50);
     });
 
@@ -175,7 +177,7 @@ describe('double-entry settlement', () => {
 
       expect(results.filter((r) => r.status === 'posted')).toHaveLength(1);
       expect(results.filter((r) => r.status === 'duplicate')).toHaveLength(9);
-      expect(await balanceOf(db, { vendorId })).toBe(950);
+      expect(await balanceOf(db, { holdVendorId: vendorId })).toBe(950);
     });
   });
 

@@ -26,6 +26,8 @@ export const ledgerAccounts = pgTable(
     vendor_id: uuid().references(() => vendors.id, { onDelete: 'restrict' }),
     driver_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
     gateway: paymentMethodEnum(),
+    /** Step 7.3: owner of a VENDOR_DISPUTE_HOLD account (one per vendor, opened on first use). */
+    hold_vendor_id: uuid().references(() => vendors.id, { onDelete: 'restrict' }),
     balance_npr: npr().notNull().default(0),
     created_at: createdAt(),
     updated_at: updatedAt(),
@@ -34,6 +36,7 @@ export const ledgerAccounts = pgTable(
     unique('ledger_accounts_vendor_id_key').on(t.vendor_id),
     unique('ledger_accounts_driver_user_id_key').on(t.driver_user_id),
     unique('ledger_accounts_gateway_key').on(t.gateway),
+    unique('ledger_accounts_hold_vendor_id_key').on(t.hold_vendor_id),
     // Exactly one escrow and one revenue account.
     uniqueIndex('ledger_accounts_system_singleton_idx')
       .on(t.account_type)
@@ -43,7 +46,13 @@ export const ledgerAccounts = pgTable(
       'ledger_accounts_owner_check',
       sql`((${t.account_type} = 'VENDOR_WALLET') = (${t.vendor_id} IS NOT NULL))
         AND ((${t.account_type} = 'DRIVER_WALLET') = (${t.driver_user_id} IS NOT NULL))
-        AND ((${t.account_type} = 'GATEWAY_CLEARING') = (${t.gateway} IS NOT NULL))`,
+        AND ((${t.account_type} = 'GATEWAY_CLEARING') = (${t.gateway} IS NOT NULL))
+        AND ((${t.account_type}::text = 'VENDOR_DISPUTE_HOLD') = (${t.hold_vendor_id} IS NOT NULL))`,
+    ),
+    // Step 7.3: the hold only ever holds what an order put there; it is never overdrawn.
+    check(
+      'ledger_accounts_dispute_hold_non_negative_check',
+      sql`${t.account_type}::text <> 'VENDOR_DISPUTE_HOLD' OR ${t.balance_npr} >= 0`,
     ),
     check('ledger_accounts_gateway_check', sql`${t.gateway} IS DISTINCT FROM 'COD'`),
     // Escrow can never pay out more than it holds.

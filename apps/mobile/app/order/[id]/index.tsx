@@ -11,7 +11,10 @@ import {
   displayedOrderState,
   isCancelableState,
 } from '../../../src/features/order/cancellation-window';
-import { postDeliveryDeadline } from '../../../src/features/dispute/dispute-window';
+import {
+  conversationDeadline,
+  isConversationOpen,
+} from '../../../src/features/dispute/dispute-window';
 import { DeliveryOtpBadge } from '../../../src/features/order/DeliveryOtpBadge';
 import {
   useCancellationCountdown,
@@ -53,8 +56,9 @@ export default function OrderTrackingScreen() {
   useOrderRealtime(id, order === undefined || !isTerminalOrderState(order.state));
   const cancel = useCancelOrder();
   const remainingMs = useCancellationCountdown(order?.placedAt ?? null);
-  // SPEC journey step 11: disputes may be opened for 48 h after delivery.
-  const disputeWindowOpen = useBeforeDeadline(postDeliveryDeadline(order?.deliveredAt ?? null));
+  // Step 7.3 (SPEC core 6): the chat with the shop is open from placement until 7 days after
+  // delivery.
+  const beforeConversationEnd = useBeforeDeadline(conversationDeadline(order?.deliveredAt ?? null));
 
   const header = (
     // No back button and no back swipe: the way out of an order is "Back to Home" below.
@@ -197,7 +201,7 @@ export default function OrderTrackingScreen() {
         </View>
       )}
 
-      {order.state === 'DELIVERED' && disputeWindowOpen ? (
+      {isConversationOpen(order.state, order.deliveredAt, beforeConversationEnd) ? (
         <Button
           label={t('dispute.open')}
           variant="secondary"

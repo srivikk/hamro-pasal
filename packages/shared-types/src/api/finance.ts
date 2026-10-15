@@ -93,6 +93,11 @@ export const vendorFinanceLedgerResponseSchema = z.strictObject({
   available_balance_npr: z.number(),
   /** Prepaid earnings still in escrow (paid, not delivered yet). */
   pending_balance_npr: z.number().nonnegative(),
+  /**
+   * Step 7.3: delivered prepaid earnings waiting out their 7-day window in the dispute hold. Not
+   * payable until released. 0 from an older API.
+   */
+  dispute_hold_npr: z.number().nonnegative().default(0),
   /** Already taken out of the available balance by requests that are still PENDING. */
   pending_payout_npr: z.number().nonnegative(),
   /** DELIVERED orders the nightly job has not reconciled yet. */
@@ -223,6 +228,8 @@ export const settlementVendorViewSchema = z
     available_for_payout_npr: z.number().min(0),
     /** Prepaid earnings of orders not delivered yet. Not payable. */
     pending_escrow_npr: z.number().min(0),
+    /** Step 7.3: delivered prepaid earnings in the 7-day dispute hold. Not payable. */
+    dispute_hold_npr: z.number().min(0).default(0),
     tax_id: panSchema.nullable(),
     /** When a Super Admin verified the PAN document; null holds every payout. */
     pan_verified_at: z.iso.datetime().nullable(),

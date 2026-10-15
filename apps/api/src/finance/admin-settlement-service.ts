@@ -18,7 +18,7 @@ import {
 import { and, asc, eq, gt, inArray } from 'drizzle-orm';
 
 import { adFeesDueByVendor, adFeesDuePaisa, collectAdFeesDue } from '../marketing/ad-fees';
-import { pendingEscrowByVendor } from '../wallet/vendor-wallet-service';
+import { disputeHoldByVendor, pendingEscrowByVendor } from '../wallet/vendor-wallet-service';
 import { AdminVendorNotFoundError } from '../wallet/wallet-service';
 import {
   PayoutExceedsBalanceError,
@@ -44,6 +44,8 @@ export interface SettlementVendor {
   /** What may leave the platform now: the wallet balance less ad fees still due, never below 0. */
   readonly availableForPayoutNpr: number;
   readonly pendingEscrowNpr: number;
+  /** Step 7.3: delivered prepaid earnings in the dispute hold. Not payable. */
+  readonly disputeHoldNpr: number;
   /** Where the payout is sent; null holds every payout. */
   readonly primaryBankAccount: PrimaryBankAccount | null;
 }
@@ -128,6 +130,7 @@ export class AdminSettlementService {
           .limit(ADMIN_VENDOR_LIST_LIMIT);
         const ids = rows.map((row) => row.id);
         const escrow = await pendingEscrowByVendor(tx, ids);
+        const hold = await disputeHoldByVendor(tx, ids);
         const feesDue = await adFeesDueByVendor(tx, ids);
         const accounts =
           ids.length === 0
@@ -146,6 +149,7 @@ export class AdminSettlementService {
           vendor,
           availableForPayoutNpr: availableOf(vendor.wallet_balance_npr, feesDue.get(vendor.id)),
           pendingEscrowNpr: escrow.get(vendor.id) ?? 0,
+          disputeHoldNpr: hold.get(vendor.id) ?? 0,
           primaryBankAccount: primary.get(vendor.id) ?? null,
         }));
       },
@@ -309,6 +313,7 @@ async function settlementVendor(
   vendor: SettlementVendor['vendor'],
 ): Promise<SettlementVendor> {
   const escrow = await pendingEscrowByVendor(tx, [vendor.id]);
+  const hold = await disputeHoldByVendor(tx, [vendor.id]);
   return {
     vendor,
     availableForPayoutNpr: availableOf(
@@ -316,6 +321,7 @@ async function settlementVendor(
       await adFeesDuePaisa(tx, vendor.id),
     ),
     pendingEscrowNpr: escrow.get(vendor.id) ?? 0,
+    disputeHoldNpr: hold.get(vendor.id) ?? 0,
     primaryBankAccount: await primaryBankAccountOf(tx, vendor.id),
   };
 }

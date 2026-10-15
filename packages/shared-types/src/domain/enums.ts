@@ -92,6 +92,16 @@ export const ledgerAccountTypes = [
   'AD_BUDGET_CLEARING',
   /** The platform's share of campaign discounts: its marketing cost (SPEC core 9). */
   'PROMO_EXPENSE',
+  /**
+   * Step 7.3 (SPEC core 6): one per vendor (owner `hold_vendor_id`). A delivered prepaid order's
+   * earnings wait here for its 7-day conversation window; never negative, never paid out.
+   */
+  'VENDOR_DISPUTE_HOLD',
+  /**
+   * Step 7.3: one account. Refunds a resolution decided, owed to customers and paid by hand from
+   * the eSewa / Khalti merchant dashboards (decided 2026-10-15).
+   */
+  'REFUND_CLEARING',
 ] as const;
 export const ledgerAccountTypeSchema = z.enum(ledgerAccountTypes);
 export type LedgerAccountType = z.infer<typeof ledgerAccountTypeSchema>;
@@ -119,6 +129,10 @@ export const ledgerTransactionKinds = [
   'AD_PURCHASE',
   'AD_BUDGET_RELEASE',
   'AD_REFUND',
+  /** Step 7.3: day 8 with no escalation, or a resolution: VENDOR_DISPUTE_HOLD to VENDOR_WALLET. */
+  'DISPUTE_HOLD_RELEASE',
+  /** Step 7.3: a resolution's refund: hold (and / or wallet) to REFUND_CLEARING. */
+  'DISPUTE_REFUND',
 ] as const;
 export const ledgerTransactionKindSchema = z.enum(ledgerTransactionKinds);
 export type LedgerTransactionKind = z.infer<typeof ledgerTransactionKindSchema>;
@@ -146,6 +160,10 @@ export const ledgerLineTypes = [
   'RECHARGE',
   'PAYOUT',
   'ADJUSTMENT',
+  /** Step 7.3: the settlement's credit to the dispute hold, its release, and a refund. */
+  'DISPUTE_HOLD',
+  'DISPUTE_RELEASE',
+  'DISPUTE_REFUND',
 ] as const;
 export const ledgerLineTypeSchema = z.enum(ledgerLineTypes);
 export type LedgerLineType = z.infer<typeof ledgerLineTypeSchema>;
@@ -183,7 +201,19 @@ export const fiscalDocumentTypeSchema = z.enum(fiscalDocumentTypes);
 export type FiscalDocumentType = z.infer<typeof fiscalDocumentTypeSchema>;
 
 /** Super Admin arbitration outcomes (SPEC Super Admin flow step 3). */
-export const disputeStatuses = ['OPEN', 'REFUNDED_TO_CUSTOMER', 'RELEASED_TO_VENDOR'] as const;
+/**
+ * Step 7.3 (SPEC core 6): an order's conversation. OPEN while the parties chat; ESCALATED once a
+ * party asked Hamro Pasal to decide; CLOSED when the 7-day window ended without an escalation (its
+ * hold was released); the other three are the Super Admin's resolution.
+ */
+export const disputeStatuses = [
+  'OPEN',
+  'ESCALATED',
+  'CLOSED',
+  'RELEASED_TO_VENDOR',
+  'REFUNDED_TO_CUSTOMER',
+  'PARTIALLY_REFUNDED',
+] as const;
 export const disputeStatusSchema = z.enum(disputeStatuses);
 export type DisputeStatus = z.infer<typeof disputeStatusSchema>;
 

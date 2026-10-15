@@ -548,6 +548,12 @@ export const vendorWalletBalanceResponseSchema = z.strictObject({
   suspension_limit_npr: z.number().max(0),
   pending_escrow_npr: z.number().nonnegative(),
   pending_escrow_order_count: z.number().int().nonnegative(),
+  /**
+   * Step 7.3: delivered prepaid earnings waiting out their 7-day window (released on day 8, or
+   * by the Super Admin for an escalated order). Not payable. 0 from an older API.
+   */
+  dispute_hold_npr: z.number().nonnegative().default(0),
+  dispute_hold_order_count: z.number().int().nonnegative().default(0),
 });
 export type VendorWalletBalanceResponseBody = z.infer<typeof vendorWalletBalanceResponseSchema>;
 

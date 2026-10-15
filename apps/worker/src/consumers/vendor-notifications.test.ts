@@ -82,6 +82,7 @@ function ledgerMutated(): DomainEvent {
         vendor_id: null,
         driver_user_id: null,
         gateway: null,
+        hold_vendor_id: null,
         amount_npr: i === 0 ? 10 : -10,
         balance_after_npr: 0,
       })),

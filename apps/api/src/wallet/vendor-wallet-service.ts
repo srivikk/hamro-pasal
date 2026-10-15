@@ -37,6 +37,9 @@ export interface VendorWalletBalance {
   readonly suspensionLimitNpr: number;
   readonly pendingEscrowNpr: number;
   readonly pendingEscrowOrderCount: number;
+  /** Step 7.3: delivered prepaid earnings in the 7-day dispute hold. Not payable. */
+  readonly disputeHoldNpr: number;
+  readonly disputeHoldOrderCount: number;
 }
 
 export interface WalletEntryOrder {
@@ -68,10 +71,10 @@ export interface VendorWalletPage {
 /**
  * Orders whose prepaid money sits in SYSTEM_ESCROW on the vendor's behalf: captured (PAID), not yet
  * settled (settlement happens in the DELIVERED commit). Refunds only exist on CANCELED / FAILED
- * orders, which these states exclude. DISPUTED escrow stays
- * frozen until arbitration, so it is still pending.
+ * orders, which these states exclude. Step 7.3: a DISPUTED order was delivered and settled first
+ * (its earnings are in the dispute hold, counted by `disputeHoldOf`), so it is not pending here.
  */
-const ESCROW_HELD_STATES = ['PLACED', 'PREPARING', 'OUT_FOR_DELIVERY', 'DISPUTED'] as const;
+const ESCROW_HELD_STATES = ['PLACED', 'PREPARING', 'OUT_FOR_DELIVERY'] as const;
 
 /**
  * The vendor's view of its money (SPEC §5): the VENDOR_WALLET balance (its projection
@@ -90,6 +93,7 @@ export class VendorWalletService {
       if (settings === undefined) throw new Error('platform_settings row is missing');
 
       const escrow = await pendingEscrowOf(tx, vendor.id);
+      const hold = await disputeHoldOf(tx, vendor.id);
 
       return {
         vendorId: vendor.id,
@@ -99,6 +103,8 @@ export class VendorWalletService {
         suspensionLimitNpr: settings.limit,
         pendingEscrowNpr: escrow.totalNpr,
         pendingEscrowOrderCount: escrow.orderCount,
+        disputeHoldNpr: hold.totalNpr,
+        disputeHoldOrderCount: hold.orderCount,
       };
     });
   }
@@ -240,6 +246,42 @@ async function vendorOf(tx: Transaction, vendorUserId: string) {
 }
 
 /** The vendor's share of the prepaid money still held in SYSTEM_ESCROW (see ESCROW_HELD_STATES). */
+/**
+ * Step 7.3 (SPEC core 6): delivered prepaid earnings still in the vendor's VENDOR_DISPUTE_HOLD,
+ * and how many orders they belong to (an order's held amount is what its journals left there).
+ */
+export async function disputeHoldOf(
+  tx: Transaction,
+  vendorId: string,
+): Promise<{ readonly totalNpr: number; readonly orderCount: number }> {
+  const { rows } = await tx.execute<{ total: string | null; orders: string }>(sql`
+    SELECT sum(held) AS total, count(*) AS orders
+      FROM (SELECT t.order_id, sum(e.amount_npr) AS held
+              FROM ledger_entries e
+              JOIN ledger_accounts a ON a.id = e.account_id
+              JOIN ledger_transactions t ON t.id = e.transaction_id
+             WHERE a.hold_vendor_id = ${vendorId}
+             GROUP BY t.order_id
+            HAVING sum(e.amount_npr) > 0) per_order`);
+  const [row] = rows;
+  return { totalNpr: Number(row?.total ?? 0), orderCount: Number(row?.orders ?? 0) };
+}
+
+/** `disputeHoldOf` for several vendors: the hold account balances. A vendor with none is absent. */
+export async function disputeHoldByVendor(
+  tx: Transaction,
+  vendorIds: readonly string[],
+): Promise<Map<string, number>> {
+  if (vendorIds.length === 0) return new Map();
+  const rows = await tx
+    .select({ vendorId: ledgerAccounts.hold_vendor_id, balance: ledgerAccounts.balance_npr })
+    .from(ledgerAccounts)
+    .where(inArray(ledgerAccounts.hold_vendor_id, [...vendorIds]));
+  return new Map(
+    rows.flatMap((row) => (row.vendorId === null ? [] : [[row.vendorId, row.balance] as const])),
+  );
+}
+
 export async function pendingEscrowOf(
   tx: Transaction,
   vendorId: string,
@@ -316,5 +358,11 @@ export function entryTypeOf(kind: LedgerTransactionKind, amountNpr: number): Wal
     case 'AD_BUDGET_RELEASE':
     case 'AD_REFUND':
       return 'AD_REFUND';
+    // Step 7.3: an order's held earnings reaching the wallet are that order's payout.
+    case 'DISPUTE_HOLD_RELEASE':
+      return 'ORDER_PAYOUT';
+    // A refund the hold could not cover, debited by Hamro Pasal's resolution.
+    case 'DISPUTE_REFUND':
+      return 'ADJUSTMENT';
   }
 }

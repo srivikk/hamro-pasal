@@ -23,6 +23,7 @@ import { CatalogService } from './catalog/catalog-service';
 import { CategoryService } from './catalog/category-service';
 import { ProductService } from './catalog/product-service';
 import { CheckoutService } from './checkout/checkout-service';
+import { AdminDisputeService } from './disputes/admin-dispute-service';
 import { DisputeService } from './disputes/dispute-service';
 import { AdminPayoutService } from './finance/admin-payout-service';
 import { AdminSettlementService } from './finance/admin-settlement-service';
@@ -215,6 +216,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),
     reviews: new ReviewService(infra.db),
     disputes: new DisputeService(infra.db),
+    adminDisputes: new AdminDisputeService(infra.db, ledger),
     evidence: infra.evidence,
     adminDeadLetters: new DeadLetterService(infra.db),
     adminVendors: new AdminVendorService(infra.db, wallet),

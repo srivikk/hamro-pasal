@@ -64,7 +64,7 @@ import {
   DeliveryNotFoundError,
   DeliveryStateConflictError,
 } from '../deliveries/delivery-service';
-import { DisputeWindowClosedError } from '../disputes/dispute-service';
+import { AlreadyEscalatedError, DisputeWindowClosedError } from '../disputes/dispute-service';
 import {
   BankAccountMissingError,
   PanNotVerifiedError,
@@ -584,6 +584,9 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof DisputeWindowClosedError) {
     return new HttpError(422, 'DISPUTE_WINDOW_CLOSED', error.message);
+  }
+  if (error instanceof AlreadyEscalatedError) {
+    return new HttpError(409, 'ALREADY_ESCALATED', error.message);
   }
   if (error instanceof MulterError) {
     // Every image upload (evidence, product photos, promotion art, PAN documents) is 5 MB.

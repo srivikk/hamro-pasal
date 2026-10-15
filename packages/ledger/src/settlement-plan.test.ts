@@ -71,7 +71,7 @@ describe('planSettlement', () => {
 
     expect(describePostings(postings)).toEqual([
       'SYSTEM_ESCROW: -1050',
-      'VENDOR_WALLET: 950',
+      'VENDOR_DISPUTE_HOLD: 950',
       'PLATFORM_REVENUE: 100',
     ]);
     expect(sum(postings)).toBe(0);
@@ -84,7 +84,7 @@ describe('planSettlement', () => {
 
     expect(describePostings(postings)).toEqual([
       'SYSTEM_ESCROW: -1050',
-      'VENDOR_WALLET: 900',
+      'VENDOR_DISPUTE_HOLD: 900',
       'DRIVER_WALLET: 50',
       'PLATFORM_REVENUE: 100',
     ]);
@@ -121,7 +121,7 @@ describe('planSettlement', () => {
 
     expect(describePostings(postings)).toEqual([
       'SYSTEM_ESCROW: -333.34',
-      'VENDOR_WALLET: 300.01',
+      'VENDOR_DISPUTE_HOLD: 300.01',
       'PLATFORM_REVENUE: 33.33',
     ]);
     expect(sum(postings)).toBe(0);
@@ -168,7 +168,7 @@ describe('settlement with a platform campaign discount (SPEC core 9)', () => {
     const plan = planSettlement(discounted());
     expect(byType(plan)).toEqual([
       ['SYSTEM_ESCROW', -950],
-      ['VENDOR_WALLET', 905], // 1000 - 50 - 95 + its own 50 delivery fee
+      ['VENDOR_DISPUTE_HOLD', 905], // 1000 - 50 - 95 + its own 50 delivery fee
       ['PLATFORM_REVENUE', 95],
       ['PROMO_EXPENSE', -50],
     ]);
@@ -209,14 +209,14 @@ describe('settlement with a platform campaign discount (SPEC core 9)', () => {
     );
     expect(byType(vendorPays)).toEqual([
       ['SYSTEM_ESCROW', -950],
-      ['VENDOR_WALLET', 860],
+      ['VENDOR_DISPUTE_HOLD', 860],
       ['PLATFORM_REVENUE', 90],
     ]);
     const platformPays = planSettlement(
       discounted({ platform_promo_vendor_share_npr: 0, platform_commission_amount: 100 }),
     );
     expect(byType(platformPays)).toContainEqual(['PROMO_EXPENSE', -100]);
-    expect(byType(platformPays)).toContainEqual(['VENDOR_WALLET', 950]);
+    expect(byType(platformPays)).toContainEqual(['VENDOR_DISPUTE_HOLD', 950]);
     expect(sum(platformPays)).toBe(0);
   });
 
@@ -274,7 +274,7 @@ describe('settlement with a vendor offer stacked on a campaign (SPEC verificatio
     const plan = planSettlement(stacked());
     expect(byType(plan)).toEqual([
       ['SYSTEM_ESCROW', -860],
-      ['VENDOR_WALLET', 819.5], // 1000 - 100 - 45 - 85.50 + its own 50 delivery fee
+      ['VENDOR_DISPUTE_HOLD', 819.5], // 1000 - 100 - 45 - 85.50 + its own 50 delivery fee
       ['PLATFORM_REVENUE', 85.5],
       ['PROMO_EXPENSE', -45],
     ]);
@@ -315,7 +315,7 @@ describe('settlement with a vendor offer stacked on a campaign (SPEC verificatio
     );
     expect(byType(plan)).toEqual([
       ['SYSTEM_ESCROW', -950],
-      ['VENDOR_WALLET', 860],
+      ['VENDOR_DISPUTE_HOLD', 860],
       ['PLATFORM_REVENUE', 90],
     ]);
   });

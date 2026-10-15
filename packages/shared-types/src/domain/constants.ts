@@ -71,6 +71,18 @@ export const REFRESH_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const POST_DELIVERY_WINDOW_HOURS = 48;
 export const POST_DELIVERY_WINDOW_SECONDS = POST_DELIVERY_WINDOW_HOURS * 60 * 60;
 
+/**
+ * Step 7.3 (SPEC core 6, decided 2026-10-15): an order conversation is open from placement until
+ * this long after delivery, and a prepaid order earnings are held until then (released on day 8).
+ */
+export const DISPUTE_WINDOW_HOURS = 168;
+/** An escalation reason, and a resolution note. */
+export const ESCALATION_REASON_MIN_LENGTH = 10;
+export const ESCALATION_REASON_MAX_LENGTH = 500;
+export const RESOLUTION_NOTE_MIN_LENGTH = 10;
+export const RESOLUTION_NOTE_MAX_LENGTH = 1000;
+export const ADMIN_DISPUTE_LIST_DEFAULT_LIMIT = 50;
+
 /** Longest optional feedback text accepted with a review. */
 export const MAX_REVIEW_FEEDBACK_LENGTH = 500;
 

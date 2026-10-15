@@ -9,6 +9,7 @@ import {
 import { and, eq } from 'drizzle-orm';
 
 import { LedgerService } from '../src/ledger/ledger-service';
+import { settleDisputeHold } from '../src/ledger/ledger-service';
 import { SettlementService } from '../src/ledger/settlement-service';
 import { WalletService } from '../src/wallet/wallet-service';
 import {
@@ -90,7 +91,12 @@ describe('WalletService: debt suspension and restoration', () => {
     });
     await settlement.capturePayment(order.id);
     await markDelivered(db, order.id, await createUser(db, 'DRIVER'));
-    return settlement.settleOrder(order.id);
+    const settled = await settlement.settleOrder(order.id);
+    // Step 7.3: a prepaid order's earnings reach the wallet when its 7-day hold is released.
+    await db.transaction((tx) =>
+      settleDisputeHold(tx, ledger, { orderId: order.id, vendorId, refundPaisa: 0 }),
+    );
+    return settled;
   }
 
   /** A balanced top-up journal, as the top-up endpoint posts it. */

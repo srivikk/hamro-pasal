@@ -232,7 +232,9 @@ describe('dispute chat screen', () => {
 
     expect(screen.queryByText('Sorry! Can you share a photo?')).toBeNull();
     expect(
-      screen.getByText('Tell us what went wrong. A Hamro Pasal team member will reply here.'),
+      screen.getByText(
+        'Message the shop about this order. If you cannot agree, escalate to Hamro Pasal.',
+      ),
     ).toBeOnTheScreen();
   });
 
@@ -408,7 +410,10 @@ describe('dispute chat screen', () => {
   });
 
   it.each([
-    ['DISPUTE_WINDOW_CLOSED', 'The 48-hour dispute window for this order has ended.'],
+    [
+      'DISPUTE_WINDOW_CLOSED',
+      'The conversation for this order has ended (it closes 7 days after delivery).',
+    ],
     ['ORDER_NOT_FOUND', "This dispute isn't available."],
   ])('closes when the server refuses the join with %s', async (code, message) => {
     await renderScreen();
@@ -422,14 +427,113 @@ describe('dispute chat screen', () => {
     expect(mockSocket.emittedOf('chat:join')).toHaveLength(1); // a refusal is never retried
   });
 
-  it('is closed once 48 h have passed since delivery', async () => {
-    deliveredAgo(48 * HOUR + 60_000);
+  it('is closed once 7 days have passed since delivery (step 7.3)', async () => {
+    deliveredAgo(168 * HOUR + 60_000);
     await renderScreen();
 
     expect(screen.getByTestId('dispute-closed')).toHaveTextContent(
-      'The 48-hour dispute window for this order has ended.',
+      'The conversation for this order has ended (it closes 7 days after delivery).',
     );
     expect(mockIo).not.toHaveBeenCalled();
+  });
+
+  describe('escalation to Hamro Pasal (step 7.3)', () => {
+    const conversation = (status: 'ESCALATED') => ({
+      conversation: {
+        dispute_id: '5d1c2a10-0000-4000-8000-0000000000d1',
+        order_id: ORDER_ID,
+        status,
+        escalated_at: '2026-10-15T08:00:00.000Z',
+        escalation_reason: 'The honey jar arrived broken.',
+        window_ends_at: null,
+      },
+    });
+
+    it('is open from placement, before delivery', async () => {
+      useOrderStore.setState({
+        orders: {
+          [ORDER_ID]: {
+            orderId: ORDER_ID,
+            placedAt: Date.now() - HOUR,
+            deliveredAt: null,
+            state: 'PREPARING',
+            paymentMethod: 'ESEWA',
+            totalNpr: 1250,
+          },
+        },
+      });
+      await renderScreen();
+
+      expect(screen.queryByTestId('dispute-closed')).toBeNull();
+      expect(screen.getByTestId('dispute-escalate')).toBeOnTheScreen();
+    });
+
+    it('asks for a reason of at least 10 characters and posts it once', async () => {
+      const posted: unknown[] = [];
+      server.use(
+        http.post(apiUrl(`/api/orders/${ORDER_ID}/escalate`), async ({ request }) => {
+          posted.push(await request.json());
+          return HttpResponse.json(conversation('ESCALATED'));
+        }),
+      );
+      await renderScreen();
+      acceptJoin();
+
+      fireEvent.press(screen.getByTestId('dispute-escalate'));
+      fireEvent.changeText(screen.getByTestId('dispute-escalate-reason'), 'Too short');
+      expect(screen.getByRole('button', { name: 'Escalate' })).toBeDisabled();
+
+      fireEvent.changeText(
+        screen.getByTestId('dispute-escalate-reason'),
+        '  The honey jar arrived broken.  ',
+      );
+      fireEvent.press(screen.getByRole('button', { name: 'Escalate' }));
+      await settle();
+
+      expect(posted).toEqual([{ reason: 'The honey jar arrived broken.' }]);
+      expect(screen.getByTestId('dispute-escalated')).toHaveTextContent(
+        'Escalated to Hamro Pasal. Our team will read this conversation and decide.',
+      );
+      expect(screen.queryByTestId('dispute-escalate')).toBeNull();
+    });
+
+    it('treats 409 ALREADY_ESCALATED as escalated', async () => {
+      server.use(
+        http.post(apiUrl(`/api/orders/${ORDER_ID}/escalate`), () =>
+          HttpResponse.json(errorBody('ALREADY_ESCALATED', 'Already escalated'), { status: 409 }),
+        ),
+      );
+      await renderScreen();
+      acceptJoin();
+
+      fireEvent.press(screen.getByTestId('dispute-escalate'));
+      fireEvent.changeText(
+        screen.getByTestId('dispute-escalate-reason'),
+        'The honey jar arrived broken.',
+      );
+      fireEvent.press(screen.getByRole('button', { name: 'Escalate' }));
+      await settle();
+
+      expect(screen.getByTestId('dispute-escalated')).toBeOnTheScreen();
+    });
+
+    it('shows a DISPUTED order as escalated, past the 7 days', async () => {
+      useOrderStore.setState({
+        orders: {
+          [ORDER_ID]: {
+            orderId: ORDER_ID,
+            placedAt: Date.now() - 300 * HOUR,
+            deliveredAt: Date.now() - 200 * HOUR,
+            state: 'DISPUTED',
+            paymentMethod: 'ESEWA',
+            totalNpr: 1250,
+          },
+        },
+      });
+      await renderScreen();
+
+      expect(screen.getByTestId('dispute-escalated')).toBeOnTheScreen();
+    });
   });
 
   describe('transcript read-back (GET /api/orders/:id/chat)', () => {

@@ -11,6 +11,7 @@ import type { CatalogService } from './catalog/catalog-service';
 import type { CategoryService } from './catalog/category-service';
 import type { ProductService } from './catalog/product-service';
 import type { CheckoutService } from './checkout/checkout-service';
+import type { AdminDisputeService } from './disputes/admin-dispute-service';
 import type { DisputeService } from './disputes/dispute-service';
 import type { AdminPayoutService } from './finance/admin-payout-service';
 import type { AdminSettlementService } from './finance/admin-settlement-service';
@@ -51,6 +52,7 @@ import { categoriesRouter, productsRouter, vendorProductsRouter } from './routes
 import { deliveriesRouter } from './routes/deliveries';
 import { orderChatRouter } from './routes/order-chat';
 import { alertsRouter } from './routes/alerts';
+import { adminDisputesRouter, escalationRouter } from './routes/disputes';
 import { meRouter } from './routes/me';
 import { notificationsRouter } from './routes/notifications';
 import { testRouter } from './routes/mock-services';
@@ -94,6 +96,8 @@ export interface ApiServices {
   readonly khalti: KhaltiService;
   readonly reviews: ReviewService;
   readonly disputes: DisputeService;
+  /** Step 7.3: escalated conversations and their resolution. */
+  readonly adminDisputes: AdminDisputeService;
   readonly evidence: EvidenceStorage;
   /** Phase 15: the Super Admin dashboard (apps/admin). */
   readonly adminDeadLetters: DeadLetterService;
@@ -168,6 +172,12 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
   if (services !== undefined) {
     const customerAuth = requireAuth(services.accessTokenSecret, ['CUSTOMER']);
     app.use('/api/auth', authRouter(services.auth));
+    // Step 7.3. Before the admin router, which would otherwise answer 404 for these paths.
+    app.use(
+      '/api/admin/disputes',
+      requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
+      adminDisputesRouter(services.adminDisputes),
+    );
     app.use(
       '/api/admin',
       requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
@@ -268,6 +278,8 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       '/api/vendors/orders',
       requireAuth(services.accessTokenSecret, ['VENDOR']),
       vendorOrdersRouter({ reviews: services.reviews, vendorOrders: services.vendorOrders }),
+      // Step 7.3: the vendor escalates its order's conversation.
+      escalationRouter(services.disputes),
     );
     app.use(
       '/api/vendors/wallet',
@@ -293,7 +305,13 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       requireAuth(services.accessTokenSecret, ['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
       orderChatRouter(services.disputes),
     );
-    app.use('/api/orders', customerAuth, ordersRouter(services.orders));
+    app.use(
+      '/api/orders',
+      customerAuth,
+      ordersRouter(services.orders),
+      // Step 7.3: the customer escalates its order's conversation.
+      escalationRouter(services.disputes),
+    );
     app.use(
       '/api/payments',
       paymentsRouter({ esewa: services.esewa, khalti: services.khalti, customerAuth }),

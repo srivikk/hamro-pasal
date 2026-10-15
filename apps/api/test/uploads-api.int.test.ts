@@ -202,8 +202,8 @@ describe('dispute evidence uploads', () => {
     expect(await storedFiles(orderId)).toEqual([]);
   });
 
-  it('refuses orders outside the 48 h dispute window (422)', async () => {
-    const late = await deliveredOrder(48.1);
+  it('refuses orders outside the conversation window (422): 7 days after delivery, or unpaid', async () => {
+    const late = await deliveredOrder(168.1);
     const customerId = await createUser(db());
     const vendorId = await createVendor(db());
     const undelivered = await createOrder(db(), { vendorId, customerId });

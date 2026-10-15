@@ -29,6 +29,8 @@ import { mockPushLogFromEnv, pushGatewayFromEnv } from './push/mock-push';
 import { OutboxRelay } from './outbox/outbox-relay';
 import { allTimerQueues, createTimerQueues, registerMidnightJobs } from './queues/definitions';
 import { createProcessors, createTimerHandlers } from './queues/processors';
+import { DisputeHoldReleaseService } from './finance/dispute-hold-release';
+import { DisputeNoticeService } from './notifications/dispute-notices';
 import { NotifyMeService } from './notifications/notify-me';
 import { VendorAcceptanceExpiryService } from './sla/vendor-acceptance-expiry';
 import { VendorEscalationService } from './sla/vendor-escalation';
@@ -71,6 +73,8 @@ async function main(): Promise<void> {
       escalation: new VendorEscalationService(db),
       acceptanceExpiry: new VendorAcceptanceExpiryService(db),
       notifyMe,
+      // Step 7.3: day 8, the held prepaid earnings of an order nobody escalated.
+      disputeHoldRelease: new DisputeHoldReleaseService(db, new LedgerService(new WalletService())),
       debtReconciliation: new VendorDebtReconciliationService(db),
       complianceSweep: new ComplianceSweepService(db),
       billingRenewal: new BillingCycleRenewalService(db),
@@ -138,6 +142,8 @@ async function main(): Promise<void> {
     ),
     vendorContacts: new DatabaseVendorContacts(db),
     notifyMe,
+    // Step 7.3: the parties of an escalated or resolved order are told.
+    disputeNotices: new DisputeNoticeService(db, push),
   });
   if (consumers.length > 0) {
     const handlers = routeByTopic(consumers);

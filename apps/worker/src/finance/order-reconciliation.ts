@@ -17,7 +17,7 @@ import {
   type SettlementService,
 } from '@hamro-pasal/ledger';
 import type { Order } from '@hamro-pasal/shared-types';
-import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, or, sql } from 'drizzle-orm';
 
 /** A DELIVERED order whose settlement is now verified and stamped `reconciled_at`. */
 export interface ReconciledOrder {
@@ -212,11 +212,17 @@ export class OrderReconciliationService {
   }
 }
 
-/** What the order's settlement must post to its vendor's wallet, from the order snapshot. */
+/**
+ * What the order's settlement must post to its vendor, from the order snapshot: to its wallet, or
+ * (step 7.3, a prepaid order) to its dispute hold. Both together, so an order delivered before the
+ * hold existed (credited to the wallet) still reconciles.
+ */
 export function vendorWalletPaisa(order: Order): number {
   return planSettlement(order)
     .filter(
-      ({ account }) => account.type === 'VENDOR_WALLET' && account.vendorId === order.vendor_id,
+      ({ account }) =>
+        (account.type === 'VENDOR_WALLET' || account.type === 'VENDOR_DISPUTE_HOLD') &&
+        account.vendorId === order.vendor_id,
     )
     .reduce((total, posting) => total + posting.amountPaisa, 0);
 }
@@ -229,7 +235,7 @@ async function settlementJournalId(tx: Transaction, orderId: string): Promise<st
   return journal?.id ?? null;
 }
 
-/** What the settlement journal did post to the vendor's wallet (0 without a journal or a posting). */
+/** What the settlement journal did post to the vendor's wallet and hold (0 without a journal). */
 async function postedVendorWalletPaisa(tx: Transaction, order: Order): Promise<number> {
   const [posted] = await tx
     .select({ total: sql<number>`coalesce(sum(${ledgerEntries.amount_npr}), 0)`.mapWith(Number) })
@@ -239,7 +245,10 @@ async function postedVendorWalletPaisa(tx: Transaction, order: Order): Promise<n
     .where(
       and(
         eq(ledgerTransactions.idempotency_key, orderSettlementKey(order.id)),
-        eq(ledgerAccounts.vendor_id, order.vendor_id),
+        or(
+          eq(ledgerAccounts.vendor_id, order.vendor_id),
+          eq(ledgerAccounts.hold_vendor_id, order.vendor_id),
+        ),
       ),
     );
   return toPaisa(posted?.total ?? 0);

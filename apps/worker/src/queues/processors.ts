@@ -2,6 +2,7 @@ import type { BillingCycleRenewalService } from '../billing/billing-cycle-renewa
 import type { ComplianceSweepService } from '../compliance/compliance-sweep';
 import type { SettlementPayoutRunService } from '../finance/settlement-payout-run';
 import type { MarketingStatusSweepService } from '../marketing/marketing-status-sweep';
+import type { DisputeHoldReleaseService } from '../finance/dispute-hold-release';
 import type { NotifyMeService } from '../notifications/notify-me';
 import {
   ghostCustomerTimerJobSchema,
@@ -41,6 +42,8 @@ export interface TimerHandlers {
   runSettlementPayoutRun(): Promise<void>;
   /** Step 7.4: the 5-minute Notify Me sweep. */
   runNotifyMeSweep(): Promise<void>;
+  /** Step 7.3: the hourly day-8 release of held prepaid earnings. */
+  runDisputeHoldRelease(): Promise<void>;
 }
 
 /** Payloads are validated at the boundary: a malformed job fails loudly (and is retained). */
@@ -60,6 +63,7 @@ export function createProcessors(handlers: TimerHandlers) {
       if (task === 'MARKETING_STATUS_SWEEP') return handlers.runMarketingStatusSweep();
       if (task === 'SETTLEMENT_PAYOUT_RUN') return handlers.runSettlementPayoutRun();
       if (task === 'NOTIFY_ME_SWEEP') return handlers.runNotifyMeSweep();
+      if (task === 'DISPUTE_HOLD_RELEASE') return handlers.runDisputeHoldRelease();
       return handlers.runMidnightTask(task);
     },
   };
@@ -132,6 +136,8 @@ export function createTimerHandlers(deps: {
   readonly acceptanceExpiry?: Pick<VendorAcceptanceExpiryService, 'cancelIfUnanswered'>;
   /** Step 7.4. Optional like those above. */
   readonly notifyMe?: Pick<NotifyMeService, 'sweep'>;
+  /** Step 7.3. Optional like those above. */
+  readonly disputeHoldRelease?: Pick<DisputeHoldReleaseService, 'run'>;
 }): TimerHandlers {
   return {
     ...pendingImplementationHandlers,
@@ -147,6 +153,17 @@ export function createTimerHandlers(deps: {
       console.info(
         `[worker] settlement payout run (cut-off ${summary.cutoff.toISOString()}): ${String(summary.paid.length)} vendor(s) paid Rs. ${String(total / 100)}; skipped ${JSON.stringify(summary.skipped)}`,
       );
+    },
+    runDisputeHoldRelease: async () => {
+      if (deps.disputeHoldRelease === undefined) {
+        return pendingImplementationHandlers.runDisputeHoldRelease();
+      }
+      const summary = await deps.disputeHoldRelease.run();
+      if (summary.released > 0 || summary.skipped > 0) {
+        console.info(
+          `[worker] dispute hold release: ${String(summary.released)} order(s) released (Rs. ${String(summary.releasedNpr)}), ${String(summary.skipped)} skipped`,
+        );
+      }
     },
     runNotifyMeSweep: async () => {
       if (deps.notifyMe === undefined) return pendingImplementationHandlers.runNotifyMeSweep();
@@ -236,6 +253,10 @@ export const pendingImplementationHandlers: TimerHandlers = {
   },
   runNotifyMeSweep: () => {
     console.warn('[worker] notify-me sweep fired (not wired in this worker)');
+    return Promise.resolve();
+  },
+  runDisputeHoldRelease: () => {
+    console.warn('[worker] dispute hold release fired (not wired in this worker)');
     return Promise.resolve();
   },
   onVendorAcceptanceTimeout: (job) => {

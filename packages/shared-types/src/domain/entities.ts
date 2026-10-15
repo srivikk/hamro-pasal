@@ -355,6 +355,8 @@ export const ledgerAccountSchema = z.strictObject({
   driver_user_id: z.uuid().nullable(),
   /** Gateway of a GATEWAY_CLEARING account (ESEWA / KHALTI), otherwise null. */
   gateway: paymentMethodSchema.nullable(),
+  /** Step 7.3: owner of a VENDOR_DISPUTE_HOLD account, otherwise null. */
+  hold_vendor_id: z.uuid().nullable(),
   balance_npr: nprAmountSchema,
   created_at: z.date(),
   updated_at: z.date(),
@@ -389,10 +391,21 @@ export type LedgerEntry = z.infer<typeof ledgerEntrySchema>;
 export const disputeSchema = z.strictObject({
   id: z.uuid(),
   order_id: z.uuid(),
-  opened_by_user_id: z.uuid(),
-  reason: nonEmptyTextSchema,
+  /** Who sent the first message; null for a row the day-8 release created (nobody chatted). */
+  opened_by_user_id: z.uuid().nullable(),
+  /** Step 7.3: a conversation is not a complaint; the escalation carries the reason. */
+  reason: nonEmptyTextSchema.nullable(),
   status: disputeStatusSchema,
+  escalated_at: z.date().nullable(),
+  escalated_by_user_id: z.uuid().nullable(),
+  escalation_reason: nonEmptyTextSchema.nullable(),
+  /** What the resolution refunds the customer (0 for a release). */
+  refund_npr: nprAmountSchema.nullable(),
+  resolution_note: nonEmptyTextSchema.nullable(),
+  /** The journal that released (or resolved) the order hold. */
+  hold_release_transaction_id: z.uuid().nullable(),
   resolved_by_user_id: z.uuid().nullable(),
+  /** When it was resolved, or CLOSED by the day-8 release. */
   resolved_at: z.date().nullable(),
   created_at: z.date(),
   updated_at: z.date(),

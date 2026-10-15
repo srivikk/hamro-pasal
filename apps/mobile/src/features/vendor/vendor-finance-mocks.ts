@@ -31,6 +31,8 @@ const sample = (
   suspension_limit_npr: -2000,
   pending_escrow_npr: escrow,
   pending_escrow_order_count: escrowOrders,
+  dispute_hold_npr: 0,
+  dispute_hold_order_count: 0,
 });
 
 /** What each model's card shows when there is no real figure for it. */

@@ -392,8 +392,9 @@ describe('settlement rules at checkout and ad charging at delivery', () => {
 
       expect((await deliver(s, order)).status).toBe(200);
 
-      // 1000 - 100 commission + 50 own delivery fee = 950, less the 25 ad fee.
-      expect(await walletOf(s.vendorId)).toMatchObject({ balance: 925 });
+      // 1000 - 100 commission + 50 own delivery fee = 950, held for 7 days (step 7.3); the 25
+      // ad fee is charged to the wallet now.
+      expect(await walletOf(s.vendorId)).toMatchObject({ balance: -25 });
       expect((await purchaseRow(adId))?.amount_paid_npr).toBe(25);
     });
 

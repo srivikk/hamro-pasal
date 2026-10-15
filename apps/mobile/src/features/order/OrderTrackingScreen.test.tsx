@@ -407,32 +407,33 @@ describe('discrete state tracker', () => {
   });
 });
 
-describe('dispute button (48 h after delivery)', () => {
+describe('chat with the shop (from placement until 7 days after delivery, step 7.3)', () => {
   const MINUTE = 60_000;
   const HOUR = 60 * MINUTE;
-  const disputeButton = () => screen.queryByRole('button', { name: 'Report an Issue / Dispute' });
+  const WEEK = 168 * HOUR;
+  const disputeButton = () => screen.queryByRole('button', { name: 'Chat with the shop' });
 
   function delivered(ago: number): void {
     placeOrder(NOW - ago - HOUR, 'DELIVERED', NOW - ago);
     serverState('DELIVERED');
   }
 
-  it('is shown at 47 h 59 min after delivery', async () => {
-    delivered(47 * HOUR + 59 * MINUTE);
+  it('is shown at 7 days less a minute after delivery', async () => {
+    delivered(WEEK - MINUTE);
     await renderScreen();
 
     expect(disputeButton()).toBeOnTheScreen();
   });
 
-  it('is hidden at 48 h 1 min after delivery', async () => {
-    delivered(48 * HOUR + MINUTE);
+  it('is hidden at 7 days and a minute after delivery', async () => {
+    delivered(WEEK + MINUTE);
     await renderScreen();
 
     expect(disputeButton()).toBeNull();
   });
 
-  it('disappears on its own when the 48 h window closes while the screen is open', async () => {
-    delivered(47 * HOUR + 59 * MINUTE);
+  it('disappears on its own when the 7-day window closes while the screen is open', async () => {
+    delivered(WEEK - MINUTE);
     await renderScreen();
     expect(disputeButton()).toBeOnTheScreen();
 
@@ -446,7 +447,7 @@ describe('dispute button (48 h after delivery)', () => {
     delivered(HOUR);
     await renderScreen();
 
-    fireEvent.press(screen.getByRole('button', { name: 'Report an Issue / Dispute' }));
+    fireEvent.press(screen.getByRole('button', { name: 'Chat with the shop' }));
 
     expect(mockRouterPush).toHaveBeenCalledWith({
       pathname: '/order/[id]/dispute',
@@ -454,11 +455,11 @@ describe('dispute button (48 h after delivery)', () => {
     });
   });
 
-  it('is not offered before delivery, or when the delivery time is unknown', async () => {
+  it('is offered from placement, before delivery', async () => {
     placeOrder(NOW - HOUR, 'OUT_FOR_DELIVERY');
     serverState('OUT_FOR_DELIVERY');
     await renderScreen();
-    expect(disputeButton()).toBeNull();
+    expect(disputeButton()).toBeOnTheScreen();
   });
 
   it('is not offered when this device never saw the delivery time', async () => {

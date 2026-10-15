@@ -62,6 +62,7 @@ export function vendorFinanceRouter(finance: VendorFinanceService): Router {
       vendor_id: ledger.vendorId,
       available_balance_npr: ledger.availableBalanceNpr,
       pending_balance_npr: ledger.pendingBalanceNpr,
+      dispute_hold_npr: ledger.disputeHoldNpr,
       pending_payout_npr: ledger.pendingPayoutNpr,
       unreconciled_order_count: ledger.unreconciledOrderCount,
       reconciled_orders: ledger.reconciledOrders.map(reconciledOrderView),

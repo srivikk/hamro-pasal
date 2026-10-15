@@ -51,6 +51,7 @@ const ledger: VendorFinanceLedgerResponseBody = {
   vendor_id: ID.vendor,
   available_balance_npr: 600,
   pending_balance_npr: 950,
+  dispute_hold_npr: 0,
   pending_payout_npr: 400,
   unreconciled_order_count: 1,
   reconciled_orders: [

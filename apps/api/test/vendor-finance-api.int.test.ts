@@ -148,6 +148,7 @@ describe('vendor finance API', () => {
       expect(await ledgerBody(userId)).toEqual({
         vendor_id: vendorId,
         available_balance_npr: 0,
+        dispute_hold_npr: 0,
         pending_balance_npr: 0,
         pending_payout_npr: 0,
         unreconciled_order_count: 0,
@@ -185,8 +186,10 @@ describe('vendor finance API', () => {
 
       const body = await ledgerBody(userId);
 
-      // 950 + (−100) + 900 + 950 (the unreconciled one is settled too).
-      expect(body.available_balance_npr).toBe(2700);
+      // Step 7.3: the delivered prepaid orders wait in the dispute hold: 950 + 900 + 950 (the
+      // unreconciled one is settled too); only the cash commission (−100) is in the wallet.
+      expect(body.available_balance_npr).toBe(-100);
+      expect(body.dispute_hold_npr).toBe(2800);
       expect(body.pending_balance_npr).toBe(950);
       expect(body.unreconciled_order_count).toBe(1);
       expect(

@@ -129,6 +129,7 @@ const ready: SettlementVendorView = {
   settlement_model: 'PLATFORM_ESCROW',
   available_for_payout_npr: 8450,
   pending_escrow_npr: 3200,
+  dispute_hold_npr: 0,
   tax_id: '302118845',
   pan_verified_at: '2026-09-28T07:30:00.000Z',
   primary_bank_account: {

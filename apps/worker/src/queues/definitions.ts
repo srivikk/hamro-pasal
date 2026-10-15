@@ -2,6 +2,8 @@ import {
   GHOST_CUSTOMER_TIMER_MS,
   JOB_QUEUES,
   HOURLY_CRON_PATTERN,
+  DISPUTE_HOLD_RELEASE_CRON_PATTERN,
+  DISPUTE_HOLD_RELEASE_TASK,
   MARKETING_STATUS_SWEEP_TASK,
   NOTIFY_ME_SWEEP_CRON_PATTERN,
   NOTIFY_ME_SWEEP_TASK,
@@ -168,6 +170,16 @@ export async function registerMidnightJobs(queue: Queue<MidnightMaintenanceJob>)
       opts: { attempts: 3, ...RETENTION },
     },
   );
+  // Step 7.3: the day-8 release of held prepaid earnings, hourly at half past.
+  await queue.upsertJobScheduler(
+    DISPUTE_HOLD_RELEASE_SCHEDULER_ID,
+    { pattern: DISPUTE_HOLD_RELEASE_CRON_PATTERN, tz: NEPAL_TIMEZONE },
+    {
+      name: DISPUTE_HOLD_RELEASE_TASK,
+      data: { task: DISPUTE_HOLD_RELEASE_TASK },
+      opts: { attempts: 3, ...RETENTION },
+    },
+  );
   // Step 7.4: the Notify Me sweep, every 5 minutes.
   await queue.upsertJobScheduler(
     NOTIFY_ME_SWEEP_SCHEDULER_ID,
@@ -192,4 +204,5 @@ export async function registerMidnightJobs(queue: Queue<MidnightMaintenanceJob>)
 
 export const MARKETING_SWEEP_SCHEDULER_ID = 'marketing-status-sweep';
 export const NOTIFY_ME_SWEEP_SCHEDULER_ID = 'notify-me-sweep';
+export const DISPUTE_HOLD_RELEASE_SCHEDULER_ID = 'dispute-hold-release';
 export const SETTLEMENT_PAYOUT_SCHEDULER_ID = 'settlement-payout-run';

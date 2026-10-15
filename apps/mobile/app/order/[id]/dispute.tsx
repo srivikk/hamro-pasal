@@ -25,10 +25,107 @@ import {
   MAX_CHAT_ATTACHMENTS,
   MAX_CHAT_MESSAGE_LENGTH,
 } from '../../../src/features/dispute/chat-contract';
-import { postDeliveryDeadline } from '../../../src/features/dispute/dispute-window';
+import {
+  conversationDeadline,
+  isConversationOpen,
+} from '../../../src/features/dispute/dispute-window';
+import { useEscalation } from '../../../src/features/dispute/useEscalation';
 import { useDisputeChat, type ThreadMessage } from '../../../src/features/dispute/useDisputeChat';
 import { useBeforeDeadline } from '../../../src/lib/useBeforeDeadline';
+import { ApiError } from '../../../src/api/http';
 import { useOrderStore } from '../../../src/store/useOrderStore';
+import { useToastStore } from '../../../src/store/useToastStore';
+
+/** Step 7.3: an escalation's reason, as the server checks it. */
+const REASON_MIN = 10;
+const REASON_MAX = 500;
+
+/**
+ * Step 7.3 (SPEC core 6): "Escalate to Hamro Pasal", once per order, with a reason. Escalated, the
+ * Hamro Pasal team joins this conversation and decides; the shop is told.
+ */
+function EscalationBar({ orderId, escalated }: { orderId: string; escalated: boolean }) {
+  const { t } = useTranslation();
+  const showToast = useToastStore((state) => state.show);
+  const escalation = useEscalation(orderId);
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [done, setDone] = useState(escalated);
+  const trimmed = reason.trim();
+
+  if (done) {
+    return (
+      <Text className="bg-blue-50 px-4 py-2 text-xs text-blue-900" testID="dispute-escalated">
+        {t('dispute.escalated')}
+      </Text>
+    );
+  }
+  if (!open) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        testID="dispute-escalate"
+        className="mx-4 mt-2 self-start rounded-lg border border-gray-300 bg-white px-3 py-1.5 active:opacity-70"
+        onPress={() => {
+          setOpen(true);
+        }}
+      >
+        <Text className="text-xs font-semibold text-gray-800">{t('dispute.escalate')}</Text>
+      </Pressable>
+    );
+  }
+  return (
+    <View className="mx-4 mt-2 rounded-xl bg-white p-3" testID="dispute-escalate-form">
+      <Text className="mb-2 text-xs text-gray-600">{t('dispute.escalateHint')}</Text>
+      <TextInput
+        testID="dispute-escalate-reason"
+        className="min-h-16 rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        multiline
+        maxLength={REASON_MAX}
+        value={reason}
+        onChangeText={setReason}
+        placeholder={t('dispute.escalatePlaceholder')}
+      />
+      <View className="mt-2 flex-row justify-end gap-2">
+        <Button
+          label={t('address.cancel')}
+          size="sm"
+          variant="secondary"
+          onPress={() => {
+            setOpen(false);
+          }}
+        />
+        <Button
+          label={t('dispute.escalateSubmit')}
+          size="sm"
+          disabled={trimmed.length < REASON_MIN || escalation.isPending}
+          onPress={() => {
+            escalation.mutate(trimmed, {
+              onSuccess: () => {
+                setDone(true);
+                showToast(t('dispute.escalatedToast'), 'info');
+              },
+              onError: (error) => {
+                if (error instanceof ApiError && error.code === 'ALREADY_ESCALATED') {
+                  setDone(true);
+                  return;
+                }
+                showToast(
+                  t(
+                    error instanceof ApiError && error.code === 'DISPUTE_WINDOW_CLOSED'
+                      ? 'dispute.closed'
+                      : 'dispute.escalateFailed',
+                  ),
+                  'error',
+                );
+              },
+            });
+          }}
+        />
+      </View>
+    </View>
+  );
+}
 
 function MessageBubble({ entry, onRetry }: { entry: ThreadMessage; onRetry: () => void }) {
   const { t } = useTranslation();
@@ -89,7 +186,7 @@ function ClosedNotice({ message }: { message: string }) {
   );
 }
 
-function DisputeChat({ orderId }: { orderId: string }) {
+function DisputeChat({ orderId, escalated }: { orderId: string; escalated: boolean }) {
   const { t } = useTranslation();
   const { thread, connection, unavailable, send, retry, historyStatus, retryHistory } =
     useDisputeChat(orderId);
@@ -144,6 +241,7 @@ function DisputeChat({ orderId }: { orderId: string }) {
           {t(`dispute.connection.${connection}`)}
         </Text>
       )}
+      <EscalationBar orderId={orderId} escalated={escalated} />
       <Text className="px-4 pt-3 text-xs text-gray-500">{t('dispute.privacy')}</Text>
       {historyStatus === 'failed' ? (
         <View
@@ -242,13 +340,17 @@ function DisputeChat({ orderId }: { orderId: string }) {
   );
 }
 
-/** SPEC customer flow step 11: dispute chat, open for 48 h after delivery. */
+/**
+ * Step 7.3 (SPEC core 6): the conversation with the shop, open from placement until 7 days after
+ * delivery (and while escalated).
+ */
 export default function DisputeScreen() {
   const { t } = useTranslation();
   const { id } = useLocalSearchParams<{ id: string }>();
   const order = useOrderStore((state) => state.orders[id]);
-  const windowOpen = useBeforeDeadline(postDeliveryDeadline(order?.deliveredAt ?? null));
-  const eligible = order?.state === 'DELIVERED' && windowOpen;
+  const beforeEnd = useBeforeDeadline(conversationDeadline(order?.deliveredAt ?? null));
+  const eligible =
+    order !== undefined && isConversationOpen(order.state, order.deliveredAt, beforeEnd);
 
   return (
     <>
@@ -259,7 +361,11 @@ export default function DisputeScreen() {
           headerBackTitle: t('common.back'),
         }}
       />
-      {eligible ? <DisputeChat orderId={id} /> : <ClosedNotice message={t('dispute.closed')} />}
+      {eligible ? (
+        <DisputeChat orderId={id} escalated={order.state === 'DISPUTED'} />
+      ) : (
+        <ClosedNotice message={t('dispute.closed')} />
+      )}
     </>
   );
 }

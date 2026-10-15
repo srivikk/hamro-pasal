@@ -10,6 +10,8 @@ export type AccountRef =
   | { readonly type: 'AD_REVENUE' }
   | { readonly type: 'AD_BUDGET_CLEARING' }
   | { readonly type: 'PROMO_EXPENSE' }
+  | { readonly type: 'REFUND_CLEARING' }
+  | { readonly type: 'VENDOR_DISPUTE_HOLD'; readonly vendorId: string }
   | { readonly type: 'GATEWAY_CLEARING'; readonly gateway: 'ESEWA' | 'KHALTI' }
   | { readonly type: 'VENDOR_WALLET'; readonly vendorId: string }
   | { readonly type: 'DRIVER_WALLET'; readonly driverUserId: string };
@@ -100,6 +102,8 @@ export function planPaymentCapture(order: SettlementOrder): PlannedPosting[] {
  *   the platform rider on PLATFORM_FLEET / EMERGENCY_FLEET.
  *
  *   Prepaid:      escrow -(S+F) -> vendor +(S-C) [+F], driver [+F], platform +C
+ *                 Step 7.3 (SPEC core 6): the vendor's part goes to its VENDOR_DISPUTE_HOLD, not
+ *                 its wallet, until the 7-day window has closed (DISPUTE_HOLD line).
  *   COD self:     the vendor already holds all the cash -> vendor -C, platform +C
  *                 (may push the wallet negative; the DB suspends it beyond the limit)
  *   COD fleet:    the rider holds the cash -> driver -(S+F), vendor +(S-C), platform +C,
@@ -166,7 +170,11 @@ export function planSettlement(order: SettlementOrder): PlannedPosting[] {
   if (order.payment_method !== 'COD') {
     return balanced([
       { account: ESCROW, amountPaisa: -paid },
-      { account: vendor, amountPaisa: vendorShare + (selfDelivered ? fee : 0) },
+      {
+        account: { type: 'VENDOR_DISPUTE_HOLD', vendorId: order.vendor_id },
+        amountPaisa: vendorShare + (selfDelivered ? fee : 0),
+        lineType: 'DISPUTE_HOLD',
+      },
       ...(driver === null ? [] : [{ account: driver, amountPaisa: fee }]),
       { account: REVENUE, amountPaisa: commission },
       { account: PROMO, amountPaisa: -platformDiscount },

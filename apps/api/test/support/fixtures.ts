@@ -241,17 +241,22 @@ export async function outboxFor(db: Database, aggregateId: string) {
 export type BalanceKey =
   'SYSTEM_ESCROW' | 'PLATFORM_REVENUE' | 'GATEWAY_CLEARING:ESEWA' | 'GATEWAY_CLEARING:KHALTI';
 
-/** Current balance of a system account, or of the vendor/driver wallet owned by `ownerId`. */
+/**
+ * Current balance of a system account, of the vendor/driver wallet owned by `ownerId`, or (step
+ * 7.3) of a vendor's dispute hold, where a delivered prepaid order's earnings wait for 7 days.
+ */
 export async function balanceOf(
   db: Database,
-  key: BalanceKey | { vendorId: string } | { driverUserId: string },
+  key: BalanceKey | { vendorId: string } | { driverUserId: string } | { holdVendorId: string },
 ) {
   let condition;
   if (typeof key === 'object') {
     condition =
       'vendorId' in key
         ? eq(ledgerAccounts.vendor_id, key.vendorId)
-        : eq(ledgerAccounts.driver_user_id, key.driverUserId);
+        : 'holdVendorId' in key
+          ? eq(ledgerAccounts.hold_vendor_id, key.holdVendorId)
+          : eq(ledgerAccounts.driver_user_id, key.driverUserId);
   } else if (key.startsWith('GATEWAY_CLEARING:')) {
     condition = eq(ledgerAccounts.gateway, key.endsWith('ESEWA') ? 'ESEWA' : 'KHALTI');
   } else {

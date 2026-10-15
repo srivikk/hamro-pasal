@@ -128,6 +128,20 @@ describe('dispute chat (/chat)', () => {
     return { customerId, vendorUserId, orderId: order.id, pii };
   }
 
+  /** Step 7.3: the customer escalated the order's conversation to Hamro Pasal. */
+  async function escalate(orderId: string, customerId: string): Promise<void> {
+    const values = {
+      status: 'ESCALATED' as const,
+      escalated_at: new Date(),
+      escalated_by_user_id: customerId,
+      escalation_reason: 'The honey jar arrived broken.',
+    };
+    await db()
+      .insert(disputes)
+      .values({ order_id: orderId, opened_by_user_id: customerId, ...values })
+      .onConflictDoUpdate({ target: disputes.order_id, set: values });
+  }
+
   async function participant(instance: number, userId: string, role: UserRole) {
     const socket = connectClient(`${instances[instance]?.url ?? ''}/chat`, {
       transports: ['websocket'],
@@ -210,10 +224,17 @@ describe('dispute chat (/chat)', () => {
     });
   });
 
-  it('lets a Super Admin join any dispute, identified by role only when unnamed', async () => {
+  it('lets a Super Admin join an escalated conversation only, identified by role when unnamed', async () => {
     const { customerId, orderId, pii } = await dispute();
     const adminId = await named('SUPER_ADMIN', null, 'Adhikari');
     const customer = await participant(0, customerId, 'CUSTOMER');
+    const early = await participant(1, adminId, 'SUPER_ADMIN');
+    // Step 7.3: not escalated, the Super Admin cannot read or join it.
+    expect(await join(early.socket, orderId)).toMatchObject({
+      ok: false,
+      error: { code: 'ORDER_NOT_FOUND' },
+    });
+    await escalate(orderId, customerId);
     const admin = await participant(1, adminId, 'SUPER_ADMIN');
     await join(customer.socket, orderId);
     expect(await join(admin.socket, orderId)).toEqual({ ok: true, order_id: orderId });
@@ -245,8 +266,12 @@ describe('dispute chat (/chat)', () => {
     }
   });
 
-  it('closes 48 h after delivery', async () => {
-    const { customerId, orderId } = await dispute(48.1);
+  it('stays open for 7 days after delivery and closes then (step 7.3)', async () => {
+    const open = await dispute(167.9);
+    const inTime = await participant(0, open.customerId, 'CUSTOMER');
+    expect(await join(inTime.socket, open.orderId)).toEqual({ ok: true, order_id: open.orderId });
+
+    const { customerId, orderId } = await dispute(168.1);
     const customer = await participant(0, customerId, 'CUSTOMER');
 
     expect(await join(customer.socket, orderId)).toMatchObject({
@@ -325,7 +350,7 @@ describe('dispute chat (/chat)', () => {
       expect(ack).toEqual({ ok: true, message: vendor.received[0] });
     });
 
-    it("the order's first message opens its dispute; later ones join it", async () => {
+    it("the order's first message opens its conversation; later ones join it", async () => {
       const { customerId, vendorUserId, orderId } = await dispute();
       const customer = await participant(0, customerId, 'CUSTOMER');
       const vendor = await participant(1, vendorUserId, 'VENDOR');
@@ -340,7 +365,8 @@ describe('dispute chat (/chat)', () => {
       expect(opened[0]).toMatchObject({
         order_id: orderId,
         opened_by_user_id: customerId,
-        reason: 'Jar broken.',
+        // Step 7.3: a conversation is not a complaint; an escalation carries the reason.
+        reason: null,
         status: 'OPEN',
         resolved_by_user_id: null,
         resolved_at: null,
@@ -362,11 +388,11 @@ describe('dispute chat (/chat)', () => {
       await send(vendor.socket, { client_id: 'v-1', order_id: orderId, body: 'Customer refused.' });
 
       expect(await disputesOf(orderId)).toMatchObject([
-        { opened_by_user_id: vendorUserId, reason: 'Customer refused.' },
+        { opened_by_user_id: vendorUserId, reason: null, status: 'OPEN' },
       ]);
     });
 
-    it('a photo-only first message opens the dispute with a placeholder reason', async () => {
+    it('a photo-only first message opens the conversation too', async () => {
       const { customerId, orderId } = await dispute();
       const jpeg = await photo();
       const uploaded = bodyOf(
@@ -386,7 +412,7 @@ describe('dispute chat (/chat)', () => {
         attachments: [uploaded],
       });
 
-      expect((await disputesOf(orderId))[0]?.reason).toBe('Photo evidence submitted');
+      expect((await disputesOf(orderId))[0]).toMatchObject({ status: 'OPEN', reason: null });
       expect((await transcriptOf(orderId))[0]?.attachments).toEqual([uploaded]);
     });
 
@@ -419,13 +445,14 @@ describe('dispute chat (/chat)', () => {
       }
     });
 
-    it('keeps an OPEN dispute reachable after the 48 h window, until it is resolved', async () => {
-      const { customerId, vendorUserId, orderId } = await dispute(47);
+    it('keeps an escalated conversation reachable after the 7-day window, until it is resolved', async () => {
+      const { customerId, vendorUserId, orderId } = await dispute(160);
       const early = await participant(0, customerId, 'CUSTOMER');
       await send(early.socket, { client_id: 'c-1', order_id: orderId, body: 'Opened in time.' });
+      await escalate(orderId, customerId);
       await db()
         .update(orders)
-        .set({ delivered_at: sql`now() - make_interval(hours => 49)` })
+        .set({ delivered_at: sql`now() - make_interval(hours => 169)` })
         .where(eq(orders.id, orderId));
 
       const customer = await participant(0, customerId, 'CUSTOMER');
@@ -444,6 +471,8 @@ describe('dispute chat (/chat)', () => {
           status: 'REFUNDED_TO_CUSTOMER',
           resolved_at: new Date(),
           resolved_by_user_id: customerId,
+          resolution_note: 'Refunded in full.',
+          refund_npr: 100,
         })
         .where(eq(disputes.id, open?.id ?? ''));
       const afterResolution = await participant(0, customerId, 'CUSTOMER');
@@ -454,9 +483,9 @@ describe('dispute chat (/chat)', () => {
     });
 
     it('stores nothing and opens nothing for refused messages', async () => {
-      const { orderId } = await dispute(48.1);
+      const { orderId } = await dispute(168.1);
       const outsider = await participant(0, await createUser(db()), 'CUSTOMER');
-      const late = await dispute(48.1);
+      const late = await dispute(168.1);
       const lateCustomer = await participant(0, late.customerId, 'CUSTOMER');
 
       await send(outsider.socket, { client_id: 'x', order_id: orderId, body: 'hi' });

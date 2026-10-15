@@ -334,7 +334,8 @@ describe('discount stacking: vendor offer, then platform campaign', () => {
       await delivered(s, order);
 
       // vendor 769.50 + 50 delivery, platform 85.50 - 45: 819.50 + 40.50 = 860.
-      expect(await balanceOf(db, { vendorId: s.vendorId })).toBe(819.5);
+      // Step 7.3: a delivered prepaid order is credited to the dispute hold for 7 days.
+      expect(await balanceOf(db, { holdVendorId: s.vendorId })).toBe(819.5);
       expect(await balanceOf(db, 'PLATFORM_REVENUE')).toBe(revenueBefore + 85.5);
       expect(await promoExpense()).toBe(promoBefore - 45);
       expect(await balanceOf(db, 'SYSTEM_ESCROW')).toBe(escrowBefore);
@@ -385,7 +386,7 @@ describe('discount stacking: vendor offer, then platform campaign', () => {
       await delivered(s, order);
 
       // 1000 - 100 - 90 + 50 delivery.
-      expect(await balanceOf(db, { vendorId: s.vendorId })).toBe(860);
+      expect(await balanceOf(db, { holdVendorId: s.vendorId })).toBe(860);
       expect(await promoExpense()).toBe(promoBefore);
     });
   });

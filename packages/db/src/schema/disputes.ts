@@ -13,11 +13,19 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
-import { createdAt, primaryId, updatedAt } from './columns';
+import { createdAt, npr, primaryId, updatedAt } from './columns';
 import { disputeStatusEnum, reviewDirectionEnum } from './enums';
+import { ledgerTransactions } from './ledger';
 import { orders } from './orders';
 import { users } from './users';
 
+/**
+ * Step 7.3 (SPEC core 6): an order's one Customer <-> Vendor conversation, its escalation to Hamro
+ * Pasal, and how it ended. The first message opens it (OPEN); a party may escalate it once
+ * (ESCALATED); the day-8 release closes it (CLOSED, also created so when nobody chatted); the
+ * Super Admin resolves an escalated one (RELEASED_TO_VENDOR, REFUNDED_TO_CUSTOMER,
+ * PARTIALLY_REFUNDED).
+ */
 export const disputes = pgTable(
   'disputes',
   {
@@ -26,11 +34,19 @@ export const disputes = pgTable(
       .notNull()
       .unique()
       .references(() => orders.id, { onDelete: 'restrict' }),
-    opened_by_user_id: uuid()
-      .notNull()
-      .references(() => users.id, { onDelete: 'restrict' }),
-    reason: text().notNull(),
+    /** Null for a row the day-8 release created: nobody chatted. */
+    opened_by_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
+    /** Before step 7.3, the first message; a conversation is not a complaint. */
+    reason: text(),
     status: disputeStatusEnum().notNull().default('OPEN'),
+    escalated_at: timestamp({ withTimezone: true, mode: 'date' }),
+    escalated_by_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
+    escalation_reason: text(),
+    refund_npr: npr(),
+    resolution_note: text(),
+    hold_release_transaction_id: uuid().references(() => ledgerTransactions.id, {
+      onDelete: 'restrict',
+    }),
     resolved_by_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
     resolved_at: timestamp({ withTimezone: true, mode: 'date' }),
     created_at: createdAt(),
@@ -43,12 +59,40 @@ export const disputes = pgTable(
     index('disputes_resolved_by_user_id_idx')
       .on(t.resolved_by_user_id)
       .where(sql`${t.resolved_by_user_id} IS NOT NULL`),
-    check('disputes_reason_check', sql`btrim(${t.reason}) <> ''`),
-    // An OPEN dispute has no resolution, and a resolved one records who resolved it and when.
+    index('disputes_escalated_by_user_id_idx')
+      .on(t.escalated_by_user_id)
+      .where(sql`${t.escalated_by_user_id} IS NOT NULL`),
+    index('disputes_hold_release_transaction_id_idx')
+      .on(t.hold_release_transaction_id)
+      .where(sql`${t.hold_release_transaction_id} IS NOT NULL`),
+    // The Super Admin's queue: escalated conversations, oldest first.
+    index('disputes_escalated_at_idx')
+      .on(t.escalated_at, t.id)
+      .where(sql`${t.escalated_at} IS NOT NULL`),
+    check('disputes_reason_check', sql`${t.reason} IS NULL OR btrim(${t.reason}) <> ''`),
+    // An escalation names who, when and why; a conversation that never was escalated has none.
+    check(
+      'disputes_escalation_check',
+      sql`(${t.escalated_at} IS NULL) = (${t.escalated_by_user_id} IS NULL)
+        AND (${t.escalated_at} IS NULL) = (${t.escalation_reason} IS NULL)
+        AND (${t.status} <> 'ESCALATED' OR ${t.escalated_at} IS NOT NULL)`,
+    ),
+    check(
+      'disputes_escalation_reason_check',
+      sql`${t.escalation_reason} IS NULL OR length(btrim(${t.escalation_reason})) BETWEEN 10 AND 500`,
+    ),
+    // OPEN and ESCALATED are still running; every other status records when it ended, and only a
+    // Super Admin resolution (which follows an escalation) names who, why and the refund.
     check(
       'disputes_resolution_check',
-      sql`(${t.status} = 'OPEN') = (${t.resolved_at} IS NULL AND ${t.resolved_by_user_id} IS NULL)`,
+      sql`(${t.status} IN ('OPEN', 'ESCALATED')) = (${t.resolved_at} IS NULL)
+        AND (${t.status} IN ('RELEASED_TO_VENDOR', 'REFUNDED_TO_CUSTOMER', 'PARTIALLY_REFUNDED'))
+          = (${t.resolved_by_user_id} IS NOT NULL)
+        AND (${t.resolved_by_user_id} IS NULL) = (${t.resolution_note} IS NULL)
+        AND (${t.resolved_by_user_id} IS NULL) = (${t.refund_npr} IS NULL)
+        AND (${t.resolved_by_user_id} IS NULL OR ${t.escalated_at} IS NOT NULL)`,
     ),
+    check('disputes_refund_check', sql`${t.refund_npr} IS NULL OR ${t.refund_npr} >= 0`),
   ],
 );
 

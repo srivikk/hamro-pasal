@@ -359,7 +359,9 @@ describe('end-to-end order lifecycle', () => {
 
     // 1050 leaves escrow: 900 to the shop (1000 − 10 %), 100 to the platform, 50 to the rider.
     expect(await settlementJournals()).toHaveLength(1);
-    expect(await balanceOf(db(), { vendorId })).toBe(900);
+    // Step 7.3: the vendor's 900 waits in its dispute hold for 7 days after delivery.
+    expect(await balanceOf(db(), { holdVendorId: vendorId })).toBe(900);
+    expect(await balanceOf(db(), { vendorId })).toBe(0);
     expect(await balanceOf(db(), { driverUserId: riderId })).toBe(50);
     expect(await balanceOf(db(), 'PLATFORM_REVENUE')).toBe(revenueAtStart + 100);
     expect(await balanceOf(db(), 'SYSTEM_ESCROW')).toBe(escrowAtStart);
@@ -389,7 +391,9 @@ describe('end-to-end order lifecycle', () => {
       await request(t.app).get('/api/vendor/finance/ledger').set('authorization', asVendor()),
     );
     expect(before).toMatchObject({
-      available_balance_npr: 900,
+      // Step 7.3: the 900 waits in the dispute hold for 7 days after delivery.
+      available_balance_npr: 0,
+      dispute_hold_npr: 900,
       unreconciled_order_count: 1,
       reconciled_orders: [],
     });
@@ -399,7 +403,9 @@ describe('end-to-end order lifecycle', () => {
     expect(log).toMatch(/order reconciliation: \d+ order\(s\) reconciled/);
     expect((await orderRow()).reconciled_at).not.toBeNull();
     expect(await settlementJournals()).toHaveLength(1);
-    expect(await balanceOf(db(), { vendorId })).toBe(900);
+    // Step 7.3: the vendor's 900 waits in its dispute hold for 7 days after delivery.
+    expect(await balanceOf(db(), { holdVendorId: vendorId })).toBe(900);
+    expect(await balanceOf(db(), { vendorId })).toBe(0);
     expect(await balanceOf(db(), { driverUserId: riderId })).toBe(50);
 
     const after = bodyOf(
@@ -407,7 +413,8 @@ describe('end-to-end order lifecycle', () => {
       await request(t.app).get('/api/vendor/finance/ledger').set('authorization', asVendor()),
     );
     expect(after).toMatchObject({
-      available_balance_npr: 900,
+      available_balance_npr: 0,
+      dispute_hold_npr: 900,
       pending_balance_npr: 0,
       unreconciled_order_count: 0,
     });
@@ -427,6 +434,6 @@ describe('end-to-end order lifecycle', () => {
     const reconciledAt = (await orderRow()).reconciled_at;
     await runMidnightReconciliation();
     expect((await orderRow()).reconciled_at).toEqual(reconciledAt);
-    expect(await balanceOf(db(), { vendorId })).toBe(900);
+    expect(await balanceOf(db(), { holdVendorId: vendorId })).toBe(900);
   });
 });

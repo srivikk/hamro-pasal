@@ -35,6 +35,19 @@ describe('GET /api/orders/:id/chat', () => {
 
   const db = () => t.container.db;
 
+  /** Step 7.3: the conversation escalated to Hamro Pasal by the customer. */
+  async function escalated(orderId: string, customerId: string): Promise<void> {
+    await db()
+      .update(disputes)
+      .set({
+        status: 'ESCALATED',
+        escalated_at: new Date(),
+        escalated_by_user_id: customerId,
+        escalation_reason: 'The jar arrived broken.',
+      })
+      .where(eq(disputes.order_id, orderId));
+  }
+
   async function named(role: UserRole, first: string | null, last: string): Promise<string> {
     const id = await createUser(db(), role);
     await db().update(users).set({ first_name: first, last_name: last }).where(eq(users.id, id));
@@ -118,10 +131,13 @@ describe('GET /api/orders/:id/chat', () => {
     expect([...times].sort((a, b) => a - b)).toEqual(times);
   });
 
-  it('lets the vendor and a Super Admin read it too', async () => {
+  it('lets the vendor read it, and a Super Admin once it was escalated (step 7.3)', async () => {
     const { customerId, vendorUserId, orderId, pii } = await deliveredOrder();
     const adminId = await named('SUPER_ADMIN', null, 'Adhikari');
     await say(orderId, customerId, 'c-1', 'Broken jar.');
+    // Not escalated: the Super Admin cannot read it.
+    expect((await history(orderId, bearer(adminId, 'SUPER_ADMIN'))).status).toBe(404);
+    await escalated(orderId, customerId);
     await say(orderId, adminId, 'a-1', 'Looking into it.');
 
     const asVendor = await history(orderId, bearer(vendorUserId, 'VENDOR'));
@@ -153,12 +169,15 @@ describe('GET /api/orders/:id/chat', () => {
       .update(orders)
       .set({ delivered_at: sql`now() - make_interval(hours => 72)` })
       .where(eq(orders.id, orderId));
+    await escalated(orderId, customerId);
     await db()
       .update(disputes)
       .set({
         status: 'REFUNDED_TO_CUSTOMER',
         resolved_at: new Date(),
         resolved_by_user_id: customerId,
+        resolution_note: 'Refunded in full.',
+        refund_npr: 100,
       })
       .where(eq(disputes.order_id, orderId));
 

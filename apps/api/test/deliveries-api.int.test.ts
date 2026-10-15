@@ -425,7 +425,9 @@ describe('deliveries API', () => {
 
       expect(await settlementsOf(orderId)).toHaveLength(1);
       expect(await balanceOf(db(), { driverUserId: s.driverId })).toBe(50);
-      expect(await balanceOf(db(), { vendorId: s.vendorId })).toBe(900);
+      // Step 7.3: a delivered prepaid order is credited to the dispute hold for 7 days.
+      expect(await balanceOf(db(), { holdVendorId: s.vendorId })).toBe(900);
+      expect(await balanceOf(db(), { vendorId: s.vendorId })).toBe(0);
     });
 
     it('answers a retry by the same rider with the same success, once in the ledger', async () => {

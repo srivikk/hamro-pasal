@@ -345,11 +345,11 @@
     "failed": "Couldn't submit your review. Please try again."
   },
   "dispute": {
-    "open": "Report an Issue / Dispute",
-    "title": "Dispute",
-    "closed": "The 48-hour dispute window for this order has ended.",
+    "open": "Chat with the shop",
+    "title": "Chat with the shop",
+    "closed": "The conversation for this order has ended (it closes 7 days after delivery).",
     "unavailable": "This dispute isn't available.",
-    "empty": "Tell us what went wrong. A Hamro Pasal team member will reply here.",
+    "empty": "Message the shop about this order. If you cannot agree, escalate to Hamro Pasal.",
     "historyLoading": "Loading the conversation…",
     "historyFailed": "Couldn't load earlier messages.",
     "historyRetry": "Try again",
@@ -375,7 +375,14 @@
     "connection": {
       "connecting": "Connecting to support…",
       "reconnecting": "Reconnecting… your messages will send when you're back online."
-    }
+    },
+    "escalate": "Escalate to Hamro Pasal",
+    "escalateHint": "Tell us what went wrong. Our team will read this conversation and decide.",
+    "escalatePlaceholder": "At least 10 characters",
+    "escalateSubmit": "Escalate",
+    "escalated": "Escalated to Hamro Pasal. Our team will read this conversation and decide.",
+    "escalatedToast": "Sent to Hamro Pasal.",
+    "escalateFailed": "Couldn't escalate. Check your connection and try again."
   },
   "auth": {
     "title": "Sign in",
@@ -931,7 +938,8 @@
     "reserve": "Fixed reserve: Rs. {{reserve, localizedNumber}} · Rs. {{above, localizedNumber}} above it",
     "reserveHint": "Fees are taken from this balance. Your shop goes offline if it falls below the reserve.",
     "previewModel": "Preview a settlement model (development only)",
-    "sampleNote": "Sample figures, not your real balance."
+    "sampleNote": "Sample figures, not your real balance.",
+    "disputeHold": "Rs. {{amount}} from {{count}} delivered order(s) is held for 7 days after delivery, then added to your balance."
   },
   "notifications": {
     "orderChannel": "Order updates"

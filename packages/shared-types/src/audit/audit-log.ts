@@ -25,6 +25,8 @@ export const auditEntityTypes = [
   'home_promotion',
   'payout_request',
   'platform_settings',
+  /** Step 7.3: an order conversation (the disputes row). */
+  'dispute',
 ] as const;
 export const auditEntityTypeSchema = z.enum(auditEntityTypes);
 export type AuditEntityType = z.infer<typeof auditEntityTypeSchema>;
@@ -95,6 +97,9 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   OPENING_HOURS_CHANGED: 'vendor',
   AVAILABILITY_CHANGED: 'vendor',
   VENDOR_AUTO_PAUSED: 'vendor',
+  // Order conversations (step 7.3, SPEC core 6)
+  DISPUTE_ESCALATED: 'dispute',
+  DISPUTE_RESOLVED: 'dispute',
   // Where payouts are sent (SPEC core 5). The account number is masked in every state.
   BANK_ACCOUNT_ADDED: 'vendor_bank_account',
   BANK_ACCOUNT_UPDATED: 'vendor_bank_account',

@@ -151,7 +151,13 @@ describe('nightly order reconciliation (real PostgreSQL + BullMQ)', () => {
     if (row === undefined) throw new Error(`vendor ${vendorId} not found`);
     // The projection and the ledger account can never disagree.
     expect(row.projection).toBe(row.account);
-    return row.projection;
+    // Step 7.3: a prepaid order's earnings are credited to the vendor's dispute hold until day 8;
+    // what settlement credited the vendor is both together.
+    const [hold] = await db
+      .select({ balance: ledgerAccounts.balance_npr })
+      .from(ledgerAccounts)
+      .where(eq(ledgerAccounts.hold_vendor_id, vendorId));
+    return Math.round((row.projection + (hold?.balance ?? 0)) * 100) / 100;
   }
 
   async function orderRow(orderId: string) {

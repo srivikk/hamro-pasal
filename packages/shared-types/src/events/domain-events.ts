@@ -240,6 +240,30 @@ export const vendorOpenedPayloadSchema = z.strictObject({
   opened_at: z.iso.datetime(),
 });
 
+/**
+ * Step 7.3 (SPEC core 6): a party asked Hamro Pasal to decide. The other party is told; the
+ * order's held amount is frozen until the resolution.
+ */
+export const disputeEscalatedPayloadSchema = z.strictObject({
+  dispute_id: z.uuid(),
+  order_id: z.uuid(),
+  vendor_id: z.uuid(),
+  customer_id: z.uuid(),
+  escalated_by: z.enum(['CUSTOMER', 'VENDOR']),
+  escalated_at: z.iso.datetime(),
+});
+
+/** Step 7.3: the Super Admin resolved an escalated order. Both parties are told. */
+export const disputeResolvedPayloadSchema = z.strictObject({
+  dispute_id: z.uuid(),
+  order_id: z.uuid(),
+  vendor_id: z.uuid(),
+  customer_id: z.uuid(),
+  outcome: z.enum(['RELEASE', 'REFUND', 'PARTIAL_REFUND']),
+  refund_npr: z.number().nonnegative(),
+  resolved_at: z.iso.datetime(),
+});
+
 /** SPEC core 8 (Phase 35): an ad's paid period is over. Written once, when it becomes ENDED. */
 export const marketingAdEndedPayloadSchema = z.strictObject({
   ad_purchase_id: z.uuid(),
@@ -304,6 +328,8 @@ export const ledgerMutatedPayloadSchema = z.strictObject({
         vendor_id: z.uuid().nullable(),
         driver_user_id: z.uuid().nullable(),
         gateway: paymentMethodSchema.nullable(),
+        /** Step 7.3: owner of a VENDOR_DISPUTE_HOLD account. Absent from older events. */
+        hold_vendor_id: z.uuid().nullable().default(null),
         amount_npr: z.number(),
         balance_after_npr: z.number(),
       }),
@@ -380,6 +406,14 @@ export const productBackInStockEventSchema = envelope(
   productBackInStockPayloadSchema,
 );
 export const vendorOpenedEventSchema = envelope('vendor.opened', vendorOpenedPayloadSchema);
+export const disputeEscalatedEventSchema = envelope(
+  'dispute.escalated',
+  disputeEscalatedPayloadSchema,
+);
+export const disputeResolvedEventSchema = envelope(
+  'dispute.resolved',
+  disputeResolvedPayloadSchema,
+);
 export const marketingAdEndedEventSchema = envelope(
   'marketing.ad_ended',
   marketingAdEndedPayloadSchema,
@@ -410,6 +444,8 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   vendorAutoPausedEventSchema,
   productBackInStockEventSchema,
   vendorOpenedEventSchema,
+  disputeEscalatedEventSchema,
+  disputeResolvedEventSchema,
   marketingAdEndedEventSchema,
   marketingAdPausedEventSchema,
   marketingCampaignTermsChangedEventSchema,
@@ -433,6 +469,8 @@ export type VendorReactivatedEvent = z.infer<typeof vendorReactivatedEventSchema
 export type VendorAutoPausedEvent = z.infer<typeof vendorAutoPausedEventSchema>;
 export type ProductBackInStockEvent = z.infer<typeof productBackInStockEventSchema>;
 export type VendorOpenedEvent = z.infer<typeof vendorOpenedEventSchema>;
+export type DisputeEscalatedEvent = z.infer<typeof disputeEscalatedEventSchema>;
+export type DisputeResolvedEvent = z.infer<typeof disputeResolvedEventSchema>;
 export type MarketingAdEndedEvent = z.infer<typeof marketingAdEndedEventSchema>;
 export type MarketingAdPausedEvent = z.infer<typeof marketingAdPausedEventSchema>;
 export type MarketingCampaignTermsChangedEvent = z.infer<
@@ -462,6 +500,8 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'vendor.auto_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'product.back_in_stock': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.opened': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'dispute.escalated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'dispute.resolved': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_ended': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.campaign_terms_changed': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,

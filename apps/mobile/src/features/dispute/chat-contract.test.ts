@@ -1,5 +1,11 @@
 import { buildOutgoingMessage, sanitizeChatUser, sanitizeIncomingMessage } from './chat-contract';
-import { isDisputeEligible, POST_DELIVERY_WINDOW_MS, postDeliveryDeadline } from './dispute-window';
+import {
+  CONVERSATION_WINDOW_MS,
+  conversationDeadline,
+  isConversationOpen,
+  POST_DELIVERY_WINDOW_MS,
+  postDeliveryDeadline,
+} from './dispute-window';
 
 /** A full user row as a careless server (or a future profile object) might send it. */
 const AARAV_FULL = {
@@ -135,18 +141,25 @@ describe('48 h post-delivery window', () => {
     expect(postDeliveryDeadline(null)).toBeNull();
   });
 
-  it.each([
-    [0, true],
-    [47 * HOUR + 59 * MINUTE, true],
-    [48 * HOUR - 1, true],
-    [48 * HOUR, false],
-    [48 * HOUR + MINUTE, false],
-  ])('%p ms after delivery -> eligible %p', (elapsed, expected) => {
-    expect(isDisputeEligible('DELIVERED', DELIVERED_AT, DELIVERED_AT + elapsed)).toBe(expected);
+  it('closes the conversation 7 days (168 h) after delivery (step 7.3)', () => {
+    expect(CONVERSATION_WINDOW_MS).toBe(168 * HOUR);
+    expect(conversationDeadline(DELIVERED_AT)).toBe(DELIVERED_AT + 168 * HOUR);
+    expect(conversationDeadline(null)).toBeNull();
+    expect(MINUTE).toBe(60_000);
   });
 
-  it('applies to delivered orders with a known delivery time only', () => {
-    expect(isDisputeEligible('OUT_FOR_DELIVERY', DELIVERED_AT, DELIVERED_AT)).toBe(false);
-    expect(isDisputeEligible('DELIVERED', null, DELIVERED_AT)).toBe(false);
+  it.each([
+    ['PENDING_PAYMENT', null, false, false],
+    ['PLACED', null, false, true],
+    ['PREPARING', null, false, true],
+    ['OUT_FOR_DELIVERY', null, false, true],
+    ['DELIVERED', DELIVERED_AT, true, true],
+    ['DELIVERED', DELIVERED_AT, false, false],
+    ['DELIVERED', null, true, false],
+    ['DISPUTED', DELIVERED_AT, false, true],
+    ['CANCELED', null, false, false],
+    ['FAILED', null, false, false],
+  ] as const)('%s (delivered %p, before the end %p) -> open %p', (state, at, before, open) => {
+    expect(isConversationOpen(state, at, before)).toBe(open);
   });
 });

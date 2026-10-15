@@ -490,6 +490,104 @@ A vendor trades as soon as its PAN is saved, but **no money is transferred to it
 
 ---
 
+## 7. Platform additions (specified 2026-10-15, nothing built)
+
+Rules: SPEC core section 6 (order chat, escalation, 7-day hold) and section 11 (everything else), edge cases 19–23, verification 25–32. **Decided 2026-10-15:** escalation is possible for 7 days after delivery and is never auto-released (only an un-escalated order releases on day 8); prepaid earnings are held 7 days before they are payable; the Seller app is a second build of `apps/mobile`; a queued export is attached under 7 MB, else linked for 7 days.
+
+### 7.0 Open decisions (blocking the step named)
+
+- [x] **Decided 2026-10-15: one account, several roles** (as recommended below). **One phone, two roles (blocks 7.7).** `users.phone` is unique and a user has one `role`. A customer who becomes a seller with the same number cannot today. Recommended: a `user_roles (user_id, role)` table; `POST /api/auth/otp/verify` takes `app: CUSTOMER | SELLER` and issues the token for the role that app uses (403 `ROLE_NOT_GRANTED` when the account lacks it); `users.role` kept as the primary role until every reader moves. Alternative: sellers must use a number with no customer account (no code change, poor experience).
+- [ ] **Brand assets (blocks 7.9):** logo (SVG), 1024 px icon, adaptive foreground + background, splash, monochrome notification icon, light and dark palette; the same for the Seller variant.
+- [x] **Decided 2026-10-15: Amazon SES over SMTP**; the user verifies the sender domain. **Email provider (blocks 7.6):** AWS SES (recommended: same cloud as R2/ECS plan, 10 MB raw message limit) or an SMTP relay. Sender domain with SPF / DKIM.
+- [x] **Decided 2026-10-15: refunds are recorded and paid by hand from the merchant dashboards; an admin marks them paid.** Automated eSewa / Khalti refunds go to the backlog. **Refund rail (blocks paying 7.3's refunds):** a resolution can decide a refund; actually paying it needs the eSewa / Khalti refund integration (section 3, still open). Until then a refund is recorded and waits in `REFUND_CLEARING`.
+- [x] **Decided 2026-10-15: a 5-minute auto-cancel that counts as missed**; 3 missed or rejected in a row pause the shop.
+
+### 7.1 Foundations (do first; several features need them)
+
+- [x] **Built 2026-10-15 (§8Z.40; not yet in API views).** **Vendor Code:** `vendors.vendor_code text NOT NULL UNIQUE` (`HPV-` + 5-digit zero-padded number from a sequence: gaps are harmless here, unlike Bill Numbers). Backfill existing rows in created order. In `vendorSchema`, `contract.ts`, the admin vendor views. Never reused.
+- [x] **Built 2026-10-15 (§8Z.40).** **Notification centre:** `notification_messages (id, audience: VENDOR | CUSTOMER | ALL_CUSTOMERS, title ≤ 60, body ≤ 240, data jsonb, source: ADMIN | SYSTEM, campaign_id NULL, created_by_user_id NULL, created_at)`; `notification_recipients (message_id, user_id, read_at NULL, PRIMARY KEY (message_id, user_id))` for targeted messages; `notification_reads (message_id, user_id, read_at)` for broadcasts. A customer's inbox = their recipient rows ∪ ALL_CUSTOMERS messages created after `users.created_at`, left-joined to reads. Index `(user_id, message_id)` and `(audience, created_at)`.
+  - `GET /api/me/notifications?cursor=` (keyset on `(created_at, id)`), `POST /api/me/notifications/:id/read`, `POST /api/me/notifications/read-all`, `GET /api/me/notifications/unread-count`.
+  - Phase 38's vendor notices also write a VENDOR message (so a deactivation notice exists in-app when the vendor signs in again).
+- [x] **Built 2026-10-15 (§8Z.40): `users.email` and the full `GET / PATCH /api/me` contract.** **Email on the account:** `users.email` (+ `PATCH /api/me`, section 2 P1, still open). Required for queued exports; vendors and admins enter it once.
+- [x] **Built 2026-10-15 (§8Z.40).** **`@hamro-pasal/mail`** (server-only, like `@hamro-pasal/sms`): `MailGateway.send({ to, subject, text, attachments? })`, adapters SES / SMTP / MOCK (MOCK logs, refused in production), `MAIL_PROVIDER` in `serverEnvSchema`.
+
+### 7.2 Vendor delivery pricing, hours and Auto-Pause — S / M
+
+- [ ] **Minimum order value from the Vendor App:** `deliverySettingsRequestSchema` gains `min_order_value` (0–50 000, whole paisa); the response returns it; a table CHECK `free_delivery_above_npr IS NULL OR free_delivery_above_npr > min_order_value` (+ `400 VALIDATION_FAILED` in the schema). Audit `DELIVERY_SETTINGS_CHANGED` already covers it. Seller app: one field in Delivery settings.
+- [ ] **Quote:** `cartQuoteResponseSchema` gains `free_delivery_threshold_npr | null` and `free_delivery_remaining_npr | null` (default null: older API reads as "no offer"). Cart line "Add Rs. X more for free delivery"; shop page badge from the menu's vendor object (`free_delivery_above_npr`, a contract change: strict schema, API first).
+- [ ] **Opening hours:** `vendor_opening_hours (id, vendor_id → vendors CASCADE, weekday 0–6, opens_at time, closes_at time, CHECK opens_at <> closes_at)`; a range with `closes_at < opens_at` runs past midnight; max 3 ranges per weekday, no overlaps (checked in the service). `GET / PUT /api/vendor/opening-hours` (PUT replaces the week; audited `OPENING_HOURS_CHANGED`).
+- [ ] **Override and pause on the vendor row:** `vendors.availability_override` (`NONE | OPEN | CLOSED`, default NONE), `availability_override_until timestamptz NULL` (the next boundary, computed when set), `auto_paused_at timestamptz NULL`, `consecutive_missed_orders int NOT NULL DEFAULT 0`. This replaces the planned `accepting_orders` boolean of 6.3 (the switch becomes the override; with no hours, OPEN / CLOSED behave as the old switch). `PUT /api/vendor/availability { mode: AUTO | OPEN | CLOSED }`.
+- [ ] **One SQL predicate `isOrderable`** (in `CatalogService`, reused by feed, menu, quote, checkout): LIVE ∧ delivery mode enabled ∧ `auto_paused_at IS NULL` ∧ (override OPEN and not expired ∨ (override not CLOSED-and-unexpired ∧ (no hours ∨ now in a range, Asia/Kathmandu, ending ≥ 15 min from now))). Feed entry gains `open_now`, `opens_at | null`, `closed_reason: HOURS | OVERRIDE | AUTO_PAUSED | null`. `platform_settings.last_order_minutes_before_close` (default 15).
+- [ ] **5-minute auto-cancel:** the existing 90 s BullMQ timer gets a sibling at `placed_at + 300 s`: under the order row lock, still PLACED → `cancelPlacedOrder` (stock back, refund flag + `order.canceled_refund_due` when PAID), audit, `order.state_changed`. Vendor flow 6's window becomes enforced.
+- [ ] **Auto-Pause counter:** in the same transaction as an auto-cancel or a vendor reject, `consecutive_missed_orders + 1` under the vendor row lock; at `platform_settings.auto_pause_threshold` (default 3) set `auto_paused_at`, audit `VENDOR_AUTO_PAUSED`, outbox `vendor.auto_paused` → the vendor-notices consumer (SMS + push + inbox). An accept resets it to 0. Resuming (`PUT …/availability`) clears `auto_paused_at` and the counter. Lock order: order row, then vendor row (the existing reject's order).
+
+### 7.3 Order chat, escalation and the 7-day hold — L (money)
+
+- [ ] **Schema.** Keep `disputes` as the conversation row (one per order) and widen it: `status` gains `ESCALATED` and `CLOSED`, (OPEN = chatting, CLOSED = window passed without escalation, REFUNDED_TO_CUSTOMER / RELEASED_TO_VENDOR = resolved; add `PARTIALLY_REFUNDED`); new columns `escalated_at`, `escalated_by_user_id`, `escalation_reason`, `refund_npr`, `resolution_note`, `hold_release_transaction_id`. `reason` becomes nullable (a chat is not a complaint). `chat_messages` unchanged.
+- [ ] **Ledger:** account type `VENDOR_DISPUTE_HOLD` (one per vendor, opened on first use), journal kinds `DISPUTE_HOLD_RELEASE`, `DISPUTE_REFUND`, line types `DISPUTE_HOLD`, `DISPUTE_RELEASE`, `DISPUTE_REFUND`. **`planSettlement` changes for prepaid orders only:** the vendor's share is credited to `VENDOR_DISPUTE_HOLD`, not `VENDOR_WALLET` (COD postings unchanged). The nightly reconciliation's "expected vendor posting" follows. Pending escrow and the Ledger screen show held money as its own line.
+- [ ] **Day-8 release job** (`DISPUTE_HOLD_RELEASE`, hourly on the maintenance queue): for each prepaid DELIVERED order with `delivered_at + 168 h <= now()`, no escalation and no release yet: order row lock → re-check → hold → wallet journal (idempotency key `dispute-release:<order>`) → `disputes.status = CLOSED` (or a row created CLOSED when nobody chatted). Through `LedgerService`, so a release can lift a debt suspension. One transaction per order.
+- [ ] **Chat window:** `DisputeService.access` opens from `placed_at` (not DELIVERED) until `delivered_at + 168 h`, or while ESCALATED; closed for CANCELED / FAILED. The admin's read access (`GET /api/orders/:id/chat`, `/chat` join) requires `ESCALATED` or resolved (today it is always open: this narrows it).
+- [ ] **`POST /api/orders/:id/escalate { reason 10–500 }`** (customer of the order) and **`POST /api/vendors/orders/:id/escalate`** (its vendor): order row lock; inside the window; once per order (`409 ALREADY_ESCALATED`); order → `DISPUTED` (`order.state_changed`); audit `DISPUTE_ESCALATED`; outbox `dispute.escalated` (the other party and the admins are told). `422 DISPUTE_WINDOW_CLOSED` after 168 h.
+- [ ] **Admin:** `GET /api/admin/disputes?status=ESCALATED&cursor=` (order, parties' first names, held amount, age), `POST /api/admin/disputes/:id/resolve { outcome: RELEASE | REFUND | PARTIAL_REFUND, refund_npr?, note 10–1000 }`: order row lock → hold → wallet and / or hold → `REFUND_CLEARING`; COD refunds debit `VENDOR_WALLET` through `WalletService`; order → `DELIVERED`; audit `DISPUTE_RESOLVED`; outbox `dispute.resolved`. Refund ≤ what the customer paid. Credit Note for a post-delivery refund (6.4, still open) when it exists. Admin screen: an "Escalations" tab with the transcript.
+- [ ] **Payout run and manual payout** read `VENDOR_WALLET` only: no change needed beyond the settlement change, which is the point of the hold.
+- [ ] **Migration of existing data:** orders delivered before the change keep their wallet credit; only new deliveries are held. Existing OPEN disputes become ESCALATED (they were raised to an admin-visible chat).
+- [ ] Apps: chat entry on the customer order screen from PLACED; "Escalate to Hamro Pasal" with a reason; the Seller app's order detail gets the same chat (today the vendor has no chat screen); the countdown to the window's end.
+
+### 7.4 Notify Me — S
+
+- [ ] `stock_alerts (user_id, product_id, created_at, PK)`, `shop_open_alerts (user_id, vendor_id, created_at, PK)`; max 50 per user across both (`422 ALERT_LIMIT_REACHED`). `PUT / DELETE /api/me/alerts/products/:id`, `PUT / DELETE /api/me/alerts/shops/:id`, `GET /api/me/alerts`. `is_alerted` on the menu / product views for a signed-in customer (optional field, default false).
+- [ ] **Back in stock:** the vendor stock PATCH and the availability flag (6.8) write outbox `product.back_in_stock` when a product goes from not orderable to orderable, in their transaction. A worker consumer deletes the alerts `RETURNING user_id` and sends push + inbox in batches of 100.
+- [ ] **Shop opens:** opening is derived from the clock, so nothing writes at opening time. A 5-minute job reads the shops with waiting alerts whose `isOrderable` became true and does the same (delete-returning, then notify). A pause lifted or an override set to OPEN triggers it at once through an outbox event.
+
+### 7.5 Admin push notifications — M
+
+- [ ] `GET /api/admin/vendors/search?q=&limit=20`: `vendor_code` exact or prefix, else `business_name` by `pg_trgm` similarity (extension + GIN index in the migration); each result `{ id, vendor_code, business_name, municipality_palika_string, status }`.
+- [ ] `POST /api/admin/notifications { audience: VENDORS, vendor_ids[1–500], title, body }` or `{ audience: ALL_CUSTOMERS, title, body }` → 202 `{ message_id, recipient_count }`: one `notification_messages` row (+ recipient rows for vendors) in one transaction with audit `NOTIFICATION_SENT` and outbox `notification.broadcast_requested`. A worker job pages device tokens (`device_tokens ⋈ users WHERE role = …`) 100 per Expo request, deletes `DeviceNotRegistered` tokens, and records `sent / failed` counts on the message. Rate: at most one ALL_CUSTOMERS broadcast per 10 minutes (`429`). `GET /api/admin/notifications` lists what was sent with its counts.
+- [ ] Admin screen: "Notifications" tab: audience switch, vendor search with chips (name + code), title / body with counters, a preview, a confirmation that names the recipient count.
+- [ ] Apps: notification centre screen (both builds), unread badge, tap opens `data.deep_link` when present.
+
+### 7.6 Data export — M
+
+- [ ] `export_jobs (id, requested_by_user_id, role, kind, params jsonb, status QUEUED | RUNNING | DONE | FAILED, row_count, file_key NULL, delivery ATTACHMENT | LINK | NULL, error, created_at, finished_at, expires_at)`. Kinds: vendor `STATEMENT` (ledger entries for a date range, BS dates beside AD), `ORDERS`, `INVOICES`; admin `VENDORS`, `CUSTOMERS`, `ORDERS`, `PAYOUTS`, `AUDIT_LOG`.
+- [ ] `POST /api/vendor/exports` and `POST /api/admin/exports { kind, from, to, filters }`: count first; ≤ 5 000 → `200 text/csv` streamed (`Content-Disposition: attachment`, UTF-8 BOM for Excel); more → `202 { job_id }` (`422 EMAIL_REQUIRED` without an email). `GET …/exports/:id` (status), `GET …/exports/:id/download` (signed-in owner only, until `expires_at`).
+- [ ] Worker `DATA_EXPORT` queue: stream rows with a cursor (never the whole table in memory), write CSV → zip → private bucket (`exports/<job>.zip`); attach when < 7 MB, else link; mail through `@hamro-pasal/mail`. A daily sweep deletes expired files.
+- [ ] CSV safety: escape cells starting with `=`, `+`, `-`, `@`, tab or CR (prefix `'`); amounts as plain numbers; Nepal Time. Audit `DATA_EXPORTED` with kind, filters and row count (never the data). A vendor's export is scoped by the server to its shop; the customer export masks nothing but is SUPER_ADMIN only.
+
+### 7.7 Seller app build and onboarding — M (after decision 7.0 roles)
+
+- [ ] `apps/mobile/app.config.ts` replaces `app.json`: `APP_VARIANT=customer | seller` sets name, slug, scheme (`hamropasal` / `hamropasalseller`), bundle id / package, icon, and an `extra.appVariant` the app reads. Two EAS build profiles per environment. Routing: the customer build never mounts `(vendor)` / `(driver)`; the seller build opens on seller sign-in. Riders stay in the customer build until decided otherwise.
+- [ ] **Self-signup:** `POST /api/seller/signup { business_name, phone-verified token, province…, palika, location, category_ids, fulfillment_mode }` → vendor `SANDBOXED` with the delivery defaults; documents through the existing upload routes (PAN document, a citizenship document route to add, private bucket). `GET /api/seller/application` shows its status. Audit `VENDOR_SIGNED_UP`; outbox `vendor.signed_up` → admin inbox.
+- [ ] **Admin onboarding:** `POST /api/admin/vendors { phone, business_name, … }` creates the user (VENDOR role) and the vendor (`SANDBOXED` or `APPROVED`), SMS invite with the Seller app link. `POST /api/admin/vendors/:id/approve` (SANDBOXED → APPROVED, KYC check) — the approval step SPEC vendor flow 4 has never had a route for.
+- [ ] Customer app: Profile → "Become a Seller" → `Linking.openURL('hamropasalseller://signup')`, falling back to the store URL.
+
+### 7.8 In-app video tutorials — S
+
+- [ ] `app_tutorials (id, app CUSTOMER | SELLER, youtube_video_id ~ '^[A-Za-z0-9_-]{11}$', title, display_order, is_active)`; admin CRUD; public `GET /api/tutorials?app=`.
+- [ ] Apps: `TutorialCard` (floating, dismissible, thumbnail `https://i.ytimg.com/vi/<id>/hqdefault.jpg`, "Don't show again" per video in MMKV); `TutorialPlayerModal` = `react-native-webview` (already installed, no rebuild) loading `https://www.youtube-nocookie.com/embed/<id>?playsinline=1&rel=0&modestbranding=1`, `allowsInlineMediaPlayback`, `allowsFullscreenVideo`; `onShouldStartLoadWithRequest` refuses any navigation outside the embed origin so a tap on the YouTube logo never leaves the app.
+
+### 7.9 Branding — M (assets first)
+
+- [ ] Tokens: `apps/mobile/tailwind.config.js` (`brand`, `brand-light`, surfaces, text) and `apps/admin/src/styles.css` (`:root` and dark). One pass replacing hard-coded hex colours in icons, gradients and the header themes.
+- [ ] Assets: `icon`, `adaptiveIcon`, `splash` (expo-splash-screen config plugin), the `expo-notifications` icon and colour, `LogoPlaceholder` and `auth-wall-placeholder.png` replaced; per variant (7.7). Needs a development-client rebuild and new store graphics.
+- [ ] The dark-mode pass §8Z.10 left open (Home, shop, cart, checkout, order, vendor screens) goes with it.
+
+### 7.10 Execution order
+
+| Step | Content                                                   | Depends on                     | Size |
+| ---- | --------------------------------------------------------- | ------------------------------ | ---- |
+| 1    | 7.1 Vendor Code, notification centre, email, mail package | –                              | M    |
+| 2    | 7.2 MOV + quote fields                                    | –                              | S    |
+| 3    | 7.2 hours, override, 5-minute auto-cancel, Auto-Pause     | 1 (inbox for the pause notice) | M    |
+| 4    | 7.4 Notify Me                                             | 1, 3 (`isOrderable`)           | S    |
+| 5    | 7.3 chat, escalation, hold, release job, admin resolution | 1                              | L    |
+| 6    | 7.5 admin push + notification centre screens              | 1                              | M    |
+| 7    | 7.6 exports                                               | 1 (email, mail)                | M    |
+| 8    | 7.0 roles decision, then 7.7 Seller build + onboarding    | 7.0                            | M    |
+| 9    | 7.8 tutorials                                             | – (any time)                   | S    |
+| 10   | 7.9 branding                                              | 7.0 assets, 8 (two icons)      | M    |
+
+Step 5 is the only one that changes how money moves: run it against SPEC verification 25 and the payout and reconciliation suites before release, and announce the payout delay to vendors first.
+
 ## Next phase (after the admin wiring of 2026-10-08)
 
 Every admin tab except Vendor requests now runs on its real routes. What remains, in a suggested order:
@@ -508,7 +606,9 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 
 - [x] **Four events in the existing transactional outbox** (`outbox_events`, migration 0005; no new table), relayed to `notifications.broadcast`: `vendor.suspended_for_compliance`, `marketing.ad_ended`, `marketing.ad_paused`, `marketing.campaign_terms_changed`. Each is written last in the transaction of its change.
 - [x] **The consumer (2026-10-09, §8Z.37):** the worker's `vendor-notices` consumer words all five events (these four and `vendor.compliance_restored`) and hands them to a `NotificationAdapter`; the only adapter is the logger (`[notify:sms]` / `[notify:push]` lines on stdout). Idempotent per `event_id` + vendor.
-- [ ] **A provider-backed adapter** (SMS through `@hamro-pasal/sms`, push through the Expo gateway), and the shop's language. The original item: SMS / push templates (the worker's notification consumer ignores an event type it has no template for), and an in-app notice. `marketing.campaign_terms_changed` names vendor ids, not phones: its consumer reads the phones.
+- [x] **A provider-backed adapter (2026-10-09, §8Z.39):** `ProductionNotificationAdapter`: the SMS through `@hamro-pasal/sms` (retried, then dead-lettered), then a best-effort Expo push (logged as `notice.push_sent | push_skipped | push_failed`). The logger remains for `MOCK_SERVICES=true`.
+- [x] **`vendor.deactivated` / `vendor.reactivated` (2026-10-09, §8Z.39)**, written by the two routes and worded by the same consumer. SMS only in practice: a closed account has no device token.
+- [ ] The shop's language in notices; one real SMS and one real push observed end to end. The original item: SMS / push templates (the worker's notification consumer ignores an event type it has no template for), and an in-app notice. `marketing.campaign_terms_changed` names vendor ids, not phones: its consumer reads the phones.
 - [x] **`vendor.compliance_restored` (2026-10-09, §8Z.37)** when a saved PAN lifts a compliance suspension, with the status it left the shop in.
 
 ## Vendor App delivery settings and shop deactivation (2026-10-09, STATE_HANDOFF.md §8Z.37)
@@ -518,7 +618,8 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 - [x] **`POST /api/vendor/account/deactivate { confirm: true }`** → `200 { vendor_id, status: DEACTIVATED, deactivated_at, cancelled_ad_count, returned_npr, closed_opt_in_count, wallet_balance_npr }`, also on repeat; `409 SHOP_NOT_DEACTIVATABLE` (`details.blockers`: `NEGATIVE_BALANCE`, `ACTIVE_ORDERS`, `PENDING_PAYOUT`, `AD_FEES_DUE`). Migration 0038 (`vendor_status` + `DEACTIVATED`). Running ads are cancelled, live opt-ins closed as `OPTED_OUT`, device tokens removed; the account can no longer sign in (`403 ACCOUNT_DEACTIVATED`). **This replaces the deletion-request routes of 6.10**, which were never built. SPEC vendor flow 23 amended.
 - [x] **Vendor App "Delete Shop Account" wired (2026-10-09, §8Z.38):** confirm, the route, the server's reasons in an alert, sign-out on success.
 - [x] **`POST /api/admin/vendors/:id/reactivate` and the Reactivate button on the Vendors tab (2026-10-09, §8Z.38):** LIVE with a PAN, else SUSPENDED_COMPLIANCE; `409 VENDOR_STATUS_CONFLICT` otherwise; audited.
-- [ ] A notice to the vendor that its shop was reopened; whether a reopened shop should return to the status it had before it closed.
+- [x] A notice to the vendor that its shop was closed or reopened (2026-10-09, §8Z.39).
+- [ ] Whether a reopened shop should return to the status it had before it closed.
 
 ## Cloud storage (2026-10-09, STATE_HANDOFF.md §8Z.35)
 

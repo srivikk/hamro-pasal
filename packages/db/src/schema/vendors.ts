@@ -45,6 +45,12 @@ export const vendors = pgTable(
       .unique()
       .references(() => users.id, { onDelete: 'restrict' }),
     business_name: text().notNull(),
+    // Step 7.1: "HPV-00042". Taken from vendor_code_seq by next_vendor_code() (migration 0039);
+    // a sequence gap is harmless here, unlike a Bill Number. Never reused.
+    vendor_code: text()
+      .notNull()
+      .unique()
+      .default(sql`next_vendor_code()`),
     phone: text().notNull(),
     status: vendorStatusEnum().notNull().default('SANDBOXED'),
     pricing_model: pricingModelEnum(),
@@ -118,6 +124,7 @@ export const vendors = pgTable(
     index('vendors_pan_verified_by_user_id_idx')
       .on(t.pan_verified_by_user_id)
       .where(sql`${t.pan_verified_by_user_id} IS NOT NULL`),
+    check('vendors_vendor_code_check', sql`${t.vendor_code} ~ '^HPV-[0-9]{5,}$'`),
     check('vendors_phone_np_check', sql`${t.phone} ~ '${sql.raw(NEPAL_PHONE_PATTERN)}'`),
     check('vendors_business_name_check', sql`btrim(${t.business_name}) <> ''`),
     check(

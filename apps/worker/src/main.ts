@@ -20,7 +20,8 @@ import { OrderReconciliationService } from './finance/order-reconciliation';
 import { BullVendorAcceptanceTimers } from './consumers/vendor-sla-scheduler';
 import { buildBullConnection } from './infra/redis';
 import { Lifecycle } from './lifecycle';
-import { LoggerNotificationAdapter } from './notifications/notification-adapter';
+import { DatabaseNoticeInbox, InboxNotificationAdapter } from './notifications/notice-inbox';
+import { notificationAdapterFromEnv } from './notifications/production-notification-adapter';
 import { DatabaseOrderStateReader } from './notifications/order-state-reader';
 import { DatabaseVendorContacts } from './notifications/vendor-notices';
 import { DatabasePushRecipients } from './notifications/push-recipients';
@@ -100,26 +101,34 @@ async function main(): Promise<void> {
   lifecycle.register(async () => {
     await redis.quit();
   });
+  // SMS_PROVIDER=MOCK logs "[sms:mock] to +977…: <text>" instead of calling the provider.
+  const sms = smsGatewayFromEnv(env);
+  // Pushes go to https://exp.host/--/api/v2/push/send for every registered device.
+  // MOCK_SERVICES=true: no request is made and each order push is logged as "[MOCK PUSH] -> …".
+  const push = pushGatewayFromEnv(env);
+  const pushRecipients = new DatabasePushRecipients(db);
   const consumers = buildConsumers({
     redis,
     vendorAcceptanceTimers: new BullVendorAcceptanceTimers(queues.vendorAcceptance),
-    // SMS_PROVIDER=MOCK logs "[sms:mock] to +977…: <text>" instead of calling the provider.
-    sms: smsGatewayFromEnv(env),
+    sms,
     // IVR_PROVIDER=MOCK logs "[ivr:mock] Calling +977…" for escalations; DISABLED places no call.
     ivr: ivrGatewayFromEnv(env),
     orders: new DatabaseOrderStateReader(db),
     deadLetters: deadLetterPublisher,
     deadLetterStore: new DatabaseDeadLetterStore(db),
-    // Order pushes go to https://exp.host/--/api/v2/push/send for every registered device.
-    // MOCK_SERVICES=true: no request is made and each push is logged as "[MOCK PUSH] -> …".
-    push: pushGatewayFromEnv(env),
+    push,
     pushMockLog: mockPushLogFromEnv(env),
-    pushRecipients: new DatabasePushRecipients(db),
+    pushRecipients,
     // SMS_PROVIDER=MOCK also logs "[sms:mock] to +977…: <text>" beside each push attempt.
     pushSmsFallbackLog: smsFallbackLogFromEnv(env),
-    // Compliance, ad and campaign notices are written to stdout as "[notify:sms] …" and
-    // "[notify:push] …" until a provider adapter is chosen for them.
-    notifications: new LoggerNotificationAdapter(),
+    // Compliance, account, ad and campaign notices: an SMS through SMS_PROVIDER, then a push to
+    // the shop's devices (Phase 38). MOCK_SERVICES=true writes "[notify:sms] …" and
+    // "[notify:push] …" lines instead and sends nothing.
+    // Step 7.1: each notice is first kept in the shop's notification centre.
+    notifications: new InboxNotificationAdapter(
+      new DatabaseNoticeInbox(db),
+      notificationAdapterFromEnv(env, { sms, push, recipients: pushRecipients }),
+    ),
     vendorContacts: new DatabaseVendorContacts(db),
   });
   if (consumers.length > 0) {

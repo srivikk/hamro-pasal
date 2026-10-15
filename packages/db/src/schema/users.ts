@@ -6,6 +6,7 @@ import {
 } from '@hamro-pasal/shared-types';
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   doublePrecision,
   index,
@@ -13,11 +14,13 @@ import {
   pgTable,
   smallint,
   text,
+  timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
 import { createdAt, geoPoint, primaryId, updatedAt } from './columns';
-import { userRoleEnum } from './enums';
+import { accountStatusEnum, languagePreferenceEnum, userRoleEnum } from './enums';
 
 export const users = pgTable(
   'users',
@@ -28,6 +31,13 @@ export const users = pgTable(
     // Null until the customer adds a name: OTP sign-up only knows the phone number.
     first_name: text(),
     last_name: text(),
+    // Step 7.1 (2026-10-15): the account's own settings, read and written through /api/me.
+    email: text(),
+    language_preference: languagePreferenceEnum().notNull().default('en'),
+    terms_accepted_at: timestamp({ withTimezone: true }),
+    whatsapp_opt_in: boolean().notNull().default(false),
+    account_status: accountStatusEnum().notNull().default('ACTIVE'),
+    deletion_requested_at: timestamp({ withTimezone: true }),
     created_at: createdAt(),
     updated_at: updatedAt(),
   },
@@ -35,6 +45,18 @@ export const users = pgTable(
     check('users_phone_np_check', sql`${t.phone} ~ '${sql.raw(NEPAL_PHONE_PATTERN)}'`),
     check('users_first_name_check', sql`${t.first_name} IS NULL OR btrim(${t.first_name}) <> ''`),
     check('users_last_name_check', sql`${t.last_name} IS NULL OR btrim(${t.last_name}) <> ''`),
+    // Stored lower-cased, so the unique index below is case-insensitive.
+    check(
+      'users_email_check',
+      sql`${t.email} IS NULL OR (${t.email} = lower(btrim(${t.email})) AND ${t.email} LIKE '_%@_%')`,
+    ),
+    uniqueIndex('users_email_uidx')
+      .on(t.email)
+      .where(sql`${t.email} IS NOT NULL`),
+    check(
+      'users_deletion_requested_check',
+      sql`(${t.account_status} = 'DELETED_REQUESTED') = (${t.deletion_requested_at} IS NOT NULL)`,
+    ),
   ],
 );
 

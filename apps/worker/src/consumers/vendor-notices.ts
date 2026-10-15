@@ -12,9 +12,18 @@ import type { KafkaConsumerDefinition } from './types';
 /** Redis prefix of the per-shop claims: `<prefix><event_id>:<vendor_id>`. */
 export const VENDOR_NOTICE_DEDUPE_PREFIX = 'notifications:notice:seen:';
 
+/**
+ * After this many refusals in a row within one event the rest of its shops wait for the retry.
+ * A provider that times out costs up to 10 s per SMS; without the bound, one campaign change
+ * naming hundreds of shops would hold the partition past Kafka's poll interval.
+ */
+export const VENDOR_NOTICE_MAX_CONSECUTIVE_FAILURES = 3;
+
 export interface VendorNoticeDeps {
-  /** Where notices leave the worker (the logger, until a provider is wired). */
+  /** Where notices leave the worker: the SMS / push providers, or the logger under MOCK_SERVICES. */
   readonly notifications: NotificationAdapter;
+  /** Default VENDOR_NOTICE_MAX_CONSECUTIVE_FAILURES. */
+  readonly maxConsecutiveFailures?: number;
   /** Phone numbers of the shops a campaign change names by id. */
   readonly contacts: VendorContactReader;
   readonly deduplicator: EventDeduplicator;
@@ -26,6 +35,8 @@ export interface VendorNoticeDeps {
  * Kafka `notifications.broadcast` → vendor notices (Phase 36):
  *   vendor.suspended_for_compliance   → "your shop is offline, add your PAN"
  *   vendor.compliance_restored        → "PAN saved, your shop is back online"
+ *   vendor.deactivated                → "your shop account is closed" (Phase 38)
+ *   vendor.reactivated                → "your shop has been reopened" (Phase 38)
  *   marketing.ad_ended                → "your ad ended" (+ the budget returned)
  *   marketing.ad_paused               → "your ad is paused, its budget is used up"
  *   marketing.campaign_terms_changed  → one notice per shop whose opt-in was voided
@@ -55,6 +66,9 @@ export function vendorNoticeConsumer(deps: VendorNoticeDeps): KafkaConsumerDefin
       );
     });
 
+  const maxConsecutiveFailures =
+    deps.maxConsecutiveFailures ?? VENDOR_NOTICE_MAX_CONSECUTIVE_FAILURES;
+
   return {
     topic: KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
     handle: async ({ message }) => {
@@ -62,7 +76,11 @@ export function vendorNoticeConsumer(deps: VendorNoticeDeps): KafkaConsumerDefin
       if (event === null || !isVendorNoticeEvent(event)) return;
 
       const failures: unknown[] = [];
+      let failuresInARow = 0;
       for (const notice of await vendorNoticesOf(event, deps.contacts)) {
+        // The provider is down or timing out, not one number: stop here. The shops not reached
+        // were never claimed, so the retry (after its backoff) starts with them.
+        if (failuresInARow >= maxConsecutiveFailures) break;
         const claim = `${notice.eventId}:${notice.vendorId}`;
         if (!(await deps.deduplicator.claim(claim))) continue;
         try {
@@ -70,8 +88,10 @@ export function vendorNoticeConsumer(deps: VendorNoticeDeps): KafkaConsumerDefin
         } catch (error: unknown) {
           await deps.deduplicator.release(claim).catch(() => undefined);
           failures.push(error);
+          failuresInARow += 1;
           continue;
         }
+        failuresInARow = 0;
         onSent(notice, deps.notifications.name);
       }
       if (failures.length === 1) {

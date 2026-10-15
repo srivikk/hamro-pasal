@@ -6,12 +6,15 @@ import {
   NEPAL_PHONE_REGEX,
   NEPAL_PROVINCE_ID_MAX,
   NEPAL_PROVINCE_ID_MIN,
+  VENDOR_CODE_PATTERN,
   VENDOR_WALLET_HARD_FLOOR_NPR,
 } from './constants';
 import {
+  accountStatusSchema,
   deliveryScopeSchema,
   disputeStatusSchema,
   fulfillmentModeSchema,
+  languagePreferenceSchema,
   ledgerAccountTypeSchema,
   ledgerLineTypeSchema,
   ledgerTransactionKindSchema,
@@ -57,6 +60,15 @@ export const userSchema = z.strictObject({
   /** Null for customers who signed up by OTP and have not added a name yet. */
   first_name: nonEmptyTextSchema.nullable(),
   last_name: nonEmptyTextSchema.nullable(),
+  /** Step 7.1: stored lower-cased; unique among accounts that have one. */
+  email: z.email().nullable(),
+  language_preference: languagePreferenceSchema,
+  /** Stamped once with the database clock when the account accepts the terms. */
+  terms_accepted_at: z.date().nullable(),
+  whatsapp_opt_in: z.boolean(),
+  account_status: accountStatusSchema,
+  /** Set exactly while account_status is DELETED_REQUESTED. */
+  deletion_requested_at: z.date().nullable(),
   created_at: z.date(),
   updated_at: z.date(),
 });
@@ -85,6 +97,8 @@ export const vendorSchema = z.strictObject({
   id: z.uuid(),
   user_id: z.uuid(),
   business_name: nonEmptyTextSchema,
+  /** Step 7.1: "HPV-00042", permanent and unique, tells shops of similar names apart. */
+  vendor_code: z.string().regex(VENDOR_CODE_PATTERN),
   phone: nepalPhoneSchema,
   status: vendorStatusSchema,
   /** Null until the vendor picks a model; required once LIVE (SPEC vendor flow step 5). */

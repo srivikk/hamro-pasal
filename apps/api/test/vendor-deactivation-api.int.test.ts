@@ -735,6 +735,81 @@ describe('Vendor deactivation API', () => {
     });
   });
 
+  describe('vendor.deactivated and vendor.reactivated', () => {
+    const events = (vendorId: string, type: 'vendor.deactivated' | 'vendor.reactivated') =>
+      db
+        .select()
+        .from(outboxEvents)
+        .where(and(eq(outboxEvents.aggregate_id, vendorId), eq(outboxEvents.event_type, type)));
+    const reactivate = (vendorId: string) =>
+      request(t.app).post(`/api/admin/vendors/${vendorId}/reactivate`).set('authorization', admin);
+
+    it('writes vendor.deactivated once, with what the platform still holds, however often it is asked', async () => {
+      const { vendorId, token } = await shop({ model: 'COD_CREDIT', balance: 400 });
+      await ad(token, { billing: 'PER_ORDER_PREMIUM', price: 25, budget: 300 });
+
+      expect((await deactivate(token)).status).toBe(200);
+      expect((await deactivate(token)).status).toBe(200);
+
+      const [event, ...more] = await events(vendorId, 'vendor.deactivated');
+      expect(more).toEqual([]);
+      expect(event).toMatchObject({
+        topic: 'notifications.broadcast',
+        published_at: null,
+        payload: {
+          vendor_id: vendorId,
+          vendor_phone: (await vendorRow(vendorId)).phone,
+          wallet_balance_npr: 400,
+          cancelled_ad_count: 1,
+          returned_npr: 300,
+        },
+      });
+    });
+
+    it('writes no vendor.deactivated for a refused closure', async () => {
+      const { vendorId, token } = await shop();
+      await credit(vendorId, -150);
+
+      expect((await deactivate(token)).status).toBe(409);
+
+      expect(await events(vendorId, 'vendor.deactivated')).toEqual([]);
+    });
+
+    it('writes vendor.reactivated once, saying whether the shop came back LIVE', async () => {
+      const withPan = await shop();
+      await db.update(vendors).set({ tax_id: '302118845' }).where(eq(vendors.id, withPan.vendorId));
+      expect((await deactivate(withPan.token)).status).toBe(200);
+
+      const answers = await Promise.all(
+        Array.from({ length: 4 }, () => reactivate(withPan.vendorId)),
+      );
+
+      expect(answers.filter((res) => res.status === 200)).toHaveLength(1);
+      const [event, ...more] = await events(withPan.vendorId, 'vendor.reactivated');
+      expect(more).toEqual([]);
+      expect(event).toMatchObject({
+        topic: 'notifications.broadcast',
+        payload: {
+          vendor_id: withPan.vendorId,
+          vendor_phone: (await vendorRow(withPan.vendorId)).phone,
+          status: 'LIVE',
+          reactivated_by_user_id: adminId,
+        },
+      });
+
+      const noPan = await shop();
+      expect((await deactivate(noPan.token)).status).toBe(200);
+      expect((await reactivate(noPan.vendorId)).status).toBe(200);
+      const [offline] = await events(noPan.vendorId, 'vendor.reactivated');
+      expect(offline?.payload).toMatchObject({ status: 'SUSPENDED_COMPLIANCE' });
+
+      // A shop that was never closed is refused, and nothing is announced.
+      const live = await shop();
+      expect((await reactivate(live.vendorId)).status).toBe(409);
+      expect(await events(live.vendorId, 'vendor.reactivated')).toEqual([]);
+    });
+  });
+
   describe('vendor.compliance_restored', () => {
     const save = (token: string, taxId = '302118845') =>
       request(t.app)

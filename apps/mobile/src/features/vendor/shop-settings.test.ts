@@ -233,19 +233,27 @@ describe('useVendorShopStore', () => {
     expect(store.getState()).toMatchObject({ online: false, stored: null });
   });
 
-  it('records a deletion request, takes the shop offline, and keeps both across a relaunch', () => {
-    const { engine, store } = freshStore();
-    store.getState().requestDeletion('vendor-user-1', Date.parse('2026-10-07T06:00:00.000Z'));
+  it('forgets the local deletion request an older build stored, keeping the rest', () => {
+    const engine = new InMemoryMmkv();
+    engine.set(
+      VENDOR_SHOP_STORE_KEY,
+      JSON.stringify({
+        state: {
+          online: false,
+          stored: { userId: 'vendor-user-1', settings: SETTINGS },
+          deletionRequest: { userId: 'vendor-user-1', requestedAt: '2026-10-07T06:00:00.000Z' },
+        },
+        version: 1,
+      }),
+    );
 
-    const relaunched = createVendorShopStore(mmkvStateStorage(engine));
-    expect(relaunched.getState()).toMatchObject({
+    const { store } = freshStore(engine);
+
+    expect(store.getState()).toMatchObject({
       online: false,
-      deletionRequest: { userId: 'vendor-user-1', requestedAt: '2026-10-07T06:00:00.000Z' },
+      stored: { userId: 'vendor-user-1', settings: SETTINGS },
     });
-
-    relaunched.getState().cancelDeletion();
-    expect(relaunched.getState().deletionRequest).toBeNull();
-    expect(relaunched.getState().online).toBe(false); // the vendor switches back on themselves
+    expect(store.getState()).not.toHaveProperty('deletionRequest');
   });
 
   it('shows the settings only to the account that saved them', () => {

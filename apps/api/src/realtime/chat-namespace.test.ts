@@ -38,6 +38,13 @@ function userRow(role: UserRole, firstName: string | null, lastName: string, pho
     role,
     first_name: firstName,
     last_name: lastName,
+    // Step 7.1: the row now carries an email too; the allowlist must drop it like the surname.
+    email: `${phone.slice(-4)}@example.com`,
+    language_preference: 'en',
+    terms_accepted_at: null,
+    whatsapp_opt_in: false,
+    account_status: 'ACTIVE',
+    deletion_requested_at: null,
     created_at: new Date('2026-09-01T00:00:00.000Z'),
     updated_at: new Date('2026-09-01T00:00:00.000Z'),
   };
@@ -60,7 +67,17 @@ const DISPUTE: Dispute = {
 };
 const USERS = new Map([AARAV, RAM, ADMIN, OUTSIDER].map((user) => [user.id, user]));
 
-const PII = ['last_name', 'phone_number', '"phone"', 'Sharma', 'Shrestha', 'Adhikari', '+97798'];
+const PII = [
+  'last_name',
+  'phone_number',
+  '"phone"',
+  'Sharma',
+  'Shrestha',
+  'Adhikari',
+  '+97798',
+  '"email"',
+  '@example.com',
+];
 
 function expectNoPii(value: unknown): void {
   const json = JSON.stringify(value);

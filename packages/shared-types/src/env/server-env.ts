@@ -25,6 +25,9 @@ export type WalletTopUpMode = (typeof walletTopUpModes)[number];
  * in production; DISABLED (the default) places no call, so the escalation is SMS only.
  */
 export const ivrProviders = ['MOCK', 'DISABLED'] as const;
+
+/** Step 7.1 (decided 2026-10-15): Amazon SES over SMTP; MOCK logs; DISABLED sends nothing. */
+export const mailProviders = ['SES_SMTP', 'MOCK', 'DISABLED'] as const;
 export type IvrProvider = (typeof ivrProviders)[number];
 
 /**
@@ -143,6 +146,16 @@ export const serverEnvSchema = z
     // Expo push notifications (Phase 20, read by the worker). Only needed when the Expo project
     // has "enhanced push security" on; without it the push API takes unauthenticated requests.
     EXPO_ACCESS_TOKEN: optionalNonEmpty,
+
+    // Email (step 7.1, read by the worker for queued exports). SES_SMTP needs the SES SMTP
+    // endpoint of the region (email-smtp.<region>.amazonaws.com), SMTP credentials made in the
+    // SES console (not the IAM access key) and a verified sender.
+    MAIL_PROVIDER: z.enum(mailProviders).default('DISABLED'),
+    SES_SMTP_HOST: optionalNonEmpty,
+    SES_SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(587),
+    SES_SMTP_USER: optionalNonEmpty,
+    SES_SMTP_PASSWORD: optionalNonEmpty,
+    MAIL_FROM: z.email().optional(),
 
     // Uploads (dispute evidence, product photos). Cloudflare R2 is not wired yet: the API stores
     // files on local disk (default: uploads/ at the API root, apps/api/uploads) and serves them under
@@ -297,6 +310,20 @@ export const serverEnvSchema = z
       });
     }
 
+    if (env.MAIL_PROVIDER === 'SES_SMTP') {
+      requireKeys(
+        ['SES_SMTP_HOST', 'SES_SMTP_USER', 'SES_SMTP_PASSWORD', 'MAIL_FROM'],
+        'MAIL_PROVIDER=SES_SMTP',
+      );
+    }
+    if (env.MAIL_PROVIDER === 'MOCK' && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['MAIL_PROVIDER'],
+        message: 'MOCK only logs emails; it is not allowed in production',
+      });
+    }
+
     switch (env.SMS_PROVIDER) {
       case 'SPARROW':
         requireKeys(
@@ -337,7 +364,7 @@ export class InvalidEnvError extends Error {
 /**
  * Validates a raw environment map (typically `process.env`).
  * Empty strings are treated as unset so `.env.example` placeholders fail loudly.
- * With MOCK_SERVICES on, SMS_PROVIDER and IVR_PROVIDER are answered as MOCK whatever they are set
+ * With MOCK_SERVICES on, SMS_PROVIDER, IVR_PROVIDER and MAIL_PROVIDER are answered as MOCK whatever they are set
  * to, so a local run can never send a billed SMS or place a call.
  */
 export function parseServerEnv(source: Readonly<Record<string, string | undefined>>): ServerEnv {
@@ -346,7 +373,7 @@ export function parseServerEnv(source: Readonly<Record<string, string | undefine
     throw new InvalidEnvError(z.prettifyError(result.error));
   }
   return mockServicesEnabled(result.data)
-    ? { ...result.data, SMS_PROVIDER: 'MOCK', IVR_PROVIDER: 'MOCK' }
+    ? { ...result.data, SMS_PROVIDER: 'MOCK', IVR_PROVIDER: 'MOCK', MAIL_PROVIDER: 'MOCK' }
     : result.data;
 }
 

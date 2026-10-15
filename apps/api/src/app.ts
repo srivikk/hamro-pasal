@@ -26,6 +26,8 @@ import type { VendorAnalyticsService } from './analytics/vendor-analytics-servic
 import type { VendorInvoiceService } from './invoices/vendor-invoice-service';
 import type { CampaignService } from './marketing/campaign-service';
 import type { PromotionService } from './marketing/promotion-service';
+import type { MeService } from './account/me-service';
+import type { NotificationCentreService } from './account/notification-centre-service';
 import type { DeviceTokenService } from './notifications/device-token-service';
 import type { DeliveryService } from './deliveries/delivery-service';
 import type { OrderService } from './orders/order-service';
@@ -47,6 +49,7 @@ import { cartRouter } from './routes/cart';
 import { categoriesRouter, productsRouter, vendorProductsRouter } from './routes/catalog';
 import { deliveriesRouter } from './routes/deliveries';
 import { orderChatRouter } from './routes/order-chat';
+import { meRouter } from './routes/me';
 import { notificationsRouter } from './routes/notifications';
 import { testRouter } from './routes/mock-services';
 import { ordersRouter } from './routes/orders';
@@ -101,6 +104,9 @@ export interface ApiServices {
   readonly promotionImages: PromotionImageStorage;
   /** Phase 20: Expo push tokens of signed-in devices. */
   readonly deviceTokens: DeviceTokenService;
+  /** Step 7.1: the signed-in account and its notification centre. */
+  readonly me: MeService;
+  readonly notificationCentre: NotificationCentreService;
   /** Phase 22: vendor earnings and payout requests, and the Super Admin's decisions on them. */
   readonly vendorFinance: VendorFinanceService;
   readonly adminPayouts: AdminPayoutService;
@@ -291,6 +297,12 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       '/api/notifications',
       requireAuth(services.accessTokenSecret),
       notificationsRouter(services.deviceTokens),
+    );
+    // Step 7.1. Any role: the account's own record and its notification centre.
+    app.use(
+      '/api/me',
+      requireAuth(services.accessTokenSecret),
+      meRouter(services.me, services.notificationCentre),
     );
     app.use('/api/uploads', customerAuth, uploadsRouter(services.disputes, services.evidence));
     // STORAGE_DRIVER=LOCAL only (development, tests): the API stands in for the bucket's public

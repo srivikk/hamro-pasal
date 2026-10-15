@@ -19,6 +19,8 @@ export type VendorNoticeEvent = Extract<
     event_type:
       | 'vendor.suspended_for_compliance'
       | 'vendor.compliance_restored'
+      | 'vendor.deactivated'
+      | 'vendor.reactivated'
       | 'marketing.ad_ended'
       | 'marketing.ad_paused'
       | 'marketing.campaign_terms_changed';
@@ -28,6 +30,8 @@ export type VendorNoticeEvent = Extract<
 const NOTICE_EVENT_TYPES: ReadonlySet<string> = new Set<VendorNoticeEvent['event_type']>([
   'vendor.suspended_for_compliance',
   'vendor.compliance_restored',
+  'vendor.deactivated',
+  'vendor.reactivated',
   'marketing.ad_ended',
   'marketing.ad_paused',
   'marketing.campaign_terms_changed',
@@ -139,6 +143,42 @@ function wordingOf(event: VendorNoticeEvent): Wording {
         push: {
           title: 'PAN saved',
           body: 'Your shop is not live yet. Please upload your PAN certificate in the app meanwhile.',
+        },
+      };
+    case 'vendor.deactivated': {
+      const owed =
+        event.payload.wallet_balance_npr > 0
+          ? ` The ${formatNpr(event.payload.wallet_balance_npr)} in your wallet will be paid to your bank account.`
+          : '';
+      return {
+        sms:
+          `Hamro Pasal: your shop account is closed and signed out, as you asked.${owed} ` +
+          'Please contact Hamro Pasal support to reopen it.',
+        push: {
+          title: 'Your shop account is closed',
+          body: `Your shop is closed and signed out, as you asked.${owed} Please contact support to reopen it.`,
+        },
+      };
+    }
+    case 'vendor.reactivated':
+      if (event.payload.status === 'LIVE') {
+        return {
+          sms:
+            'Hamro Pasal: your shop has been reopened and is back online. Please sign in to ' +
+            'the app to take orders. Your ads and campaigns must be set up again.',
+          push: {
+            title: 'Your shop is reopened',
+            body: 'Your shop is back online. Please sign in to take orders and set up your ads and campaigns again.',
+          },
+        };
+      }
+      return {
+        sms:
+          'Hamro Pasal: your shop has been reopened, but it stays offline until a PAN is on ' +
+          'file. Please sign in to the app and add your 9-digit PAN in Shop settings.',
+        push: {
+          title: 'Your shop is reopened',
+          body: 'It stays offline until a PAN is on file. Please sign in and add your PAN in Shop settings.',
         },
       };
     case 'marketing.ad_ended': {

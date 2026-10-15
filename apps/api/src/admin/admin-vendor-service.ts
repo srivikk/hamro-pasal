@@ -1,4 +1,5 @@
 import {
+  enqueueDomainEvent,
   platformSettings,
   recordAuditLog,
   vendors,
@@ -119,6 +120,21 @@ export class AdminVendorService {
         beforeState: { status: before.status },
         afterState: { status: vendor.status, has_pan: hasPan },
         context,
+      });
+      // Phase 38: the vendor is told it can sign in again. Last in the transaction; a second
+      // press is refused above, so one reopening writes one event.
+      const reactivatedAt = new Date();
+      await enqueueDomainEvent(tx, {
+        type: 'vendor.reactivated',
+        aggregateId: vendorId,
+        occurredAt: reactivatedAt,
+        payload: {
+          vendor_id: vendorId,
+          vendor_phone: vendor.phone,
+          status: hasPan ? 'LIVE' : 'SUSPENDED_COMPLIANCE',
+          reactivated_by_user_id: adminUserId,
+          reactivated_at: reactivatedAt.toISOString(),
+        },
       });
       return { vendor, previousStatus: 'DEACTIVATED' as const };
     });

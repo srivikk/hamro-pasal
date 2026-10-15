@@ -205,3 +205,34 @@ describe('parseServerEnv', () => {
     expect(off.IVR_PROVIDER).toBe('DISABLED');
   });
 });
+
+describe('mail settings (step 7.1)', () => {
+  const ses = {
+    MAIL_PROVIDER: 'SES_SMTP',
+    SES_SMTP_HOST: 'email-smtp.ap-south-1.amazonaws.com',
+    SES_SMTP_USER: 'AKIAEXAMPLE',
+    SES_SMTP_PASSWORD: 'smtp-password',
+    MAIL_FROM: 'exports@hamropasal.np',
+  };
+
+  it('is DISABLED by default, with SES on port 587', () => {
+    const env = parseServerEnv(validEnv);
+    expect(env.MAIL_PROVIDER).toBe('DISABLED');
+    expect(parseServerEnv({ ...validEnv, ...ses }).SES_SMTP_PORT).toBe(587);
+  });
+
+  it('needs every SES key for SES_SMTP', () => {
+    for (const key of Object.keys(ses).filter((k) => k !== 'MAIL_PROVIDER')) {
+      expect(() => parseServerEnv({ ...validEnv, ...ses, [key]: '' })).toThrow(key);
+    }
+  });
+
+  it('refuses MOCK in production, and MOCK_SERVICES answers it as MOCK', () => {
+    expect(() =>
+      parseServerEnv({ ...validEnv, NODE_ENV: 'production', MAIL_PROVIDER: 'MOCK' }),
+    ).toThrow('MAIL_PROVIDER');
+    expect(parseServerEnv({ ...validEnv, ...ses, MOCK_SERVICES: 'true' }).MAIL_PROVIDER).toBe(
+      'MOCK',
+    );
+  });
+});

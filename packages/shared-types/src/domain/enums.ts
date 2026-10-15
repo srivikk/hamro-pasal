@@ -279,3 +279,22 @@ export type SettlementModelRequestStatus = z.infer<typeof settlementModelRequest
 export const adPurchaseStatuses = ['ACTIVE', 'PAUSED', 'ENDED', 'CANCELLED'] as const;
 export const adPurchaseStatusSchema = z.enum(adPurchaseStatuses);
 export type AdPurchaseStatus = z.infer<typeof adPurchaseStatusSchema>;
+
+/** Step 7.1 (2026-10-15): the language server-written texts use for an account (§8Z.10). */
+export const languagePreferences = ['en', 'ne'] as const;
+export const languagePreferenceSchema = z.enum(languagePreferences);
+export type LanguagePreference = z.infer<typeof languagePreferenceSchema>;
+
+/** An account's own standing, apart from any role (a deleted or blocked person). */
+export const accountStatuses = ['ACTIVE', 'DELETED_REQUESTED', 'SUSPENDED'] as const;
+export const accountStatusSchema = z.enum(accountStatuses);
+export type AccountStatus = z.infer<typeof accountStatusSchema>;
+
+/** Who an in-app notification centre message is for (SPEC core 11). */
+export const notificationAudiences = ['VENDOR', 'CUSTOMER', 'ALL_CUSTOMERS'] as const;
+export const notificationAudienceSchema = z.enum(notificationAudiences);
+export type NotificationAudience = z.infer<typeof notificationAudienceSchema>;
+
+export const notificationSources = ['ADMIN', 'SYSTEM'] as const;
+export const notificationSourceSchema = z.enum(notificationSources);
+export type NotificationSource = z.infer<typeof notificationSourceSchema>;

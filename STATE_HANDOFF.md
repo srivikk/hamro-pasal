@@ -1100,6 +1100,91 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.40 Phase 39: step 7.1 foundations — /api/me, Vendor Code, notification centre, @hamro-pasal/mail (2026-10-15)
+
+Decisions (user, 2026-10-15): one account may hold several roles (built in step 8); Amazon SES
+over SMTP; refunds recorded and paid by hand from the merchant dashboards; a 5-minute auto-cancel
+that counts as missed. All in SPEC.md core 6 / 11 and BACKEND_CHECKLIST 7.0. Migration **0039**;
+new dependency **nodemailer 8** (`packages/mail`). Not run against SES or a device; the dev
+database needs `pnpm db:migrate`.
+
+- **`users`** (+ `userSchema`, contract): `email` (lower-cased by CHECK, partial unique
+  `users_email_uidx`), `language_preference` (en | ne), `terms_accepted_at`, `whatsapp_opt_in`,
+  `account_status` (ACTIVE | DELETED_REQUESTED | SUSPENDED) and `deletion_requested_at` (set
+  exactly while DELETED_REQUESTED).
+- **`GET / PATCH /api/me`** (any role, `no-store`): the §8Z.10 contract the mobile app already
+  sends (`full_name`, `email | null`, `language_preference`, `whatsapp_opt_in`, `accept_terms:
+true`; strict, at least one key). `full_name` is split into first / last name so the chat
+  filter keeps showing the first name only; terms are stamped once with the database clock;
+  `409 EMAIL_TAKEN`. The app's on-phone fallback (it treated 404 as "not built") no longer
+  fires. Not built: the deletion routes (`/api/user/deletion-*`), `profile_complete` in the OTP
+  verify answer.
+- **`vendors.vendor_code`** (`HPV-00042`): `vendor_code_seq` + `next_vendor_code()` (no
+  truncation past 99999), existing shops backfilled in sign-up order, unique, format CHECK, in
+  `vendorSchema`. Not in any API view yet (step 6 adds it to the admin search).
+- **Notification centre:** `notification_messages` (audience VENDOR | CUSTOMER | ALL_CUSTOMERS,
+  source ADMIN | SYSTEM, title ≤ 60, body ≤ 240, unique `dedupe_key`), `notification_recipients`,
+  `notification_reads`. One writer, `recordNotificationMessage` in `@hamro-pasal/db`, idempotent
+  per dedupe key. Routes under `/api/me`: `GET /notifications?limit=&cursor=`,
+  `GET /notifications/unread-count`, `POST /notifications/:id/read`, `POST /notifications/read-all`.
+  A broadcast is seen by a token signed in as CUSTOMER whose account existed when it was sent.
+- **Worker:** `InboxNotificationAdapter` stores every vendor notice as a VENDOR message
+  (`notice:<event_id>:<vendor_id>`) before the SMS and push; failing to store it fails the notice
+  (retried, then dead-lettered).
+- **`@hamro-pasal/mail`:** `SesSmtpMailGateway` (nodemailer; STARTTLS on 587 or TLS on 465; 15 s
+  timeouts), `MockMailGateway` (logs the subject only), `mailGatewayFromEnv`; attachments capped
+  at 7 MB; one-line subjects only. Env: `MAIL_PROVIDER` (SES_SMTP | MOCK | DISABLED, the default),
+  `SES_SMTP_HOST`, `SES_SMTP_PORT`, `SES_SMTP_USER`, `SES_SMTP_PASSWORD`, `MAIL_FROM`. MOCK is
+  refused in production; MOCK_SERVICES forces MOCK. Nothing sends mail yet (exports, step 7).
+- **Tests:** API integration **986 / 986** in 57 suites (+13, `me-api`); db integration 179 (+9);
+  unit: shared-types 372, worker 179, mail 9, api 193, mobile 1559, admin 303. Typecheck and
+  lint clean. Not tested: `DatabaseNoticeInbox` against PostgreSQL (thin over the tested writer);
+  the backfill on a database that already has shops (the test database starts empty); no
+  mutation checks.
+
+## 8Z.39 Phase 38: provider-backed vendor notices, deactivation / reactivation events, dead code removed (2026-10-09)
+
+`packages/shared-types`, `apps/api`, `apps/worker`, `apps/mobile`. **No migration, no new
+dependency.** Not run against a real SMS provider, Expo or a device.
+
+- **`ProductionNotificationAdapter`** (`apps/worker/src/notifications/production-notification-adapter.ts`)
+  replaces the logger in `main.ts` (`notificationAdapterFromEnv`). With `MOCK_SERVICES=true`
+  (never in production) the logger still runs and prints `[notify:sms]` / `[notify:push]`.
+  - **SMS first, and it is the delivery:** `@hamro-pasal/sms` (`SMS_PROVIDER`; 10 s timeout). A
+    refusal or timeout rejects `send`: the consumer releases that shop's claim, `withDeadLetter`
+    retries (1 s / 2 s / 4 s), then `dead_letter_events` + `notifications.dlq`. A timeout can hide
+    an SMS that was sent, so a retry may text twice (at-least-once).
+  - **Push is best effort,** only after the SMS was accepted: the shop's tokens
+    (`DatabasePushRecipients.vendor`) → `ExpoPushGateway` (5 s timeout). Nothing in it can reject
+    `send`. Tracked as one JSON line per notice: `notice.push_sent` (sent / rejected /
+    removed_tokens), `notice.push_skipped` (`NO_DEVICE`) or `notice.push_failed` (on stderr).
+    `DeviceNotRegistered` tokens are deleted. Not retried.
+  - Push payload: visible, channel `orders`, `data { type: 'vendor.notice', notification_id:
+'<event_id>:<vendor_id>', event_type }`. The app shows the banner; tapping only opens the app.
+- **Consumer guard:** after `VENDOR_NOTICE_MAX_CONSECUTIVE_FAILURES` (3) refusals in a row
+  within one event, the remaining shops are left unclaimed for the retry. A down provider costs
+  at most ~30 s per attempt instead of 10 s per shop of a campaign change.
+- **Two new outbox events** on `notifications.broadcast`, each last in its transaction:
+  `vendor.deactivated` `{ vendor_id, vendor_phone, wallet_balance_npr, cancelled_ad_count,
+returned_npr, deactivated_at }` (not on a repeat or a refusal) and `vendor.reactivated`
+  `{ vendor_id, vendor_phone, status: LIVE | SUSPENDED_COMPLIANCE, reactivated_by_user_id,
+reactivated_at }`. The `vendor-notices` consumer words both (seven events now).
+  - **Both reach the vendor by SMS only in practice:** deactivation deletes the account's device
+    tokens in its transaction, and they stay deleted until the vendor signs in again after a
+    reactivation. The push is attempted and logged as `notice.push_skipped`.
+- **Deleted:** `apps/mobile/src/features/vendor/shop-deletion.ts`; `deletionRequest`,
+  `requestDeletion`, `cancelDeletion` from `useVendorShopStore` (store version unchanged: a
+  stored `deletionRequest` from an older build is dropped on load, tested).
+- **Behaviour to know:** with `SMS_PROVIDER=SPARROW` and `MOCK_SERVICES` off, every compliance
+  sweep, ad end / pause, campaign terms change and account closure now sends a **billed SMS**.
+  The nightly sweep on a dev database texts every seeded shop without a PAN.
+- **Tests:** worker unit 175 (+16: `production-notification-adapter.test.ts` on the real Sparrow
+  and Expo gateways over a fake `fetch`, timeouts included; wording and the guard in
+  `vendor-notices.test.ts`), shared-types 366 (+4), API integration `vendor-deactivation-api` 35
+  (+3) and `admin-vendors-api` 18, worker integration `vendor-notices.int` 4, the three touched
+  mobile suites 48. `pnpm typecheck` 16 of 16; lint clean. **Not rerun:** the full API, worker
+  and mobile suites; no mutation checks.
+
 ## 8Z.38 Phase 37: Delete Shop Account wired, the PAN reminder from the server, admin reactivation (2026-10-09)
 
 `apps/api`, `apps/admin`, `apps/mobile`, one audit action in shared-types. **No migration, no

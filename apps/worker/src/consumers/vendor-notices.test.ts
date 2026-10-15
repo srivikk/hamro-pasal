@@ -59,6 +59,27 @@ function restored(status: 'LIVE' | 'SUSPENDED' | 'APPROVED' = 'LIVE', vendorId =
   });
 }
 
+function deactivated(walletBalanceNpr = 0, vendorId = randomUUID()) {
+  return envelope('vendor.deactivated', vendorId, {
+    vendor_id: vendorId,
+    vendor_phone: PHONE,
+    wallet_balance_npr: walletBalanceNpr,
+    cancelled_ad_count: 1,
+    returned_npr: 0,
+    deactivated_at: AT,
+  });
+}
+
+function reactivated(status: 'LIVE' | 'SUSPENDED_COMPLIANCE' = 'LIVE', vendorId = randomUUID()) {
+  return envelope('vendor.reactivated', vendorId, {
+    vendor_id: vendorId,
+    vendor_phone: PHONE,
+    status,
+    reactivated_by_user_id: randomUUID(),
+    reactivated_at: AT,
+  });
+}
+
 function adEnded(returnedNpr = 0, vendorId = randomUUID()) {
   const adId = randomUUID();
   return envelope('marketing.ad_ended', adId, {
@@ -190,6 +211,32 @@ describe('vendor notice wording', () => {
     expect(waiting.sms).not.toContain('back online');
   });
 
+  it('tells a vendor its shop account is closed, and what it is still owed', async () => {
+    const owed = await wording(deactivated(1250.5));
+    expect(owed.sms).toBe(
+      'Hamro Pasal: your shop account is closed and signed out, as you asked. The Rs. 1,250.50 in your wallet will be paid to your bank account. Please contact Hamro Pasal support to reopen it.',
+    );
+    expect(owed.push.title).toBe('Your shop account is closed');
+
+    const nothing = await wording(deactivated(0));
+    expect(nothing.sms).toBe(
+      'Hamro Pasal: your shop account is closed and signed out, as you asked. Please contact Hamro Pasal support to reopen it.',
+    );
+    expect(nothing.push.body).not.toContain('wallet');
+  });
+
+  it('says a reopened shop is online only when it has a PAN', async () => {
+    expect((await wording(reactivated('LIVE'))).sms).toBe(
+      'Hamro Pasal: your shop has been reopened and is back online. Please sign in to the app to take orders. Your ads and campaigns must be set up again.',
+    );
+    const offline = await wording(reactivated('SUSPENDED_COMPLIANCE'));
+    expect(offline.sms).toBe(
+      'Hamro Pasal: your shop has been reopened, but it stays offline until a PAN is on file. Please sign in to the app and add your 9-digit PAN in Shop settings.',
+    );
+    expect(offline.sms).not.toContain('back online');
+    expect(offline.push.body).toContain('stays offline');
+  });
+
   it('gives the end of an ad as a Nepal Time date, with the budget that came back', async () => {
     expect(nepalDate('2026-10-08T18:30:00.000Z')).toBe('9 Oct 2026');
     expect(nepalDate('2026-10-08T18:14:59.000Z')).toBe('8 Oct 2026');
@@ -237,6 +284,10 @@ describe('vendor notice wording', () => {
       restored('LIVE'),
       restored('SUSPENDED'),
       restored('APPROVED'),
+      deactivated(125_000),
+      deactivated(0),
+      reactivated('LIVE'),
+      reactivated('SUSPENDED_COMPLIANCE'),
       adEnded(225),
       adEnded(0),
       adPaused(),
@@ -245,7 +296,7 @@ describe('vendor notice wording', () => {
       ...(await Promise.all(events.map(wording))),
       ...(await vendorNoticesOf(termsChanged([vendorId]), contactsOf({ [vendorId]: PHONE }))),
     ];
-    expect(notices).toHaveLength(8);
+    expect(notices).toHaveLength(12);
     for (const notice of notices) {
       expect(notice.sms.startsWith('Hamro Pasal: ')).toBe(true);
       expect(notice.sms).toMatch(/^[\x20-\x7e]+$/);
@@ -257,8 +308,10 @@ describe('vendor notice wording', () => {
     }
   });
 
-  it('words the five notice events and no other', () => {
+  it('words the seven notice events and no other', () => {
     expect(isVendorNoticeEvent(suspended())).toBe(true);
+    expect(isVendorNoticeEvent(deactivated())).toBe(true);
+    expect(isVendorNoticeEvent(reactivated())).toBe(true);
     expect(isVendorNoticeEvent(termsChanged([]))).toBe(true);
     const debt: DomainEvent = {
       event_id: randomUUID(),
@@ -323,23 +376,87 @@ describe('vendorNoticeConsumer', () => {
     return { adapter, deduplicator, sent, handle: consumer.handle, topic: consumer.topic };
   }
 
-  it('listens on notifications.broadcast and hands each of the five events to the adapter', async () => {
+  it('listens on notifications.broadcast and hands each of the seven events to the adapter', async () => {
     const vendorId = randomUUID();
     const { adapter, handle, topic, sent } = harness(contactsOf({ [vendorId]: PHONE }));
     expect(topic).toBe('notifications.broadcast');
-    const events = [suspended(), restored(), adEnded(225), adPaused(), termsChanged([vendorId])];
+    const events = [
+      suspended(),
+      restored(),
+      deactivated(700),
+      reactivated(),
+      adEnded(225),
+      adPaused(),
+      termsChanged([vendorId]),
+    ];
 
     for (const event of events) await handle(kafkaMessage(event));
 
     expect(adapter.sent.map((notice) => notice.eventType)).toEqual([
       'vendor.suspended_for_compliance',
       'vendor.compliance_restored',
+      'vendor.deactivated',
+      'vendor.reactivated',
       'marketing.ad_ended',
       'marketing.ad_paused',
       'marketing.campaign_terms_changed',
     ]);
     expect(adapter.sent.map((notice) => notice.eventId)).toEqual(events.map((e) => e.event_id));
-    expect(sent).toHaveLength(5);
+    expect(sent).toHaveLength(7);
+  });
+
+  it('tells a just-closed shop at the number in the event, without asking for its contact', async () => {
+    // The contact reader leaves deactivated shops out; this notice must not depend on it.
+    const contacts = contactsOf({});
+    const { adapter, handle } = harness(contacts);
+    const event = deactivated(700);
+
+    await handle(kafkaMessage(event));
+
+    expect(adapter.sent.map((notice) => [notice.vendorId, notice.phone])).toEqual([
+      [event.payload.vendor_id, PHONE],
+    ]);
+    expect(contacts.asked).toEqual([]);
+  });
+
+  it('stops after three refusals in a row and leaves the rest of the shops for the retry', async () => {
+    const ids = Array.from({ length: 8 }, () => randomUUID());
+    const phones = Object.fromEntries(ids.map((id, i) => [id, `+97798000000${String(30 + i)}`]));
+    const { adapter, deduplicator, handle } = harness(contactsOf(phones));
+    const attempted: string[] = [];
+    const send = adapter.send.bind(adapter);
+    adapter.send = (notice) => {
+      attempted.push(notice.vendorId);
+      return send(notice);
+    };
+    const event = termsChanged(ids);
+    // The provider is down from the second shop on.
+    for (const id of ids.slice(1)) adapter.failFor.add(id);
+
+    await expect(handle(kafkaMessage(event))).rejects.toBeInstanceOf(AggregateError);
+
+    // One told, three timed out, four never tried (and never claimed).
+    expect(attempted).toEqual(ids.slice(0, 4));
+    expect([...deduplicator.claims]).toEqual([`${event.event_id}:${ids[0] ?? ''}`]);
+
+    adapter.failFor.clear();
+    await handle(kafkaMessage(event));
+
+    expect(adapter.sent.map((notice) => notice.vendorId)).toEqual(ids);
+  });
+
+  it('does not count refusals that a delivered notice separates', async () => {
+    const ids = Array.from({ length: 7 }, () => randomUUID());
+    const phones = Object.fromEntries(ids.map((id, i) => [id, `+97798000000${String(40 + i)}`]));
+    const { adapter, handle } = harness(contactsOf(phones));
+    // Every other number is refused: bad numbers, not a provider outage.
+    for (const id of ids.filter((_, i) => i % 2 === 1)) adapter.failFor.add(id);
+
+    await expect(handle(kafkaMessage(termsChanged(ids)))).rejects.toBeInstanceOf(AggregateError);
+
+    expect(adapter.sent.map((notice) => notice.vendorId)).toEqual(
+      ids.filter((_, i) => i % 2 === 0),
+    );
   });
 
   it('delivers a redelivered event (same event_id) once', async () => {

@@ -3,6 +3,7 @@ import {
   auditLogs,
   campaignOptIns,
   deviceTokens,
+  enqueueDomainEvent,
   payoutRequests,
   recordAuditLog,
   vendors,
@@ -214,6 +215,21 @@ export class VendorDeactivationService {
           closed_opt_in_count: result.closedOptInCount,
         },
         context,
+      });
+      // Phase 38: the shop is told its account is closed. Last in the transaction, so the event
+      // exists exactly when the closure committed; a repeat returned above and writes none.
+      await enqueueDomainEvent(tx, {
+        type: 'vendor.deactivated',
+        aggregateId: before.id,
+        occurredAt: now,
+        payload: {
+          vendor_id: before.id,
+          vendor_phone: after.phone,
+          wallet_balance_npr: Math.max(0, result.walletBalanceNpr),
+          cancelled_ad_count: result.cancelledAdCount,
+          returned_npr: result.returnedNpr,
+          deactivated_at: now.toISOString(),
+        },
       });
       return { vendorId: before.id, deactivatedAt: now, ...result };
     });

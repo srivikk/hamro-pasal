@@ -54,7 +54,7 @@ export interface ConsumerDeps {
   readonly pushSmsFallbackLog: ((line: string) => void) | null;
   /** Set when MOCK_SERVICES is on: logs "[MOCK PUSH] -> …" for each order push. */
   readonly pushMockLog?: ((line: string) => void) | null;
-  /** Where compliance, ad and campaign notices leave the worker (Phase 36: the logger). */
+  /** Where compliance, account, ad and campaign notices leave the worker (SMS + push). */
   readonly notifications: NotificationAdapter;
   /** Phone numbers of the shops a campaign change names by id. */
   readonly vendorContacts: VendorContactReader;

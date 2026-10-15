@@ -10,6 +10,7 @@ export * from './enums';
 export * from './invoices';
 export * from './ledger';
 export * from './marketing';
+export * from './notification-centre';
 export * from './orders';
 export * from './outbox';
 export * from './payouts';

@@ -123,3 +123,7 @@ export const MAX_PRODUCT_PRICE_NPR = 1_000_000;
 export const MAX_PRODUCT_STOCK_QUANTITY = 1_000_000;
 /** The unit of a product whose vendor named none (and of every product created before Phase 17). */
 export const DEFAULT_PRODUCT_UNIT = 'piece';
+
+/** Step 7.1: a vendor's permanent public code, "HPV-" and at least five digits (HPV-00042). */
+export const VENDOR_CODE_PATTERN = /^HPV-[0-9]{5,}$/;
+export const VENDOR_CODE_PREFIX = 'HPV-';

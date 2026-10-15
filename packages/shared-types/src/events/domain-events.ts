@@ -182,6 +182,34 @@ export const vendorComplianceRestoredPayloadSchema = z.strictObject({
   restored_at: z.iso.datetime(),
 });
 
+/**
+ * SPEC vendor flow 23 (Phase 38): the vendor closed its shop. Written once, last in the
+ * transaction that set DEACTIVATED (a repeated request writes none). The account's devices were
+ * signed out in that transaction, so the notice reaches the shop by SMS.
+ */
+export const vendorDeactivatedPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  vendor_phone: nepalPhoneSchema,
+  /** What the platform still holds for the shop and will pay out; a shop in debt is never closed. */
+  wallet_balance_npr: z.number().min(0),
+  cancelled_ad_count: z.number().int().min(0),
+  /** Unstarted flat fees and unused held budgets returned to the wallet with the closure. */
+  returned_npr: z.number().min(0),
+  deactivated_at: z.iso.datetime(),
+});
+
+/**
+ * SPEC vendor flow 23 (Phase 38): a Super Admin reopened a closed shop. `status` is where that
+ * left it: LIVE, or SUSPENDED_COMPLIANCE when it has no PAN (saving one then brings it back).
+ */
+export const vendorReactivatedPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  vendor_phone: nepalPhoneSchema,
+  status: vendorStatusSchema.extract(['LIVE', 'SUSPENDED_COMPLIANCE']),
+  reactivated_by_user_id: z.uuid(),
+  reactivated_at: z.iso.datetime(),
+});
+
 /** SPEC core 8 (Phase 35): an ad's paid period is over. Written once, when it becomes ENDED. */
 export const marketingAdEndedPayloadSchema = z.strictObject({
   ad_purchase_id: z.uuid(),
@@ -305,6 +333,14 @@ export const vendorComplianceRestoredEventSchema = envelope(
   'vendor.compliance_restored',
   vendorComplianceRestoredPayloadSchema,
 );
+export const vendorDeactivatedEventSchema = envelope(
+  'vendor.deactivated',
+  vendorDeactivatedPayloadSchema,
+);
+export const vendorReactivatedEventSchema = envelope(
+  'vendor.reactivated',
+  vendorReactivatedPayloadSchema,
+);
 export const marketingAdEndedEventSchema = envelope(
   'marketing.ad_ended',
   marketingAdEndedPayloadSchema,
@@ -330,6 +366,8 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   vendorStatusOverriddenEventSchema,
   vendorSuspendedForComplianceEventSchema,
   vendorComplianceRestoredEventSchema,
+  vendorDeactivatedEventSchema,
+  vendorReactivatedEventSchema,
   marketingAdEndedEventSchema,
   marketingAdPausedEventSchema,
   marketingCampaignTermsChangedEventSchema,
@@ -348,6 +386,8 @@ export type VendorSuspendedForComplianceEvent = z.infer<
   typeof vendorSuspendedForComplianceEventSchema
 >;
 export type VendorComplianceRestoredEvent = z.infer<typeof vendorComplianceRestoredEventSchema>;
+export type VendorDeactivatedEvent = z.infer<typeof vendorDeactivatedEventSchema>;
+export type VendorReactivatedEvent = z.infer<typeof vendorReactivatedEventSchema>;
 export type MarketingAdEndedEvent = z.infer<typeof marketingAdEndedEventSchema>;
 export type MarketingAdPausedEvent = z.infer<typeof marketingAdPausedEventSchema>;
 export type MarketingCampaignTermsChangedEvent = z.infer<
@@ -372,6 +412,8 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'vendor.status_overridden': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.suspended_for_compliance': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.compliance_restored': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.deactivated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.reactivated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_ended': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.campaign_terms_changed': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,

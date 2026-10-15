@@ -13,7 +13,6 @@ import { accessTokenFor } from '../../test/access-tokens';
 import { walletBalance } from '../../test/api-fixtures';
 import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
 import { createTestQueryClient, renderWithProviders } from '../../test/render';
-import { shopDeletionBlockers } from './shop-deletion';
 import { vendorOrdersQueryKey } from './useVendorOrders';
 import { vendorWalletBalanceQueryKey } from './useVendorWallet';
 
@@ -55,7 +54,7 @@ beforeEach(() => {
     accessToken: accessTokenFor('VENDOR', VENDOR_USER_ID),
     refreshToken: 'r.jwt',
   });
-  useVendorShopStore.setState({ online: true, stored: null, deletionRequest: null });
+  useVendorShopStore.setState({ online: true, stored: null });
   useVendorBoardStore.getState().reset();
   useProfileStore.setState({ consents: null });
   useToastStore.setState({ toast: null });
@@ -98,21 +97,6 @@ describe('Shop settings: WhatsApp updates', () => {
       user_id: VENDOR_USER_ID,
       whatsapp_opt_in: true,
     });
-  });
-});
-
-describe('shop deletion rules', () => {
-  it('blocks a shop that owes money or has orders in hand', () => {
-    expect(shopDeletionBlockers({ balanceNpr: 0, activeOrders: 0 })).toEqual([]);
-    expect(shopDeletionBlockers({ balanceNpr: 850, activeOrders: 0 })).toEqual([]);
-    expect(shopDeletionBlockers({ balanceNpr: -0.01, activeOrders: 0 })).toEqual([
-      'NEGATIVE_BALANCE',
-    ]);
-    expect(shopDeletionBlockers({ balanceNpr: 0, activeOrders: 1 })).toEqual(['ACTIVE_ORDERS']);
-    expect(shopDeletionBlockers({ balanceNpr: -100, activeOrders: 2 })).toEqual([
-      'NEGATIVE_BALANCE',
-      'ACTIVE_ORDERS',
-    ]);
   });
 });
 

@@ -21,6 +21,7 @@ export * from './api/admin-pricing';
 export * from './api/catalog';
 export * from './api/finance';
 export * from './api/notifications';
+export * from './api/me';
 export * from './api/settlement-model-requests';
 export * from './api/vendor-account';
 export * from './api/vendor-ads';

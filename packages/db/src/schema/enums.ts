@@ -1,12 +1,16 @@
 import {
+  accountStatuses,
   deadLetterStatuses,
   deliveryStates,
   deliveryScopes,
   disputeStatuses,
   fulfillmentModes,
+  languagePreferences,
   ledgerAccountTypes,
   ledgerLineTypes,
   ledgerTransactionKinds,
+  notificationAudiences,
+  notificationSources,
   orderStates,
   paymentMethods,
   paymentStatuses,
@@ -39,3 +43,7 @@ export const payoutStatusEnum = pgEnum('payout_status', payoutStatuses);
 export const deliveryStateEnum = pgEnum('delivery_state', deliveryStates);
 export const settlementModelEnum = pgEnum('settlement_model', settlementModels);
 export const fiscalDocumentTypeEnum = pgEnum('fiscal_document_type', fiscalDocumentTypes);
+export const languagePreferenceEnum = pgEnum('language_preference', languagePreferences);
+export const accountStatusEnum = pgEnum('account_status', accountStatuses);
+export const notificationAudienceEnum = pgEnum('notification_audience', notificationAudiences);
+export const notificationSourceEnum = pgEnum('notification_source', notificationSources);

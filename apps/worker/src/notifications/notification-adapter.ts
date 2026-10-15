@@ -17,9 +17,9 @@ export interface VendorNotice {
  * Where vendor notices leave the worker (Phase 36). Throwing means "not delivered": the consumer
  * releases its claim for that shop and the message is retried, then dead-lettered.
  *
- * The only implementation today is the logger below. A real one sends `sms` through
- * `@hamro-pasal/sms` (the SMS_PROVIDER adapters the login code and the debt notices already use)
- * and `push` through the Expo gateway to the devices of `vendors.user_id`.
+ * The worker runs `ProductionNotificationAdapter` (production-notification-adapter.ts): the SMS
+ * through `@hamro-pasal/sms`, the push through the Expo gateway to the devices of
+ * `vendors.user_id`. The logger below stands in for it while MOCK_SERVICES is on.
  */
 export interface NotificationAdapter {
   readonly name: string;

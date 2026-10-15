@@ -16,12 +16,6 @@ const storedSettingsSchema = z.strictObject({
 });
 export type StoredShopSettings = z.infer<typeof storedSettingsSchema>;
 
-const deletionRequestSchema = z.strictObject({
-  userId: z.string().min(1).nullable(),
-  requestedAt: z.iso.datetime(),
-});
-export type StoredDeletionRequest = z.infer<typeof deletionRequestSchema>;
-
 export interface VendorShopState {
   /**
    * The header's Online / Offline switch. On the phone only for now: the server has no
@@ -30,38 +24,28 @@ export interface VendorShopState {
   online: boolean;
   /** PAN, delivery mode, scope and charges, with the account they belong to. */
   stored: StoredShopSettings | null;
-  /**
-   * The vendor asked for the shop account to be deleted. Kept on the phone only until
-   * `POST /api/vendor/deletion-request` exists (STATE_HANDOFF.md §8Z.14): nothing is deleted.
-   */
-  deletionRequest: StoredDeletionRequest | null;
   setOnline: (online: boolean) => void;
   saveSettings: (settings: ShopSettings, userId: string | null) => void;
-  /** Records the request and takes the shop offline. */
-  requestDeletion: (userId: string | null, nowMs: number) => void;
-  cancelDeletion: () => void;
 }
 
-export type PersistedVendorShopState = Pick<
-  VendorShopState,
-  'online' | 'stored' | 'deletionRequest'
->;
+export type PersistedVendorShopState = Pick<VendorShopState, 'online' | 'stored'>;
 
 export type VendorShopStore = UseBoundStore<
   Mutate<StoreApi<VendorShopState>, [['zustand/persist', PersistedVendorShopState]]>
 >;
 
-/** Whatever was on disk, re-validated: anything that fails the schema is dropped. */
+/**
+ * Whatever was on disk, re-validated: anything that fails the schema is dropped, and so is any
+ * key this version no longer keeps (an older build stored a local `deletionRequest`).
+ */
 function toPersistedVendorShop(value: unknown): PersistedVendorShopState {
   if (typeof value !== 'object' || value === null) {
-    return { online: true, stored: null, deletionRequest: null };
+    return { online: true, stored: null };
   }
   const stored = storedSettingsSchema.safeParse(Reflect.get(value, 'stored'));
-  const deletion = deletionRequestSchema.safeParse(Reflect.get(value, 'deletionRequest'));
   return {
     online: Reflect.get(value, 'online') !== false,
     stored: stored.success ? stored.data : null,
-    deletionRequest: deletion.success ? deletion.data : null,
   };
 }
 
@@ -71,16 +55,6 @@ export function createVendorShopStore(storage: StateStorage<void>): VendorShopSt
       (set) => ({
         online: true,
         stored: null,
-        deletionRequest: null,
-        requestDeletion: (userId, nowMs) => {
-          set({
-            online: false,
-            deletionRequest: { userId, requestedAt: new Date(nowMs).toISOString() },
-          });
-        },
-        cancelDeletion: () => {
-          set({ deletionRequest: null });
-        },
         setOnline: (online) => {
           set({ online });
         },
@@ -92,11 +66,7 @@ export function createVendorShopStore(storage: StateStorage<void>): VendorShopSt
         name: VENDOR_SHOP_STORE_KEY,
         version: VENDOR_SHOP_STORE_VERSION,
         storage: createJSONStorage<PersistedVendorShopState>(() => storage),
-        partialize: ({ online, stored, deletionRequest }): PersistedVendorShopState => ({
-          online,
-          stored,
-          deletionRequest,
-        }),
+        partialize: ({ online, stored }): PersistedVendorShopState => ({ online, stored }),
         migrate: (persisted) => toPersistedVendorShop(persisted),
         merge: (persisted, current) => ({ ...current, ...toPersistedVendorShop(persisted) }),
       },

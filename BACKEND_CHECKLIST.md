@@ -567,8 +567,8 @@ Rules: SPEC core section 6 (order chat, escalation, 7-day hold) and section 11 (
 
 ### 7.9 Branding — M (assets first)
 
-- [ ] Tokens: `apps/mobile/tailwind.config.js` (`brand`, `brand-light`, surfaces, text) and `apps/admin/src/styles.css` (`:root` and dark). One pass replacing hard-coded hex colours in icons, gradients and the header themes.
-- [ ] Assets: `icon`, `adaptiveIcon`, `splash` (expo-splash-screen config plugin), the `expo-notifications` icon and colour, `LogoPlaceholder` and `auth-wall-placeholder.png` replaced; per variant (7.7). Needs a development-client rebuild and new store graphics.
+- [x] **Built 2026-10-16 (step 10): `src/theme/palette.json` is the single source (brand, surface, ink, line, success, warning, danger, inactive; light and dark), read by Tailwind, `colors.ts` and `app.config.ts`; admin `--brand*` tokens, `--accent` follows them. Still open: the pass replacing hard-coded hex colours in screens.** Tokens: `apps/mobile/tailwind.config.js` (`brand`, `brand-light`, surfaces, text) and `apps/admin/src/styles.css` (`:root` and dark). One pass replacing hard-coded hex colours in icons, gradients and the header themes.
+- [x] **Wired 2026-10-16 (step 10) with PLACEHOLDER images in `apps/mobile/assets/branding/{customer,seller}/` (README gives names, sizes, rules); the Seller build uses `brand.dark` as its accent. Still open: the final artwork, switching `LogoPlaceholder` to `logo.png`, the auth-wall photo, store graphics.** Assets: `icon`, `adaptiveIcon`, `splash` (expo-splash-screen config plugin), the `expo-notifications` icon and colour, `LogoPlaceholder` and `auth-wall-placeholder.png` replaced; per variant (7.7). Needs a development-client rebuild and new store graphics.
 - [ ] The dark-mode pass §8Z.10 left open (Home, shop, cart, checkout, order, vendor screens) goes with it.
 
 ### 7.10 Execution order

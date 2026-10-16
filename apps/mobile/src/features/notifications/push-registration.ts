@@ -22,7 +22,7 @@ export function devicePlatform(os: string = Platform.OS): DevicePlatform | null 
   return null;
 }
 
-/** The EAS project the push token is issued for (app.json `extra.eas.projectId`). */
+/** The EAS project the push token is issued for (app.config.ts `extra.eas.projectId`). */
 export function easProjectId(): string | null {
   const extra: unknown = Constants.expoConfig?.extra;
   const eas: unknown =

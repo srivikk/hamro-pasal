@@ -1,29 +1,48 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
+import palette from './src/theme/palette.json';
+
 /*
  * Step 7.7 (SPEC core 11, decided 2026-10-15): two store builds from one codebase. APP_VARIANT
  * picks the build: `customer` (default) is "Hamro Pasal", `seller` is "Hamro Pasal Seller", each
  * with its own name, slug, URL scheme and package / bundle id, so both install side by side.
  * The app reads `extra.appVariant` (src/lib/app-variant.ts) to sign in with the right role and
  * to mount only its own screens. Riders stay in the customer build.
+ *
+ * Step 7.9: each build takes its icon, adaptive icon, splash and notification icon from
+ * assets/branding/<variant>/ (see the README there) and its colours from src/theme/palette.json.
+ * The files there now are PLACEHOLDERS: replace them, keeping the names, then rebuild the
+ * development client (native assets are not hot-reloaded).
  */
 
 type Variant = 'customer' | 'seller';
 
 const VARIANTS: Readonly<
-  Record<Variant, { name: string; slug: string; scheme: string; bundleId: string }>
+  Record<
+    Variant,
+    {
+      name: string;
+      slug: string;
+      scheme: string;
+      bundleId: string;
+      /** Behind the adaptive icon and the light splash; the Seller app is a shade darker. */
+      accent: string;
+    }
+  >
 > = {
   customer: {
     name: 'Hamro Pasal',
     slug: 'hamro-pasal',
     scheme: 'hamropasal',
     bundleId: 'com.hamro.pasal',
+    accent: palette.brand.DEFAULT,
   },
   seller: {
     name: 'Hamro Pasal Seller',
     slug: 'hamro-pasal-seller',
     scheme: 'hamropasalseller',
     bundleId: 'com.hamro.pasal.seller',
+    accent: palette.brand.dark,
   },
 };
 
@@ -36,6 +55,7 @@ function variantOf(value: string | undefined): Variant {
 export default ({ config }: ConfigContext): ExpoConfig => {
   const variant = variantOf(process.env.APP_VARIANT);
   const app = VARIANTS[variant];
+  const assets = `./assets/branding/${variant}`;
   return {
     ...config,
     name: app.name,
@@ -44,12 +64,26 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     version: '0.0.0',
     orientation: 'portrait',
     userInterfaceStyle: 'automatic',
+    icon: `${assets}/icon.png`,
     plugins: [
       'expo-router',
       'expo-secure-store',
       [
+        'expo-splash-screen',
+        {
+          image: `${assets}/splash-icon.png`,
+          imageWidth: 200,
+          resizeMode: 'contain',
+          backgroundColor: app.accent,
+          dark: { image: `${assets}/splash-icon.png`, backgroundColor: palette.surface.dark },
+        },
+      ],
+      [
         'expo-notifications',
         {
+          // Android draws the small icon as a white silhouette, tinted with `color`.
+          icon: `${assets}/notification-icon.png`,
+          color: palette.brand.DEFAULT,
           defaultChannel: 'orders',
           enableBackgroundRemoteNotifications: true,
         },
@@ -90,6 +124,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     android: {
       package: app.bundleId,
+      adaptiveIcon: {
+        foregroundImage: `${assets}/adaptive-icon.png`,
+        backgroundColor: app.accent,
+      },
     },
     ios: {
       bundleIdentifier: app.bundleId,

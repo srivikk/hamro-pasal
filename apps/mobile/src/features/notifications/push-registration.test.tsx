@@ -22,11 +22,13 @@ import { renderHookWithProviders } from '../../test/render';
 import { devicePlatform, easProjectId, registerForPushNotifications } from './push-registration';
 import { usePushRegistration } from './usePushRegistration';
 
-// jest-expo's expo-constants carries no app config: give it the real app.json, so the test covers
-// the shape the token request reads (extra.eas.projectId).
+// jest-expo's expo-constants carries no app config: give it the real one (app.config.ts), so the
+// test covers the shape the token request reads (extra.eas.projectId).
 jest.mock('expo-constants', () => {
-  const appJson = jest.requireActual<{ expo: Record<string, unknown> }>('../../../app.json');
-  return { __esModule: true, default: { expoConfig: appJson.expo } };
+  const appConfig = jest.requireActual<{
+    default: (context: { config: Record<string, unknown> }) => Record<string, unknown>;
+  }>('../../../app.config').default;
+  return { __esModule: true, default: { expoConfig: appConfig({ config: {} }) } };
 });
 
 setupApiTestEnvironment();
@@ -72,7 +74,7 @@ describe('registerForPushNotifications', () => {
 
     expect(result).toBe('registered');
     expect(requestPermissionsAsync).toHaveBeenCalledTimes(1);
-    // The token is issued for this app's EAS project (app.json extra.eas.projectId).
+    // The token is issued for this app's EAS project (app.config.ts extra.eas.projectId).
     expect(getExpoPushTokenAsync).toHaveBeenCalledWith({
       projectId: 'f91dc398-deb8-4af4-9b50-0210e8cb080f',
     });

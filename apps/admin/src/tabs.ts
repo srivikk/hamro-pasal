@@ -22,6 +22,9 @@ export const TABS = [
   { id: 'notifications', label: 'Notifications' },
   // Step 7.6: CSV data exports.
   { id: 'exports', label: 'Exports' },
+  // Steps 7.7 / 7.8: shops onboarded by an admin, approvals, and the in-app tutorial videos.
+  { id: 'onboarding', label: 'Onboarding' },
+  { id: 'tutorials', label: 'Tutorials' },
   { id: 'audit-log', label: 'Audit log' },
 ] as const;
 

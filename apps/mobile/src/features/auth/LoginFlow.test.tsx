@@ -7,7 +7,9 @@ import LoginScreen from '../../../app/login';
 import VerifyOtpScreen from '../../../app/verify-otp';
 import { OTP_SEND_PATH, OTP_VERIFY_PATH } from '../../api/auth';
 import { VENDORS_PATH } from '../../api/catalog';
+import { setAppVariantForTests } from '../../lib/app-variant';
 import { useAuthStore } from '../../store/useAuthStore';
+import { useSellerSignupStore } from '../../store/useSellerSignupStore';
 import { useCartStore } from '../../store/useCartStore';
 import { useToastStore } from '../../store/useToastStore';
 import {
@@ -124,6 +126,37 @@ describe('Login screen (POST /api/auth/otp/send)', () => {
 });
 
 describe('Code screen (POST /api/auth/otp/verify)', () => {
+  it('in the Seller app, takes a number without a shop to the signup with its token (step 7.7)', async () => {
+    setAppVariantForTests('SELLER');
+    try {
+      const verified = servePost(OTP_VERIFY_PATH, () =>
+        HttpResponse.json(
+          errorBody('ROLE_NOT_GRANTED', {
+            role: 'VENDOR',
+            signup_token: 'signup-token-1',
+            signup_token_expires_in: 1800,
+          }),
+          { status: 403 },
+        ),
+      );
+      renderWithProviders(<VerifyOtpScreen />);
+      typeCode('042187');
+      fireEvent.press(screen.getByRole('button', { name: 'Verify' }));
+
+      await waitFor(() => {
+        expect(mockRouter.replace).toHaveBeenCalledWith('/seller-signup');
+      });
+      expect(verified).toEqual([{ phone: TEST_PHONE, code: '042187', app: 'SELLER' }]);
+      expect(useSellerSignupStore.getState()).toMatchObject({
+        phone: TEST_PHONE,
+        token: 'signup-token-1',
+      });
+      expect(useAuthStore.getState().refreshToken).toBeNull();
+    } finally {
+      setAppVariantForTests('CUSTOMER');
+    }
+  });
+
   it('stores the session and returns to the previous screen', async () => {
     const verified = servePost(OTP_VERIFY_PATH, () => HttpResponse.json(authTokensResponse()));
     renderWithProviders(<VerifyOtpScreen />);
@@ -135,7 +168,7 @@ describe('Code screen (POST /api/auth/otp/verify)', () => {
     await waitFor(() => {
       expect(mockRouter.back).toHaveBeenCalledTimes(1);
     });
-    expect(verified).toEqual([{ phone: TEST_PHONE, code: '042187' }]);
+    expect(verified).toEqual([{ phone: TEST_PHONE, code: '042187', app: 'CUSTOMER' }]);
     expect(useAuthStore.getState()).toMatchObject({
       accessToken: ISSUED_ACCESS_TOKEN,
       refreshToken: ISSUED_REFRESH_TOKEN,

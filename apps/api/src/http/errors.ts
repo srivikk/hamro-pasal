@@ -38,7 +38,8 @@ import {
   OtpInvalidError,
 } from '../auth/otp-auth-service';
 import { InvalidRefreshTokenError } from '../auth/refresh-token';
-import { AccountDeactivatedError } from '../auth/otp-auth-service';
+import { AccountDeactivatedError, RoleNotGrantedError } from '../auth/otp-auth-service';
+import { InvalidSignupTokenError } from '../auth/seller-signup-token';
 import { VendorNotFoundError } from '../catalog/catalog-service';
 import { VendorNotDeactivatableError } from '../vendor/vendor-deactivation-service';
 import {
@@ -210,6 +211,16 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof OtpAttemptsExceededError) {
     return new HttpError(429, 'OTP_ATTEMPTS_EXCEEDED', error.message);
+  }
+  if (error instanceof RoleNotGrantedError) {
+    return new HttpError(403, 'ROLE_NOT_GRANTED', error.message, {
+      role: error.role,
+      signup_token: error.signupToken,
+      signup_token_expires_in: error.signupTokenExpiresIn,
+    });
+  }
+  if (error instanceof InvalidSignupTokenError) {
+    return new HttpError(401, 'INVALID_SIGNUP_TOKEN', 'Sign in again to sign up as a seller');
   }
   if (error instanceof AccountDeactivatedError) {
     return new HttpError(403, 'ACCOUNT_DEACTIVATED', error.message);

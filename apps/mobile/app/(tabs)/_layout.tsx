@@ -1,12 +1,22 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { Redirect, Tabs } from 'expo-router';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { tabResetAction, type TabsNavigation } from '../../src/features/navigation/tab-reset';
+import { isSellerApp } from '../../src/lib/app-variant';
 import { useOnboardingRequired } from '../../src/features/profile/profile-form';
 import { selectHasSession, useAuthStore } from '../../src/store/useAuthStore';
 import { useOnboardingStore } from '../../src/store/useOnboardingStore';
 import { colors } from '../../src/theme/colors';
+
+/** Signs a vendor session out of the customer app, which then asks for a customer sign-in. */
+function VendorSessionInCustomerApp() {
+  useEffect(() => {
+    useAuthStore.getState().clearSession();
+  }, []);
+  return null;
+}
 
 export default function TabsLayout() {
   const { t } = useTranslation();
@@ -16,8 +26,15 @@ export default function TabsLayout() {
   const languageChosen = useOnboardingStore((state) => state.languageChosen);
   const onboardingRequired = useOnboardingRequired();
 
-  // A vendor or rider signing in (or relaunching) lands on their dashboard, not the customer shop.
-  if (role === 'VENDOR') return <Redirect href="/dashboard" />;
+  // Step 7.7: the Seller app is the vendor's own: it opens on its dashboard, or on sign-in.
+  if (isSellerApp()) {
+    if (role === 'VENDOR') return <Redirect href="/dashboard" />;
+    return <Redirect href={languageChosen ? '/login' : '/language'} />;
+  }
+  // The customer app never shows the vendor screens; a vendor session from before the Seller app
+  // signs in again here (as the customer of the same number).
+  if (role === 'VENDOR') return <VendorSessionInCustomerApp />;
+  // Riders stay in the customer build: a signed-in rider lands on the delivery dashboard.
   if (role === 'DRIVER') return <Redirect href="/driver/dashboard" />;
   // First launch: English or Nepali, asked once, before anything else is shown.
   if (!languageChosen) return <Redirect href="/language" />;

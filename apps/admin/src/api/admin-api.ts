@@ -1,4 +1,13 @@
 import {
+  adminVendorApprovedResponseSchema,
+  adminVendorCreatedResponseSchema,
+  tutorialListResponseSchema,
+  tutorialResponseSchema,
+  type AdminVendorApprovedResponseBody,
+  type AdminVendorCreatedResponseBody,
+  type AdminVendorCreateRequest,
+  type TutorialView,
+  type TutorialWriteRequest,
   exportJobResponseSchema,
   type AdminExportRequest,
   type ExportJobView,
@@ -141,6 +150,16 @@ export interface AdminApi {
   requestExport(input: AdminExportRequest): Promise<ExportAnswer>;
   /** Step 7.6: a queued export's status. */
   getExport(id: string): Promise<ExportJobView>;
+  /** Step 7.7: creates a shop and its account (or adds the vendor role to the number's account). */
+  createVendor(input: AdminVendorCreateRequest): Promise<AdminVendorCreatedResponseBody>;
+  /** Step 7.7: SANDBOXED -> APPROVED once its KYC documents are in (422 KYC_INCOMPLETE). */
+  approveVendor(id: string): Promise<AdminVendorApprovedResponseBody>;
+  /** Step 7.8: every tutorial video of both apps. */
+  listTutorials(): Promise<TutorialView[]>;
+  createTutorial(input: TutorialWriteRequest): Promise<TutorialView>;
+  /** PUT: replaces every field. */
+  updateTutorial(id: string, input: TutorialWriteRequest): Promise<TutorialView>;
+  deleteTutorial(id: string): Promise<void>;
   overrideVendor(
     id: string,
     action: 'SUSPEND' | 'RESTORE' | 'REACTIVATE',
@@ -481,6 +500,53 @@ export function createAdminApi(client: ApiClient): AdminApi {
           schema: exportJobResponseSchema,
         })
       ).job,
+    createVendor: (input) =>
+      client.request({
+        method: 'POST',
+        path: '/api/admin/vendors',
+        schema: adminVendorCreatedResponseSchema,
+        body: input,
+      }),
+    approveVendor: (id) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/vendors/${encodeURIComponent(id)}/approve`,
+        schema: adminVendorApprovedResponseSchema,
+      }),
+    listTutorials: async () =>
+      (
+        await client.request({
+          method: 'GET',
+          path: '/api/admin/tutorials',
+          schema: tutorialListResponseSchema,
+        })
+      ).tutorials,
+    createTutorial: async (input) =>
+      (
+        await client.request({
+          method: 'POST',
+          path: '/api/admin/tutorials',
+          schema: tutorialResponseSchema,
+          body: input,
+        })
+      ).tutorial,
+    updateTutorial: async (id, input) =>
+      (
+        await client.request({
+          method: 'PUT',
+          path: `/api/admin/tutorials/${encodeURIComponent(id)}`,
+          schema: tutorialResponseSchema,
+          body: input,
+        })
+      ).tutorial,
+    deleteTutorial: async (id) => {
+      // 204 No Content: the client reads an empty body as null.
+      await client.request({
+        method: 'DELETE',
+        path: `/api/admin/tutorials/${encodeURIComponent(id)}`,
+        schema: z.null(),
+      });
+    },
     listSettlements: () =>
       client.request({
         method: 'GET',

@@ -11,6 +11,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import { useProfileStore } from '../store/useProfileStore';
 import { syncLanguagePreference } from './account';
 import { apiRequest, type ApiError } from './http';
+import { appVariant } from '../lib/app-variant';
 
 export const OTP_SEND_PATH = '/api/auth/otp/send';
 export const OTP_VERIFY_PATH = '/api/auth/otp/verify';
@@ -44,12 +45,17 @@ export function sendOtp(phone: string, channel: OtpChannel = 'SMS'): Promise<Otp
   });
 }
 
-/** POST /api/auth/otp/verify: exchanges the code for an access token and a refresh token. */
+/**
+ * POST /api/auth/otp/verify: exchanges the code for an access token and a refresh token. Step 7.7:
+ * it names this build (`app`), so the customer app signs in as the customer and the Seller app as
+ * the vendor of the same number. The Seller app gets 403 ROLE_NOT_GRANTED, with a signup token, for
+ * a number that has no shop yet.
+ */
 export function verifyOtp(phone: string, code: string): Promise<AuthTokensResponseBody> {
   return apiRequest({
     method: 'POST',
     path: OTP_VERIFY_PATH,
-    body: { phone, code },
+    body: { phone, code, app: appVariant() },
     schema: authTokensResponseSchema,
     authenticated: false,
   });

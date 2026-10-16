@@ -37,8 +37,8 @@ export function authRouter(auth: OtpAuthService): Router {
    * left out of the body; every other role (the mobile app) gets it in the body as before.
    */
   router.post('/otp/verify', async (req, res) => {
-    const { phone, code } = parseInput(otpVerifyRequestSchema, req.body);
-    const session = await auth.verifyOtp(phone, code);
+    const { phone, code, app } = parseInput(otpVerifyRequestSchema, req.body);
+    const session = await auth.verifyOtp(phone, code, app);
     const shared: CookieAuthTokensResponseBody = {
       token_type: 'Bearer',
       access_token: session.accessToken,

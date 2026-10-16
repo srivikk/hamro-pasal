@@ -23,7 +23,9 @@ import {
 } from '../src/features/auth/login-form';
 import { LanguageToggle } from '../src/features/settings/LanguageToggle';
 import { formatCountdown, useNow } from '../src/lib/countdown';
+import { signupTokenOf } from '../src/features/seller/seller-api';
 import { useAuthStore } from '../src/store/useAuthStore';
+import { useSellerSignupStore } from '../src/store/useSellerSignupStore';
 import { useToastStore } from '../src/store/useToastStore';
 import { colors } from '../src/theme/colors';
 
@@ -76,8 +78,14 @@ export default function VerifyOtpScreen() {
           if (isNewUser) router.replace('/complete-profile');
           else leaveSignIn(router);
         },
-        onError: () => {
+        onError: (error) => {
           setCode('');
+          // Step 7.7: the Seller app signed in a number without a shop: sign it up.
+          const signup = signupTokenOf(error);
+          if (signup !== null) {
+            useSellerSignupStore.getState().start(phone, signup.token, signup.expiresInSeconds);
+            router.replace('/seller-signup');
+          }
         },
       },
     );

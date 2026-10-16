@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { FloatingCartBanner } from '../../../src/features/cart/FloatingCartBanner';
+import { TutorialCard } from '../../../src/features/tutorials/TutorialCard';
 
 /**
  * The Shops tab is a stack: the feed, and a shop's menu pushed on top of it. Because the stack
@@ -24,6 +25,8 @@ export default function HomeStackLayout() {
         </Stack>
       </View>
       <FloatingCartBanner />
+      {/* Step 7.8: the customer app's tutorial videos, floating over the feed. */}
+      <TutorialCard />
     </View>
   );
 }

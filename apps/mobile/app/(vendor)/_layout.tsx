@@ -4,6 +4,7 @@ import { Pressable, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { NotificationBell } from '../../src/features/inbox/NotificationBell';
+import { isSellerApp } from '../../src/lib/app-variant';
 import { VendorOnlineToggle } from '../../src/features/vendor/VendorOnlineToggle';
 import { selectHasSession, useAuthStore } from '../../src/store/useAuthStore';
 import { colors } from '../../src/theme/colors';
@@ -50,7 +51,8 @@ function HeaderIcon({
 export default function VendorLayout() {
   const { t } = useTranslation();
   const isVendor = useAuthStore((state) => selectHasSession(state) && state.role === 'VENDOR');
-  if (!isVendor) return <Redirect href="/" />;
+  // Step 7.7: only the Seller app mounts the vendor screens.
+  if (!isVendor || !isSellerApp()) return <Redirect href="/" />;
 
   return (
     <Tabs

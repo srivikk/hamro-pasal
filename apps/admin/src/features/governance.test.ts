@@ -144,6 +144,8 @@ describe('tabs', () => {
       'approvals',
       'notifications',
       'exports',
+      'onboarding',
+      'tutorials',
       'audit-log',
     ]);
   });

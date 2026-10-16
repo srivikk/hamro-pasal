@@ -13,6 +13,8 @@ import type { ProductService } from './catalog/product-service';
 import type { CheckoutService } from './checkout/checkout-service';
 import type { AdminDisputeService } from './disputes/admin-dispute-service';
 import type { ExportService } from './exports/export-service';
+import type { TutorialService } from './tutorials/tutorial-service';
+import type { SellerOnboardingService } from './vendor/seller-onboarding-service';
 import type { AdminNotificationService } from './notifications/admin-notification-service';
 import type { DisputeService } from './disputes/dispute-service';
 import type { AdminPayoutService } from './finance/admin-payout-service';
@@ -56,6 +58,12 @@ import { orderChatRouter } from './routes/order-chat';
 import { alertsRouter } from './routes/alerts';
 import { adminPushRouter } from './routes/admin-push';
 import { exportsRouter } from './routes/exports';
+import {
+  adminOnboardingRouter,
+  sellerRouter,
+  tutorialsRouter,
+  vendorKycRouter,
+} from './routes/seller';
 import { adminDisputesRouter, escalationRouter } from './routes/disputes';
 import { meRouter } from './routes/me';
 import { notificationsRouter } from './routes/notifications';
@@ -106,6 +114,10 @@ export interface ApiServices {
   readonly adminNotifications: AdminNotificationService;
   /** Step 7.6: data exports (downloaded at once, or queued and emailed). */
   readonly exports: ExportService;
+  /** Step 7.7: Seller app signup, admin onboarding and approval. */
+  readonly sellerOnboarding: SellerOnboardingService;
+  /** Step 7.8: the in-app tutorial videos. */
+  readonly tutorials: TutorialService;
   readonly evidence: EvidenceStorage;
   /** Phase 15: the Super Admin dashboard (apps/admin). */
   readonly adminDeadLetters: DeadLetterService;
@@ -186,6 +198,22 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
       adminDisputesRouter(services.adminDisputes),
     );
+    // Step 7.7 / 7.8. Before the admin router: onboarding, approval and the tutorials.
+    app.use(
+      '/api/admin',
+      requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
+      adminOnboardingRouter(services.sellerOnboarding, services.tutorials),
+    );
+    app.use(
+      '/api/seller',
+      sellerRouter(services.sellerOnboarding, requireAuth(services.accessTokenSecret, ['VENDOR'])),
+    );
+    app.use(
+      '/api/vendor/kyc',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorKycRouter(services.sellerOnboarding),
+    );
+    app.use('/api/tutorials', tutorialsRouter(services.tutorials));
     // Step 7.6. Before the admin router too.
     app.use(
       '/api/admin/exports',

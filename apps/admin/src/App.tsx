@@ -15,6 +15,8 @@ import { PayoutScreen } from './features/finance/PayoutScreen';
 import { LogisticsScreen } from './features/logistics/LogisticsScreen';
 import { NotificationScreen } from './features/notifications/NotificationScreen';
 import { ExportScreen } from './features/exports/ExportScreen';
+import { OnboardingScreen } from './features/onboarding/OnboardingScreen';
+import { TutorialScreen } from './features/onboarding/TutorialScreen';
 import { PricingPlanScreen } from './features/pricing/PricingPlanScreen';
 import { ProductScreen } from './features/products/ProductScreen';
 import { PromotionScreen } from './features/promotions/PromotionScreen';
@@ -63,6 +65,10 @@ function Screen({ tab }: { readonly tab: Tab }) {
       return <NotificationScreen />;
     case 'exports':
       return <ExportScreen />;
+    case 'onboarding':
+      return <OnboardingScreen />;
+    case 'tutorials':
+      return <TutorialScreen />;
     case 'audit-log':
       return <AuditLogScreen />;
   }

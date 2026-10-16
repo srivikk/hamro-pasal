@@ -18,6 +18,7 @@ export * from './outbox';
 export * from './payouts';
 export * from './promotions';
 export * from './settlement-requests';
+export * from './roles-and-tutorials';
 export * from './users';
 export * from './vendors';
 export * from './wallet';

@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { openSellerSignup } from '../../src/features/seller/become-seller';
 
 import { useSignOut } from '../../src/api/auth';
 import { Button } from '../../src/components/Button';
@@ -200,6 +201,15 @@ export default function ProfileScreen() {
       <View className="gap-2">
         <SectionTitle>{t('account.more')}</SectionTitle>
         <MenuCard>
+          {/* Step 7.7: the Seller app's signup (or its store page). */}
+          <MenuRow
+            icon="storefront-outline"
+            label={t('becomeSeller.title')}
+            testID="menu-become-seller"
+            onPress={() => {
+              void openSellerSignup();
+            }}
+          />
           <MenuRow
             icon="information-circle-outline"
             label={t('about.title')}

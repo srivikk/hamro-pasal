@@ -224,7 +224,12 @@ describe('OTP auth API', () => {
       const body = bodyOf(authTokensResponseSchema, await verify(phone, codeSentTo(phone)));
 
       expect(body.is_new_user).toBe(false);
-      expect(body.user).toEqual({ id: vendorUserId, role: 'VENDOR', first_name: 'Test' });
+      expect(body.user).toEqual({
+        id: vendorUserId,
+        role: 'VENDOR',
+        first_name: 'Test',
+        roles: ['VENDOR'],
+      });
       expect(verifyAccessToken(body.access_token, ACCESS_SECRET).role).toBe('VENDOR');
       expect(await t.container.db.select().from(users).where(eq(users.phone, phone))).toHaveLength(
         1,

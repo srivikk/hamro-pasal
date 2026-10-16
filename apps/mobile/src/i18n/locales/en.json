@@ -1200,5 +1200,57 @@
     "retry": "Try again",
     "open": "Notifications",
     "openUnread": "Notifications, {{count}} unread"
+  },
+  "sellerSignup": {
+    "title": "Open your shop",
+    "intro": "Sell on Hamro Pasal with this number. Tell us about your shop; you add your PAN and citizenship documents next, then Hamro Pasal reviews it.",
+    "businessName": "Shop name",
+    "businessNameRequired": "Enter your shop’s name.",
+    "palika": "Municipality / Palika",
+    "palikaRequired": "Enter your municipality.",
+    "location": "Shop location",
+    "pinLocation": "Pin the shop on the map",
+    "locationPinned": "Location pinned ✓ (change)",
+    "locationRequired": "Pin where your shop is.",
+    "delivery": "Who delivers your orders?",
+    "SELF_DELIVERY": "I deliver",
+    "PLATFORM_FLEET": "Hamro Pasal riders",
+    "submit": "Create my shop",
+    "creating": "Creating…",
+    "created": "Your shop is created. Add your documents next.",
+    "expired": "Your sign-in expired. Sign in again to continue.",
+    "alreadySeller": "This number already has a shop. Sign in again.",
+    "failed": "Couldn’t create the shop. Check your connection and try again."
+  },
+  "sellerApplication": {
+    "title": "Your application",
+    "status": {
+      "SANDBOXED": "In setup: add your documents for review.",
+      "APPROVED": "Approved: you can go live.",
+      "LIVE": "Live: customers can order.",
+      "SUSPENDED": "Suspended.",
+      "SUSPENDED_COMPLIANCE": "Offline until your PAN is added.",
+      "DEACTIVATED": "Closed."
+    },
+    "taxId": "PAN number saved",
+    "pan": "PAN document uploaded",
+    "citizenship": "Citizenship document uploaded",
+    "ready": "Everything is in. Hamro Pasal will review your shop.",
+    "uploadCitizenship": "Upload citizenship document",
+    "replaceCitizenship": "Replace citizenship document",
+    "uploaded": "Document uploaded.",
+    "uploadFailed": "Couldn’t upload the document. Try again.",
+    "openSettings": "Add PAN in Shop settings",
+    "toDashboard": "Go to my dashboard",
+    "retry": "Try again"
+  },
+  "becomeSeller": {
+    "title": "Become a Seller"
+  },
+  "tutorials": {
+    "label": "How to",
+    "play": "Play the video: {{title}}",
+    "dontShowAgain": "Don’t show again",
+    "close": "Close the video"
   }
 }

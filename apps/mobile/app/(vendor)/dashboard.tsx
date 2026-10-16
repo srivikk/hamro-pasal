@@ -12,6 +12,7 @@ import {
   type ListRenderItem,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { TutorialCard } from '../../src/features/tutorials/TutorialCard';
 
 import { Button } from '../../src/components/Button';
 import {
@@ -373,6 +374,8 @@ export default function VendorDashboardScreen() {
           <RefreshControl refreshing={query.isRefetching} onRefresh={() => void query.refetch()} />
         }
       />
+      {/* Step 7.8: the Seller app's tutorial videos. */}
+      <TutorialCard />
     </View>
   );
 }

@@ -414,6 +414,8 @@ export const authUserSchema = z.strictObject({
   role: userRoleSchema,
   /** Null until the customer adds a name; OTP sign-up only knows the phone number. */
   first_name: z.string().min(1).nullable(),
+  /** Step 7.7: every role the account holds (one phone, several roles). Absent from older APIs. */
+  roles: z.array(userRoleSchema).optional(),
 });
 export type AuthUser = z.infer<typeof authUserSchema>;
 

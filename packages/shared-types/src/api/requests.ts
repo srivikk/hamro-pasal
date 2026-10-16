@@ -122,6 +122,12 @@ export const otpVerifyRequestSchema = z.strictObject({
       new RegExp(`^[0-9]{${String(OTP_CODE_LENGTH)}}$`),
       `code must be ${String(OTP_CODE_LENGTH)} digits`,
     ),
+  /**
+   * Step 7.7: the app signing in. CUSTOMER issues the customer role (added to the account when it
+   * lacks it; a rider keeps DRIVER); SELLER the vendor role, or `403 ROLE_NOT_GRANTED` with a
+   * signup token for a number without a shop. Absent: the account's primary role (the web).
+   */
+  app: z.enum(['CUSTOMER', 'SELLER']).optional(),
 });
 export type OtpVerifyRequest = z.infer<typeof otpVerifyRequestSchema>;
 

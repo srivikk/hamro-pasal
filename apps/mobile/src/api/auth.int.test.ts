@@ -111,7 +111,8 @@ describe('POST /api/auth/otp/verify', () => {
       await result.current.mutateAsync({ phone: TEST_PHONE, code: '042187' });
     });
 
-    expect(received[0]?.body).toEqual({ phone: TEST_PHONE, code: '042187' });
+    // Step 7.7: the build names itself, so the server signs this app in with its own role.
+    expect(received[0]?.body).toEqual({ phone: TEST_PHONE, code: '042187', app: 'CUSTOMER' });
     expect(useAuthStore.getState()).toMatchObject({
       accessToken: ISSUED_ACCESS_TOKEN,
       refreshToken: ISSUED_REFRESH_TOKEN,

@@ -6,6 +6,8 @@ import type { ObjectStore } from './object-store';
 import { IMAGE_EXTENSIONS } from './public-files';
 
 const PAN_DOCUMENT_KEY = /^kyc\/pan\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|png|webp)$/;
+/** Step 7.7 (vendor flow 2): the citizenship document, beside the PAN. */
+const CITIZENSHIP_DOCUMENT_KEY = /^kyc\/citizenship\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|png|webp)$/;
 
 const CONTENT_TYPES: Readonly<Record<string, DisputeEvidenceContentType>> = {
   jpg: 'image/jpeg',
@@ -41,9 +43,21 @@ export class KycDocumentStorage {
     return key;
   }
 
+  /** Step 7.7: stores a citizenship document under a new key and returns that key. */
+  async saveCitizenshipDocument(
+    vendorId: string,
+    bytes: Buffer,
+    contentType: DisputeEvidenceContentType,
+  ): Promise<string> {
+    const key = `kyc/citizenship/${vendorId}/${randomUUID()}.${IMAGE_EXTENSIONS[contentType]}`;
+    if (!CITIZENSHIP_DOCUMENT_KEY.test(key)) throw new Error(`Not a vendor id: ${vendorId}`);
+    await this.store.put(key, bytes, { contentType, cacheControl: 'private, no-store' });
+    return key;
+  }
+
   /** The document, or null when the key is not one of ours or its object is gone. */
   async read(key: string): Promise<StoredDocument | null> {
-    const extension = PAN_DOCUMENT_KEY.exec(key)?.[1];
+    const extension = (PAN_DOCUMENT_KEY.exec(key) ?? CITIZENSHIP_DOCUMENT_KEY.exec(key))?.[1];
     const contentType = extension === undefined ? undefined : CONTENT_TYPES[extension];
     if (contentType === undefined) return null;
     const bytes = await this.store.get(key);
@@ -55,7 +69,7 @@ export class KycDocumentStorage {
    * object that is already gone counts as deleted.
    */
   async deleteFile(key: string): Promise<boolean> {
-    if (!PAN_DOCUMENT_KEY.test(key)) return false;
+    if (!PAN_DOCUMENT_KEY.test(key) && !CITIZENSHIP_DOCUMENT_KEY.test(key)) return false;
     await this.store.delete(key);
     return true;
   }

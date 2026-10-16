@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import { REFRESH_TOKEN_TTL_SECONDS } from '@hamro-pasal/shared-types';
+import {
+  REFRESH_TOKEN_TTL_SECONDS,
+  userRoleSchema,
+  type UserRole,
+} from '@hamro-pasal/shared-types';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 
@@ -21,12 +25,18 @@ export const REFRESH_TOKEN = {
 export interface RefreshTokenClaims {
   readonly userId: string;
   readonly tokenId: string;
+  /**
+   * Step 7.7: the role the session was signed in with (one account, several roles). Absent from a
+   * token issued before: the account's primary role applies.
+   */
+  readonly role: UserRole | null;
 }
 
 const claimsSchema = z.object({
   sub: z.uuid(),
   jti: z.uuid(),
   typ: z.literal('refresh'),
+  rol: userRoleSchema.optional(),
 });
 
 export class InvalidRefreshTokenError extends Error {
@@ -36,8 +46,8 @@ export class InvalidRefreshTokenError extends Error {
   }
 }
 
-export function signRefreshToken(userId: string, secret: string): string {
-  return jwt.sign({ typ: 'refresh' }, secret, {
+export function signRefreshToken(userId: string, secret: string, role?: UserRole): string {
+  return jwt.sign(role === undefined ? { typ: 'refresh' } : { typ: 'refresh', rol: role }, secret, {
     algorithm: REFRESH_TOKEN.algorithm,
     subject: userId,
     issuer: REFRESH_TOKEN.issuer,
@@ -62,5 +72,5 @@ export function verifyRefreshToken(token: string, secret: string): RefreshTokenC
   if (!claims.success) {
     throw new InvalidRefreshTokenError('unexpected claims');
   }
-  return { userId: claims.data.sub, tokenId: claims.data.jti };
+  return { userId: claims.data.sub, tokenId: claims.data.jti, role: claims.data.rol ?? null };
 }

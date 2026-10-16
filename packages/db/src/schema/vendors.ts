@@ -89,6 +89,8 @@ export const vendors = pgTable(
     // Phase 34: the uploaded PAN document's object key in the private document store. Not a
     // public URL: the object is read only through the API (the vendor's upload, the admin's view).
     pan_document_url: text(),
+    // Step 7.7 (vendor flow 2): the citizenship document, in the same private store.
+    citizenship_document_url: text(),
     // Phase 25, Delivery Modularity (SPEC §2). The CITY_WIDE tier: Palika names, the shop's own
     // always among them (the vendors_default_serviceable_palikas trigger fills an empty list).
     serviceable_palikas: text()

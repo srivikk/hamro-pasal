@@ -159,6 +159,10 @@ export const serverEnvSchema = z
     // Step 7.6: where the API is reached from outside, for the link in a queued export's email
     // (`<base>/api/vendor/exports/<id>/download`). Defaults to http://localhost:<API_PORT>.
     PUBLIC_API_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
+    // Step 7.7: the Seller app's store page, sent in the SMS that invites an admin-onboarded shop.
+    SELLER_APP_URL: z
+      .url({ protocol: /^https?$/ })
+      .default('https://play.google.com/store/apps/details?id=com.hamro.pasal.seller'),
 
     // Uploads (dispute evidence, product photos). Cloudflare R2 is not wired yet: the API stores
     // files on local disk (default: uploads/ at the API root, apps/api/uploads) and serves them under

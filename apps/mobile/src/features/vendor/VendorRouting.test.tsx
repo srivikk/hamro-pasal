@@ -7,6 +7,7 @@ import type * as ReactNativeModule from 'react-native';
 import TabsLayout from '../../../app/(tabs)/_layout';
 import VendorLayout from '../../../app/(vendor)/_layout';
 import VendorMarketingScreen from '../../../app/(vendor)/marketing';
+import { setAppVariantForTests } from '../../lib/app-variant';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useOnboardingStore } from '../../store/useOnboardingStore';
 import { useProfileStore } from '../../store/useProfileStore';
@@ -83,6 +84,23 @@ beforeEach(() => {
 });
 
 describe('vendor-only route group app/(vendor)', () => {
+  // Step 7.7: the vendor screens are the Seller app's.
+  beforeEach(() => {
+    setAppVariantForTests('SELLER');
+  });
+  afterEach(() => {
+    setAppVariantForTests('CUSTOMER');
+  });
+
+  it('is not mounted by the customer app, even for a vendor session', () => {
+    setAppVariantForTests('CUSTOMER');
+    signIn('VENDOR');
+
+    renderWithProviders(<VendorLayout />);
+
+    expect(screen.getByTestId('redirect')).toHaveTextContent('/');
+  });
+
   it('opens for a signed-in vendor', () => {
     signIn('VENDOR');
 
@@ -178,22 +196,35 @@ describe('vendor-only route group app/(vendor)', () => {
 });
 
 describe('customer tabs', () => {
-  it('send a signed-in vendor to the order dashboard', () => {
+  it('sign a vendor session out of the customer app, which asks for a customer sign-in (step 7.7)', () => {
     signIn('VENDOR');
 
     renderWithProviders(<TabsLayout />);
 
-    expect(screen.getByTestId('redirect')).toHaveTextContent('/dashboard');
     expect(screen.queryByTestId('tab-(home)')).not.toBeOnTheScreen();
+    expect(useAuthStore.getState().refreshToken).toBeNull();
   });
 
-  it('send a vendor there after a relaunch too (only the refresh token and role survive)', () => {
-    signIn('VENDOR');
-    useAuthStore.setState({ accessToken: null });
+  it('in the Seller app, send a vendor to the order dashboard, even after a relaunch', () => {
+    setAppVariantForTests('SELLER');
+    try {
+      signIn('VENDOR');
+      useAuthStore.setState({ accessToken: null });
+      renderWithProviders(<TabsLayout />);
+      expect(screen.getByTestId('redirect')).toHaveTextContent('/dashboard');
+    } finally {
+      setAppVariantForTests('CUSTOMER');
+    }
+  });
 
-    renderWithProviders(<TabsLayout />);
-
-    expect(screen.getByTestId('redirect')).toHaveTextContent('/dashboard');
+  it('in the Seller app, open on the seller sign-in when signed out', () => {
+    setAppVariantForTests('SELLER');
+    try {
+      renderWithProviders(<TabsLayout />);
+      expect(screen.getByTestId('redirect')).toHaveTextContent('/login');
+    } finally {
+      setAppVariantForTests('CUSTOMER');
+    }
   });
 
   it.each([

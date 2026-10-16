@@ -25,6 +25,8 @@ import { ProductService } from './catalog/product-service';
 import { CheckoutService } from './checkout/checkout-service';
 import { AdminDisputeService } from './disputes/admin-dispute-service';
 import { ExportService } from './exports/export-service';
+import { TutorialService } from './tutorials/tutorial-service';
+import { SellerOnboardingService } from './vendor/seller-onboarding-service';
 import { AdminNotificationService } from './notifications/admin-notification-service';
 import { DisputeService } from './disputes/dispute-service';
 import { AdminPayoutService } from './finance/admin-payout-service';
@@ -101,6 +103,8 @@ export interface ApiConfig {
   readonly walletTopUpMode: WalletTopUpMode;
   /** MOCK_SERVICES: builds the mock payment service behind POST /api/test/mock-payment. */
   readonly mockServices?: boolean;
+  /** Step 7.7: the Seller app link in an onboarding invite (SELLER_APP_URL). */
+  readonly sellerAppUrl?: string;
 }
 
 export interface Infrastructure {
@@ -164,6 +168,7 @@ export function apiConfigFromEnv(env: ServerEnv): ApiConfig {
     },
     walletTopUpMode: env.WALLET_TOP_UP_MODE,
     mockServices: mockServicesEnabled(env),
+    sellerAppUrl: env.SELLER_APP_URL,
   };
 }
 
@@ -195,6 +200,10 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
   );
   const otps = new OtpStore(infra.redisPool, otpPepper(config.accessTokenSecret), infra.otpOptions);
   const esewa = new EsewaService(infra.db, checkout, confirmation, config.esewa);
+  const auth = new OtpAuthService(infra.db, otps, infra.sms, {
+    accessTokenSecret: config.accessTokenSecret,
+    refreshTokenSecret: config.refreshTokenSecret,
+  });
   // Mock branches never exist in a production process, even if the config asks for them.
   const mockPayments =
     config.mockServices === true && process.env.NODE_ENV !== 'production'
@@ -207,10 +216,14 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     redisPool: infra.redisPool,
     settlement,
     exportFiles: infra.exportFiles,
-    auth: new OtpAuthService(infra.db, otps, infra.sms, {
-      accessTokenSecret: config.accessTokenSecret,
+    auth,
+    sellerOnboarding: new SellerOnboardingService(infra.db, auth, infra.kycDocuments, infra.sms, {
+      sellerAppUrl:
+        config.sellerAppUrl ??
+        'https://play.google.com/store/apps/details?id=com.hamro.pasal.seller',
       refreshTokenSecret: config.refreshTokenSecret,
     }),
+    tutorials: new TutorialService(infra.db),
     catalog: new CatalogService(infra.db),
     checkout,
     orders: new OrderService(infra.db, locks),

@@ -156,6 +156,8 @@ export const vendorSchema = z.strictObject({
    * key). Never a public URL and never sent to a client: it is read through the API.
    */
   pan_document_url: nonEmptyTextSchema.nullable(),
+  /** Step 7.7: the citizenship document's key in the private document store (vendor flow 2). */
+  citizenship_document_url: nonEmptyTextSchema.nullable(),
   /** The municipalities a CITY_WIDE shop serves; always contains its own Palika. */
   serviceable_palikas: z.array(nonEmptyTextSchema).min(1),
   /** SELF_DELIVERY only: per kilometre (RADIUS_BOUND), and the subtotal that makes delivery free. */

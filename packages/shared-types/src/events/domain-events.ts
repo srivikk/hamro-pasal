@@ -281,6 +281,14 @@ export const exportRequestedPayloadSchema = z.strictObject({
   job_id: z.uuid(),
 });
 
+/** Step 7.7 (SPEC core 11): a shop signed itself up in the Seller app (SANDBOXED), for review. */
+export const vendorSignedUpPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  vendor_code: z.string(),
+  business_name: z.string(),
+  signed_up_at: z.iso.datetime(),
+});
+
 /** SPEC core 8 (Phase 35): an ad's paid period is over. Written once, when it becomes ENDED. */
 export const marketingAdEndedPayloadSchema = z.strictObject({
   ad_purchase_id: z.uuid(),
@@ -439,6 +447,7 @@ export const exportRequestedEventSchema = envelope(
   'export.requested',
   exportRequestedPayloadSchema,
 );
+export const vendorSignedUpEventSchema = envelope('vendor.signed_up', vendorSignedUpPayloadSchema);
 export const marketingAdEndedEventSchema = envelope(
   'marketing.ad_ended',
   marketingAdEndedPayloadSchema,
@@ -473,6 +482,7 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   disputeResolvedEventSchema,
   notificationBroadcastRequestedEventSchema,
   exportRequestedEventSchema,
+  vendorSignedUpEventSchema,
   marketingAdEndedEventSchema,
   marketingAdPausedEventSchema,
   marketingCampaignTermsChangedEventSchema,
@@ -502,6 +512,7 @@ export type NotificationBroadcastRequestedEvent = z.infer<
   typeof notificationBroadcastRequestedEventSchema
 >;
 export type ExportRequestedEvent = z.infer<typeof exportRequestedEventSchema>;
+export type VendorSignedUpEvent = z.infer<typeof vendorSignedUpEventSchema>;
 export type MarketingAdEndedEvent = z.infer<typeof marketingAdEndedEventSchema>;
 export type MarketingAdPausedEvent = z.infer<typeof marketingAdPausedEventSchema>;
 export type MarketingCampaignTermsChangedEvent = z.infer<
@@ -535,6 +546,7 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'dispute.resolved': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'notification.broadcast_requested': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'export.requested': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.signed_up': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_ended': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.campaign_terms_changed': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,

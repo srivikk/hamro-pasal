@@ -31,6 +31,8 @@ export const auditEntityTypes = [
   'notification_message',
   /** Step 7.6: a data export (export_jobs, or a direct download). */
   'export_job',
+  /** Step 7.8: an in-app tutorial video. */
+  'app_tutorial',
 ] as const;
 export const auditEntityTypeSchema = z.enum(auditEntityTypes);
 export type AuditEntityType = z.infer<typeof auditEntityTypeSchema>;
@@ -108,6 +110,14 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   NOTIFICATION_SENT: 'notification_message',
   // Data export (step 7.6, SPEC core 11): kind, filters and row count, never the data.
   DATA_EXPORTED: 'export_job',
+  // Seller onboarding (step 7.7) and tutorials (step 7.8)
+  VENDOR_SIGNED_UP: 'vendor',
+  VENDOR_ONBOARDED: 'vendor',
+  VENDOR_APPROVED: 'vendor',
+  CITIZENSHIP_DOCUMENT_UPLOADED: 'vendor',
+  TUTORIAL_CREATED: 'app_tutorial',
+  TUTORIAL_UPDATED: 'app_tutorial',
+  TUTORIAL_DELETED: 'app_tutorial',
   // Where payouts are sent (SPEC core 5). The account number is masked in every state.
   BANK_ACCOUNT_ADDED: 'vendor_bank_account',
   BANK_ACCOUNT_UPDATED: 'vendor_bank_account',

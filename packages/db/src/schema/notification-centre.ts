@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   check,
   index,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -35,6 +36,17 @@ export const notificationMessages = pgTable(
      * (e.g. `notice:<event_id>:<vendor_id>`). Null for an admin's message.
      */
     dedupe_key: text().unique(),
+    /**
+     * Step 7.5: who it was sent to when it was sent (the shops named, or the customers then
+     * registered), and what the push did: claimed by one worker (`push_started_at`), then the
+     * devices the push service accepted and refused. Null for a message that is not pushed by the
+     * admin push job (system notices push on their own).
+     */
+    recipient_count: integer(),
+    push_started_at: timestamp({ withTimezone: true }),
+    push_sent_count: integer(),
+    push_failed_count: integer(),
+    push_completed_at: timestamp({ withTimezone: true }),
     created_at: createdAt(),
   },
   (t) => [
@@ -48,6 +60,19 @@ export const notificationMessages = pgTable(
     ),
     check('notification_messages_body_check', sql`char_length(btrim(${t.body})) BETWEEN 1 AND 240`),
     check('notification_messages_data_check', sql`jsonb_typeof(${t.data}) = 'object'`),
+    check(
+      'notification_messages_push_counts_check',
+      sql`(${t.recipient_count} IS NULL OR ${t.recipient_count} >= 0)
+        AND (${t.push_completed_at} IS NULL) = (${t.push_sent_count} IS NULL)
+        AND (${t.push_completed_at} IS NULL) = (${t.push_failed_count} IS NULL)
+        AND (${t.push_completed_at} IS NULL OR ${t.push_started_at} IS NOT NULL)
+        AND (${t.push_sent_count} IS NULL OR ${t.push_sent_count} >= 0)
+        AND (${t.push_failed_count} IS NULL OR ${t.push_failed_count} >= 0)`,
+    ),
+    // The Super Admin's history, newest first.
+    index('notification_messages_admin_created_idx')
+      .on(t.created_at, t.id)
+      .where(sql`${t.source} = 'ADMIN'`),
     check(
       'notification_messages_source_check',
       sql`(${t.source} = 'ADMIN') = (${t.created_by_user_id} IS NOT NULL)`,

@@ -1,4 +1,11 @@
 import {
+  adminNotificationListResponseSchema,
+  adminNotificationSentResponseSchema,
+  adminVendorSearchResponseSchema,
+  type AdminNotificationListResponseBody,
+  type AdminNotificationRequest,
+  type AdminNotificationSentResponseBody,
+  type AdminVendorSearchResponseBody,
   adminAdProductListResponseSchema,
   adminAdProductResponseSchema,
   adminAuditLogListResponseSchema,
@@ -105,6 +112,15 @@ export interface AdminApi {
   }): Promise<AdminDeadLetterListResponseBody>;
   retryDeadLetter(id: string): Promise<AdminDeadLetterRetryResponseBody>;
   listVendors(): Promise<AdminVendorListResponseBody>;
+  /**
+   * Step 7.5: shops by Vendor Code (or its prefix / number) or by name (similarity). Every result
+   * carries its Vendor Code, shown next to the name.
+   */
+  searchVendors(q: string): Promise<AdminVendorSearchResponseBody>;
+  /** Step 7.5: a push to 1–500 shops or to all customers; 202 with the recipient count. */
+  sendNotification(input: AdminNotificationRequest): Promise<AdminNotificationSentResponseBody>;
+  /** Step 7.5: what Super Admins sent, newest first, with the push outcome. */
+  listNotifications(cursor?: string): Promise<AdminNotificationListResponseBody>;
   overrideVendor(
     id: string,
     action: 'SUSPEND' | 'RESTORE' | 'REACTIVATE',
@@ -393,6 +409,27 @@ export function createAdminApi(client: ApiClient): AdminApi {
         path: `/api/admin/pricing-plans/${encodeURIComponent(id)}`,
         schema: adminPricingPlanResponseSchema,
         body: input,
+      }),
+    searchVendors: (q) =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/vendors/search',
+        schema: adminVendorSearchResponseSchema,
+        query: { q },
+      }),
+    sendNotification: (input) =>
+      client.request({
+        method: 'POST',
+        path: '/api/admin/notifications',
+        schema: adminNotificationSentResponseSchema,
+        body: input,
+      }),
+    listNotifications: (cursor) =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/notifications',
+        schema: adminNotificationListResponseSchema,
+        query: { cursor },
       }),
     listSettlements: () =>
       client.request({

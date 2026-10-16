@@ -24,6 +24,7 @@ import { CategoryService } from './catalog/category-service';
 import { ProductService } from './catalog/product-service';
 import { CheckoutService } from './checkout/checkout-service';
 import { AdminDisputeService } from './disputes/admin-dispute-service';
+import { AdminNotificationService } from './notifications/admin-notification-service';
 import { DisputeService } from './disputes/dispute-service';
 import { AdminPayoutService } from './finance/admin-payout-service';
 import { AdminSettlementService } from './finance/admin-settlement-service';
@@ -217,6 +218,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     reviews: new ReviewService(infra.db),
     disputes: new DisputeService(infra.db),
     adminDisputes: new AdminDisputeService(infra.db, ledger),
+    adminNotifications: new AdminNotificationService(infra.db),
     evidence: infra.evidence,
     adminDeadLetters: new DeadLetterService(infra.db),
     adminVendors: new AdminVendorService(infra.db, wallet),

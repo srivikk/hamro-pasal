@@ -24,6 +24,7 @@ export * from './api/notifications';
 export * from './api/me';
 export * from './api/alerts';
 export * from './api/disputes';
+export * from './api/admin-notifications';
 export * from './api/settlement-model-requests';
 export * from './api/vendor-account';
 export * from './api/vendor-availability';

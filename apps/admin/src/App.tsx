@@ -13,6 +13,7 @@ import { ComplianceScreen } from './features/compliance/ComplianceScreen';
 import { DeadLetterScreen } from './features/dlq/DeadLetterScreen';
 import { PayoutScreen } from './features/finance/PayoutScreen';
 import { LogisticsScreen } from './features/logistics/LogisticsScreen';
+import { NotificationScreen } from './features/notifications/NotificationScreen';
 import { PricingPlanScreen } from './features/pricing/PricingPlanScreen';
 import { ProductScreen } from './features/products/ProductScreen';
 import { PromotionScreen } from './features/promotions/PromotionScreen';
@@ -57,6 +58,8 @@ function Screen({ tab }: { readonly tab: Tab }) {
       return <ApprovalScreen />;
     case 'promotions':
       return <PromotionScreen />;
+    case 'notifications':
+      return <NotificationScreen />;
     case 'audit-log':
       return <AuditLogScreen />;
   }

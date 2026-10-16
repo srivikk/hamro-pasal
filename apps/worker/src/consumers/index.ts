@@ -5,6 +5,7 @@ import type { SmsGateway } from '@hamro-pasal/sms';
 import type { Redis } from 'ioredis';
 
 import type { NotificationAdapter } from '../notifications/notification-adapter';
+import type { AdminPushService } from '../notifications/admin-push';
 import type { DisputeNoticeService } from '../notifications/dispute-notices';
 import type { NotifyMeService } from '../notifications/notify-me';
 import type { OrderStateReader } from '../notifications/order-state-reader';
@@ -16,6 +17,7 @@ import {
   ORDER_PUSH_DEDUPE_PREFIX,
   orderPushNotificationConsumer,
 } from './order-push-notifications';
+import { adminPushConsumer } from './admin-push';
 import { disputeNoticeConsumer } from './dispute-notices';
 import { notifyMeConsumer } from './notify-me';
 import {
@@ -66,6 +68,8 @@ export interface ConsumerDeps {
   readonly notifyMe?: Pick<NotifyMeService, 'productBackInStock' | 'shopOpened'>;
   /** Step 7.3: tells the parties of an escalated or resolved order. Absent: not consumed here. */
   readonly disputeNotices?: Pick<DisputeNoticeService, 'escalated' | 'resolved'>;
+  /** Step 7.5: pushes the Super Admin's messages. Absent: not consumed here. */
+  readonly adminPush?: Pick<AdminPushService, 'deliver'>;
 }
 
 /** Register Kafka topic handlers here. Several may share a topic (see routeByTopic). */
@@ -134,6 +138,17 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
       : [
           withDeadLetter(disputeNoticeConsumer({ notices: deps.disputeNotices }), {
             name: 'dispute-notices',
+            deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
+            publisher: deps.deadLetters,
+            store: deps.deadLetterStore,
+          }),
+        ]),
+    // Step 7.5. Its own retries and dead letters too.
+    ...(deps.adminPush === undefined
+      ? []
+      : [
+          withDeadLetter(adminPushConsumer({ adminPush: deps.adminPush }), {
+            name: 'admin-push',
             deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
             publisher: deps.deadLetters,
             store: deps.deadLetterStore,

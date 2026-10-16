@@ -83,6 +83,12 @@ export const RESOLUTION_NOTE_MIN_LENGTH = 10;
 export const RESOLUTION_NOTE_MAX_LENGTH = 1000;
 export const ADMIN_DISPUTE_LIST_DEFAULT_LIMIT = 50;
 
+/** Step 7.5 (SPEC core 11): one admin push names at most this many shops. */
+export const MAX_ADMIN_NOTIFICATION_VENDORS = 500;
+/** At most one broadcast to all customers per this many minutes (429 otherwise). */
+export const ALL_CUSTOMERS_BROADCAST_INTERVAL_MINUTES = 10;
+export const ADMIN_NOTIFICATION_LIST_DEFAULT_LIMIT = 50;
+
 /** Longest optional feedback text accepted with a review. */
 export const MAX_REVIEW_FEEDBACK_LENGTH = 500;
 

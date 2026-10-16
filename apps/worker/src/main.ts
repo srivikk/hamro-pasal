@@ -30,6 +30,7 @@ import { OutboxRelay } from './outbox/outbox-relay';
 import { allTimerQueues, createTimerQueues, registerMidnightJobs } from './queues/definitions';
 import { createProcessors, createTimerHandlers } from './queues/processors';
 import { DisputeHoldReleaseService } from './finance/dispute-hold-release';
+import { AdminPushService } from './notifications/admin-push';
 import { DisputeNoticeService } from './notifications/dispute-notices';
 import { NotifyMeService } from './notifications/notify-me';
 import { VendorAcceptanceExpiryService } from './sla/vendor-acceptance-expiry';
@@ -144,6 +145,8 @@ async function main(): Promise<void> {
     notifyMe,
     // Step 7.3: the parties of an escalated or resolved order are told.
     disputeNotices: new DisputeNoticeService(db, push),
+    // Step 7.5: the Super Admin's messages reach the devices.
+    adminPush: new AdminPushService(db, push),
   });
   if (consumers.length > 0) {
     const handlers = routeByTopic(consumers);

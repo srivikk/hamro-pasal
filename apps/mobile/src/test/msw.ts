@@ -105,6 +105,8 @@ export const server = setupServer(
     const { mode } = (await request.json()) as { mode: 'AUTO' | 'OPEN' | 'CLOSED' };
     return HttpResponse.json(availabilityAnswer(mode));
   }),
+  // Step 7.5: the header bell asks for the unread count of a signed-in account; none by default.
+  http.get(apiUrl('/api/me/notifications/unread-count'), () => HttpResponse.json({ unread: 0 })),
   // The shop page reads its products' categories from the public list; none by default.
   http.get(apiUrl('/api/products'), () => HttpResponse.json({ products: [], next_cursor: null })),
   ...accountMockHandlers({ baseUrl: API_URL }),

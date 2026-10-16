@@ -1191,5 +1191,14 @@
     "alreadyAvailable": "It is available now.",
     "failed": "Couldn't save that. Check your connection and try again.",
     "signIn": "Sign in to get notified."
+  },
+  "inbox": {
+    "title": "Notifications",
+    "empty": "No notifications yet.",
+    "markAll": "Mark all read",
+    "failed": "Couldn't load your notifications.",
+    "retry": "Try again",
+    "open": "Notifications",
+    "openUnread": "Notifications, {{count}} unread"
   }
 }

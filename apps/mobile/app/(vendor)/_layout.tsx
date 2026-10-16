@@ -3,6 +3,7 @@ import { Redirect, router, Tabs } from 'expo-router';
 import { Pressable, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { NotificationBell } from '../../src/features/inbox/NotificationBell';
 import { VendorOnlineToggle } from '../../src/features/vendor/VendorOnlineToggle';
 import { selectHasSession, useAuthStore } from '../../src/store/useAuthStore';
 import { colors } from '../../src/theme/colors';
@@ -69,7 +70,13 @@ export default function VendorLayout() {
             }}
           />
         ),
-        headerRight: () => <VendorOnlineToggle />,
+        // Step 7.5: the notification centre's bell beside the Online / Offline switch.
+        headerRight: () => (
+          <View className="flex-row items-center">
+            <NotificationBell color={colors.brand} className="mr-4" />
+            <VendorOnlineToggle />
+          </View>
+        ),
       }}
     >
       <Tabs.Screen

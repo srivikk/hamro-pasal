@@ -136,6 +136,8 @@ export const vendors = pgTable(
     check('vendors_vendor_code_check', sql`${t.vendor_code} ~ '^HPV-[0-9]{5,}$'`),
     check('vendors_phone_np_check', sql`${t.phone} ~ '${sql.raw(NEPAL_PHONE_PATTERN)}'`),
     check('vendors_business_name_check', sql`btrim(${t.business_name}) <> ''`),
+    // Step 7.5: the Super Admin's vendor search matches names by trigram similarity (pg_trgm).
+    index('vendors_business_name_trgm_idx').using('gin', sql`${t.business_name} gin_trgm_ops`),
     check(
       'vendors_municipality_palika_string_check',
       sql`btrim(${t.municipality_palika_string}) <> ''`,

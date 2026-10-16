@@ -12,6 +12,7 @@ import type { CategoryService } from './catalog/category-service';
 import type { ProductService } from './catalog/product-service';
 import type { CheckoutService } from './checkout/checkout-service';
 import type { AdminDisputeService } from './disputes/admin-dispute-service';
+import type { AdminNotificationService } from './notifications/admin-notification-service';
 import type { DisputeService } from './disputes/dispute-service';
 import type { AdminPayoutService } from './finance/admin-payout-service';
 import type { AdminSettlementService } from './finance/admin-settlement-service';
@@ -52,6 +53,7 @@ import { categoriesRouter, productsRouter, vendorProductsRouter } from './routes
 import { deliveriesRouter } from './routes/deliveries';
 import { orderChatRouter } from './routes/order-chat';
 import { alertsRouter } from './routes/alerts';
+import { adminPushRouter } from './routes/admin-push';
 import { adminDisputesRouter, escalationRouter } from './routes/disputes';
 import { meRouter } from './routes/me';
 import { notificationsRouter } from './routes/notifications';
@@ -98,6 +100,8 @@ export interface ApiServices {
   readonly disputes: DisputeService;
   /** Step 7.3: escalated conversations and their resolution. */
   readonly adminDisputes: AdminDisputeService;
+  /** Step 7.5: the Super Admin push and its vendor search. */
+  readonly adminNotifications: AdminNotificationService;
   readonly evidence: EvidenceStorage;
   /** Phase 15: the Super Admin dashboard (apps/admin). */
   readonly adminDeadLetters: DeadLetterService;
@@ -177,6 +181,12 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       '/api/admin/disputes',
       requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
       adminDisputesRouter(services.adminDisputes),
+    );
+    // Step 7.5. Also before the admin router: the vendor search and the push.
+    app.use(
+      '/api/admin',
+      requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
+      adminPushRouter(services.adminNotifications),
     );
     app.use(
       '/api/admin',

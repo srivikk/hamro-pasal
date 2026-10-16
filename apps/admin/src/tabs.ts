@@ -18,6 +18,8 @@ export const TABS = [
   { id: 'payouts', label: 'Payouts (legacy)' },
   { id: 'settlements', label: 'Settlements' },
   { id: 'approvals', label: 'Vendor requests' },
+  // Step 7.5: push messages to chosen shops or to all customers.
+  { id: 'notifications', label: 'Notifications' },
   { id: 'audit-log', label: 'Audit log' },
 ] as const;
 

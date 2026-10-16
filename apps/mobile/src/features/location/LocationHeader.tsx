@@ -27,6 +27,7 @@ import type { Coordinates } from '../territory/territory';
 import { describePlace } from './describe-place';
 import { useHeaderTone } from './header-phase';
 import { MAX_PLACE_SEARCH_LENGTH, usePlaceSuggestions } from './place-search';
+import { NotificationBell } from '../inbox/NotificationBell';
 
 export interface LocationPickerDeps {
   /** The device position (or the __DEV__ simulator's); null when it cannot be read. */
@@ -483,6 +484,11 @@ export function LocationHeader({
             <Ionicons name="chevron-down" size={16} color={night ? '#FFFFFF' : '#1F2937'} />
           </View>
         </Pressable>
+        {/* Step 7.5: the notification centre, with the unread count. */}
+        <NotificationBell
+          color="#1F2937"
+          className="mr-3 h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm active:bg-gray-100"
+        />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={t('tabs.profile')}

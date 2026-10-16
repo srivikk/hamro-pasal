@@ -1053,3 +1053,28 @@ select.search {
   margin: 0 0 16px;
   max-width: 640px;
 }
+
+/* Step 7.5: the Notifications tab. Chosen shops as name + Vendor Code chips, and the preview. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.chips .chip {
+  cursor: default;
+}
+
+.preview {
+  max-width: 360px;
+  margin: 12px 0;
+}
+
+.success {
+  color: var(--primary);
+}

@@ -264,6 +264,15 @@ export const disputeResolvedPayloadSchema = z.strictObject({
   resolved_at: z.iso.datetime(),
 });
 
+/**
+ * Step 7.5 (SPEC core 11): the Super Admin sent a message; the worker pushes it to the
+ * recipients' devices and records what the push service answered on the message.
+ */
+export const notificationBroadcastRequestedPayloadSchema = z.strictObject({
+  message_id: z.uuid(),
+  audience: z.enum(['VENDOR', 'ALL_CUSTOMERS']),
+});
+
 /** SPEC core 8 (Phase 35): an ad's paid period is over. Written once, when it becomes ENDED. */
 export const marketingAdEndedPayloadSchema = z.strictObject({
   ad_purchase_id: z.uuid(),
@@ -414,6 +423,10 @@ export const disputeResolvedEventSchema = envelope(
   'dispute.resolved',
   disputeResolvedPayloadSchema,
 );
+export const notificationBroadcastRequestedEventSchema = envelope(
+  'notification.broadcast_requested',
+  notificationBroadcastRequestedPayloadSchema,
+);
 export const marketingAdEndedEventSchema = envelope(
   'marketing.ad_ended',
   marketingAdEndedPayloadSchema,
@@ -446,6 +459,7 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   vendorOpenedEventSchema,
   disputeEscalatedEventSchema,
   disputeResolvedEventSchema,
+  notificationBroadcastRequestedEventSchema,
   marketingAdEndedEventSchema,
   marketingAdPausedEventSchema,
   marketingCampaignTermsChangedEventSchema,
@@ -471,6 +485,9 @@ export type ProductBackInStockEvent = z.infer<typeof productBackInStockEventSche
 export type VendorOpenedEvent = z.infer<typeof vendorOpenedEventSchema>;
 export type DisputeEscalatedEvent = z.infer<typeof disputeEscalatedEventSchema>;
 export type DisputeResolvedEvent = z.infer<typeof disputeResolvedEventSchema>;
+export type NotificationBroadcastRequestedEvent = z.infer<
+  typeof notificationBroadcastRequestedEventSchema
+>;
 export type MarketingAdEndedEvent = z.infer<typeof marketingAdEndedEventSchema>;
 export type MarketingAdPausedEvent = z.infer<typeof marketingAdPausedEventSchema>;
 export type MarketingCampaignTermsChangedEvent = z.infer<
@@ -502,6 +519,7 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'vendor.opened': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'dispute.escalated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'dispute.resolved': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'notification.broadcast_requested': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_ended': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.campaign_terms_changed': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,

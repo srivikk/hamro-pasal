@@ -20,6 +20,8 @@ export const TABS = [
   { id: 'approvals', label: 'Vendor requests' },
   // Step 7.5: push messages to chosen shops or to all customers.
   { id: 'notifications', label: 'Notifications' },
+  // Step 7.6: CSV data exports.
+  { id: 'exports', label: 'Exports' },
   { id: 'audit-log', label: 'Audit log' },
 ] as const;
 

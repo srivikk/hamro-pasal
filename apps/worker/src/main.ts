@@ -1,3 +1,7 @@
+import { resolve } from 'node:path';
+
+import { mailGatewayFromEnv } from '@hamro-pasal/mail';
+import { privateObjectStoreFromEnv } from '@hamro-pasal/storage';
 import { BillingCycleRenewalService } from './billing/billing-cycle-renewal';
 import { ComplianceSweepService } from './compliance/compliance-sweep';
 import { SettlementPayoutRunService } from './finance/settlement-payout-run';
@@ -27,8 +31,14 @@ import { DatabaseVendorContacts } from './notifications/vendor-notices';
 import { DatabasePushRecipients } from './notifications/push-recipients';
 import { mockPushLogFromEnv, pushGatewayFromEnv } from './push/mock-push';
 import { OutboxRelay } from './outbox/outbox-relay';
-import { allTimerQueues, createTimerQueues, registerMidnightJobs } from './queues/definitions';
-import { createProcessors, createTimerHandlers } from './queues/processors';
+import {
+  allTimerQueues,
+  createTimerQueues,
+  registerMidnightJobs,
+  scheduleDataExport,
+} from './queues/definitions';
+import { createExportProcessor, createProcessors, createTimerHandlers } from './queues/processors';
+import { ExportJobService } from './exports/export-job';
 import { DisputeHoldReleaseService } from './finance/dispute-hold-release';
 import { AdminPushService } from './notifications/admin-push';
 import { DisputeNoticeService } from './notifications/dispute-notices';
@@ -64,6 +74,17 @@ async function main(): Promise<void> {
   // Step 7.4: Notify Me, from its outbox events and from the 5-minute sweep.
   const notifyMe = new NotifyMeService(db, push);
 
+  // The API's private uploads directory (development): the worker writes, the API serves.
+  const DEFAULT_PRIVATE_UPLOADS_DIR = resolve(__dirname, '..', '..', 'api', 'uploads-private');
+  // Step 7.6: queued data exports, emailed through MAIL_PROVIDER (Amazon SES over SMTP) and, when
+  // too large to attach, stored in the private store for a link.
+  const exportJobsService = new ExportJobService({
+    db,
+    mail: mailGatewayFromEnv(env),
+    files: privateObjectStoreFromEnv(env, DEFAULT_PRIVATE_UPLOADS_DIR),
+    apiBaseUrl: env.PUBLIC_API_BASE_URL ?? `http://localhost:${String(env.API_PORT)}`,
+  });
+
   // BullMQ timers and crons
   const connection = buildBullConnection(env.REDIS_URL);
   const queues = createTimerQueues(connection);
@@ -74,6 +95,7 @@ async function main(): Promise<void> {
       escalation: new VendorEscalationService(db),
       acceptanceExpiry: new VendorAcceptanceExpiryService(db),
       notifyMe,
+      exports: exportJobsService,
       // Step 7.3: day 8, the held prepaid earnings of an order nobody escalated.
       disputeHoldRelease: new DisputeHoldReleaseService(db, new LedgerService(new WalletService())),
       debtReconciliation: new VendorDebtReconciliationService(db),
@@ -96,6 +118,11 @@ async function main(): Promise<void> {
     new Worker(queues.vendorAcceptance.name, processors.vendorAcceptance, { connection }),
     new Worker(queues.ghostCustomer.name, processors.ghostCustomer, { connection }),
     new Worker(queues.midnight.name, processors.midnight, { connection }),
+    // Step 7.6: two exports at a time at most; each streams from the database.
+    new Worker(queues.dataExport.name, createExportProcessor(exportJobsService), {
+      connection,
+      concurrency: 2,
+    }),
   ];
   for (const worker of workers) {
     worker.on('failed', (job, error) => {
@@ -147,6 +174,7 @@ async function main(): Promise<void> {
     disputeNotices: new DisputeNoticeService(db, push),
     // Step 7.5: the Super Admin's messages reach the devices.
     adminPush: new AdminPushService(db, push),
+    dataExports: { schedule: (jobId) => scheduleDataExport(queues.dataExport, jobId) },
   });
   if (consumers.length > 0) {
     const handlers = routeByTopic(consumers);

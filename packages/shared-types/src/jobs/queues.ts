@@ -12,6 +12,8 @@ export const JOB_QUEUES = {
   GHOST_CUSTOMER_TIMER: 'ghost-customer-timer',
   /** Midnight (Nepal time) maintenance crons. */
   MIDNIGHT_MAINTENANCE: 'midnight-maintenance',
+  /** Step 7.6: queued data exports, built and emailed one job at a time. */
+  DATA_EXPORT: 'data-export',
 } as const;
 export type JobQueueName = (typeof JOB_QUEUES)[keyof typeof JOB_QUEUES];
 
@@ -47,6 +49,8 @@ export const midnightTasks = [
    * changes of every cycle that has ended, and open the next BS month.
    */
   'BILLING_CYCLE_RENEWAL',
+  /** Step 7.6: deletes queued export files whose 7-day link has expired. */
+  'EXPORT_FILE_SWEEP',
 ] as const;
 /**
  * Runs every hour on the maintenance queue (Phase 28, SPEC core 8): ends ad purchases whose paid
@@ -80,6 +84,12 @@ export const vendorAcceptanceTimeoutJobSchema = z.strictObject({
 export type VendorAcceptanceTimeoutJob = z.infer<typeof vendorAcceptanceTimeoutJobSchema>;
 /** What a scheduler is given: `kind` may be left out (an escalation). */
 export type VendorAcceptanceTimeoutJobInput = z.input<typeof vendorAcceptanceTimeoutJobSchema>;
+
+/** Step 7.6: one queued export (the export_jobs row holds what to build). */
+export const dataExportJobSchema = z.strictObject({
+  job_id: z.uuid(),
+});
+export type DataExportJob = z.infer<typeof dataExportJobSchema>;
 
 export const ghostCustomerTimerJobSchema = z.strictObject({
   order_id: z.uuid(),

@@ -18,6 +18,7 @@ import {
   orderPushNotificationConsumer,
 } from './order-push-notifications';
 import { adminPushConsumer } from './admin-push';
+import { exportSchedulerConsumer, type DataExportScheduler } from './export-scheduler';
 import { disputeNoticeConsumer } from './dispute-notices';
 import { notifyMeConsumer } from './notify-me';
 import {
@@ -70,6 +71,8 @@ export interface ConsumerDeps {
   readonly disputeNotices?: Pick<DisputeNoticeService, 'escalated' | 'resolved'>;
   /** Step 7.5: pushes the Super Admin's messages. Absent: not consumed here. */
   readonly adminPush?: Pick<AdminPushService, 'deliver'>;
+  /** Step 7.6: puts queued exports on the DATA_EXPORT queue. Absent: not consumed here. */
+  readonly dataExports?: DataExportScheduler;
 }
 
 /** Register Kafka topic handlers here. Several may share a topic (see routeByTopic). */
@@ -149,6 +152,17 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
       : [
           withDeadLetter(adminPushConsumer({ adminPush: deps.adminPush }), {
             name: 'admin-push',
+            deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
+            publisher: deps.deadLetters,
+            store: deps.deadLetterStore,
+          }),
+        ]),
+    // Step 7.6. Its own retries and dead letters too.
+    ...(deps.dataExports === undefined
+      ? []
+      : [
+          withDeadLetter(exportSchedulerConsumer({ scheduler: deps.dataExports }), {
+            name: 'export-scheduler',
             deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
             publisher: deps.deadLetters,
             store: deps.deadLetterStore,

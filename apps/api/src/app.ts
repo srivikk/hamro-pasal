@@ -12,6 +12,7 @@ import type { CategoryService } from './catalog/category-service';
 import type { ProductService } from './catalog/product-service';
 import type { CheckoutService } from './checkout/checkout-service';
 import type { AdminDisputeService } from './disputes/admin-dispute-service';
+import type { ExportService } from './exports/export-service';
 import type { AdminNotificationService } from './notifications/admin-notification-service';
 import type { DisputeService } from './disputes/dispute-service';
 import type { AdminPayoutService } from './finance/admin-payout-service';
@@ -54,6 +55,7 @@ import { deliveriesRouter } from './routes/deliveries';
 import { orderChatRouter } from './routes/order-chat';
 import { alertsRouter } from './routes/alerts';
 import { adminPushRouter } from './routes/admin-push';
+import { exportsRouter } from './routes/exports';
 import { adminDisputesRouter, escalationRouter } from './routes/disputes';
 import { meRouter } from './routes/me';
 import { notificationsRouter } from './routes/notifications';
@@ -102,6 +104,8 @@ export interface ApiServices {
   readonly adminDisputes: AdminDisputeService;
   /** Step 7.5: the Super Admin push and its vendor search. */
   readonly adminNotifications: AdminNotificationService;
+  /** Step 7.6: data exports (downloaded at once, or queued and emailed). */
+  readonly exports: ExportService;
   readonly evidence: EvidenceStorage;
   /** Phase 15: the Super Admin dashboard (apps/admin). */
   readonly adminDeadLetters: DeadLetterService;
@@ -181,6 +185,17 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       '/api/admin/disputes',
       requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
       adminDisputesRouter(services.adminDisputes),
+    );
+    // Step 7.6. Before the admin router too.
+    app.use(
+      '/api/admin/exports',
+      requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
+      exportsRouter(services.exports, 'SUPER_ADMIN'),
+    );
+    app.use(
+      '/api/vendor/exports',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      exportsRouter(services.exports, 'VENDOR'),
     );
     // Step 7.5. Also before the admin router: the vendor search and the push.
     app.use(

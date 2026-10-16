@@ -7,7 +7,12 @@ import {
   type EvidenceStorage,
 } from './evidence-storage';
 import { KycDocumentStorage } from './kyc-document-storage';
-import { LocalObjectStore, S3ObjectStore, type S3CommandSender } from './object-store';
+import {
+  LocalObjectStore,
+  S3ObjectStore,
+  type ObjectStore,
+  type S3CommandSender,
+} from './object-store';
 import {
   LocalProductImageStorage,
   ObjectProductImageStorage,
@@ -21,6 +26,8 @@ export interface FileStorage {
   readonly productImages: ProductImageStorage;
   readonly promotionImages: PromotionImageStorage;
   readonly kycDocuments: KycDocumentStorage;
+  /** Step 7.6: queued data exports (`exports/<job>.zip`), in the same private store. */
+  readonly exportFiles: ObjectStore;
 }
 
 /**
@@ -37,6 +44,7 @@ export function localFileStorage(
     productImages: new LocalProductImageStorage(publicDir, publicBaseUrl),
     promotionImages: new PromotionImageStorage(new LocalObjectStore(publicDir), publicBaseUrl),
     kycDocuments: new KycDocumentStorage(new LocalObjectStore(privateDir)),
+    exportFiles: new LocalObjectStore(privateDir),
   };
 }
 
@@ -55,6 +63,7 @@ export function s3FileStorage(client: S3CommandSender, config: S3StorageConfig):
     productImages: new ObjectProductImageStorage(publicStore, config.publicBaseUrl),
     promotionImages: new PromotionImageStorage(publicStore, config.publicBaseUrl),
     kycDocuments: new KycDocumentStorage(new S3ObjectStore(client, config.privateBucket)),
+    exportFiles: new S3ObjectStore(client, config.privateBucket),
   };
 }
 

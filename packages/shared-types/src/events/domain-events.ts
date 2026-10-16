@@ -273,6 +273,14 @@ export const notificationBroadcastRequestedPayloadSchema = z.strictObject({
   audience: z.enum(['VENDOR', 'ALL_CUSTOMERS']),
 });
 
+/**
+ * Step 7.6 (SPEC core 11): a data export too large to download at once was queued; the worker
+ * puts it on its DATA_EXPORT queue, builds it and emails it.
+ */
+export const exportRequestedPayloadSchema = z.strictObject({
+  job_id: z.uuid(),
+});
+
 /** SPEC core 8 (Phase 35): an ad's paid period is over. Written once, when it becomes ENDED. */
 export const marketingAdEndedPayloadSchema = z.strictObject({
   ad_purchase_id: z.uuid(),
@@ -427,6 +435,10 @@ export const notificationBroadcastRequestedEventSchema = envelope(
   'notification.broadcast_requested',
   notificationBroadcastRequestedPayloadSchema,
 );
+export const exportRequestedEventSchema = envelope(
+  'export.requested',
+  exportRequestedPayloadSchema,
+);
 export const marketingAdEndedEventSchema = envelope(
   'marketing.ad_ended',
   marketingAdEndedPayloadSchema,
@@ -460,6 +472,7 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   disputeEscalatedEventSchema,
   disputeResolvedEventSchema,
   notificationBroadcastRequestedEventSchema,
+  exportRequestedEventSchema,
   marketingAdEndedEventSchema,
   marketingAdPausedEventSchema,
   marketingCampaignTermsChangedEventSchema,
@@ -488,6 +501,7 @@ export type DisputeResolvedEvent = z.infer<typeof disputeResolvedEventSchema>;
 export type NotificationBroadcastRequestedEvent = z.infer<
   typeof notificationBroadcastRequestedEventSchema
 >;
+export type ExportRequestedEvent = z.infer<typeof exportRequestedEventSchema>;
 export type MarketingAdEndedEvent = z.infer<typeof marketingAdEndedEventSchema>;
 export type MarketingAdPausedEvent = z.infer<typeof marketingAdPausedEventSchema>;
 export type MarketingCampaignTermsChangedEvent = z.infer<
@@ -520,6 +534,7 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'dispute.escalated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'dispute.resolved': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'notification.broadcast_requested': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'export.requested': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_ended': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.campaign_terms_changed': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,

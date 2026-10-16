@@ -14,6 +14,7 @@ import {
   SETTLEMENT_PAYOUT_RUN_TASK,
   VENDOR_ACCEPTANCE_EXPIRY_MS,
   VENDOR_ACCEPTANCE_TIMEOUT_MS,
+  type DataExportJob,
   type GhostCustomerTimerJob,
   type MidnightMaintenanceJob,
   type MidnightTask,
@@ -40,6 +41,8 @@ export interface TimerQueues {
   readonly vendorAcceptance: Queue<VendorAcceptanceTimeoutJob>;
   readonly ghostCustomer: Queue<GhostCustomerTimerJob>;
   readonly midnight: Queue<MidnightMaintenanceJob>;
+  /** Step 7.6: queued data exports. */
+  readonly dataExport: Queue<DataExportJob>;
 }
 
 export function createTimerQueues(connection: ConnectionOptions, prefix?: string): TimerQueues {
@@ -51,12 +54,13 @@ export function createTimerQueues(connection: ConnectionOptions, prefix?: string
     ),
     ghostCustomer: new Queue<GhostCustomerTimerJob>(JOB_QUEUES.GHOST_CUSTOMER_TIMER, options),
     midnight: new Queue<MidnightMaintenanceJob>(JOB_QUEUES.MIDNIGHT_MAINTENANCE, options),
+    dataExport: new Queue<DataExportJob>(JOB_QUEUES.DATA_EXPORT, options),
   };
 }
 
 /** Every timer queue, typed, for lifecycle management (open/close/obliterate). */
 export function allTimerQueues(queues: TimerQueues): Queue[] {
-  return [queues.vendorAcceptance, queues.ghostCustomer, queues.midnight];
+  return [queues.vendorAcceptance, queues.ghostCustomer, queues.midnight, queues.dataExport];
 }
 
 export function vendorAcceptanceTimeoutOptions(
@@ -145,6 +149,26 @@ async function cancelPendingTimer(queue: Queue, jobId: string): Promise<boolean>
     // Picked up by a worker between the state check and removal: the timer is firing.
     return false;
   }
+}
+
+/** Step 7.6: attempts per export (each failure is retried after a back-off; the last marks it FAILED). */
+export const DATA_EXPORT_ATTEMPTS = 3;
+
+/** One job per export; BullMQ refuses ':' in a custom id. */
+export async function scheduleDataExport(
+  queue: Queue<DataExportJob>,
+  jobId: string,
+): Promise<void> {
+  await queue.add(
+    'export',
+    { job_id: jobId },
+    {
+      jobId: `export-${jobId}`,
+      attempts: DATA_EXPORT_ATTEMPTS,
+      backoff: { type: 'exponential', delay: 60_000 },
+      ...RETENTION,
+    },
+  );
 }
 
 export function midnightSchedulerId(task: MidnightTask): string {

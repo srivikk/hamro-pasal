@@ -56,6 +56,19 @@ export interface ApiClient {
    * the same token renewal as `request`. The API marks such answers `no-store`.
    */
   download(path: string): Promise<Blob>;
+  /**
+   * Step 7.6: a POST whose answer is either a file (a CSV export, 200) or JSON (a queued export,
+   * 202): the raw answer, with the same token renewal as `request`. Refusals throw ApiError.
+   */
+  postForFile(path: string, body: unknown): Promise<FileOrJsonAnswer>;
+}
+
+/** What postForFile answers: the status, the body as a Blob, and the file name it was sent as. */
+export interface FileOrJsonAnswer {
+  readonly status: number;
+  readonly contentType: string;
+  readonly body: Blob;
+  readonly fileName: string | null;
 }
 
 /** The body as JSON, or null when it is empty or not JSON (then the contract check reports it). */
@@ -219,6 +232,47 @@ export function createApiClient(options: {
     );
   }
 
+  async function sendForFile(
+    path: string,
+    body: unknown,
+    accessToken: string,
+  ): Promise<FileOrJsonAnswer> {
+    let response: Response;
+    try {
+      response = await options.fetch(buildUrl(baseUrl, path, undefined), {
+        method: 'POST',
+        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+    } catch (error: unknown) {
+      throw new ApiError(
+        0,
+        CLIENT_ERROR_CODES.NETWORK_ERROR,
+        error instanceof Error ? error.message : 'Network request failed',
+      );
+    }
+    if (response.ok) {
+      const disposition = response.headers.get('content-disposition') ?? '';
+      return {
+        status: response.status,
+        contentType: response.headers.get('content-type') ?? '',
+        body: await response.blob(),
+        fileName: /filename="([^"]+)"/.exec(disposition)?.[1] ?? null,
+      };
+    }
+    const parsed = errorBodySchema.safeParse(parseJson(await response.text()));
+    if (parsed.success) {
+      const { code, message, details } = parsed.data.error;
+      throw new ApiError(response.status, code, message, details);
+    }
+    throw new ApiError(
+      response.status,
+      CLIENT_ERROR_CODES.UNEXPECTED_RESPONSE,
+      `HTTP ${String(response.status)}`,
+    );
+  }
+
   /** Runs a call with the access token, renewing it once on a 401 UNAUTHENTICATED. */
   async function authorized<T>(call: (accessToken: string) => Promise<T>): Promise<T> {
     const token = session.getState().session?.accessToken ?? null;
@@ -246,5 +300,6 @@ export function createApiClient(options: {
     request: (request) => authorized((token) => send(request, token)),
 
     download: (path) => authorized((token) => sendDownload(path, token)),
+    postForFile: (path, body) => authorized((token) => sendForFile(path, body, token)),
   };
 }

@@ -29,6 +29,8 @@ export const auditEntityTypes = [
   'dispute',
   /** Step 7.5: a message the Super Admin sent (notification_messages). */
   'notification_message',
+  /** Step 7.6: a data export (export_jobs, or a direct download). */
+  'export_job',
 ] as const;
 export const auditEntityTypeSchema = z.enum(auditEntityTypes);
 export type AuditEntityType = z.infer<typeof auditEntityTypeSchema>;
@@ -104,6 +106,8 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   DISPUTE_RESOLVED: 'dispute',
   // Admin push (step 7.5, SPEC core 11)
   NOTIFICATION_SENT: 'notification_message',
+  // Data export (step 7.6, SPEC core 11): kind, filters and row count, never the data.
+  DATA_EXPORTED: 'export_job',
   // Where payouts are sent (SPEC core 5). The account number is masked in every state.
   BANK_ACCOUNT_ADDED: 'vendor_bank_account',
   BANK_ACCOUNT_UPDATED: 'vendor_bank_account',

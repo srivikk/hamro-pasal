@@ -2,9 +2,11 @@ import type { BillingCycleRenewalService } from '../billing/billing-cycle-renewa
 import type { ComplianceSweepService } from '../compliance/compliance-sweep';
 import type { SettlementPayoutRunService } from '../finance/settlement-payout-run';
 import type { MarketingStatusSweepService } from '../marketing/marketing-status-sweep';
+import type { ExportJobService } from '../exports/export-job';
 import type { DisputeHoldReleaseService } from '../finance/dispute-hold-release';
 import type { NotifyMeService } from '../notifications/notify-me';
 import {
+  dataExportJobSchema,
   ghostCustomerTimerJobSchema,
   midnightMaintenanceJobSchema,
   vendorAcceptanceTimeoutJobSchema,
@@ -66,6 +68,30 @@ export function createProcessors(handlers: TimerHandlers) {
       if (task === 'DISPUTE_HOLD_RELEASE') return handlers.runDisputeHoldRelease();
       return handlers.runMidnightTask(task);
     },
+  };
+}
+
+/**
+ * Step 7.6: the DATA_EXPORT queue's processor. BullMQ retries a failed export; its last attempt
+ * marks the job FAILED instead of throwing.
+ */
+export function createExportProcessor(exports: Pick<ExportJobService, 'run'>) {
+  return async (job: Job): Promise<void> => {
+    const { job_id: jobId } = dataExportJobSchema.parse(job.data);
+    const attempts = job.opts.attempts ?? 1;
+    const outcome = await exports.run(jobId, { finalAttempt: job.attemptsMade + 1 >= attempts });
+    if (outcome.status === 'ATTACHED' || outcome.status === 'LINKED') {
+      console.info(
+        JSON.stringify({
+          export: outcome.status.toLowerCase(),
+          job_id: jobId,
+          rows: outcome.rowCount,
+          bytes: outcome.bytes,
+        }),
+      );
+    } else if (outcome.status === 'FAILED') {
+      console.error(JSON.stringify({ export: 'failed', job_id: jobId, error: outcome.error }));
+    }
   };
 }
 
@@ -138,6 +164,8 @@ export function createTimerHandlers(deps: {
   readonly notifyMe?: Pick<NotifyMeService, 'sweep'>;
   /** Step 7.3. Optional like those above. */
   readonly disputeHoldRelease?: Pick<DisputeHoldReleaseService, 'run'>;
+  /** Step 7.6. Optional like those above. */
+  readonly exports?: Pick<ExportJobService, 'sweepExpired'>;
 }): TimerHandlers {
   return {
     ...pendingImplementationHandlers,
@@ -217,6 +245,16 @@ export function createTimerHandlers(deps: {
         }
         case 'SUBSCRIPTION_DOWNGRADE':
           return pendingImplementationHandlers.runMidnightTask(task);
+        case 'EXPORT_FILE_SWEEP': {
+          if (deps.exports === undefined) {
+            return pendingImplementationHandlers.runMidnightTask(task);
+          }
+          const deleted = await deps.exports.sweepExpired();
+          if (deleted > 0) {
+            console.info(`[worker] export sweep: ${String(deleted)} expired file(s) deleted`);
+          }
+          return;
+        }
       }
     },
     onVendorAcceptanceExpiry: async (job) => {

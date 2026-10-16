@@ -1,4 +1,7 @@
 import {
+  exportJobResponseSchema,
+  type AdminExportRequest,
+  type ExportJobView,
   adminNotificationListResponseSchema,
   adminNotificationSentResponseSchema,
   adminVendorSearchResponseSchema,
@@ -92,12 +95,22 @@ import {
 } from '@hamro-pasal/shared-types';
 import { z } from 'zod';
 
-import type { ApiClient } from './client';
+import { ApiError, CLIENT_ERROR_CODES, type ApiClient } from './client';
 
 /**
  * The endpoints this web app calls: sign-in, the dashboard's (under /api/admin, SUPER_ADMIN only)
  * and, since Phase 19, the Vendor Portal's (under /api/vendor/products, VENDOR only).
  */
+/** What a data export request answered: the file itself, or the queued job. */
+export type ExportAnswer =
+  | {
+      readonly kind: 'FILE';
+      readonly file: Blob;
+      readonly fileName: string;
+      readonly rowCount: number | null;
+    }
+  | { readonly kind: 'QUEUED'; readonly job: ExportJobView };
+
 export interface AdminApi {
   sendOtp(phone: string): Promise<OtpSendResponseBody>;
   /** A Super Admin's refresh token arrives as an HttpOnly cookie, not in this body. */
@@ -121,6 +134,13 @@ export interface AdminApi {
   sendNotification(input: AdminNotificationRequest): Promise<AdminNotificationSentResponseBody>;
   /** Step 7.5: what Super Admins sent, newest first, with the push outcome. */
   listNotifications(cursor?: string): Promise<AdminNotificationListResponseBody>;
+  /**
+   * Step 7.6: a data export. At most 5 000 rows come back as the CSV file itself; more are queued
+   * and emailed to the admin (the answer is then the job).
+   */
+  requestExport(input: AdminExportRequest): Promise<ExportAnswer>;
+  /** Step 7.6: a queued export's status. */
+  getExport(id: string): Promise<ExportJobView>;
   overrideVendor(
     id: string,
     action: 'SUSPEND' | 'RESTORE' | 'REACTIVATE',
@@ -431,6 +451,36 @@ export function createAdminApi(client: ApiClient): AdminApi {
         schema: adminNotificationListResponseSchema,
         query: { cursor },
       }),
+    requestExport: async (input) => {
+      const answer = await client.postForFile('/api/admin/exports', input);
+      if (answer.status === 202) {
+        const parsed = exportJobResponseSchema.safeParse(
+          JSON.parse(await answer.body.text()) as unknown,
+        );
+        if (!parsed.success) {
+          throw new ApiError(
+            answer.status,
+            CLIENT_ERROR_CODES.UNEXPECTED_RESPONSE,
+            'Unexpected export answer',
+          );
+        }
+        return { kind: 'QUEUED', job: parsed.data.job };
+      }
+      return {
+        kind: 'FILE',
+        file: answer.body,
+        fileName: answer.fileName ?? 'hamro-pasal-export.csv',
+        rowCount: null,
+      };
+    },
+    getExport: async (id) =>
+      (
+        await client.request({
+          method: 'GET',
+          path: `/api/admin/exports/${encodeURIComponent(id)}`,
+          schema: exportJobResponseSchema,
+        })
+      ).job,
     listSettlements: () =>
       client.request({
         method: 'GET',

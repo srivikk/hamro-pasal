@@ -128,6 +128,7 @@ describe('timer queues (real Redis)', () => {
       );
       expect(schedulers.map((s) => s.key).sort()).toEqual([
         'billing-cycle-renewal',
+        'export-file-sweep',
         'order-reconciliation',
         'subscription-downgrade',
         'vendor-compliance-sweep',

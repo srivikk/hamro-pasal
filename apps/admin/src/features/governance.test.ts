@@ -143,6 +143,7 @@ describe('tabs', () => {
       'settlements',
       'approvals',
       'notifications',
+      'exports',
       'audit-log',
     ]);
   });

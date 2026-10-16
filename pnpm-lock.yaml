@@ -259,6 +259,9 @@ importers:
       '@hamro-pasal/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@hamro-pasal/exports':
+        specifier: workspace:*
+        version: link:../../packages/exports
       '@hamro-pasal/ledger':
         specifier: workspace:*
         version: link:../../packages/ledger
@@ -268,6 +271,9 @@ importers:
       '@hamro-pasal/sms':
         specifier: workspace:*
         version: link:../../packages/sms
+      '@hamro-pasal/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@socket.io/redis-adapter':
         specifier: ^8.3.0
         version: 8.3.0(socket.io-adapter@2.5.8(supports-color@8.1.1))(supports-color@8.1.1)
@@ -492,6 +498,9 @@ importers:
       '@hamro-pasal/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@hamro-pasal/exports':
+        specifier: workspace:*
+        version: link:../../packages/exports
       '@hamro-pasal/ivr':
         specifier: workspace:*
         version: link:../../packages/ivr
@@ -501,12 +510,18 @@ importers:
       '@hamro-pasal/ledger':
         specifier: workspace:*
         version: link:../../packages/ledger
+      '@hamro-pasal/mail':
+        specifier: workspace:*
+        version: link:../../packages/mail
       '@hamro-pasal/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
       '@hamro-pasal/sms':
         specifier: workspace:*
         version: link:../../packages/sms
+      '@hamro-pasal/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@socket.io/redis-emitter':
         specifier: ^5.1.0
         version: 5.1.0(supports-color@8.1.1)
@@ -578,6 +593,34 @@ importers:
       tsx:
         specifier: ^4.23.15
         version: 4.23.15
+
+  packages/exports:
+    dependencies:
+      '@hamro-pasal/db':
+        specifier: workspace:*
+        version: link:../db
+      '@hamro-pasal/ledger':
+        specifier: workspace:*
+        version: link:../ledger
+      '@hamro-pasal/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+      drizzle-orm:
+        specifier: ^0.45.3
+        version: 0.45.3(@types/pg@8.23.1)(pg@8.23.0)
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
+    devDependencies:
+      '@types/jest':
+        specifier: ^29.5.14
+        version: 29.5.14
+      jest:
+        specifier: ~29.7.0
+        version: 29.7.0(@types/node@24.19.0)(supports-color@8.1.1)
+      ts-jest:
+        specifier: ^29.4.14
+        version: 29.4.14(@babel/core@7.29.7(supports-color@8.1.1))(@jest/transform@30.5.2(supports-color@8.1.1))(@jest/types@30.5.1)(babel-jest@30.5.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(esbuild@0.28.2)(jest-util@30.5.1)(jest@29.7.0(@types/node@24.19.0)(supports-color@8.1.1))(typescript@6.0.3)
 
   packages/ivr:
     dependencies:
@@ -679,6 +722,25 @@ importers:
 
   packages/sms:
     dependencies:
+      '@hamro-pasal/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+    devDependencies:
+      '@types/jest':
+        specifier: ^29.5.14
+        version: 29.5.14
+      jest:
+        specifier: ~29.7.0
+        version: 29.7.0(@types/node@24.19.0)(supports-color@8.1.1)
+      ts-jest:
+        specifier: ^29.4.14
+        version: 29.4.14(@babel/core@7.29.7(supports-color@8.1.1))(@jest/transform@30.5.2(supports-color@8.1.1))(@jest/types@30.5.1)(babel-jest@30.5.2(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(esbuild@0.28.2)(jest-util@30.5.1)(jest@29.7.0(@types/node@24.19.0)(supports-color@8.1.1))(typescript@6.0.3)
+
+  packages/storage:
+    dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.1147.0
+        version: 3.1147.0
       '@hamro-pasal/shared-types':
         specifier: workspace:*
         version: link:../shared-types

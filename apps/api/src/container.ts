@@ -24,6 +24,7 @@ import { CategoryService } from './catalog/category-service';
 import { ProductService } from './catalog/product-service';
 import { CheckoutService } from './checkout/checkout-service';
 import { AdminDisputeService } from './disputes/admin-dispute-service';
+import { ExportService } from './exports/export-service';
 import { AdminNotificationService } from './notifications/admin-notification-service';
 import { DisputeService } from './disputes/dispute-service';
 import { AdminPayoutService } from './finance/admin-payout-service';
@@ -86,6 +87,7 @@ import { PaymentConfirmationService } from './payments/payment-confirmation';
 import { ReviewService } from './reviews/review-service';
 import type { EvidenceStorage } from './uploads/evidence-storage';
 import type { KycDocumentStorage } from './uploads/kyc-document-storage';
+import type { ObjectStore } from './uploads/object-store';
 import type { ProductImageStorage } from './uploads/product-image-storage';
 import type { PromotionImageStorage } from './uploads/promotion-image-storage';
 import { fileStorageFromEnv } from './uploads/storage-from-env';
@@ -123,6 +125,8 @@ export interface Infrastructure {
   readonly promotionImages: PromotionImageStorage;
   /** Phase 34: vendors' KYC documents, in the private store that nothing serves. */
   readonly kycDocuments: KycDocumentStorage;
+  /** Step 7.6: queued data export files (the private store; the worker writes them). */
+  readonly exportFiles: ObjectStore;
   /**
    * The invoice PDF's Devanagari font. Left out: read from apps/api/assets/fonts. Null: none
    * (invoices print Latin text only, and production refuses to print).
@@ -136,6 +140,8 @@ export interface ApiContainer extends ApiServices {
   readonly settlement: SettlementService;
   /** Phase 21: riders' last GPS positions (Redis geo set), fed and read by the /orders namespace. */
   readonly riderLocations: RiderLocationStore;
+  /** Step 7.6: the private store queued export files are kept in (tests put files here). */
+  readonly exportFiles: ObjectStore;
   close(): Promise<void>;
 }
 
@@ -200,6 +206,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     db: infra.db,
     redisPool: infra.redisPool,
     settlement,
+    exportFiles: infra.exportFiles,
     auth: new OtpAuthService(infra.db, otps, infra.sms, {
       accessTokenSecret: config.accessTokenSecret,
       refreshTokenSecret: config.refreshTokenSecret,
@@ -219,6 +226,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     disputes: new DisputeService(infra.db),
     adminDisputes: new AdminDisputeService(infra.db, ledger),
     adminNotifications: new AdminNotificationService(infra.db),
+    exports: new ExportService(infra.db, infra.exportFiles),
     evidence: infra.evidence,
     adminDeadLetters: new DeadLetterService(infra.db),
     adminVendors: new AdminVendorService(infra.db, wallet),

@@ -156,6 +156,9 @@ export const serverEnvSchema = z
     SES_SMTP_USER: optionalNonEmpty,
     SES_SMTP_PASSWORD: optionalNonEmpty,
     MAIL_FROM: z.email().optional(),
+    // Step 7.6: where the API is reached from outside, for the link in a queued export's email
+    // (`<base>/api/vendor/exports/<id>/download`). Defaults to http://localhost:<API_PORT>.
+    PUBLIC_API_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
 
     // Uploads (dispute evidence, product photos). Cloudflare R2 is not wired yet: the API stores
     // files on local disk (default: uploads/ at the API root, apps/api/uploads) and serves them under

@@ -8,6 +8,7 @@ import {
   type SellerSignupResponseBody,
 } from '@hamro-pasal/shared-types';
 
+import { localFilePart } from '../../api/file-part';
 import { ApiError, apiRequest } from '../../api/http';
 
 export const SELLER_SIGNUP_PATH = '/api/seller/signup';
@@ -56,16 +57,12 @@ export interface KycDocumentFile {
   readonly mimeType: string;
 }
 
-/** POST /api/vendor/kyc/citizenship-document (multipart, one `document` part). */
+/** POST /api/vendor/kyc/citizenship-document (multipart, one `document` part, see `localFilePart`). */
 export async function uploadCitizenshipDocument(
   file: KycDocumentFile,
 ): Promise<SellerApplicationView> {
   const form = new FormData();
-  form.append(PAN_DOCUMENT_FILE_FIELD, {
-    uri: file.uri,
-    name: 'citizenship-document.jpg',
-    type: file.mimeType,
-  } as unknown as Blob);
+  form.append(PAN_DOCUMENT_FILE_FIELD, localFilePart(file.uri));
   const body = await apiRequest({
     method: 'POST',
     path: CITIZENSHIP_DOCUMENT_PATH,

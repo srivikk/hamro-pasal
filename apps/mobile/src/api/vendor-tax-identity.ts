@@ -9,6 +9,7 @@ import {
   type TaxIdentityView,
 } from '@hamro-pasal/shared-types';
 
+import { localFilePart } from './file-part';
 import { ApiError, apiRequest } from './http';
 
 export const TAX_IDENTITY_PATH = '/api/vendor/tax-identity';
@@ -60,17 +61,12 @@ export async function saveTaxIdentity(draft: TaxIdentityDraft): Promise<TaxIdent
 }
 
 /**
- * POST /api/vendor/tax-identity/document (multipart, one `document` part). React Native's FormData
- * sends a `{ uri, name, type }` part by streaming the file at `uri`; the DOM typings only know
- * Blob, hence the cast. The server stores it privately and replaces an earlier document.
+ * POST /api/vendor/tax-identity/document (multipart, one `document` part, see `localFilePart`).
+ * The server stores it privately and replaces an earlier document.
  */
 export function uploadPanDocument(file: PanDocumentFile): Promise<PanDocumentUploadResponseBody> {
   const form = new FormData();
-  form.append(PAN_DOCUMENT_FILE_FIELD, {
-    uri: file.uri,
-    name: 'pan-document.jpg',
-    type: file.mimeType,
-  } as unknown as Blob);
+  form.append(PAN_DOCUMENT_FILE_FIELD, localFilePart(file.uri));
   return apiRequest({
     method: 'POST',
     path: PAN_DOCUMENT_PATH,

@@ -4,6 +4,7 @@ import {
   type ChatAttachment,
 } from '@hamro-pasal/shared-types';
 
+import { localFilePart } from './file-part';
 import { ApiError, apiRequest } from './http';
 
 export const DISPUTE_EVIDENCE_PATH = '/api/uploads/dispute-evidence';
@@ -33,19 +34,6 @@ const REJECTIONS: Readonly<Record<string, EvidenceRejection>> = {
 };
 
 /**
- * React Native's FormData sends a `{ uri, name, type }` part by streaming the file at `uri`; the
- * DOM typings only know Blob, hence the cast.
- */
-function filePart(file: EvidenceFile, contentType: string): Blob {
-  const extension = contentType.split('/')[1] ?? 'jpg';
-  return {
-    uri: file.uri,
-    name: file.fileName ?? `evidence.${extension}`,
-    type: contentType,
-  } as unknown as Blob;
-}
-
-/**
  * POST /api/uploads/dispute-evidence (multipart `order_id` + `file`): stores a photo for the
  * order's dispute and returns the attachment to send with `chat:new_message`. Files over 5 MB or
  * that are not images are refused here without being sent; the server checks both again (and the
@@ -63,7 +51,7 @@ export async function uploadDisputeEvidence(
 
   const form = new FormData();
   form.append('order_id', orderId);
-  form.append('file', filePart(file, contentType));
+  form.append('file', localFilePart(file.uri));
   try {
     return await apiRequest({
       method: 'POST',

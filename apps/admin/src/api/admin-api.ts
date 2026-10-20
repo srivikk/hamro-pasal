@@ -152,7 +152,7 @@ export interface AdminApi {
   getExport(id: string): Promise<ExportJobView>;
   /** Step 7.7: creates a shop and its account (or adds the vendor role to the number's account). */
   createVendor(input: AdminVendorCreateRequest): Promise<AdminVendorCreatedResponseBody>;
-  /** Step 7.7: SANDBOXED -> APPROVED once its KYC documents are in (422 KYC_INCOMPLETE). */
+  /** SANDBOXED -> LIVE (through the PAN gate) once its KYC documents are in (422 KYC_INCOMPLETE). */
   approveVendor(id: string): Promise<AdminVendorApprovedResponseBody>;
   /** Step 7.8: every tutorial video of both apps. */
   listTutorials(): Promise<TutorialView[]>;

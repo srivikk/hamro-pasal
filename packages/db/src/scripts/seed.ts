@@ -106,6 +106,7 @@ async function main(): Promise<void> {
       await seedTaxonomy(db);
       await seedShowcase(db);
       await seedTaxIdentities(db);
+      await seedDefaultPricingPlan(db);
       console.info(
         `[db] ${describeDatabaseUrl(url)} already seeded; taxonomy, the Thamel catalogue and the showcase shops ensured, nothing else to do`,
       );
@@ -238,6 +239,7 @@ async function main(): Promise<void> {
     await seedTaxonomy(db);
     await seedShowcase(db);
     await seedTaxIdentities(db);
+    await seedDefaultPricingPlan(db);
     console.info(`[db] seeded development fixtures into ${describeDatabaseUrl(url)}`);
   } finally {
     await db.$client.end();
@@ -266,4 +268,19 @@ async function seedTaxIdentities(db: Database): Promise<void> {
      WHERE admin.phone = '+9779800000099'
        AND vendors.status = 'LIVE'
        AND vendors.tax_id IS NULL`);
+}
+
+/**
+ * The default pricing plan a new shop takes (2026-10-20): admin approval makes a shop LIVE, and a
+ * LIVE shop needs a pricing model, which it takes from the one default Commission plan. Without it
+ * a freshly wiped database could approve no shop. 10%, like the seeded Thamel shop. Idempotent:
+ * nothing is written while any plan is the default (a Super Admin may have published another).
+ */
+async function seedDefaultPricingPlan(db: Database): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO pricing_plans (name, model, commission_rate, is_offered, is_default, created_by_user_id)
+    SELECT 'Standard Commission', 'COMMISSION', 10, true, true, admin.id
+      FROM users AS admin
+     WHERE admin.phone = '+9779800000099'
+       AND NOT EXISTS (SELECT 1 FROM pricing_plans WHERE is_default)`);
 }

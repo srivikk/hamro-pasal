@@ -18,6 +18,7 @@ import type {
   SellerSignupRequest,
 } from '@hamro-pasal/shared-types';
 import type { SmsGateway } from '@hamro-pasal/sms';
+import { isPanVerified, panGatedStanding } from '@hamro-pasal/shared-types';
 import { and, eq } from 'drizzle-orm';
 
 import type { AuthSession, OtpAuthService } from '../auth/otp-auth-service';
@@ -256,7 +257,13 @@ export class SellerOnboardingService {
     return { vendor, accountCreated, inviteSent };
   }
 
-  /** POST /api/admin/vendors/:id/approve. */
+  /**
+   * POST /api/admin/vendors/:id/approve. Approval is what takes a shop LIVE (decided 2026-10-20:
+   * the shop already holds the default Commission plan, which stands for SPEC vendor flow step 5's
+   * choice). Through the PAN gate: without a verified PAN the shop is SUSPENDED_COMPLIANCE,
+   * remembering LIVE, and the admin's PAN verification then makes it LIVE. A shop left APPROVED by
+   * the earlier rule (approval stopped there and nothing went further) is approved the same way.
+   */
   async approve(adminUserId: string, vendorId: string, context: AuditContext): Promise<VendorRow> {
     return this.db.transaction(async (tx) => {
       const [before] = await tx
@@ -265,7 +272,7 @@ export class SellerOnboardingService {
         .where(eq(vendors.id, vendorId))
         .for('update');
       if (before === undefined) throw new HttpError(404, 'VENDOR_NOT_FOUND', 'Vendor not found');
-      if (before.status !== 'SANDBOXED') {
+      if (before.status !== 'SANDBOXED' && before.status !== 'APPROVED') {
         throw new HttpError(409, 'NOT_SANDBOXED', `The shop is ${before.status}, not SANDBOXED`);
       }
       const missing = [
@@ -280,7 +287,7 @@ export class SellerOnboardingService {
       }
       const [after] = await tx
         .update(vendors)
-        .set({ status: 'APPROVED' })
+        .set(await goLiveColumns(tx, before))
         .where(eq(vendors.id, vendorId))
         .returning();
       if (after === undefined) throw new Error(`Vendor ${vendorId} vanished`);
@@ -305,10 +312,7 @@ export class SellerOnboardingService {
     details: ShopDetails,
     status: 'SANDBOXED' | 'APPROVED',
   ): Promise<VendorRow> {
-    const [plan] = await tx
-      .select({ id: pricingPlans.id, rate: pricingPlans.commission_rate })
-      .from(pricingPlans)
-      .where(and(eq(pricingPlans.is_default, true), eq(pricingPlans.model, 'COMMISSION')));
+    const plan = await defaultPlan(tx);
     let created: VendorRow | undefined;
     try {
       [created] = await tx
@@ -337,6 +341,16 @@ export class SellerOnboardingService {
       throw error;
     }
     if (created === undefined) throw new Error('Vendor not created');
+    // An admin onboarding a shop "approved" makes it LIVE through the PAN gate, as approve() does:
+    // a new shop has no verified PAN, so it waits in SUSPENDED_COMPLIANCE for the verification.
+    if (status === 'APPROVED') {
+      [created] = await tx
+        .update(vendors)
+        .set(await goLiveColumns(tx, created))
+        .where(eq(vendors.id, created.id))
+        .returning();
+      if (created === undefined) throw new Error('Vendor vanished');
+    }
     await tx.insert(userRoles).values({ user_id: userId, role: 'VENDOR' }).onConflictDoNothing();
     return created;
   }
@@ -379,4 +393,38 @@ async function readSignupOptions(
   const [settings] = lock ? await query.for('share') : await query;
   if (settings === undefined) throw new Error('platform_settings row is missing');
   return settings;
+}
+
+/** The one default Commission plan (exactly one may exist), or undefined when none is published. */
+async function defaultPlan(tx: Transaction): Promise<{ id: string; rate: number } | undefined> {
+  const [plan] = await tx
+    .select({ id: pricingPlans.id, rate: pricingPlans.commission_rate })
+    .from(pricingPlans)
+    .where(and(eq(pricingPlans.is_default, true), eq(pricingPlans.model, 'COMMISSION')));
+  return plan;
+}
+
+/**
+ * What a shop's row becomes when an admin's approval takes it LIVE: through the PAN gate, and with
+ * a pricing model (a LIVE shop must have one: vendors_live_requires_pricing_model_check). A shop
+ * created while no default plan existed takes the default Commission plan now; with none published
+ * the approval is refused (409 DEFAULT_PLAN_REQUIRED) rather than failing on the CHECK.
+ */
+async function goLiveColumns(tx: Transaction, shop: VendorRow) {
+  const standing = panGatedStanding('LIVE', isPanVerified(shop));
+  if (shop.pricing_model !== null) return standing;
+  const plan = await defaultPlan(tx);
+  if (plan === undefined) {
+    throw new HttpError(
+      409,
+      'DEFAULT_PLAN_REQUIRED',
+      'Publish a default Commission pricing plan before approving a shop',
+    );
+  }
+  return {
+    ...standing,
+    pricing_model: 'COMMISSION' as const,
+    pricing_plan_id: plan.id,
+    commission_rate: plan.rate / 100,
+  };
 }

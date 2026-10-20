@@ -70,8 +70,10 @@ describe('Onboarding tab rules (step 7.7)', () => {
         vendor(1, 'LIVE', '2026-10-01T00:00:00Z'),
         vendor(2, 'SANDBOXED', '2026-10-10T00:00:00Z'),
         vendor(3, 'SANDBOXED', '2026-10-05T00:00:00Z'),
+        vendor(4, 'APPROVED', '2026-09-30T00:00:00Z'), // left there by the earlier rule
+        vendor(5, 'SUSPENDED_COMPLIANCE', '2026-09-29T00:00:00Z'),
       ]).map((v) => v.id),
-    ).toEqual([ID(3), ID(2)]);
+    ).toEqual([ID(4), ID(3), ID(2)]);
   });
 
   it('names the missing KYC documents', () => {
@@ -80,6 +82,9 @@ describe('Onboarding tab rules (step 7.7)', () => {
         new ApiError(422, 'KYC_INCOMPLETE', 'x', { missing: ['PAN_DOCUMENT', 'TAX_ID'] }),
       ),
     ).toBe('Not ready to approve: missing PAN document, PAN number.');
+    expect(onboardingErrorMessage(new ApiError(409, 'DEFAULT_PLAN_REQUIRED', 'x'))).toBe(
+      'Publish a default Commission plan (Pricing plans) before approving a shop.',
+    );
     expect(onboardingErrorMessage(new ApiError(409, 'ALREADY_A_SELLER', 'x'))).toBe(
       'This number already has a shop.',
     );

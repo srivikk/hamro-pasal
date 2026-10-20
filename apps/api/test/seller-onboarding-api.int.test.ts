@@ -4,6 +4,7 @@ import {
   auditLogs,
   outboxEvents,
   platformSettings,
+  pricingPlans,
   userRoles,
   users,
   vendors,
@@ -12,6 +13,7 @@ import {
 import {
   adminVendorCreatedResponseSchema,
   authTokensResponseSchema,
+  feedResponseSchema,
   roleNotGrantedDetailsSchema,
   sellerSignupOptionsResponseSchema,
   sellerSignupResponseSchema,
@@ -25,7 +27,7 @@ import sharp from 'sharp';
 import request from 'supertest';
 
 import { verifyAccessToken } from '../src/auth/access-token';
-import { createUser, createVendor } from './support/fixtures';
+import { createCategory, createProduct, createUser, createVendor } from './support/fixtures';
 import { ACCESS_SECRET, bearer, bodyOf, buildTestApp, errorOf, type TestApp } from './support/http';
 
 const phone = () => `+9779${String(randomInt(0, 1_000_000_000)).padStart(9, '0')}`;
@@ -44,12 +46,28 @@ describe('Seller onboarding and tutorials', () => {
   let t: TestApp;
   let db: Database;
   let admin: string;
+  let verifierId: string;
 
   beforeAll(async () => {
     // No resend cooldown: these tests sign the same number in several times in a row.
     t = buildTestApp({ otpOptions: { cooldownMs: 50 } });
     db = t.container.db;
-    admin = bearer(await createUser(db, 'SUPER_ADMIN'), 'SUPER_ADMIN');
+    verifierId = await createUser(db, 'SUPER_ADMIN');
+    admin = bearer(verifierId, 'SUPER_ADMIN');
+    // A LIVE shop takes the default Commission plan; other suites may have published one already.
+    const [existing] = await db
+      .select({ id: pricingPlans.id })
+      .from(pricingPlans)
+      .where(eq(pricingPlans.is_default, true));
+    if (existing === undefined) {
+      await db.insert(pricingPlans).values({
+        name: `Default Commission ${String(randomInt(0, 1_000_000))}`,
+        model: 'COMMISSION',
+        commission_rate: 10,
+        is_default: true,
+        created_by_user_id: verifierId,
+      });
+    }
   });
 
   afterAll(async () => {
@@ -336,6 +354,126 @@ describe('Seller onboarding and tutorials', () => {
   });
 
   describe('admin onboarding and approval', () => {
+    it('makes a shop with a verified PAN LIVE at once', async () => {
+      const { vendorId } = await shopWithKyc();
+      await db
+        .update(vendors)
+        .set({ pan_verified_at: new Date(), pan_verified_by_user_id: verifierId })
+        .where(eq(vendors.id, vendorId));
+
+      const res = await request(t.app)
+        .post(`/api/admin/vendors/${vendorId}/approve`)
+        .set('authorization', admin);
+
+      expect(res.body).toEqual({ vendor_id: vendorId, status: 'LIVE' });
+      const [shop] = await db.select().from(vendors).where(eq(vendors.id, vendorId));
+      expect(shop?.status_before_compliance_suspension).toBeNull();
+    });
+
+    it('gives a shop created without a plan the default Commission plan when it is approved', async () => {
+      const { vendorId } = await shopWithKyc();
+      await db
+        .update(vendors)
+        .set({ pricing_model: null, pricing_plan_id: null, commission_rate: 0 })
+        .where(eq(vendors.id, vendorId));
+      const [plan] = await db.select().from(pricingPlans).where(eq(pricingPlans.is_default, true));
+
+      const res = await request(t.app)
+        .post(`/api/admin/vendors/${vendorId}/approve`)
+        .set('authorization', admin);
+
+      expect(res.status).toBe(200);
+      const [shop] = await db.select().from(vendors).where(eq(vendors.id, vendorId));
+      expect(shop).toMatchObject({ pricing_model: 'COMMISSION', pricing_plan_id: plan?.id });
+    });
+
+    it('refuses with 409 DEFAULT_PLAN_REQUIRED, changing nothing, while no default plan is published', async () => {
+      const { vendorId } = await shopWithKyc();
+      await db
+        .update(vendors)
+        .set({ pricing_model: null, pricing_plan_id: null, commission_rate: 0 })
+        .where(eq(vendors.id, vendorId));
+      const [plan] = await db.select().from(pricingPlans).where(eq(pricingPlans.is_default, true));
+      await db
+        .update(pricingPlans)
+        .set({ is_default: false })
+        .where(eq(pricingPlans.is_default, true));
+      try {
+        const res = await request(t.app)
+          .post(`/api/admin/vendors/${vendorId}/approve`)
+          .set('authorization', admin);
+
+        expect(res.status).toBe(409);
+        expect(errorOf(res).code).toBe('DEFAULT_PLAN_REQUIRED');
+        const [shop] = await db.select().from(vendors).where(eq(vendors.id, vendorId));
+        expect(shop?.status).toBe('SANDBOXED');
+      } finally {
+        if (plan !== undefined) {
+          await db
+            .update(pricingPlans)
+            .set({ is_default: true })
+            .where(eq(pricingPlans.id, plan.id));
+        }
+      }
+    });
+
+    it('approves a shop left APPROVED by the earlier rule, which nothing took further', async () => {
+      const { vendorId } = await shopWithKyc();
+      await db.update(vendors).set({ status: 'APPROVED' }).where(eq(vendors.id, vendorId));
+
+      const res = await request(t.app)
+        .post(`/api/admin/vendors/${vendorId}/approve`)
+        .set('authorization', admin);
+
+      expect(res.body).toEqual({ vendor_id: vendorId, status: 'SUSPENDED_COMPLIANCE' });
+    });
+
+    /**
+     * The state reported on 2026-10-20: approved by the admin, switched Online, national delivery,
+     * one active product in stock in an active root category. It must reach the customer feed,
+     * here asked from a Palika far from the shop, once its PAN is verified.
+     */
+    it('lists an approved, online, national shop with one product in the feed, wherever the customer is', async () => {
+      const { seller, vendorId } = await shopWithKyc({ delivery_scope: 'NATION_WIDE' });
+      const electronics = await createCategory(db, { name: 'Electronics' });
+      await createProduct(db, vendorId, 5, 2500, { name: 'Headphone', category_id: electronics });
+      const online = await request(t.app)
+        .put('/api/vendor/availability')
+        .set('authorization', `Bearer ${seller.access_token}`)
+        .send({ mode: 'OPEN' });
+      expect(online.status).toBe(200);
+
+      // From Pokhara, with a Palika: a national shop delivers anywhere in Nepal.
+      const feed = async () =>
+        bodyOf(
+          feedResponseSchema,
+          await request(t.app).get('/api/vendors').query({
+            lat: '28.2096',
+            lng: '83.9856',
+            municipality_palika_string: 'Pokhara Metropolitan City',
+          }),
+        );
+      const listed = async () =>
+        (await feed()).serviceable.find((entry) => entry.vendor.id === vendorId);
+
+      const approve = await request(t.app)
+        .post(`/api/admin/vendors/${vendorId}/approve`)
+        .set('authorization', admin);
+      expect(approve.status).toBe(200);
+      // Not yet: the PAN is saved but not verified (SPEC core 10).
+      expect(await listed()).toBeUndefined();
+
+      const verify = await request(t.app)
+        .post(`/api/admin/vendors/${vendorId}/pan-verification`)
+        .set('authorization', admin);
+      expect(verify.status).toBe(200);
+
+      const entry = await listed();
+      expect(entry).toMatchObject({ serviceable: true, vendor: { delivery_scope: 'NATION_WIDE' } });
+      const [shop] = await db.select().from(vendors).where(eq(vendors.id, vendorId));
+      expect(shop?.status).toBe('LIVE');
+    });
+
     it('creates the shop and its account, invites by SMS, and the owner signs in with the number', async () => {
       const number = phone();
       const res = await request(t.app)
@@ -367,17 +505,41 @@ describe('Seller onboarding and tutorials', () => {
         .set('authorization', admin)
         .send({ phone: user?.phone, ...SHOP, status: 'APPROVED' });
 
+      // "Approved" by the admin is LIVE through the PAN gate: no verified PAN yet, so it waits.
       expect(bodyOf(adminVendorCreatedResponseSchema, res)).toMatchObject({
         user_id: userId,
-        status: 'APPROVED',
+        status: 'SUSPENDED_COMPLIANCE',
         account_created: false,
       });
+      const [shop] = await db.select().from(vendors).where(eq(vendors.user_id, userId));
+      expect(shop?.status_before_compliance_suspension).toBe('LIVE');
       const [primary] = await db
         .select({ role: users.role })
         .from(users)
         .where(eq(users.id, userId));
       expect(primary?.role).toBe('CUSTOMER');
     });
+
+    /** A self-signed-up shop with every KYC document in (the PAN saved, not yet verified). */
+    async function shopWithKyc(scope: Record<string, unknown> = {}) {
+      const number = phone();
+      const res = await request(t.app)
+        .post('/api/seller/signup')
+        .send({ signup_token: await signupToken(number), ...SHOP, ...scope });
+      expect(res.status).toBe(201);
+      const seller = bodyOf(sellerSignupResponseSchema, res);
+      const [shop] = await db.select().from(vendors).where(eq(vendors.user_id, seller.user.id));
+      const vendorId = shop?.id ?? '';
+      await db
+        .update(vendors)
+        .set({
+          citizenship_document_url: `kyc/citizenship/${vendorId}/${vendorId}.jpg`,
+          pan_document_url: `kyc/pan/${vendorId}/${vendorId}.jpg`,
+          tax_id: '302118845',
+        })
+        .where(eq(vendors.id, vendorId));
+      return { seller, vendorId };
+    }
 
     it('approves a SANDBOXED shop only once its KYC documents are in', async () => {
       const number = phone();
@@ -414,7 +576,11 @@ describe('Seller onboarding and tutorials', () => {
 
       const ok = await approve();
       expect(ok.status).toBe(200);
-      expect(ok.body).toEqual({ vendor_id: vendorId, status: 'APPROVED' });
+      // Approval takes the shop LIVE through the PAN gate (decided 2026-10-20): unverified, it
+      // waits offline in SUSPENDED_COMPLIANCE, remembering LIVE.
+      expect(ok.body).toEqual({ vendor_id: vendorId, status: 'SUSPENDED_COMPLIANCE' });
+      const [approved] = await db.select().from(vendors).where(eq(vendors.id, vendorId));
+      expect(approved?.status_before_compliance_suspension).toBe('LIVE');
       expect((await approve()).status).toBe(409);
       expect(
         (

@@ -25,7 +25,8 @@ const EMPTY: ShopDraft = {
 /**
  * Onboarding (step 7.7, Super Admin flow 10): create a shop and its +977 account (the owner is
  * invited by SMS and signs in to the Seller app with that number), and approve shops that signed
- * themselves up once their KYC documents are in (SANDBOXED -> APPROVED).
+ * themselves up once their KYC documents are in. Approval takes a shop LIVE, or offline until its
+ * PAN is verified on the Compliance tab (SUSPENDED_COMPLIANCE).
  */
 export function OnboardingScreen() {
   const api = useAdminApi();

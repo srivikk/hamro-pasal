@@ -226,6 +226,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 3. Configure `delivery_scope`, base delivery fees, MOV, and map SKUs to Admin Taxonomy.
 4. Admin verifies. State = `APPROVED`.
 5. Vendor selects Pricing Model (Subscription vs Commission). State = `LIVE`.
+   * **Amended 2026-10-20 (decided by the user):** the admin's approval is what takes the shop `LIVE`; there is no separate vendor step. The shop's pricing model is the default Commission plan it holds (taken at signup, or at the approval when it has none); it can change its plan afterwards through the Billing Cycle Lock. The PAN gate of core section 10 applies: a shop whose PAN is not yet verified is `SUSPENDED_COMPLIANCE` until the verification makes it `LIVE`. Approval is refused while no default Commission plan is published.
 6. Incoming order triggers high-priority audio alarm. 3-minute acceptance window begins. (If 90s elapse with no app interaction, backend triggers an automated IVR/SMS alert).
 7. Vendor inspects order. Can select "Accept with Modifications" (Partial Fulfillment) to remove out-of-stock items, adjusting the snapshot and triggering an automated partial refund via gateway API.
 8. Vendor packs order. If Platform Fleet, waits for driver. If Self-Delivery, dispatches own staff.

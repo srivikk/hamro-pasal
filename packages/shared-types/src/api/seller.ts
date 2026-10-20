@@ -111,7 +111,11 @@ export const adminVendorCreatedResponseSchema = z.strictObject({
 });
 export type AdminVendorCreatedResponseBody = z.infer<typeof adminVendorCreatedResponseSchema>;
 
-/** POST /api/admin/vendors/:id/approve: SANDBOXED -> APPROVED once its KYC documents are in. */
+/**
+ * POST /api/admin/vendors/:id/approve: SANDBOXED (or APPROVED, left there before 2026-10-20) ->
+ * LIVE once its KYC documents are in, through the PAN gate: SUSPENDED_COMPLIANCE until the PAN is
+ * verified. 409 DEFAULT_PLAN_REQUIRED while the shop has no pricing plan and none is the default.
+ */
 export const adminVendorApprovedResponseSchema = z.strictObject({
   vendor_id: z.uuid(),
   status: vendorStatusSchema,

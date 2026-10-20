@@ -51,10 +51,13 @@ export function validateShopDraft(draft: ShopDraft): DraftResult<AdminVendorCrea
   return { ok: false, error: messages[field] ?? 'The shop cannot be created as entered.' };
 }
 
-/** Shops waiting for review: SANDBOXED, oldest first. */
+/**
+ * Shops waiting for review, oldest first: SANDBOXED, and APPROVED shops left there by the earlier
+ * rule (approval now takes a shop LIVE; one approved before 2026-10-20 never went further).
+ */
 export function sandboxedShops(vendors: readonly AdminVendorView[]): AdminVendorView[] {
   return vendors
-    .filter((vendor) => vendor.status === 'SANDBOXED')
+    .filter((vendor) => vendor.status === 'SANDBOXED' || vendor.status === 'APPROVED')
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
@@ -77,6 +80,8 @@ export function onboardingErrorMessage(error: unknown): string {
     }
     case 'NOT_SANDBOXED':
       return 'This shop is no longer waiting for approval.';
+    case 'DEFAULT_PLAN_REQUIRED':
+      return 'Publish a default Commission plan (Pricing plans) before approving a shop.';
     case 'NETWORK_ERROR':
       return 'The API cannot be reached.';
     default:

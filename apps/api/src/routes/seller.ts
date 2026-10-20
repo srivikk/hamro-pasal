@@ -4,6 +4,7 @@ import {
   MAX_PAN_DOCUMENT_BYTES,
   PAN_DOCUMENT_FILE_FIELD,
   sellerSignupRequestSchema,
+  type SellerSignupOptionsResponseBody,
   tutorialListQuerySchema,
   tutorialWriteRequestSchema,
   type AdminVendorApprovedResponseBody,
@@ -40,6 +41,20 @@ export function sellerRouter(
   router.use((_req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     next();
+  });
+
+  /**
+   * Public (2026-10-20): the delivery modes a new shop may choose now, so the Seller app offers only
+   * those, and says registrations are paused when there is none.
+   */
+  router.get('/signup-options', async (_req, res) => {
+    const options = await onboarding.signupOptions();
+    const body: SellerSignupOptionsResponseBody = {
+      self_delivery_enabled: options.selfDeliveryEnabled,
+      platform_fleet_enabled: options.platformFleetEnabled,
+      signups_open: options.selfDeliveryEnabled || options.platformFleetEnabled,
+    };
+    res.json(body);
   });
 
   /** 201: the shop (SANDBOXED) and a vendor session, as POST /api/auth/otp/verify answers one. */

@@ -222,7 +222,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 **Vendor Flow**
 
 1. Auth via OTP (+977).
-2. Onboarding: Upload PAN/VAT and citizenship docs. State = `SANDBOXED`.
+2. Onboarding: Upload PAN/VAT and citizenship docs. State = `SANDBOXED`. **Delivery mode at signup (decided 2026-10-20):** the Seller app offers only the delivery modes the Super Admin has switched on platform-wide (`GET /api/seller/signup-options`), and the server refuses any other (`422 DELIVERY_MODE_DISABLED`). With both modes off, self-signup is paused (`409 SELLER_SIGNUPS_PAUSED`) and the app says "New shop registrations are currently paused." A Super Admin's own onboarding of a shop is not limited by the switches.
 3. Configure `delivery_scope`, base delivery fees, MOV, and map SKUs to Admin Taxonomy.
 4. Admin verifies. State = `APPROVED`.
 5. Vendor selects Pricing Model (Subscription vs Commission). State = `LIVE`.

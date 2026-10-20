@@ -1,10 +1,19 @@
 import { randomInt } from 'node:crypto';
 
-import { auditLogs, outboxEvents, userRoles, users, vendors, type Database } from '@hamro-pasal/db';
+import {
+  auditLogs,
+  outboxEvents,
+  platformSettings,
+  userRoles,
+  users,
+  vendors,
+  type Database,
+} from '@hamro-pasal/db';
 import {
   adminVendorCreatedResponseSchema,
   authTokensResponseSchema,
   roleNotGrantedDetailsSchema,
+  sellerSignupOptionsResponseSchema,
   sellerSignupResponseSchema,
   sellerApplicationResponseSchema,
   tokenRefreshResponseSchema,
@@ -206,6 +215,123 @@ describe('Seller onboarding and tutorials', () => {
         ready_for_review: false,
       });
       expect(application.vendor_code).toMatch(/^HPV-\d{5,}$/);
+    });
+  });
+
+  describe('delivery modes at signup follow the platform switches (2026-10-20)', () => {
+    const setModes = (self: boolean, fleet: boolean) =>
+      db
+        .update(platformSettings)
+        .set({ self_delivery_enabled: self, platform_fleet_enabled: fleet });
+
+    afterEach(async () => {
+      await setModes(true, true);
+    });
+
+    const options = async () => {
+      const res = await request(t.app).get('/api/seller/signup-options');
+      expect(res.status).toBe(200);
+      return bodyOf(sellerSignupOptionsResponseSchema, res);
+    };
+
+    const signupWith = async (number: string, fulfillmentMode?: string) =>
+      request(t.app)
+        .post('/api/seller/signup')
+        .send({
+          signup_token: await signupToken(number),
+          ...SHOP,
+          ...(fulfillmentMode === undefined ? {} : { fulfillment_mode: fulfillmentMode }),
+        });
+
+    /** Nothing was created for the number: no shop, no vendor role. */
+    const nothingFor = async (number: string) => {
+      const [user] = await db.select().from(users).where(eq(users.phone, number));
+      if (user === undefined) throw new Error('account missing');
+      expect(await db.select().from(vendors).where(eq(vendors.user_id, user.id))).toEqual([]);
+      expect(
+        await db
+          .select()
+          .from(userRoles)
+          .where(and(eq(userRoles.user_id, user.id), eq(userRoles.role, 'VENDOR'))),
+      ).toEqual([]);
+    };
+
+    it('tells the app, without a token, which modes a new shop may choose', async () => {
+      expect(await options()).toEqual({
+        self_delivery_enabled: true,
+        platform_fleet_enabled: true,
+        signups_open: true,
+      });
+      await setModes(false, true);
+      expect(await options()).toEqual({
+        self_delivery_enabled: false,
+        platform_fleet_enabled: true,
+        signups_open: true,
+      });
+      await setModes(false, false);
+      expect((await options()).signups_open).toBe(false);
+    });
+
+    it('refuses a mode switched off platform-wide with 422, creating nothing, and takes the other', async () => {
+      await setModes(false, true);
+      const number = phone();
+
+      const refused = await signupWith(number, 'SELF_DELIVERY');
+
+      expect(refused.status).toBe(422);
+      expect(errorOf(refused)).toMatchObject({
+        code: 'DELIVERY_MODE_DISABLED',
+        details: { fulfillment_mode: 'SELF_DELIVERY' },
+      });
+      await nothingFor(number);
+
+      const accepted = await signupWith(number, 'PLATFORM_FLEET');
+      expect(accepted.status).toBe(201);
+      const [shop] = await db
+        .select({ mode: vendors.fulfillment_mode })
+        .from(vendors)
+        .where(eq(vendors.id, bodyOf(sellerSignupResponseSchema, accepted).application.vendor_id));
+      expect(shop?.mode).toBe('PLATFORM_FLEET');
+    });
+
+    it('refuses the default mode (self delivery) too when it is off', async () => {
+      await setModes(false, true);
+      const number = phone();
+
+      const refused = await signupWith(number);
+
+      expect(refused.status).toBe(422);
+      expect(errorOf(refused).code).toBe('DELIVERY_MODE_DISABLED');
+      await nothingFor(number);
+    });
+
+    it('refuses riders when only riders are off', async () => {
+      await setModes(true, false);
+      const number = phone();
+
+      const refused = await signupWith(number, 'PLATFORM_FLEET');
+
+      expect(refused.status).toBe(422);
+      expect(errorOf(refused).details).toEqual({ fulfillment_mode: 'PLATFORM_FLEET' });
+      await nothingFor(number);
+    });
+
+    it('pauses registrations with 409 while both modes are off, and reopens them after', async () => {
+      await setModes(false, false);
+      const number = phone();
+
+      for (const mode of ['SELF_DELIVERY', 'PLATFORM_FLEET']) {
+        const paused = await signupWith(number, mode);
+        expect(paused.status).toBe(409);
+        expect(errorOf(paused)).toMatchObject({
+          code: 'SELLER_SIGNUPS_PAUSED',
+          message: 'New shop registrations are currently paused',
+        });
+      }
+      await nothingFor(number);
+
+      await setModes(true, false);
+      expect((await signupWith(number, 'SELF_DELIVERY')).status).toBe(201);
     });
   });
 

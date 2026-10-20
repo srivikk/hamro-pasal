@@ -1,5 +1,6 @@
 import {
   enqueueDomainEvent,
+  platformSettings,
   pricingPlans,
   recordAuditLog,
   userRoles,
@@ -24,6 +25,7 @@ import { verifySellerSignupToken } from '../auth/seller-signup-token';
 import { HttpError } from '../http/errors';
 import { isUniqueViolation } from '../infra/pg-errors';
 import type { KycDocumentStorage } from '../uploads/kyc-document-storage';
+import { DeliveryModeDisabledError } from './vendor-delivery-settings-service';
 
 type VendorRow = typeof vendors.$inferSelect;
 
@@ -80,6 +82,23 @@ export function applicationView(vendor: VendorRow): SellerApplicationView {
  *    PAN and citizenship documents and the PAN are in.
  * A new shop takes the default pricing plan's terms when one is set.
  */
+/**
+ * Both delivery modes are switched off platform-wide (2026-10-20): a new shop could deliver no
+ * order, so self-signup is paused until the Super Admin switches one back on.
+ */
+export class SellerSignupsPausedError extends Error {
+  constructor() {
+    super('New shop registrations are currently paused');
+    this.name = 'SellerSignupsPausedError';
+  }
+}
+
+/** The platform's delivery switches, as a new shop may use them. */
+export interface SignupOptions {
+  readonly selfDeliveryEnabled: boolean;
+  readonly platformFleetEnabled: boolean;
+}
+
 export class SellerOnboardingService {
   constructor(
     private readonly db: Database,
@@ -89,10 +108,29 @@ export class SellerOnboardingService {
     private readonly config: SellerOnboardingConfig,
   ) {}
 
-  /** POST /api/seller/signup. */
+  /** GET /api/seller/signup-options: what the Seller app may offer a new shop. */
+  async signupOptions(): Promise<SignupOptions> {
+    return readSignupOptions(this.db);
+  }
+
+  /**
+   * POST /api/seller/signup. The delivery mode must be one the Super Admin has switched on
+   * (2026-10-20): 422 DELIVERY_MODE_DISABLED otherwise, and 409 SELLER_SIGNUPS_PAUSED while both
+   * are off. The switches are read FOR SHARE in the shop's transaction, so an admin turning a
+   * mode off (which updates that row) either commits first and is seen here, or waits for it.
+   */
   async signup(request: SellerSignupRequest, context: AuditContext): Promise<SignedUpSeller> {
     const userId = verifySellerSignupToken(request.signup_token, this.config.refreshTokenSecret);
     const vendor = await this.db.transaction(async (tx) => {
+      const options = await readSignupOptions(tx, true);
+      if (!options.selfDeliveryEnabled && !options.platformFleetEnabled) {
+        throw new SellerSignupsPausedError();
+      }
+      const enabled =
+        request.fulfillment_mode === 'SELF_DELIVERY'
+          ? options.selfDeliveryEnabled
+          : options.platformFleetEnabled;
+      if (!enabled) throw new DeliveryModeDisabledError(request.fulfillment_mode);
       const [user] = await tx.select().from(users).where(eq(users.id, userId)).for('update');
       if (user === undefined) throw new HttpError(401, 'INVALID_SIGNUP_TOKEN', 'Account not found');
       const created = await this.createShop(tx, user.id, user.phone, request, 'SANDBOXED');
@@ -325,4 +363,20 @@ function shopState(vendor: VendorRow) {
     fulfillment_mode: vendor.fulfillment_mode,
     delivery_scope: vendor.delivery_scope,
   };
+}
+
+/** The platform's delivery switches; locked FOR SHARE inside a signup's transaction. */
+async function readSignupOptions(
+  executor: Database | Transaction,
+  lock = false,
+): Promise<SignupOptions> {
+  const query = executor
+    .select({
+      selfDeliveryEnabled: platformSettings.self_delivery_enabled,
+      platformFleetEnabled: platformSettings.platform_fleet_enabled,
+    })
+    .from(platformSettings);
+  const [settings] = lock ? await query.for('share') : await query;
+  if (settings === undefined) throw new Error('platform_settings row is missing');
+  return settings;
 }

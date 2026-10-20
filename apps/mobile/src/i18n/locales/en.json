@@ -1225,7 +1225,12 @@
     "created": "Your shop is created. Add your documents next.",
     "expired": "Your sign-in expired. Sign in again to continue.",
     "alreadySeller": "This number already has a shop. Sign in again.",
-    "failed": "Couldn’t create the shop. Check your connection and try again."
+    "failed": "Couldn’t create the shop. Check your connection and try again.",
+    "paused": "New shop registrations are currently paused.",
+    "pausedHint": "Hamro Pasal is not taking new shops at the moment. Please check back soon.",
+    "modeDisabled": "That delivery option was just switched off. Choose another and try again.",
+    "optionsLoading": "Loading the delivery options…",
+    "optionsFailed": "Couldn’t load the delivery options. Check your connection."
   },
   "sellerApplication": {
     "title": "Your application",

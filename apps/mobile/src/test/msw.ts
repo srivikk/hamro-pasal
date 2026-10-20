@@ -45,6 +45,14 @@ function availabilityAnswer(mode: 'AUTO' | 'OPEN' | 'CLOSED') {
 
 export const server = setupServer(
   http.get(apiUrl('/api/categories'), () => HttpResponse.json({ categories: [] })),
+  // Both delivery modes on: a new shop may choose either (GET /api/seller/signup-options).
+  http.get(apiUrl('/api/seller/signup-options'), () =>
+    HttpResponse.json({
+      self_delivery_enabled: true,
+      platform_fleet_enabled: true,
+      signups_open: true,
+    }),
+  ),
   // Home always asks for the admin's promotions; none by default.
   http.get(apiUrl('/api/home/promotions'), () => HttpResponse.json({ banners: [], offers: [] })),
   http.get(apiUrl('/api/vendors/:id/products'), () => HttpResponse.json(vendorMenu())),

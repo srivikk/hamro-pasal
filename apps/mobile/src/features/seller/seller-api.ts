@@ -2,8 +2,10 @@ import {
   PAN_DOCUMENT_FILE_FIELD,
   roleNotGrantedDetailsSchema,
   sellerApplicationResponseSchema,
+  sellerSignupOptionsResponseSchema,
   sellerSignupResponseSchema,
   type SellerApplicationView,
+  type SellerSignupOptionsResponseBody,
   type SellerSignupRequest,
   type SellerSignupResponseBody,
 } from '@hamro-pasal/shared-types';
@@ -13,6 +15,20 @@ import { ApiError, apiRequest } from '../../api/http';
 
 export const SELLER_SIGNUP_PATH = '/api/seller/signup';
 export const SELLER_APPLICATION_PATH = '/api/seller/application';
+export const SELLER_SIGNUP_OPTIONS_PATH = '/api/seller/signup-options';
+
+/**
+ * GET /api/seller/signup-options (public, 2026-10-20): the delivery modes a new shop may choose,
+ * as the Super Admin's platform switches stand now.
+ */
+export function fetchSellerSignupOptions(): Promise<SellerSignupOptionsResponseBody> {
+  return apiRequest({
+    method: 'GET',
+    path: SELLER_SIGNUP_OPTIONS_PATH,
+    schema: sellerSignupOptionsResponseSchema,
+    authenticated: false,
+  });
+}
 
 /** POST /api/seller/signup (step 7.7): the shop, SANDBOXED, and a vendor session. */
 export function signUpSeller(body: SellerSignupRequest): Promise<SellerSignupResponseBody> {

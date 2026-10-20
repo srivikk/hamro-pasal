@@ -14,7 +14,8 @@ import { mockWebView } from '../../test/mock-webview';
 import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
 import { openSellerSignup } from './become-seller';
-import { SELLER_SIGNUP_PATH, signupTokenOf } from './seller-api';
+import { SELLER_SIGNUP_OPTIONS_PATH, SELLER_SIGNUP_PATH, signupTokenOf } from './seller-api';
+import { effectiveDeliveryMode, offeredDeliveryModes } from './signup-options';
 
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: jest.fn() },
@@ -92,6 +93,8 @@ describe('Seller signup (step 7.7)', () => {
       }),
     );
     renderWithProviders(<SellerSignupScreen />);
+    // The form appears once the delivery options are in.
+    await screen.findByTestId('seller-signup-business-name');
 
     // Nothing is sent until the shop has a name, a Palika and a location.
     fireEvent.press(screen.getByRole('button', { name: 'Create my shop' }));
@@ -144,6 +147,8 @@ describe('Seller signup (step 7.7)', () => {
       ),
     );
     renderWithProviders(<SellerSignupScreen />);
+    // The form appears once the delivery options are in.
+    await screen.findByTestId('seller-signup-business-name');
     fireEvent.changeText(screen.getByTestId('seller-signup-business-name'), 'Thamel Kirana Pasal');
     fireEvent.changeText(screen.getByTestId('seller-signup-palika'), 'Kathmandu Metropolitan City');
     pinThamel();
@@ -155,6 +160,161 @@ describe('Seller signup (step 7.7)', () => {
     expect(useToastStore.getState().toast?.message).toBe(
       'Your sign-in expired. Sign in again to continue.',
     );
+  });
+});
+
+describe('delivery choices follow the platform switches (2026-10-20)', () => {
+  const serveOptions = (self: boolean, fleet: boolean) => {
+    server.use(
+      http.get(apiUrl(SELLER_SIGNUP_OPTIONS_PATH), () =>
+        HttpResponse.json({
+          self_delivery_enabled: self,
+          platform_fleet_enabled: fleet,
+          signups_open: self || fleet,
+        }),
+      ),
+    );
+  };
+  const fillIn = () => {
+    fireEvent.changeText(screen.getByTestId('seller-signup-business-name'), 'Thamel Kirana Pasal');
+    fireEvent.changeText(screen.getByTestId('seller-signup-palika'), 'Kathmandu Metropolitan City');
+    pinThamel();
+  };
+
+  beforeEach(() => {
+    useSellerSignupStore.getState().start('+9779800000001', 'signup-token-1', 1800);
+  });
+
+  it('offers only the modes that are switched on, and sends the one that is', async () => {
+    serveOptions(false, true);
+    const sent: { fulfillment_mode?: string }[] = [];
+    server.use(
+      http.post(apiUrl(SELLER_SIGNUP_PATH), async ({ request }) => {
+        sent.push((await request.json()) as { fulfillment_mode?: string });
+        return HttpResponse.json({ error: { code: 'STOP', message: 'x' } }, { status: 500 });
+      }),
+    );
+    renderWithProviders(<SellerSignupScreen />);
+
+    expect(await screen.findByTestId('seller-signup-PLATFORM_FLEET')).toBeSelected();
+    expect(screen.queryByTestId('seller-signup-SELF_DELIVERY')).toBeNull();
+
+    fillIn();
+    fireEvent.press(screen.getByRole('button', { name: 'Create my shop' }));
+    await waitFor(() => {
+      expect(sent).toHaveLength(1);
+    });
+    expect(sent[0]?.fulfillment_mode).toBe('PLATFORM_FLEET');
+  });
+
+  it('hides the riders when only they are off', async () => {
+    serveOptions(true, false);
+    renderWithProviders(<SellerSignupScreen />);
+
+    expect(await screen.findByTestId('seller-signup-SELF_DELIVERY')).toBeSelected();
+    expect(screen.queryByTestId('seller-signup-PLATFORM_FLEET')).toBeNull();
+  });
+
+  it('says registrations are paused, with no form, when both are off', async () => {
+    serveOptions(false, false);
+    renderWithProviders(<SellerSignupScreen />);
+
+    const paused = await screen.findByTestId('seller-signup-paused');
+    expect(paused).toHaveTextContent(/New shop registrations are currently paused\./);
+    expect(screen.queryByTestId('seller-signup-business-name')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Create my shop' })).toBeNull();
+  });
+
+  it('shows what is offered now when the server refuses a mode switched off meanwhile', async () => {
+    let selfOn = true;
+    server.use(
+      http.get(apiUrl(SELLER_SIGNUP_OPTIONS_PATH), () =>
+        HttpResponse.json({
+          self_delivery_enabled: selfOn,
+          platform_fleet_enabled: true,
+          signups_open: true,
+        }),
+      ),
+      http.post(apiUrl(SELLER_SIGNUP_PATH), () => {
+        // The admin switched self delivery off after the screen opened.
+        selfOn = false;
+        return HttpResponse.json(
+          {
+            error: {
+              code: 'DELIVERY_MODE_DISABLED',
+              message: 'x',
+              details: { fulfillment_mode: 'SELF_DELIVERY' },
+            },
+          },
+          { status: 422 },
+        );
+      }),
+    );
+    renderWithProviders(<SellerSignupScreen />);
+    fireEvent.press(await screen.findByTestId('seller-signup-SELF_DELIVERY'));
+    fillIn();
+
+    fireEvent.press(screen.getByRole('button', { name: 'Create my shop' }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('seller-signup-SELF_DELIVERY')).toBeNull();
+    });
+    expect(screen.getByTestId('seller-signup-PLATFORM_FLEET')).toBeSelected();
+    expect(useToastStore.getState().toast?.message).toBe(
+      'That delivery option was just switched off. Choose another and try again.',
+    );
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+  });
+
+  it('turns into the paused notice when the server says registrations were paused meanwhile', async () => {
+    let open = true;
+    server.use(
+      http.get(apiUrl(SELLER_SIGNUP_OPTIONS_PATH), () =>
+        HttpResponse.json({
+          self_delivery_enabled: open,
+          platform_fleet_enabled: open,
+          signups_open: open,
+        }),
+      ),
+      http.post(apiUrl(SELLER_SIGNUP_PATH), () => {
+        open = false;
+        return HttpResponse.json(
+          { error: { code: 'SELLER_SIGNUPS_PAUSED', message: 'x' } },
+          { status: 409 },
+        );
+      }),
+    );
+    renderWithProviders(<SellerSignupScreen />);
+    await screen.findByTestId('seller-signup-business-name');
+    fillIn();
+
+    fireEvent.press(screen.getByRole('button', { name: 'Create my shop' }));
+
+    expect(await screen.findByTestId('seller-signup-paused')).toBeOnTheScreen();
+  });
+});
+
+describe('offered delivery modes', () => {
+  it('lists the switched-on modes in order, and keeps a choice only while it is offered', () => {
+    const both = { self_delivery_enabled: true, platform_fleet_enabled: true, signups_open: true };
+    expect(offeredDeliveryModes(both)).toEqual(['SELF_DELIVERY', 'PLATFORM_FLEET']);
+    expect(offeredDeliveryModes({ ...both, self_delivery_enabled: false })).toEqual([
+      'PLATFORM_FLEET',
+    ]);
+    expect(
+      offeredDeliveryModes({
+        self_delivery_enabled: false,
+        platform_fleet_enabled: false,
+        signups_open: false,
+      }),
+    ).toEqual([]);
+
+    expect(effectiveDeliveryMode(['SELF_DELIVERY', 'PLATFORM_FLEET'], 'PLATFORM_FLEET')).toBe(
+      'PLATFORM_FLEET',
+    );
+    expect(effectiveDeliveryMode(['PLATFORM_FLEET'], 'SELF_DELIVERY')).toBe('PLATFORM_FLEET');
+    expect(effectiveDeliveryMode(['SELF_DELIVERY'], null)).toBe('SELF_DELIVERY');
+    expect(effectiveDeliveryMode([], 'SELF_DELIVERY')).toBeNull();
   });
 });
 

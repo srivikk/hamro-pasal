@@ -158,6 +158,7 @@ import {
   DeliveryModeDisabledError,
   TooManyServiceablePalikasError,
 } from '../vendor/vendor-delivery-settings-service';
+import { SellerSignupsPausedError } from '../vendor/seller-onboarding-service';
 import { TopUpKeyReusedError, TopUpUnavailableError } from '../wallet/vendor-top-up-service';
 import { InvalidLedgerCursorError } from '../wallet/vendor-wallet-service';
 import {
@@ -587,6 +588,9 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof SettingChangeClosedError) {
     return new HttpError(409, 'SETTING_CHANGE_CLOSED', error.message, { status: error.status });
+  }
+  if (error instanceof SellerSignupsPausedError) {
+    return new HttpError(409, 'SELLER_SIGNUPS_PAUSED', error.message);
   }
   if (error instanceof DeliveryModeDisabledError) {
     return new HttpError(422, 'DELIVERY_MODE_DISABLED', error.message, {

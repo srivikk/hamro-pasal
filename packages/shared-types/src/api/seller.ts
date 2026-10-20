@@ -161,3 +161,16 @@ export const sellerSignupResponseSchema = authTokensResponseSchema.extend({
   application: sellerApplicationViewSchema,
 });
 export type SellerSignupResponseBody = z.infer<typeof sellerSignupResponseSchema>;
+
+/**
+ * GET /api/seller/signup-options (public, 2026-10-20): the delivery modes a new shop may choose,
+ * as the Super Admin's platform switches stand now. The Seller app offers only these; with both
+ * off, `signups_open` is false and no shop can be created (POST /signup answers 409
+ * SELLER_SIGNUPS_PAUSED).
+ */
+export const sellerSignupOptionsResponseSchema = z.strictObject({
+  self_delivery_enabled: z.boolean(),
+  platform_fleet_enabled: z.boolean(),
+  signups_open: z.boolean(),
+});
+export type SellerSignupOptionsResponseBody = z.infer<typeof sellerSignupOptionsResponseSchema>;

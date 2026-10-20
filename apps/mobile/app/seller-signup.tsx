@@ -1,5 +1,5 @@
 import type { VendorFulfillmentMode } from '@hamro-pasal/shared-types';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Redirect, router, Stack } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
@@ -9,7 +9,8 @@ import { ApiError } from '../src/api/http';
 import { Button } from '../src/components/Button';
 import { KeyboardScreen } from '../src/components/KeyboardScreen';
 import { MapPinPicker } from '../src/components/MapPinPicker';
-import { signUpSeller } from '../src/features/seller/seller-api';
+import { fetchSellerSignupOptions, signUpSeller } from '../src/features/seller/seller-api';
+import { effectiveDeliveryMode, offeredDeliveryModes } from '../src/features/seller/signup-options';
 import type { Coordinates } from '../src/features/territory/territory';
 import { tokenSubject } from '../src/lib/access-token-role';
 import { useAuthStore } from '../src/store/useAuthStore';
@@ -24,6 +25,11 @@ type Field = 'businessName' | 'palika' | 'location';
  * its OTP (the signup token proves it); the shop is created SANDBOXED on the same account, which
  * now also holds the vendor role, and the app continues signed in as that vendor. Documents follow
  * from the application screen.
+ *
+ * 2026-10-20: the delivery choices follow the Super Admin's platform switches
+ * (GET /api/seller/signup-options): a mode switched off is not offered, and with both off the
+ * form is replaced by "New shop registrations are currently paused". The server checks again
+ * when the shop is created.
  */
 export default function SellerSignupScreen() {
   const { t } = useTranslation();
@@ -34,9 +40,18 @@ export default function SellerSignupScreen() {
   const [businessName, setBusinessName] = useState('');
   const [palika, setPalika] = useState('');
   const [location, setLocation] = useState<Coordinates | null>(null);
-  const [fulfillment, setFulfillment] = useState<VendorFulfillmentMode>('SELF_DELIVERY');
+  const [chosenMode, setChosenMode] = useState<VendorFulfillmentMode | null>(null);
   const [picking, setPicking] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<Field, true>>>({});
+  const options = useQuery({
+    queryKey: ['seller', 'signup-options'],
+    queryFn: fetchSellerSignupOptions,
+    // The switches can change at any time: asked afresh on every visit and return to the app.
+    staleTime: 0,
+    refetchOnWindowFocus: 'always',
+  });
+  const offered = options.data === undefined ? [] : offeredDeliveryModes(options.data);
+  const fulfillment = effectiveDeliveryMode(offered, chosenMode);
 
   const signUp = useMutation({
     mutationFn: signUpSeller,
@@ -51,6 +66,16 @@ export default function SellerSignupScreen() {
     },
     onError: (error) => {
       const code = error instanceof ApiError ? error.code : null;
+      // The Super Admin switched the mode (or both) off after the screen opened: show what is
+      // offered now.
+      if (code === 'DELIVERY_MODE_DISABLED' || code === 'SELLER_SIGNUPS_PAUSED') {
+        void options.refetch();
+        showToast(
+          t(code === 'SELLER_SIGNUPS_PAUSED' ? 'sellerSignup.paused' : 'sellerSignup.modeDisabled'),
+          'error',
+        );
+        return;
+      }
       if (code === 'INVALID_SIGNUP_TOKEN') {
         useSellerSignupStore.getState().clear();
         showToast(t('sellerSignup.expired'), 'error');
@@ -75,7 +100,7 @@ export default function SellerSignupScreen() {
       ...(location === null ? { location: true } : {}),
     };
     setErrors(missing);
-    if (Object.keys(missing).length > 0 || location === null) return;
+    if (Object.keys(missing).length > 0 || location === null || fulfillment === null) return;
     signUp.mutate({
       signup_token: token,
       business_name: businessName.trim(),
@@ -86,6 +111,36 @@ export default function SellerSignupScreen() {
       radius_km: 3,
     });
   };
+
+  // Until the switches are known nothing can be offered; with none on, nothing can be created.
+  if (options.data === undefined || offered.length === 0) {
+    return (
+      <KeyboardScreen testID="seller-signup-screen">
+        <Stack.Screen options={{ headerShown: true, title: t('sellerSignup.title') }} />
+        <View className="gap-4 p-4">
+          {options.isError ? (
+            <>
+              <Text className="text-sm text-gray-700" testID="seller-signup-options-failed">
+                {t('sellerSignup.optionsFailed')}
+              </Text>
+              <Button label={t('common.retry')} onPress={() => void options.refetch()} />
+            </>
+          ) : options.data === undefined ? (
+            <Text className="text-sm text-gray-500" testID="seller-signup-options-loading">
+              {t('sellerSignup.optionsLoading')}
+            </Text>
+          ) : (
+            <View className="gap-2 rounded-xl bg-amber-50 p-4" testID="seller-signup-paused">
+              <Text className="text-base font-semibold text-gray-900">
+                {t('sellerSignup.paused')}
+              </Text>
+              <Text className="text-sm text-gray-700">{t('sellerSignup.pausedHint')}</Text>
+            </View>
+          )}
+        </View>
+      </KeyboardScreen>
+    );
+  }
 
   return (
     <KeyboardScreen testID="seller-signup-screen">
@@ -142,7 +197,7 @@ export default function SellerSignupScreen() {
         <View className="gap-1">
           <Text className="text-sm font-semibold text-gray-800">{t('sellerSignup.delivery')}</Text>
           <View className="flex-row gap-2">
-            {(['SELF_DELIVERY', 'PLATFORM_FLEET'] as const).map((mode) => (
+            {offered.map((mode) => (
               <Pressable
                 key={mode}
                 accessibilityRole="radio"
@@ -152,7 +207,7 @@ export default function SellerSignupScreen() {
                   fulfillment === mode ? 'border-brand bg-brand-light' : 'border-gray-300 bg-white'
                 }`}
                 onPress={() => {
-                  setFulfillment(mode);
+                  setChosenMode(mode);
                 }}
               >
                 <Text className="text-center text-sm font-semibold text-gray-900">

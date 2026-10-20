@@ -91,12 +91,8 @@ export interface VendorOrderCardProps {
   customerName?: string | null;
   /** "4 min ago": how long since the order was placed. */
   elapsed?: string;
-  /** A sample order (development builds): tagged so it is never taken for a real one. */
-  sample?: boolean;
   /** A fleet order the riders were told about that none has collected yet (Ready). */
   awaitingRider?: boolean;
-  /** Samples only: stands in for the rider confirming the pickup. */
-  onRiderPickup?: (() => void) | undefined;
 }
 
 /**
@@ -116,9 +112,7 @@ export function VendorOrderCard({
   onDeliver,
   customerName = null,
   elapsed,
-  sample = false,
   awaitingRider = false,
-  onRiderPickup,
 }: VendorOrderCardProps) {
   const { t } = useTranslation();
   const waiting = order.state === 'PLACED';
@@ -137,11 +131,6 @@ export function VendorOrderCard({
           <Text className="text-lg font-bold text-gray-900">
             {t('order.code', { code: vendorOrderCode(order.id) })}
           </Text>
-          {sample ? (
-            <Text className="rounded bg-gray-200 px-1.5 py-0.5 text-xs font-semibold text-gray-700">
-              {t('vendorDashboard.sample')}
-            </Text>
-          ) : null}
         </View>
         <Text className="text-base font-semibold text-gray-900">
           {t('order.total', { amount: order.total_npr })}
@@ -222,15 +211,6 @@ export function VendorOrderCard({
         <Text className="text-sm text-gray-500" testID={`order-rider-${order.id}`}>
           {t(awaitingRider ? 'vendorDashboard.awaitingRider' : 'vendorDashboard.withRider')}
         </Text>
-      ) : null}
-      {withRider && awaitingRider && onRiderPickup !== undefined ? (
-        <Button
-          label={t('vendorDashboard.samplePickup')}
-          variant="secondary"
-          size="sm"
-          onPress={onRiderPickup}
-          testID={`rider-pickup-${order.id}`}
-        />
       ) : null}
       {order.state === 'DELIVERED' ? (
         <Text className="text-sm font-semibold text-emerald-700">

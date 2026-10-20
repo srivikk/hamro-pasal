@@ -30,7 +30,7 @@ export function saveAvailability(body: AvailabilityRequest): Promise<Availabilit
 /**
  * Step 7.3: the shop's standing as the server decides it (hours, the switch, Auto-Pause). The
  * phone's copy (`useVendorShopStore.online`) follows the server's answer, so the dashboard's
- * offline banner and the sample orders agree with the header.
+ * offline banner agrees with the header.
  */
 export function useVendorAvailability() {
   const queryClient = useQueryClient();
@@ -43,6 +43,9 @@ export function useVendorAvailability() {
       return result;
     },
     staleTime: 0,
+    // The standing changes on the server's side too (a PAN verified, Auto-Pause, the clock): read
+    // it again whenever the app returns to the foreground (see app-focus.ts).
+    refetchOnWindowFocus: 'always',
     retry: retryTransientFailures,
   });
   const save = useMutation({

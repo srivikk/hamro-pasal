@@ -426,7 +426,7 @@
   "vendorDashboard": {
     "title": "Incoming orders",
     "loadError": "Couldn't load your orders. Check your connection.",
-    "empty": "No open orders right now. New orders will ring here.",
+    "empty": "No orders yet. New orders will ring here.",
     "alarm": "New order! Accept or reject it to stop the alarm.",
     "item": "{{quantity, localizedNumber}} × {{name}}",
     "address": "Ward {{ward, localizedNumber}}, {{tole}}, {{palika}}",
@@ -447,7 +447,6 @@
     "movedOn": "This order has moved on.",
     "dispatchFailed": "Couldn't dispatch the order. Please try again.",
     "handoffHint": "Your staff deliver this order. Type the customer's code at the door.",
-    "sample": "SAMPLE",
     "customer": "Customer",
     "withRider": "Collected by a rider for delivery.",
     "delivered": "Delivered.",
@@ -462,9 +461,7 @@
     "elapsedMinutes": "{{minutes, localizedNumber}} min ago",
     "elapsedHours": "{{hours, localizedNumber}} h {{minutes, localizedNumber}} min ago",
     "stageEmpty": "No orders in this stage.",
-    "liveUnavailable": "Couldn't load your live orders. Showing sample orders only.",
     "awaitingRider": "Riders have been told. Waiting for one to collect it.",
-    "samplePickup": "Rider picked up (sample)",
     "dispatchIn": "Ready for Pickup in {{seconds, localizedNumber}} s",
     "dispatchWait": "The customer can still cancel this order.",
     "complianceSuspended": "Your shop is offline until your PAN is verified, so it cannot accept orders."
@@ -643,13 +640,10 @@
     "taxSavedPendingVerification": "PAN saved. Your shop stays offline until Hamro Pasal verifies your PAN certificate."
   },
   "vendorCatalogue": {
-    "sampleNote": "Sample catalogue on this phone. Changes are not sent to the server yet.",
-    "empty": "No products yet. Add your first one.",
+    "empty": "Your catalogue is empty. Add your first product.",
     "add": "Add product",
     "edit": "Edit {{name}}",
-    "stockSwitch": "{{name}} in stock",
     "inStock": "In stock: {{count, localizedNumber}}",
-    "outOfStock": "Out of stock",
     "addTitle": "New product",
     "editTitle": "Edit product",
     "name": "Product name",
@@ -672,7 +666,13 @@
       "stock": "Enter a whole number, 0 or more."
     },
     "noStockLeft": "No stock left",
-    "categoryHidden": "Category hidden by Hamro Pasal"
+    "categoryHidden": "Category hidden by Hamro Pasal",
+    "listedSwitch": "Show {{name}} to customers",
+    "hidden": "Hidden from customers",
+    "noCategory": "No category yet",
+    "loadError": "Couldn't load your products.",
+    "saveError": "Couldn't save the product. Try again.",
+    "toggleError": "Couldn't change this product. Try again."
   },
   "vendorMarketing": {
     "section": {

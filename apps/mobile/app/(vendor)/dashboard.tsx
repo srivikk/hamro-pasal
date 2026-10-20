@@ -24,10 +24,7 @@ import {
 } from '../../src/features/vendor/order-board';
 import { OrderStageTabs } from '../../src/features/vendor/OrderStageTabs';
 import { useTaxIdentityQuery } from '../../src/features/vendor/usePanDocument';
-import {
-  useMinuteClock,
-  useVendorOrderSimulator,
-} from '../../src/features/vendor/useVendorOrderSimulator';
+import { useMinuteClock } from '../../src/lib/useMinuteClock';
 import {
   isAlarmRinging,
   useVendorDelivery,
@@ -38,9 +35,7 @@ import {
 } from '../../src/features/vendor/useVendorOrders';
 import { complianceReminder } from '../../src/features/vendor/compliance-reminder';
 import { useVendorAlarm } from '../../src/features/vendor/vendor-alarm';
-import { VENDOR_ORDER_MOCKS_ENABLED } from '../../src/features/vendor/vendor-order-mocks';
 import { VendorOrderCard } from '../../src/features/vendor/VendorOrderCard';
-import { useToastStore } from '../../src/store/useToastStore';
 import { useVendorBoardStore } from '../../src/store/useVendorBoardStore';
 import { useVendorShopStore } from '../../src/store/useVendorShopStore';
 
@@ -61,7 +56,6 @@ interface BoardCardProps {
   onAccept: OrderAction;
   onReject: OrderAction;
   onReady: OrderAction;
-  onRiderPickup: OrderAction;
   onDeliver: (item: BoardOrder, otp: string, onRejected: () => void) => void;
 }
 
@@ -78,7 +72,6 @@ const BoardCard = memo(function BoardCard({
   onAccept,
   onReject,
   onReady,
-  onRiderPickup,
   onDeliver,
 }: BoardCardProps) {
   const { t } = useTranslation();
@@ -97,15 +90,7 @@ const BoardCard = memo(function BoardCard({
       order={item.order}
       customerName={item.customerName}
       elapsed={elapsed}
-      sample={item.mock}
       awaitingRider={item.awaitingRider}
-      onRiderPickup={
-        item.mock
-          ? () => {
-              onRiderPickup(item);
-            }
-          : undefined
-      }
       answered={answered}
       onAccept={() => {
         onAccept(item);
@@ -133,11 +118,11 @@ const keyOf = (item: BoardOrder): string => item.order.id;
  * full volume until the vendor presses Accept or Reject on every waiting order. An accepted order
  * is Preparing until "Ready for Pickup", which dispatches it (refused until the customer's 60 s
  * cancellation window has closed) and moves it to Ready: the shop's own delivery waits there for
- * the customer's 4-digit code, a fleet order for its rider, whose pickup moves it to Handed Over. If the vendor does not answer a new
+ * the customer's 4-digit code, a fleet order for its rider. If the vendor does not answer a new
  * order within 90 s the backend escalates to an IVR call / SMS.
  *
- * Development builds also show sample orders (a new one every 30 s) so the board can be tried
- * without customers: see `vendor-order-mocks.ts`.
+ * Everything on the board comes from the server (GET /api/vendors/orders and the shop's socket
+ * room), plus the orders this device saw leave that list during this sitting.
  */
 export default function VendorDashboardScreen() {
   const { t } = useTranslation();
@@ -152,10 +137,7 @@ export default function VendorDashboardScreen() {
   const online = useVendorShopStore((state) => state.online);
   // What still keeps the shop offline (no PAN, no certificate, or the verification to come).
   const reminder = complianceReminder(useTaxIdentityQuery().data);
-  const toast = useToastStore((store) => store.show);
-  const mocks = useVendorBoardStore((state) => state.mocks);
   const departed = useVendorBoardStore((state) => state.departed);
-  useVendorOrderSimulator(VENDOR_ORDER_MOCKS_ENABLED && online);
   // The board's own record belongs to this sitting: it goes when the vendor signs out.
   useEffect(() => useVendorBoardStore.getState().reset, []);
 
@@ -163,10 +145,7 @@ export default function VendorDashboardScreen() {
   const [stage, setStage] = useState<BoardStage>('NEW');
 
   const live = query.data;
-  const board = useMemo(
-    () => buildBoard(live ?? [], departed, VENDOR_ORDER_MOCKS_ENABLED ? mocks : []),
-    [live, departed, mocks],
-  );
+  const board = useMemo(() => buildBoard(live ?? [], departed), [live, departed]);
   const counts = useMemo(
     () => ({
       NEW: board.NEW.length,
@@ -180,71 +159,45 @@ export default function VendorDashboardScreen() {
   const total = BOARD_STAGES.reduce((sum, each) => sum + counts[each], 0);
 
   const onAccept = useCallback<OrderAction>(
-    ({ order, mock }) => {
-      if (!mock) {
-        decide({ orderId: order.id, decision: 'accept' });
-        return;
-      }
-      useVendorBoardStore.getState().setMockState(order.id, 'PREPARING');
-      toast(t('vendorDashboard.accepted'), 'success');
+    ({ order }) => {
+      decide({ orderId: order.id, decision: 'accept' });
     },
-    [decide, t, toast],
+    [decide],
   );
   const onReject = useCallback<OrderAction>(
-    ({ order, mock }) => {
-      if (!mock) {
-        decide({ orderId: order.id, decision: 'reject' });
-        return;
-      }
-      useVendorBoardStore.getState().removeMock(order.id);
-      toast(t('vendorDashboard.rejected'), 'success');
+    ({ order }) => {
+      decide({ orderId: order.id, decision: 'reject' });
     },
-    [decide, t, toast],
+    [decide],
   );
   const onReady = useCallback<OrderAction>(
-    ({ order, mock }) => {
+    ({ order }) => {
       const fleet = order.fulfillment !== 'SELF_DELIVERY';
-      if (!mock) {
-        dispatch(order.id, {
-          onSuccess: () => {
-            // The server stops listing a fleet order once the riders can take it; the board keeps
-            // it under Ready until its delivery is announced.
-            if (fleet) {
-              useVendorBoardStore
-                .getState()
-                .recordDeparted({ ...order, state: 'OUT_FOR_DELIVERY' });
-            }
-          },
-        });
-        return;
-      }
-      useVendorBoardStore.getState().setMockState(order.id, 'OUT_FOR_DELIVERY');
-      toast(t(fleet ? 'vendorDashboard.dispatchedFleet' : 'vendorDashboard.dispatched'), 'success');
+      dispatch(order.id, {
+        onSuccess: () => {
+          // The server stops listing a fleet order once the riders can take it; the board keeps
+          // it under Ready until its delivery is announced.
+          if (fleet) {
+            useVendorBoardStore.getState().recordDeparted({ ...order, state: 'OUT_FOR_DELIVERY' });
+          }
+        },
+      });
     },
-    [dispatch, t, toast],
+    [dispatch],
   );
-  const onRiderPickup = useCallback<OrderAction>(({ order }) => {
-    useVendorBoardStore.getState().markMockPickedUp(order.id);
-  }, []);
   const onDeliver = useCallback<BoardCardProps['onDeliver']>(
-    ({ order, mock }, otp, onRejected) => {
-      if (!mock) {
-        deliver(
-          { orderId: order.id, otp },
-          {
-            onError: onRejected,
-            onSuccess: () => {
-              useVendorBoardStore.getState().recordDeparted({ ...order, state: 'DELIVERED' });
-            },
+    ({ order }, otp, onRejected) => {
+      deliver(
+        { orderId: order.id, otp },
+        {
+          onError: onRejected,
+          onSuccess: () => {
+            useVendorBoardStore.getState().recordDeparted({ ...order, state: 'DELIVERED' });
           },
-        );
-        return;
-      }
-      // A sample order has no real code: any four digits hand it over.
-      useVendorBoardStore.getState().setMockState(order.id, 'DELIVERED');
-      toast(t('delivery.delivered'), 'success');
+        },
+      );
     },
-    [deliver, t, toast],
+    [deliver],
   );
 
   const renderItem = useCallback<ListRenderItem<BoardOrder>>(
@@ -258,29 +211,18 @@ export default function VendorDashboardScreen() {
         onAccept={onAccept}
         onReject={onReject}
         onReady={onReady}
-        onRiderPickup={onRiderPickup}
         onDeliver={onDeliver}
       />
     ),
-    [
-      acknowledged,
-      deliveringId,
-      dispatchingId,
-      nowMs,
-      onAccept,
-      onDeliver,
-      onReady,
-      onReject,
-      onRiderPickup,
-    ],
+    [acknowledged, deliveringId, dispatchingId, nowMs, onAccept, onDeliver, onReady, onReject],
   );
 
   const header = (
     <Stack.Screen options={{ headerShown: true, title: t('vendorDashboard.title') }} />
   );
 
-  // Without sample orders there is nothing to show until the server has answered.
-  if (live === undefined && !VENDOR_ORDER_MOCKS_ENABLED) {
+  // Nothing to show until the server has answered.
+  if (live === undefined) {
     return (
       <View className="flex-1 items-center justify-center gap-4 bg-gray-50 px-6">
         {header}
@@ -325,11 +267,6 @@ export default function VendorDashboardScreen() {
           </Text>
         </Pressable>
       )}
-      {live === undefined && query.isError ? (
-        <View className="bg-amber-50 px-4 py-2" testID="vendor-live-unavailable">
-          <Text className="text-sm text-amber-900">{t('vendorDashboard.liveUnavailable')}</Text>
-        </View>
-      ) : null}
 
       <OrderStageTabs
         selected={stage}

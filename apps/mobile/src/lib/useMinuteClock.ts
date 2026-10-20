@@ -1,26 +1,5 @@
 import { useEffect, useState } from 'react';
 
-import { useVendorBoardStore } from '../../store/useVendorBoardStore';
-import { MOCK_ORDER_INTERVAL_MS } from './vendor-order-mocks';
-
-/**
- * TEMPORARY (development builds): while `enabled`, seeds the board once and then lets a sample
- * order arrive every 30 seconds, as a busy shop would see them. Disabling it (the shop goes
- * offline, the screen closes) stops the arrivals and leaves the orders already there.
- */
-export function useVendorOrderSimulator(enabled: boolean): void {
-  useEffect(() => {
-    if (!enabled) return undefined;
-    useVendorBoardStore.getState().seedMocks(Date.now());
-    const timer = setInterval(() => {
-      useVendorBoardStore.getState().addIncomingMock(Date.now());
-    }, MOCK_ORDER_INTERVAL_MS);
-    return () => {
-      clearInterval(timer);
-    };
-  }, [enabled]);
-}
-
 /** How often the clock is read; the returned value still changes only once a minute. */
 const MINUTE_CHECK_MS = 15_000;
 

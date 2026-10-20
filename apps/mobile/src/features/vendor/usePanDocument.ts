@@ -12,12 +12,18 @@ import {
 
 export const TAX_IDENTITY_QUERY_KEY = ['vendor', 'tax-identity'] as const;
 
-/** The shop's tax identity as the server holds it (whether a PAN document is on file, verified). */
+/**
+ * The shop's tax identity as the server holds it (whether a PAN document is on file, verified).
+ * It drives the dashboard's "pending verification" banner, and the verification happens on the
+ * Super Admin's side: so it is read again every time the app returns to the foreground
+ * (`refetchOnWindowFocus: 'always'`, see app-focus.ts), and an approval shows without a relaunch.
+ */
 export function useTaxIdentityQuery() {
   return useQuery({
     queryKey: TAX_IDENTITY_QUERY_KEY,
     queryFn: fetchTaxIdentity,
     staleTime: 0,
+    refetchOnWindowFocus: 'always',
     retry: retryTransientFailures,
   });
 }

@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -20,23 +20,28 @@ import {
   type ProductForm,
   type ProductFormErrors,
 } from '../../src/features/vendor/product-form';
+import {
+  loadedProducts,
+  useOwnProductsQuery,
+  useSaveProduct,
+} from '../../src/features/vendor/useVendorProducts';
+import { ApiError } from '../../src/api/http';
+import { PRODUCT_ERROR_CODES } from '../../src/api/vendor-products';
 import { useToastStore } from '../../src/store/useToastStore';
-import { useVendorCatalogueStore } from '../../src/store/useVendorCatalogueStore';
 
 /**
- * Add a product, or edit the one named by `?id=` (opened from the Catalogue tab): name, price,
- * category, stock quantity, and where the photos will go.
+ * Add a product (POST /api/vendor/products), or edit the one named by `?id=` (opened from the
+ * Catalogue tab: PUT /api/vendor/products/:id, and PATCH …/stock when the count changed): name,
+ * price, category from the live taxonomy, stock quantity.
  *
- * TODO: `POST /api/vendor/products` / `PUT /api/vendor/products/:id` (+ `PATCH …/stock`), the
- * categories from `GET /api/categories`, and photos through `POST …/:id/images` with
- * `expo-image-picker` (STATE_HANDOFF.md §8L). Until then the product is saved on the device.
+ * TODO: photos through `POST …/:id/images` with `expo-image-picker` (STATE_HANDOFF.md §8L).
  */
 export default function VendorProductScreen() {
   const { t } = useTranslation();
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const products = useVendorCatalogueStore((state) => state.products);
-  const addProduct = useVendorCatalogueStore((state) => state.addProduct);
-  const updateProduct = useVendorCatalogueStore((state) => state.updateProduct);
+  const productsQuery = useOwnProductsQuery();
+  const products = useMemo(() => loadedProducts(productsQuery.data), [productsQuery.data]);
+  const save = useSaveProduct();
   const toast = useToastStore((store) => store.show);
   // The live taxonomy: hidden categories and everything below them are never offered.
   const categoryOptions = productCategoryOptions(useCategoriesQuery().data?.categories ?? []);
@@ -71,12 +76,33 @@ export default function VendorProductScreen() {
       setErrors(result.errors);
       return;
     }
-    if (editing === null) addProduct(result.details);
-    else updateProduct(editing.id, result.details);
-    toast(t(editing === null ? 'vendorCatalogue.added' : 'vendorCatalogue.updated'), 'success');
-    setForm(EMPTY_PRODUCT_FORM);
-    setErrors({});
-    router.navigate('/catalogue');
+    if (save.isPending) return;
+    save.mutate(
+      { current: editing, draft: result.details },
+      {
+        onSuccess: () => {
+          toast(
+            t(editing === null ? 'vendorCatalogue.added' : 'vendorCatalogue.updated'),
+            'success',
+          );
+          setForm(EMPTY_PRODUCT_FORM);
+          setErrors({});
+          router.navigate('/catalogue');
+        },
+        onError: (error) => {
+          if (error instanceof ApiError && error.code === PRODUCT_ERROR_CODES.nameTaken) {
+            setErrors({ name: 'nameTaken' });
+          } else if (
+            error instanceof ApiError &&
+            error.code === PRODUCT_ERROR_CODES.categoryUnavailable
+          ) {
+            setErrors({ categoryId: 'category' });
+          } else {
+            toast(t('vendorCatalogue.saveError'), 'error');
+          }
+        },
+      },
+    );
   };
 
   const field = (
@@ -179,7 +205,12 @@ export default function VendorProductScreen() {
         }}
       />
 
-      <Button testID="product-save" label={t('vendorCatalogue.save')} onPress={submit} />
+      <Button
+        testID="product-save"
+        label={t('vendorCatalogue.save')}
+        disabled={save.isPending}
+        onPress={submit}
+      />
     </KeyboardScreen>
   );
 }

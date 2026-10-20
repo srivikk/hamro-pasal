@@ -425,7 +425,7 @@ Rules: SPEC.md Dual-Fulfillment "Delivery Modularity", Vendor Pricing "Billing C
 
 ### 6.7 Screens that only need wiring (the API exists)
 
-- [ ] **Catalogue (app work):** the list is `GET /api/vendor/products`, the In Stock switch is the availability route of 6.8, the form is `POST` / `PUT /api/vendor/products`, categories are `GET /api/categories`, photos are `POST …/:id/images`. The app holds a sample catalogue in memory until this is done.
+- [x] **Catalogue (app work): wired 2026-10-20.** The Seller app lists `GET /api/vendor/products` (React Query, paged), adds with `POST`, edits with `PUT` + `PATCH …/stock`, categories by id from `GET /api/categories`; the sample catalogue and the sample Live Orders are deleted (both screens show real data or an empty state). **The row switch is `is_active`** (PUT to show, DELETE to hide) until the availability flag of 6.8 exists; then it should move to that route. Still open: photos (`POST …/:id/images`).
 - [ ] **Ledger by settlement model:** `GET /api/vendors/wallet/balance` gains `settlement_model` and, once `vendor_ledgers` exists (section 5 step 1), `credit_limit_npr`, `ad_fees_owed_npr`, `prepaid_floor_npr`. The app previews models A and C from sample figures until then.
 
 ### 6.8 Product availability flag — P0 (decided 2026-10-07)

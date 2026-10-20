@@ -92,7 +92,4 @@ jest.mock('./src/features/location/describe-place', () => ({
 // API base URL for modules that import src/config/api. Tests that exercise the missing-variable
 // startup error delete it explicitly.
 process.env.EXPO_PUBLIC_API_URL ??= 'http://api.hamropasal.test';
-// The vendor dashboard's sample orders (development builds) stay out of every test that does not
-// ask for them: a test that wants them mocks features/vendor/vendor-order-mocks.
-process.env.EXPO_PUBLIC_MOCK_VENDOR_ORDERS ??= 'false';
 process.env.EXPO_PUBLIC_MOCK_VENDOR_FINANCE ??= 'false';

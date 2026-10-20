@@ -11,7 +11,7 @@ import { Button } from '../../components/Button';
 import { useToastStore } from '../../store/useToastStore';
 import { formatNepalDateTime } from './invoice-math';
 import { sanitizeOfferInput } from './marketing-rules';
-import { useMinuteClock } from './useVendorOrderSimulator';
+import { useMinuteClock } from '../../lib/useMinuteClock';
 import {
   useCancelVendorAdPurchase,
   usePurchaseVendorAd,

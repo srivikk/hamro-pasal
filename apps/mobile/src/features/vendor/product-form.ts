@@ -3,7 +3,10 @@ import {
   flattenCategoryTree,
   toAsciiDigits,
   type CategoryView,
+  type VendorProductView,
 } from '@hamro-pasal/shared-types';
+
+import type { ProductDraft } from '../../api/vendor-products';
 
 import { sanitizeAmountInput } from './shop-settings';
 
@@ -14,7 +17,7 @@ export const MAX_STOCK_QUANTITY = 1_000_000;
 
 /** One choice of the category picker. */
 export interface ProductCategoryOption {
-  /** The category's slug: the local catalogue keys products by it until it is wired to the API. */
+  /** The category's id: what `POST / PUT /api/vendor/products` take as `category_id`. */
   readonly value: string;
   /** Indented by depth, for the list. */
   readonly label: string;
@@ -32,7 +35,7 @@ export function productCategoryOptions(
   categories: readonly CategoryView[],
 ): ProductCategoryOption[] {
   return flattenCategoryTree(buildCategoryTree(categories)).map((node) => ({
-    value: node.slug,
+    value: node.id,
     label: `${'— '.repeat(node.depth - 1)}${node.name}`,
     name: node.name,
   }));
@@ -46,13 +49,8 @@ export function categoryNameOf(
   return options.find((option) => option.value === value)?.name ?? null;
 }
 
-/** What the vendor fills in for a product. */
-export interface ProductDetails {
-  name: string;
-  priceNpr: number;
-  categoryId: string;
-  stockQuantity: number;
-}
+/** What the vendor fills in for a product (sent to the API by `useSaveProduct`). */
+export type ProductDetails = ProductDraft;
 
 /** The form's fields as typed. */
 export interface ProductForm {
@@ -76,12 +74,13 @@ export type ProductFormErrors = Partial<Record<ProductField, ProductFormError>>;
 export type ProductFormResult =
   { ok: true; details: ProductDetails } | { ok: false; errors: ProductFormErrors };
 
-export function formFromProduct(product: ProductDetails): ProductForm {
+/** The form for a product as the server holds it (a product older than the taxonomy has none). */
+export function formFromProduct(product: VendorProductView): ProductForm {
   return {
     name: product.name,
-    price: String(product.priceNpr),
-    categoryId: product.categoryId,
-    stock: String(product.stockQuantity),
+    price: String(product.price_npr),
+    categoryId: product.category_id,
+    stock: String(product.stock_quantity),
   };
 }
 

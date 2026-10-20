@@ -15,7 +15,6 @@ import { useOrderReceiptStore } from '../../store/useOrderReceiptStore';
 import { useOrderStore } from '../../store/useOrderStore';
 import { useProfileStore } from '../../store/useProfileStore';
 import { useVendorBoardStore } from '../../store/useVendorBoardStore';
-import { useVendorCatalogueStore } from '../../store/useVendorCatalogueStore';
 import { useVendorShopStore } from '../../store/useVendorShopStore';
 
 /**
@@ -44,7 +43,6 @@ export function purgeLocalData(queryClient: QueryClient): void {
   useFavouritesStore.setState(useFavouritesStore.getInitialState(), true);
   useVendorShopStore.setState(useVendorShopStore.getInitialState(), true);
   useVendorBoardStore.getState().reset();
-  useVendorCatalogueStore.getState().reset();
   useVendorFinanceStore.setState(useVendorFinanceStore.getInitialState(), true);
 
   getAppStorage().clearAll();

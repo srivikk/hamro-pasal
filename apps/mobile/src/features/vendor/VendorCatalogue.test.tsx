@@ -1,16 +1,22 @@
-import { fireEvent, screen, within } from '@testing-library/react-native';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { http, HttpResponse } from 'msw';
+import type { CategoryView, VendorProductView } from '@hamro-pasal/shared-types';
+import type { ReactElement } from 'react';
 
 import VendorCatalogueScreen from '../../../app/(vendor)/catalogue';
 import VendorProductScreen from '../../../app/(vendor)/product';
 import { filterOptions } from '../../components/SearchableSelect';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useToastStore } from '../../store/useToastStore';
-import { useVendorCatalogueStore } from '../../store/useVendorCatalogueStore';
-import type { CategoryView } from '@hamro-pasal/shared-types';
-import type { ReactElement } from 'react';
-
 import { category, categoryList } from '../../test/api-fixtures';
+import {
+  apiUrl,
+  capture,
+  server,
+  setupApiTestEnvironment,
+  type CapturedRequest,
+} from '../../test/msw';
 import { createTestQueryClient, renderWithProviders } from '../../test/render';
 import { CATEGORIES_QUERY_KEY } from '../discovery/useCategoriesQuery';
 import {
@@ -27,8 +33,8 @@ jest.mock('expo-router', () => ({
   useLocalSearchParams: jest.fn(() => ({})),
 }));
 
-const catalogue = () => useVendorCatalogueStore.getState();
-const product = (id: string) => catalogue().products.find((each) => each.id === id);
+setupApiTestEnvironment();
+
 const toast = () => useToastStore.getState().toast;
 const press = (testID: string): void => {
   fireEvent.press(screen.getByTestId(testID));
@@ -41,8 +47,8 @@ const openProduct = (id?: string): void => {
 };
 
 /** The seeded taxonomy as GET /api/categories serves it: Groceries and its subcategories. */
-const id = (n: number) => `8b3c4d50-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const GROCERIES = category({ id: id(1), name: 'Groceries', slug: 'groceries' });
+const catId = (n: number) => `8b3c4d50-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const GROCERIES = category({ id: catId(1), name: 'Groceries', slug: 'groceries' });
 const SUBCATEGORIES: [string, string][] = [
   ['rice-flour-pulses', 'Rice, Flour & Pulses'],
   ['noodles-snacks', 'Noodles & Snacks'],
@@ -54,10 +60,108 @@ const SUBCATEGORIES: [string, string][] = [
 const TAXONOMY: CategoryView[] = [
   GROCERIES,
   ...SUBCATEGORIES.map(([slug, name], index) =>
-    category({ id: id(index + 2), name, slug, parent_id: GROCERIES.id, display_order: index }),
+    category({ id: catId(index + 2), name, slug, parent_id: GROCERIES.id, display_order: index }),
   ),
 ];
 const OFFERED = productCategoryOptions(TAXONOMY);
+const CATEGORY = Object.fromEntries(TAXONOMY.map((row) => [row.slug, row.id])) as Record<
+  string,
+  string
+>;
+const RICE = CATEGORY['rice-flour-pulses'] ?? '';
+const TEA = CATEGORY['tea-coffee'] ?? '';
+const DAIRY = CATEGORY.dairy ?? '';
+const HONEY = CATEGORY['honey-spreads'] ?? '';
+
+const productId = (n: number) => `5a0e0000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const RICE_ID = productId(1);
+const GHEE_ID = productId(2);
+const TEA_ID = productId(3);
+
+function product(overrides: Partial<VendorProductView> = {}): VendorProductView {
+  return {
+    id: RICE_ID,
+    category_id: RICE,
+    name: 'Basmati Rice 5kg',
+    description: 'Long grain',
+    price_npr: 1150,
+    unit: 'bag',
+    stock_quantity: 12,
+    image_urls: [],
+    is_active: true,
+    metadata: { origin: 'Terai' },
+    created_at: '2026-10-01T00:00:00.000Z',
+    updated_at: '2026-10-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+/** The server's products for this test, by name; the handlers below read and write it. */
+let stored: VendorProductView[] = [];
+let requests: CapturedRequest[] = [];
+const byName = (a: VendorProductView, b: VendorProductView) => a.name.localeCompare(b.name);
+const storedProduct = (id: string) => stored.find((each) => each.id === id);
+
+function serveProducts(): void {
+  server.use(
+    http.get(apiUrl('/api/vendor/products'), async ({ request }) => {
+      requests.push(await capture(request));
+      return HttpResponse.json({ products: [...stored].sort(byName), next_cursor: null });
+    }),
+    http.post(apiUrl('/api/vendor/products'), async ({ request }) => {
+      const sent = await capture(request);
+      requests.push(sent);
+      const body = sent.body as {
+        category_id: string;
+        name: string;
+        price_npr: number;
+        stock_quantity: number;
+      };
+      if (stored.some((each) => each.name.toLowerCase() === body.name.toLowerCase())) {
+        return HttpResponse.json(
+          { error: { code: 'PRODUCT_NAME_TAKEN', message: 'taken' } },
+          { status: 409 },
+        );
+      }
+      const created = product({
+        id: productId(50 + stored.length),
+        ...body,
+        description: null,
+        unit: 'piece',
+        metadata: {},
+      });
+      stored.push(created);
+      return HttpResponse.json({ product: created }, { status: 201 });
+    }),
+    http.put(apiUrl('/api/vendor/products/:id'), async ({ request, params }) => {
+      const sent = await capture(request);
+      requests.push(sent);
+      const current = storedProduct(String(params.id));
+      if (current === undefined) {
+        return HttpResponse.json(
+          { error: { code: 'PRODUCT_NOT_FOUND', message: 'gone' } },
+          { status: 404 },
+        );
+      }
+      Object.assign(current, sent.body);
+      return HttpResponse.json({ product: current });
+    }),
+    http.patch(apiUrl('/api/vendor/products/:id/stock'), async ({ request, params }) => {
+      const sent = await capture(request);
+      requests.push(sent);
+      const current = storedProduct(String(params.id));
+      if (current === undefined) return new HttpResponse(null, { status: 404 });
+      current.stock_quantity = (sent.body as { stock_quantity: number }).stock_quantity;
+      return HttpResponse.json({ product: current });
+    }),
+    http.delete(apiUrl('/api/vendor/products/:id'), async ({ request, params }) => {
+      requests.push(await capture(request));
+      const current = storedProduct(String(params.id));
+      if (current !== undefined) current.is_active = false;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+}
 
 /** Renders with the taxonomy already loaded, as the app has it once GET /api/categories answered. */
 const renderSeller = (
@@ -70,16 +174,49 @@ const renderSeller = (
   return renderWithProviders(ui, { queryClient, locale });
 };
 
+/** The catalogue, loaded; for the form, the cached list it reads the product from. */
+async function renderCatalogue(categories: CategoryView[] = TAXONOMY, locale: 'en' | 'ne' = 'en') {
+  const view = renderSeller(<VendorCatalogueScreen />, categories, locale);
+  await screen.findByTestId('catalogue-list');
+  return view;
+}
+
 const form = (overrides: Partial<ProductForm> = {}): ProductForm => ({
   name: 'Local Honey 500g',
   price: '900',
-  categoryId: 'honey-spreads',
+  categoryId: HONEY,
   stock: '8',
   ...overrides,
 });
 
 beforeEach(() => {
-  catalogue().reset();
+  stored = [
+    product(),
+    product({
+      id: GHEE_ID,
+      name: 'DDC Ghee 500ml',
+      category_id: DAIRY,
+      price_npr: 750,
+      stock_quantity: 8,
+      is_active: false,
+    }),
+    product({
+      id: TEA_ID,
+      name: 'Ilam Tea 500g',
+      category_id: TEA,
+      price_npr: 450,
+      stock_quantity: 30,
+    }),
+    product({
+      id: productId(4),
+      name: 'Wai Wai Noodles (pack of 30)',
+      category_id: CATEGORY['noodles-snacks'] ?? '',
+      price_npr: 600,
+      stock_quantity: 0,
+    }),
+  ];
+  requests = [];
+  serveProducts();
   useAuthStore.getState().setLocale('en');
   useToastStore.setState({ toast: null });
   jest.mocked(router.push).mockClear();
@@ -93,12 +230,7 @@ describe('product form rules', () => {
       validateProductForm(form({ name: '  Local   Honey 500g ', price: '899.50' }), [], OFFERED),
     ).toEqual({
       ok: true,
-      details: {
-        name: 'Local Honey 500g',
-        priceNpr: 899.5,
-        categoryId: 'honey-spreads',
-        stockQuantity: 8,
-      },
+      details: { name: 'Local Honey 500g', priceNpr: 899.5, categoryId: HONEY, stockQuantity: 8 },
     });
   });
 
@@ -124,7 +256,7 @@ describe('product form rules', () => {
   });
 
   it('refuses a category that is not on the list', () => {
-    expect(validateProductForm(form({ categoryId: 'electronics' }), [], OFFERED)).toEqual({
+    expect(validateProductForm(form({ categoryId: catId(99) }), [], OFFERED)).toEqual({
       ok: false,
       errors: { categoryId: 'category' },
     });
@@ -157,121 +289,144 @@ describe('the searchable list', () => {
   });
 });
 
-describe('catalogue store', () => {
-  it('starts with the sample catalogue, by name', () => {
-    expect(catalogue().products.map((each) => each.name)).toEqual([
-      'Basmati Rice 5kg',
-      'DDC Ghee 500ml',
-      'Ilam Tea 500g',
-      'Masoor Dal 1kg',
-      'Wai Wai Noodles (pack of 30)',
-    ]);
-  });
+describe('Catalogue tab (GET /api/vendor/products)', () => {
+  it("lists the shop's products from the server, with name, category, price and stock", async () => {
+    await renderCatalogue();
 
-  it('Out of Stock is a flag: the stock count is never overwritten', () => {
-    catalogue().setAvailable('seed-1', false);
-    expect(product('seed-1')).toMatchObject({ isAvailable: false, stockQuantity: 12 });
-
-    catalogue().setAvailable('seed-1', true);
-    expect(product('seed-1')).toMatchObject({ isAvailable: true, stockQuantity: 12 });
-  });
-
-  it('changes that one product only', () => {
-    const before = product('seed-3');
-    catalogue().setAvailable('seed-1', false);
-    expect(product('seed-3')).toBe(before);
-  });
-
-  it('adds a product, available, in name order; an edit keeps the availability flag', () => {
-    const id = catalogue().addProduct({
-      name: 'Curd 1L',
-      priceNpr: 180,
-      categoryId: 'dairy',
-      stockQuantity: 6,
-    });
-    expect(catalogue().products.map((each) => each.name)[1]).toBe('Curd 1L');
-    expect(product(id)?.isAvailable).toBe(true);
-
-    catalogue().setAvailable(id, false);
-    catalogue().updateProduct(id, {
-      name: 'Curd 1L',
-      priceNpr: 190,
-      categoryId: 'dairy',
-      stockQuantity: 0,
-    });
-    expect(product(id)).toMatchObject({ priceNpr: 190, stockQuantity: 0, isAvailable: false });
-  });
-});
-
-describe('Catalogue tab', () => {
-  it('lists the products with name, category, price and stock', () => {
-    renderSeller(<VendorCatalogueScreen />);
-
-    const row = within(screen.getByTestId('product-seed-1'));
+    expect(requests[0]).toMatchObject({ method: 'GET' });
+    expect(requests[0]?.url.searchParams.get('limit')).toBe('50');
+    expect(requests[0]?.headers.get('authorization')).toMatch(/^Bearer /);
+    const row = within(screen.getByTestId(`product-${RICE_ID}`));
     expect(row.getByText('Basmati Rice 5kg')).toBeOnTheScreen();
     expect(row.getByText('Rice, Flour & Pulses')).toBeOnTheScreen();
     expect(row.getByText('Rs. 1150')).toBeOnTheScreen();
-    expect(screen.getByTestId('product-stock-seed-1')).toHaveTextContent('In stock: 12');
-    expect(screen.getByTestId('product-stock-switch-seed-1').props.value).toBe(true);
-    expect(screen.getByTestId('catalogue-sample-note')).toBeOnTheScreen();
+    expect(screen.getByTestId(`product-stock-${RICE_ID}`)).toHaveTextContent('In stock: 12');
+    expect(screen.getByTestId(`product-listed-switch-${RICE_ID}`).props.value).toBe(true);
+    // Nothing on the device invents products.
+    expect(screen.queryByText(/sample/i)).not.toBeOnTheScreen();
   });
 
-  it('shows a product switched out of stock with its switch off, whatever its count', () => {
-    renderSeller(<VendorCatalogueScreen />);
+  it('shows the empty state when the shop has no product yet (a wiped database)', async () => {
+    stored = [];
+    await renderCatalogue();
 
-    expect(product('seed-2')?.stockQuantity).toBe(8);
-    expect(screen.getByTestId('product-stock-seed-2')).toHaveTextContent('Out of stock');
-    expect(screen.getByTestId('product-stock-switch-seed-2').props.value).toBe(false);
+    expect(screen.getByTestId('catalogue-empty')).toHaveTextContent(
+      'Your catalogue is empty. Add your first product.',
+    );
+    expect(screen.getByTestId('catalogue-add')).toBeOnTheScreen();
   });
 
-  it('says "No stock left" for a product that is switched on but has none to sell', () => {
+  it('shows a loading state, then an error with a retry when the list cannot be loaded', async () => {
+    server.use(
+      http.get(apiUrl('/api/vendor/products'), () =>
+        HttpResponse.json({ error: { code: 'FORBIDDEN', message: 'x' } }, { status: 403 }),
+      ),
+    );
     renderSeller(<VendorCatalogueScreen />);
+    expect(screen.getByTestId('catalogue-loading')).toBeOnTheScreen();
 
-    expect(screen.getByTestId('product-stock-seed-5')).toHaveTextContent('No stock left');
-    expect(screen.getByTestId('product-stock-switch-seed-5').props.value).toBe(true);
+    expect(await screen.findByTestId('catalogue-load-error')).toBeOnTheScreen();
+
+    serveProducts();
+    fireEvent.press(screen.getByText('Try again'));
+    expect(await screen.findByTestId('catalogue-list')).toBeOnTheScreen();
   });
 
-  it('switches a product out of stock and back, at once, on its row', () => {
-    renderSeller(<VendorCatalogueScreen />);
+  it('marks a hidden product and one with no stock left', async () => {
+    await renderCatalogue();
 
-    fireEvent(screen.getByTestId('product-stock-switch-seed-1'), 'valueChange', false);
-    expect(screen.getByTestId('product-stock-seed-1')).toHaveTextContent('Out of stock');
-    expect(screen.getByTestId('product-stock-switch-seed-1').props.value).toBe(false);
-    expect(product('seed-1')?.stockQuantity).toBe(12); // the count is kept
-    // Only that row changed.
-    expect(screen.getByTestId('product-stock-seed-3')).toHaveTextContent('In stock: 30');
-
-    fireEvent(screen.getByTestId('product-stock-switch-seed-1'), 'valueChange', true);
-    expect(screen.getByTestId('product-stock-seed-1')).toHaveTextContent('In stock: 12');
+    expect(screen.getByTestId(`product-stock-${GHEE_ID}`)).toHaveTextContent(
+      'Hidden from customers',
+    );
+    expect(screen.getByTestId(`product-listed-switch-${GHEE_ID}`).props.value).toBe(false);
+    expect(screen.getByTestId(`product-stock-${productId(4)}`)).toHaveTextContent('No stock left');
   });
 
-  it('opens a new product from the Add button and an existing one from its row', () => {
-    renderSeller(<VendorCatalogueScreen />);
+  it('hides a product with DELETE and shows it again with a PUT that keeps its details', async () => {
+    await renderCatalogue();
+
+    fireEvent(screen.getByTestId(`product-listed-switch-${RICE_ID}`), 'valueChange', false);
+    await waitFor(() => {
+      expect(screen.getByTestId(`product-stock-${RICE_ID}`)).toHaveTextContent(
+        'Hidden from customers',
+      );
+    });
+    expect(requests.find((each) => each.method === 'DELETE')?.url.pathname).toBe(
+      `/api/vendor/products/${RICE_ID}`,
+    );
+    expect(storedProduct(RICE_ID)?.stock_quantity).toBe(12); // the count is kept
+
+    fireEvent(screen.getByTestId(`product-listed-switch-${RICE_ID}`), 'valueChange', true);
+    await waitFor(() => {
+      expect(screen.getByTestId(`product-stock-${RICE_ID}`)).toHaveTextContent('In stock: 12');
+    });
+    // The PUT replaces every detail: what the app does not edit is sent back as it was.
+    expect(requests.find((each) => each.method === 'PUT')?.body).toEqual({
+      category_id: RICE,
+      name: 'Basmati Rice 5kg',
+      description: 'Long grain',
+      price_npr: 1150,
+      unit: 'bag',
+      is_active: true,
+      metadata: { origin: 'Terai' },
+    });
+  });
+
+  it('opens the editor instead of showing a product that has no category yet', async () => {
+    stored.push(
+      product({ id: productId(9), name: 'Old Product', category_id: null, is_active: false }),
+    );
+    await renderCatalogue();
+
+    fireEvent(screen.getByTestId(`product-listed-switch-${productId(9)}`), 'valueChange', true);
+
+    expect(router.push).toHaveBeenLastCalledWith({
+      pathname: '/product',
+      params: { id: productId(9) },
+    });
+    expect(requests.some((each) => each.method === 'PUT')).toBe(false);
+  });
+
+  it('says so when the switch could not be changed', async () => {
+    server.use(
+      http.delete(apiUrl('/api/vendor/products/:id'), () =>
+        HttpResponse.json(
+          { error: { code: 'INTERNAL_SERVER_ERROR', message: 'x' } },
+          { status: 500 },
+        ),
+      ),
+    );
+    await renderCatalogue();
+
+    fireEvent(screen.getByTestId(`product-listed-switch-${RICE_ID}`), 'valueChange', false);
+
+    await waitFor(() => {
+      expect(toast()).toMatchObject({
+        message: "Couldn't change this product. Try again.",
+        tone: 'error',
+      });
+    });
+    expect(screen.getByTestId(`product-listed-switch-${RICE_ID}`).props.value).toBe(true);
+  });
+
+  it('opens a new product from the Add button and an existing one from its row', async () => {
+    await renderCatalogue();
 
     press('catalogue-add');
     expect(router.push).toHaveBeenLastCalledWith('/product');
 
-    press('product-edit-seed-3');
-    expect(router.push).toHaveBeenLastCalledWith({
-      pathname: '/product',
-      params: { id: 'seed-3' },
-    });
+    press(`product-edit-${TEA_ID}`);
+    expect(router.push).toHaveBeenLastCalledWith({ pathname: '/product', params: { id: TEA_ID } });
   });
 
-  it('shows Nepali digits under ne', () => {
-    renderSeller(<VendorCatalogueScreen />, TAXONOMY, 'ne');
-    expect(screen.getByTestId('product-stock-seed-1')).toHaveTextContent('स्टकमा: १२');
-  });
-
-  it('says so when the shop has no product', () => {
-    useVendorCatalogueStore.setState({ products: [] });
-    renderSeller(<VendorCatalogueScreen />);
-    expect(screen.getByTestId('catalogue-empty')).toBeOnTheScreen();
+  it('shows Nepali digits under ne', async () => {
+    await renderCatalogue(TAXONOMY, 'ne');
+    expect(screen.getByTestId(`product-stock-${RICE_ID}`)).toHaveTextContent('स्टकमा: १२');
   });
 });
 
 describe('product form screen', () => {
-  it('adds a product: name, price, a category picked from the list, and stock', () => {
+  it('adds a product with POST /api/vendor/products: name, price, category id and stock', async () => {
     renderSeller(<VendorProductScreen />);
     expect(screen.getByTestId('product-form-title')).toHaveTextContent('New product');
 
@@ -279,23 +434,27 @@ describe('product form screen', () => {
     type('product-price', '900');
     press('product-category');
     type('product-category-search', 'honey');
-    expect(screen.queryByTestId('product-category-option-dairy')).not.toBeOnTheScreen();
-    press('product-category-option-honey-spreads');
+    expect(screen.queryByTestId(`product-category-option-${DAIRY}`)).not.toBeOnTheScreen();
+    press(`product-category-option-${HONEY}`);
     expect(screen.getByTestId('product-category')).toHaveTextContent('Honey & Spreads');
     type('product-stock', '8');
     press('product-save');
 
-    expect(catalogue().products).toHaveLength(6);
-    expect(catalogue().products.find((each) => each.name === 'Local Honey 500g')).toMatchObject({
-      priceNpr: 900,
-      categoryId: 'honey-spreads',
-      stockQuantity: 8,
+    await waitFor(() => {
+      expect(router.navigate).toHaveBeenCalledWith('/catalogue');
     });
+    expect(requests.find((each) => each.method === 'POST')?.body).toMatchObject({
+      category_id: HONEY,
+      name: 'Local Honey 500g',
+      price_npr: 900,
+      stock_quantity: 8,
+      image_urls: [],
+    });
+    expect(stored.find((each) => each.name === 'Local Honey 500g')).toBeDefined();
     expect(toast()).toMatchObject({ message: 'Product added.', tone: 'success' });
-    expect(router.navigate).toHaveBeenCalledWith('/catalogue');
   });
 
-  it('saves nothing and marks the fields while the form is incomplete', () => {
+  it('sends nothing and marks the fields while the form is incomplete', () => {
     renderSeller(<VendorProductScreen />);
 
     press('product-save');
@@ -303,28 +462,29 @@ describe('product form screen', () => {
     expect(screen.getByTestId('product-name-error')).toHaveTextContent('Enter a product name.');
     expect(screen.getByTestId('product-price-error')).toHaveTextContent('Enter a price above 0.');
     expect(screen.getByTestId('product-category-error')).toHaveTextContent('Choose a category.');
-    expect(catalogue().products).toHaveLength(5);
+    expect(requests.some((each) => each.method === 'POST')).toBe(false);
     expect(router.navigate).not.toHaveBeenCalled();
   });
 
-  it('refuses a second product with the same name', () => {
+  it("shows the server's PRODUCT_NAME_TAKEN on the name field", async () => {
     renderSeller(<VendorProductScreen />);
     type('product-name', 'ilam tea 500g');
     type('product-price', '400');
     press('product-category');
-    press('product-category-option-tea-coffee');
+    press(`product-category-option-${TEA}`);
 
     press('product-save');
 
-    expect(screen.getByTestId('product-name-error')).toHaveTextContent(
+    expect(await screen.findByTestId('product-name-error')).toHaveTextContent(
       'You already have a product with this name.',
     );
-    expect(catalogue().products).toHaveLength(5);
+    expect(router.navigate).not.toHaveBeenCalled();
   });
 
-  it('edits an existing product, filled in from the catalogue, keeping its own name', () => {
-    openProduct('seed-3');
-    renderSeller(<VendorProductScreen />);
+  it('edits a product from the server: PUT for the details, PATCH …/stock for a new count', async () => {
+    const view = await renderCatalogue();
+    openProduct(TEA_ID);
+    view.rerender(<VendorProductScreen />);
     expect(screen.getByTestId('product-form-title')).toHaveTextContent('Edit product');
     expect(screen.getByTestId('product-name')).toHaveDisplayValue('Ilam Tea 500g');
     expect(screen.getByTestId('product-price')).toHaveDisplayValue('450');
@@ -335,14 +495,34 @@ describe('product form screen', () => {
     type('product-stock', '२५');
     press('product-save');
 
-    expect(product('seed-3')).toMatchObject({ priceNpr: 475, stockQuantity: 25 });
-    expect(catalogue().products).toHaveLength(5);
-    expect(toast()?.message).toBe('Product updated.');
+    await waitFor(() => {
+      expect(toast()?.message).toBe('Product updated.');
+    });
+    expect(storedProduct(TEA_ID)).toMatchObject({ price_npr: 475, stock_quantity: 25 });
+    const put = requests.find((each) => each.method === 'PUT');
+    expect(put?.url.pathname).toBe(`/api/vendor/products/${TEA_ID}`);
+    expect(put?.body).not.toHaveProperty('stock_quantity');
+    expect(requests.find((each) => each.method === 'PATCH')?.body).toEqual({ stock_quantity: 25 });
   });
 
-  it('starts a fresh form when the route is reused for another product', () => {
-    openProduct('seed-3');
-    const view = renderSeller(<VendorProductScreen />);
+  it('sends no stock PATCH when the count is unchanged', async () => {
+    const view = await renderCatalogue();
+    openProduct(TEA_ID);
+    view.rerender(<VendorProductScreen />);
+
+    type('product-price', '460');
+    press('product-save');
+
+    await waitFor(() => {
+      expect(toast()?.message).toBe('Product updated.');
+    });
+    expect(requests.some((each) => each.method === 'PATCH')).toBe(false);
+  });
+
+  it('starts a fresh form when the route is reused for another product', async () => {
+    const view = await renderCatalogue();
+    openProduct(TEA_ID);
+    view.rerender(<VendorProductScreen />);
     expect(screen.getByTestId('product-name')).toHaveDisplayValue('Ilam Tea 500g');
 
     openProduct();
@@ -358,12 +538,11 @@ describe('product form screen', () => {
     press('product-image-upload');
 
     expect(toast()?.message).toBe('Photo upload is coming soon.');
-    expect(catalogue().products).toHaveLength(5);
   });
 });
 
 describe('category picker: hidden categories cascade (decided 2026-10-20)', () => {
-  it('offers the live taxonomy in tree order, subcategories indented', () => {
+  it('offers the live taxonomy in tree order, subcategories indented, keyed by id', () => {
     expect(OFFERED.map((option) => option.label)).toEqual([
       'Groceries',
       '— Rice, Flour & Pulses',
@@ -373,58 +552,55 @@ describe('category picker: hidden categories cascade (decided 2026-10-20)', () =
       '— Fresh Vegetables',
       '— Honey & Spreads',
     ]);
-    expect(categoryNameOf(OFFERED, 'dairy')).toBe('Dairy');
+    expect(categoryNameOf(OFFERED, DAIRY)).toBe('Dairy');
   });
 
   it('never offers a category whose parent is hidden, nor anything below it', () => {
     // Organic Milk is active itself, under Dairy; the server left out Dairy, which the admin hid.
     const organic = category({
-      id: id(20),
+      id: catId(20),
       name: 'Organic Milk',
       slug: 'organic-milk',
-      parent_id: id(5),
+      parent_id: DAIRY,
     });
     const withoutDairy = [...TAXONOMY.filter((row) => row.slug !== 'dairy'), organic];
 
     const offered = productCategoryOptions(withoutDairy);
 
-    expect(offered.map((option) => option.value)).not.toContain('dairy');
-    expect(offered.map((option) => option.value)).not.toContain('organic-milk');
-    expect(categoryNameOf(offered, 'organic-milk')).toBeNull();
+    expect(offered.map((option) => option.value)).not.toContain(DAIRY);
+    expect(offered.map((option) => option.value)).not.toContain(catId(20));
+    expect(categoryNameOf(offered, catId(20))).toBeNull();
   });
 
   it('refuses a category that was hidden after the form was opened', () => {
     const withoutDairy = productCategoryOptions(TAXONOMY.filter((row) => row.slug !== 'dairy'));
 
-    expect(validateProductForm(form({ categoryId: 'dairy' }), [], withoutDairy)).toEqual({
+    expect(validateProductForm(form({ categoryId: DAIRY }), [], withoutDairy)).toEqual({
       ok: false,
       errors: { categoryId: 'category' },
     });
   });
 
-  it('leaves a hidden category out of the dropdown and marks the products filed there', () => {
-    const withoutDairy = TAXONOMY.filter((row) => row.slug !== 'dairy');
-    renderSeller(<VendorCatalogueScreen />, withoutDairy);
+  it('marks the products filed under a hidden category', async () => {
+    await renderCatalogue(TAXONOMY.filter((row) => row.slug !== 'dairy'));
 
-    // seed-2 is DDC Ghee, filed under Dairy.
     expect(
-      within(screen.getByTestId('product-seed-2')).getByText('Category hidden by Hamro Pasal'),
+      within(screen.getByTestId(`product-${GHEE_ID}`)).getByText('Category hidden by Hamro Pasal'),
     ).toBeOnTheScreen();
   });
 
-  it('makes the vendor choose another category when editing a product whose category is hidden', () => {
-    openProduct('seed-2');
-    renderSeller(
-      <VendorProductScreen />,
-      TAXONOMY.filter((row) => row.slug !== 'dairy'),
-    );
+  it('makes the vendor choose another category when editing a product whose category is hidden', async () => {
+    const withoutDairy = TAXONOMY.filter((row) => row.slug !== 'dairy');
+    const view = await renderCatalogue(withoutDairy);
+    openProduct(GHEE_ID);
+    view.rerender(<VendorProductScreen />);
     press('product-category');
-    expect(screen.queryByTestId('product-category-option-dairy')).not.toBeOnTheScreen();
+    expect(screen.queryByTestId(`product-category-option-${DAIRY}`)).not.toBeOnTheScreen();
     press('product-category');
 
     press('product-save');
 
     expect(screen.getByTestId('product-category-error')).toHaveTextContent('Choose a category.');
-    expect(product('seed-2')?.categoryId).toBe('dairy');
+    expect(requests.some((each) => each.method === 'PUT')).toBe(false);
   });
 });

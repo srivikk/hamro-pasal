@@ -151,6 +151,8 @@ export const vendorSchema = z.strictObject({
   /** A Super Admin's check of the PAN document. Null freezes payouts, never trading. */
   pan_verified_at: z.date().nullable(),
   pan_verified_by_user_id: z.uuid().nullable(),
+  /** 2026-10-21: the job that verified the PAN (the automated IRD lookup), when no admin did. */
+  pan_verified_by_job: z.string().nullable(),
   /**
    * Phase 34: where the uploaded PAN document lives in the private document store (its object
    * key). Never a public URL and never sent to a client: it is read through the API.

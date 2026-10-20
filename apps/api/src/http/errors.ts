@@ -1,3 +1,5 @@
+import { IrdCheckNotFoundError, IrdCheckNotInReviewError } from '../admin/admin-compliance-service';
+import { PanChecksumInvalidError } from '../vendor/vendor-compliance-service';
 import {
   MAX_DISPUTE_EVIDENCE_BYTES,
   MAX_PRODUCT_IMAGES,
@@ -498,6 +500,26 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof DefaultPlanNotCommissionError) {
     return new HttpError(422, 'DEFAULT_PLAN_NOT_COMMISSION', error.message);
+  }
+  if (error instanceof IrdCheckNotFoundError) {
+    return new HttpError(404, 'IRD_CHECK_NOT_FOUND', 'No such IRD check');
+  }
+  if (error instanceof IrdCheckNotInReviewError) {
+    return new HttpError(
+      409,
+      'IRD_CHECK_NOT_IN_REVIEW',
+      'Only a check in manual review can be retried',
+      {
+        status: error.status,
+      },
+    );
+  }
+  if (error instanceof PanChecksumInvalidError) {
+    return new HttpError(
+      422,
+      'PAN_CHECKSUM_INVALID',
+      'This PAN is not valid: its last digit does not match. Check the number and try again.',
+    );
   }
   if (error instanceof PanMissingError) {
     return new HttpError(409, 'PAN_MISSING', 'The vendor has no PAN on file to verify');

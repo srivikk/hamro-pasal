@@ -14,6 +14,8 @@ export const JOB_QUEUES = {
   MIDNIGHT_MAINTENANCE: 'midnight-maintenance',
   /** Step 7.6: queued data exports, built and emailed one job at a time. */
   DATA_EXPORT: 'data-export',
+  /** 2026-10-21: one automated IRD lookup of a vendor's PAN (an ird_pan_checks row). */
+  IRD_PAN_VERIFICATION: 'ird-pan-verification',
 } as const;
 export type JobQueueName = (typeof JOB_QUEUES)[keyof typeof JOB_QUEUES];
 
@@ -90,6 +92,12 @@ export const dataExportJobSchema = z.strictObject({
   job_id: z.uuid(),
 });
 export type DataExportJob = z.infer<typeof dataExportJobSchema>;
+
+/** 2026-10-21: one IRD PAN check (the ird_pan_checks row holds the PAN and its state). */
+export const irdPanCheckJobSchema = z.strictObject({
+  check_id: z.uuid(),
+});
+export type IrdPanCheckJob = z.infer<typeof irdPanCheckJobSchema>;
 
 export const ghostCustomerTimerJobSchema = z.strictObject({
   order_id: z.uuid(),

@@ -86,6 +86,8 @@ export const vendors = pgTable(
     // in the transaction that saves a different PAN.
     pan_verified_at: timestamp({ withTimezone: true, mode: 'date' }),
     pan_verified_by_user_id: uuid().references(() => users.id, { onDelete: 'restrict' }),
+    // 2026-10-21: or by the platform's own job (the automated IRD lookup), named here instead.
+    pan_verified_by_job: text(),
     // Phase 34: the uploaded PAN document's object key in the private document store. Not a
     // public URL: the object is read only through the API (the vendor's upload, the admin's view).
     pan_document_url: text(),
@@ -195,10 +197,10 @@ export const vendors = pgTable(
       'vendors_registered_address_check',
       sql`${t.registered_address} IS NULL OR btrim(${t.registered_address}) <> ''`,
     ),
-    // Verified by someone, at some time, and only a PAN on file can be verified.
+    // Verified by someone (one admin, or one job), at some time, and only a PAN on file.
     check(
       'vendors_pan_verification_check',
-      sql`(${t.pan_verified_at} IS NULL) = (${t.pan_verified_by_user_id} IS NULL) AND (${t.pan_verified_at} IS NULL OR ${t.tax_id} IS NOT NULL)`,
+      sql`(${t.pan_verified_at} IS NULL) = (num_nonnulls(${t.pan_verified_by_user_id}, ${t.pan_verified_by_job}) = 0) AND num_nonnulls(${t.pan_verified_by_user_id}, ${t.pan_verified_by_job}) <= 1 AND (${t.pan_verified_at} IS NULL OR ${t.tax_id} IS NOT NULL)`,
     ),
     check(
       'vendors_serviceable_palikas_size_check',

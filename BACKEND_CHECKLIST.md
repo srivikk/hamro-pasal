@@ -602,6 +602,15 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 8. The discount engine (section 5 step 2) is **done 2026-10-09 (§8Z.34)**: vendor offers stack with campaigns in the quote and checkout, on the order, in settlement and on the invoice, and both apps are wired. Left of step 2: `payment_session` in the checkout response. Fiscal invoicing (6.4): the waiting invoices, the list, the PDF and its Devanagari font are done; left are the detail read, the customer's and admin's reads and Credit / Debit Notes.
 9. **A device run of the new screens**, after rebuilding the development client (expo-file-system, expo-sharing): the cart on a real quote, the two refusal dialogs, the invoice download and share sheet.
 
+## Automated IRD KYC verification (2026-10-21, STATE_HANDOFF.md §8Z.42)
+
+- [x] **MOD 11-2 PAN pre-validation** on `PUT /api/vendor/tax-identity` (`422 PAN_CHECKSUM_INVALID`), behind `PAN_CHECKSUM_ENFORCED`, **off by default**: the IRD has published no check-digit rule.
+  - [ ] Confirm the rule with the IRD before turning it on.
+- [x] **The IRD check** (migration 0046, `ird_pan_checks`): requested in the transaction that leaves a PAN and its document on file; `vendor.pan_check_requested` → worker → BullMQ `ird-pan-verification` → Playwright + 2Captcha on https://ird.gov.np/pan-search/ (rotating `IRD_PROXY_URLS`), 3 attempts, 30 s per network step; a name match (≥ 0.85) with an Active registration verifies the PAN as the job; anything else goes to manual review.
+- [x] **Manual review:** `GET /api/admin/kyc/manual-review`, `POST /api/admin/kyc/checks/:id/retry`; the Dashboard's "Action Required: Manual Review" panel.
+- [ ] **Before production:** Chromium in the worker image (`npx playwright-core install --with-deps chromium`), a funded 2Captcha key, one real lookup against the IRD, and legal sign-off on automating the site.
+- [ ] Tell the vendor the outcome (SMS / push), and alert an admin when the queue grows.
+
 ## Notification events (2026-10-09, STATE_HANDOFF.md §8Z.36)
 
 - [x] **Four events in the existing transactional outbox** (`outbox_events`, migration 0005; no new table), relayed to `notifications.broadcast`: `vendor.suspended_for_compliance`, `marketing.ad_ended`, `marketing.ad_paused`, `marketing.campaign_terms_changed`. Each is written last in the transaction of its change.

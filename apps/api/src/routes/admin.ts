@@ -1,3 +1,7 @@
+import type {
+  AdminIrdCheckRetryResponse,
+  AdminIrdManualReviewListResponse,
+} from '@hamro-pasal/shared-types';
 import {
   adminAuditLogListQuerySchema,
   adminDeadLetterListQuerySchema,
@@ -489,6 +493,41 @@ export function adminRouter({
       ),
     };
     res.json(body);
+  });
+
+  /** 2026-10-21: the IRD checks the worker could not settle, oldest first. */
+  router.get('/kyc/manual-review', async (_req, res) => {
+    const entries = await compliance.manualReviewQueue();
+    const body: AdminIrdManualReviewListResponse = {
+      checks: entries.map(({ check, vendor }) => ({
+        check_id: check.id,
+        vendor_id: vendor.id,
+        vendor_code: vendor.vendor_code,
+        business_name: vendor.business_name,
+        legal_name: vendor.legal_name,
+        vendor_status: vendor.status,
+        tax_id: check.tax_id,
+        // The state CHECK guarantees a reason in MANUAL_REVIEW.
+        reason: check.review_reason ?? 'SCRAPER_FAILED',
+        attempts: check.attempts,
+        ird_business_name: check.ird_business_name,
+        ird_registration_date: check.ird_registration_date,
+        name_similarity: check.name_similarity,
+        last_error: check.last_error,
+        requested_at: check.created_at.toISOString(),
+        completed_at: check.completed_at?.toISOString() ?? null,
+      })),
+    };
+    res.set('Cache-Control', 'no-store');
+    res.json(body);
+  });
+
+  /** 2026-10-21: queue a check in manual review again. No body. */
+  router.post('/kyc/checks/:id/retry', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const check = await compliance.retryIrdCheck(authOf(req).userId, id, auditContextOf(req, res));
+    const body: AdminIrdCheckRetryResponse = { check_id: check.id, status: 'QUEUED' };
+    res.status(202).json(body);
   });
 
   /**

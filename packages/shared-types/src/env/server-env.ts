@@ -25,6 +25,8 @@ export type WalletTopUpMode = (typeof walletTopUpModes)[number];
  * in production; DISABLED (the default) places no call, so the escalation is SMS only.
  */
 export const ivrProviders = ['MOCK', 'DISABLED'] as const;
+/** 2026-10-21: how the worker checks a PAN with the IRD (see IRD_VERIFICATION_PROVIDER). */
+export const irdVerificationProviders = ['PLAYWRIGHT', 'MOCK', 'DISABLED'] as const;
 
 /** Step 7.1 (decided 2026-10-15): Amazon SES over SMTP; MOCK logs; DISABLED sends nothing. */
 export const mailProviders = ['SES_SMTP', 'MOCK', 'DISABLED'] as const;
@@ -187,6 +189,30 @@ export const serverEnvSchema = z
     S3_PUBLIC_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
     S3_FORCE_PATH_STYLE: z.stringbool().default(false),
 
+    // Automated IRD PAN verification (2026-10-21, read by the worker). PLAYWRIGHT drives the IRD's
+    // public PAN search in a headless Chromium and has its invisible reCAPTCHA solved by 2Captcha
+    // (TWOCAPTCHA_API_KEY). IRD_PROXY_URLS, when set, is a comma-separated list of proxy URLs
+    // (http://user:pass@host:port) used in turn, one per attempt. MOCK answers from a fixed table
+    // (refused in production); DISABLED sends every check straight to manual review.
+    IRD_VERIFICATION_PROVIDER: z.enum(irdVerificationProviders).default('DISABLED'),
+    IRD_PAN_SEARCH_URL: z.url({ protocol: /^https$/ }).default('https://ird.gov.np/pan-search/'),
+    TWOCAPTCHA_API_KEY: optionalNonEmpty,
+    // A Chromium for PLAYWRIGHT; default: the one `npx playwright-core install chromium` installed.
+    IRD_CHROMIUM_PATH: optionalNonEmpty,
+    IRD_PROXY_URLS: z
+      .string()
+      .default('')
+      .transform((list) =>
+        list
+          .split(',')
+          .map((url) => url.trim())
+          .filter((url) => url !== ''),
+      )
+      .pipe(z.array(z.url({ protocol: /^(https?|socks5)$/ }))),
+    // The MOD 11-2 PAN check digit (2026-10-21): the IRD has published no such rule, so this is off
+    // until it is confirmed; when on, PUT /api/vendor/tax-identity refuses a PAN that fails it.
+    PAN_CHECKSUM_ENFORCED: z.stringbool().default(false),
+
     // Vendor wallet top-ups (Phase 12.5).
     WALLET_TOP_UP_MODE: z.enum(walletTopUpModes).default('DISABLED'),
 
@@ -323,6 +349,16 @@ export const serverEnvSchema = z
         'MAIL_PROVIDER=SES_SMTP',
       );
     }
+    if (env.IRD_VERIFICATION_PROVIDER === 'PLAYWRIGHT') {
+      requireKeys(['TWOCAPTCHA_API_KEY'], 'IRD_VERIFICATION_PROVIDER=PLAYWRIGHT');
+    }
+    if (env.IRD_VERIFICATION_PROVIDER === 'MOCK' && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['IRD_VERIFICATION_PROVIDER'],
+        message: 'MOCK is not allowed in production',
+      });
+    }
     if (env.MAIL_PROVIDER === 'MOCK' && env.NODE_ENV === 'production') {
       ctx.addIssue({
         code: 'custom',
@@ -380,7 +416,13 @@ export function parseServerEnv(source: Readonly<Record<string, string | undefine
     throw new InvalidEnvError(z.prettifyError(result.error));
   }
   return mockServicesEnabled(result.data)
-    ? { ...result.data, SMS_PROVIDER: 'MOCK', IVR_PROVIDER: 'MOCK', MAIL_PROVIDER: 'MOCK' }
+    ? {
+        ...result.data,
+        SMS_PROVIDER: 'MOCK',
+        IVR_PROVIDER: 'MOCK',
+        MAIL_PROVIDER: 'MOCK',
+        IRD_VERIFICATION_PROVIDER: 'MOCK',
+      }
     : result.data;
 }
 

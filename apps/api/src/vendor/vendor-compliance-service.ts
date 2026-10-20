@@ -5,13 +5,14 @@ import type {
   DisputeEvidenceContentType,
   TaxIdentityRequest,
 } from '@hamro-pasal/shared-types';
+import { isPanChecksumValid } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 
 import { VendorAccountNotFoundError } from '../orders/vendor-order-service';
 import type { KycDocumentStorage } from '../uploads/kyc-document-storage';
-import { suspendForCompliance, type VendorRow } from './compliance-standing';
+import { requestIrdPanCheck, suspendForCompliance, type VendorRow } from '@hamro-pasal/ledger';
 
-export type { VendorRow } from './compliance-standing';
+export type { VendorRow } from '@hamro-pasal/ledger';
 
 export interface TaxIdentityResult {
   readonly vendor: VendorRow;
@@ -42,10 +43,27 @@ export interface PanDocumentResult {
  * also removes the document uploaded for the old number (Phase 35): a document belongs to one PAN,
  * and an admin must never be shown the old certificate beside a new number.
  */
+/**
+ * PAN_CHECKSUM_ENFORCED (2026-10-21): the PAN fails the MOD 11-2 check digit. Refused before
+ * anything is written, so a structurally invalid PAN never reaches the IRD check's queue.
+ */
+export class PanChecksumInvalidError extends Error {
+  constructor(readonly taxId: string) {
+    super(`PAN ${taxId} fails the check digit`);
+    this.name = 'PanChecksumInvalidError';
+  }
+}
+
+export interface VendorComplianceOptions {
+  /** PAN_CHECKSUM_ENFORCED: refuse a PAN whose ninth digit is not its MOD 11-2 check digit. */
+  readonly panChecksumEnforced?: boolean;
+}
+
 export class VendorComplianceService {
   constructor(
     private readonly db: Database,
     private readonly documents: KycDocumentStorage,
+    private readonly options: VendorComplianceOptions = {},
   ) {}
 
   /** What the caller's shop has on file (GET /api/vendor/tax-identity). */
@@ -124,6 +142,8 @@ export class VendorComplianceService {
           afterState: { pan_document_url: key, size_bytes: image.bytes.length },
           context,
         });
+        // A PAN and its document, not yet verified: the IRD lookup starts (2026-10-21).
+        await requestIrdPanCheck(tx, after);
         if (verificationCleared) {
           await recordAuditLog(tx, {
             actor,
@@ -196,6 +216,9 @@ export class VendorComplianceService {
     input: TaxIdentityRequest,
     context: AuditContext,
   ): Promise<TaxIdentityResult> {
+    if (this.options.panChecksumEnforced === true && !isPanChecksumValid(input.tax_id)) {
+      throw new PanChecksumInvalidError(input.tax_id);
+    }
     const { result, removedKey } = await this.saveTaxIdentityRow(actor, input, context);
     if (removedKey !== null) await this.discard(removedKey);
     return result;
@@ -297,6 +320,10 @@ export class VendorComplianceService {
           context,
         });
       }
+
+      // A changed PAN supersedes the IRD check of the old one; a new name re-runs one that the
+      // names did not match; a first PAN with its document on file starts one (2026-10-21).
+      await requestIrdPanCheck(tx, after);
 
       return {
         result: {

@@ -19,6 +19,8 @@ import {
 } from './order-push-notifications';
 import { adminPushConsumer } from './admin-push';
 import { exportSchedulerConsumer, type DataExportScheduler } from './export-scheduler';
+import type { IrdCheckScheduler } from '../kyc/ird-queue';
+import { panCheckSchedulerConsumer } from './pan-check-scheduler';
 import { disputeNoticeConsumer } from './dispute-notices';
 import { notifyMeConsumer } from './notify-me';
 import {
@@ -73,6 +75,8 @@ export interface ConsumerDeps {
   readonly adminPush?: Pick<AdminPushService, 'deliver'>;
   /** Step 7.6: puts queued exports on the DATA_EXPORT queue. Absent: not consumed here. */
   readonly dataExports?: DataExportScheduler;
+  /** 2026-10-21: puts requested IRD PAN checks on their queue. Absent: not consumed here. */
+  readonly irdChecks?: IrdCheckScheduler;
 }
 
 /** Register Kafka topic handlers here. Several may share a topic (see routeByTopic). */
@@ -163,6 +167,17 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
       : [
           withDeadLetter(exportSchedulerConsumer({ scheduler: deps.dataExports }), {
             name: 'export-scheduler',
+            deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
+            publisher: deps.deadLetters,
+            store: deps.deadLetterStore,
+          }),
+        ]),
+    // 2026-10-21: the IRD PAN check. Its own retries and dead letters too.
+    ...(deps.irdChecks === undefined
+      ? []
+      : [
+          withDeadLetter(panCheckSchedulerConsumer({ scheduler: deps.irdChecks }), {
+            name: 'pan-check-scheduler',
             deadLetterTopic: KAFKA_TOPICS.NOTIFICATIONS_DLQ,
             publisher: deps.deadLetters,
             store: deps.deadLetterStore,

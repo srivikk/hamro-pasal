@@ -478,6 +478,24 @@ h2 {
   background: var(--brand);
 }
 
+.card.action-required {
+  border-color: var(--marigold);
+  box-shadow: inset 4px 0 0 var(--marigold);
+}
+
+.count-badge {
+  display: inline-block;
+  margin-left: 8px;
+  min-width: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #ffffff;
+  font-size: 0.8rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
 .status-pill {
   display: inline-block;
   border-radius: 999px;

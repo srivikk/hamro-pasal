@@ -6,7 +6,7 @@ import {
   recordAuditLog,
   type Transaction,
 } from '@hamro-pasal/db';
-import { generateFiscalInvoice, InvoiceNotIssuableError } from '@hamro-pasal/ledger';
+import { generateFiscalInvoice, InvoiceNotIssuableError } from './fiscal-invoice';
 import type { AuditActor, AuditContext, VendorStatus } from '@hamro-pasal/shared-types';
 import { and, asc, eq, notExists, sql } from 'drizzle-orm';
 

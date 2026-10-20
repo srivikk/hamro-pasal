@@ -10,3 +10,6 @@ export * from './wallet-service';
 export * from './bs-calendar';
 export * from './order-lifecycle';
 export * from './dispute-hold';
+export * from './compliance-standing';
+export * from './pan-verification';
+export * from './ird-checks';

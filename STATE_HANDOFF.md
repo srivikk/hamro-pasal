@@ -1100,6 +1100,114 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.42 Automated IRD KYC verification: MOD 11-2 pre-validation, the Playwright + 2Captcha worker, the manual-review queue (2026-10-21)
+
+Branch `epic/master-completion`. `packages/shared-types`, `packages/db` (migration **0046**),
+`packages/ledger`, `apps/api`, `apps/worker`, `apps/admin`. New dependency: **`playwright-core`
+1.56.1** (worker). **SPEC.md amended** (core 10, Super Admin flow 8).
+
+### Decisions (user, 2026-10-21, asked before building)
+
+| Question                                           | Decision                                    | Built                                      |
+| -------------------------------------------------- | ------------------------------------------- | ------------------------------------------ |
+| MOD 11-2 on PANs (no published IRD rule found)     | Build it, behind a flag                     | `PAN_CHECKSUM_ENFORCED`, **default false** |
+| What a name match does                             | Auto-verify the PAN                         | The job verifies; SPEC core 10 amended     |
+| CAPTCHA solving + rotating proxies on the IRD site | Build it; the business accepts the ToS risk | Playwright + 2Captcha + `IRD_PROXY_URLS`   |
+
+### Asked vs built
+
+| Asked                                 | Built                                                                                                              | Why                                                                                                                                                     |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Extract the CAPTCHA" (an image)      | 2Captcha `RecaptchaV2TaskProxyless` with the page's site key                                                       | The live page (read 2026-10-21) uses an **invisible reCAPTCHA v2**, not an image CAPTCHA                                                                |
+| "inject the payload, submit the form" | the page's own `onSubmit(token)` is called with the token                                                          | That is the reCAPTCHA's callback; it POSTs `/api/getPanSearch/` and renders the answer                                                                  |
+| 30 s limit                            | 30 s per network step (page, each 2Captcha call, the search, the result); CAPTCHA solving has its own 120 s budget | 2Captcha's reCAPTCHA solves take 15–45 s; one 30 s budget for the whole attempt would fail most attempts                                                |
+| "Auto-approve the vendor"             | the job **verifies the PAN** (`pan_verified_at`, `pan_verified_by_job`)                                            | Approval (SANDBOXED → APPROVED/LIVE) stays the admin's (vendor flow 4). Verification is what lifts `SUSPENDED_COMPLIANCE` and issues waiting invoices   |
+| Kafka flow for vendor signups         | `vendor.pan_check_requested` on `notifications.broadcast` (the topic of `vendor.signed_up`)                        | A check needs a PAN **and** its document; at signup neither exists. It is written by the PAN save or the document upload that completes the application |
+
+### Flow
+
+```
+PUT /api/vendor/tax-identity ─┐ (PAN_CHECKSUM_ENFORCED: 422 PAN_CHECKSUM_INVALID, nothing written)
+POST …/tax-identity/document ─┴─ same tx: requestIrdPanCheck(tx, vendor)
+     PAN + document, unverified → ird_pan_checks QUEUED + outbox vendor.pan_check_requested
+     (an open check for another PAN, or one in MANUAL_REVIEW, is SUPERSEDED first)
+  → OutboxRelay → Kafka notifications.broadcast
+  → worker consumer pan-check-scheduler (withDeadLetter) → BullMQ ird-pan-verification
+     (job id ird-<check>-<requested ms>; concurrency 1; limiter 1 start / 10 s)
+  → IrdPanVerificationService.run(check):
+     claim QUEUED→RUNNING (or RUNNING abandoned > 10 min) ── else SKIPPED
+     DISABLED → MANUAL_REVIEW AUTOMATION_DISABLED
+     attempts 1..3 (waits 5 s, 15 s):
+        FOUND → Active? name score ≥ 0.85? → verifyVendorPan(job) ⇒ VERIFIED
+                                            else MANUAL_REVIEW (IRD_ACCOUNT_INACTIVE | NAME_MISMATCH)
+        LAYOUT_CHANGED → MANUAL_REVIEW at once
+        NOT_FOUND / thrown error → next attempt; after the 3rd PAN_NOT_FOUND | SCRAPER_FAILED
+```
+
+- Every write to the check is guarded by `status = 'RUNNING'`: a check superseded mid-run (the PAN
+  changed, an admin verified) keeps its new state; a verification on a superseded check is rolled
+  back (tested: the PAN changed during the lookup → SUPERSEDED, vendor not verified).
+- `verifyVendorPan` (moved to `@hamro-pasal/ledger` with `compliance-standing.ts`) is the one
+  verification transaction, for the admin button and the job; `expectTaxId` refuses a PAN changed
+  since the lookup. An admin's verification closes the vendor's open checks (RESOLVED / SUPERSEDED).
+- Audit: `PAN_VERIFIED` and `IRD_PAN_CHECK_COMPLETED` with `system_actor = IRD_PAN_VERIFICATION`;
+  `IRD_PAN_CHECK_RETRIED` by the admin.
+
+### Schema (0046)
+
+- `ird_pan_checks` (status `QUEUED | RUNNING | VERIFIED | MANUAL_REVIEW | SUPERSEDED | RESOLVED`,
+  `review_reason`, `attempts` 0–3, `ird_business_name`, `ird_registration_date`,
+  `name_similarity`, `last_error`, `resolved_by_user_id`, timestamps); one open check per vendor
+  (partial unique index); a state CHECK ties reason, completion time and resolver to the status.
+- `vendors.pan_verified_by_job`; `vendors_pan_verification_check` now takes exactly one of the user
+  or the job. In `vendorSchema` and the contract.
+
+### Worker modules (`apps/worker/src/kyc/`)
+
+`ird-lookup.ts` (adapter contract), `playwright-ird-lookup.ts`, `two-captcha.ts`,
+`proxy-rotation.ts`, `ird-result-parser.ts` (pure; reads the page's rendered #result / #errdiv),
+`mock-ird-lookup.ts` (by last digit: 0 not found, 9 mismatch, 8 closed, 7 layout, else match),
+`ird-pan-verification.ts` (the state machine), `ird-queue.ts` (queue, scheduler, processor, env
+factory); `consumers/pan-check-scheduler.ts`.
+
+### Admin
+
+`GET /api/admin/kyc/manual-review`, `POST /api/admin/kyc/checks/:id/retry` (202; 409
+`IRD_CHECK_NOT_IN_REVIEW`, 404 `IRD_CHECK_NOT_FOUND`). Dashboard: "Action Required: Manual Review"
+panel first (reason, IRD name and score, registration date, attempts, last error, Try again) and a
+"KYC manual reviews" stat card. Verifying stays on the Compliance tab.
+
+### Env
+
+`IRD_VERIFICATION_PROVIDER` (PLAYWRIGHT | MOCK | DISABLED, default DISABLED; MOCK refused in
+production; `MOCK_SERVICES` forces MOCK), `IRD_PAN_SEARCH_URL`, `TWOCAPTCHA_API_KEY` (required for
+PLAYWRIGHT), `IRD_PROXY_URLS`, `IRD_CHROMIUM_PATH`, `PAN_CHECKSUM_ENFORCED`. The worker image needs
+Chromium: `npx playwright-core install --with-deps chromium`.
+
+### Not done / to know
+
+- **Never run against the real IRD or 2Captcha.** The adapter is tested in a real headless Chromium
+  against a local replica of the IRD page (form, site key, `onSubmit`, `/api/getPanSearch/`,
+  result markup copied from the live page on 2026-10-21); 2Captcha against a fake HTTP API.
+- The IRD answers "invalid information" both for an unknown PAN and a refused token, so the worker
+  cannot tell them apart; both retry, then `PAN_NOT_FOUND`. A token is never reported to 2Captcha as
+  incorrect for the same reason.
+- reCAPTCHA tokens are solved proxyless (by 2Captcha's workers), while the search goes through the
+  rotating proxy. If the IRD starts binding tokens to the IP, switch to `RecaptchaV2Task` with the
+  proxy passed to 2Captcha.
+- The vendor is not notified of the outcome (no SMS / push for VERIFIED or MANUAL_REVIEW).
+- The seed's shops are verified by SQL and get no check.
+
+### Tests
+
+shared-types 395 (+18: MOD 11-2 against ISO/ISNI/ORCID vectors, name matching, env), ledger 42, api
+unit 193, worker unit 208 (+15: parser on the IRD's real template, 2Captcha protocol and failures,
+proxy rotation, consumer), admin 342 (+2). Integration: db 184; worker
+`ird-pan-verification.int` 15 (real PostgreSQL: verify, mismatch, retry then verify, exactly 3
+attempts, not found, layout, inactive, disabled, PAN changed mid-run, document gone, idempotent
+claim, two workers racing, supersede, the unique index) and `playwright-ird-lookup.int` 6 (real
+Chromium; fails unless Chromium is installed or `SKIP_BROWSER_TESTS=true`); api `ird-kyc-api.int` 11.
+
 ## 8Z.41 "Sajilo cha hai" design system: tokens, fonts, brand artwork, component library, three app layouts (2026-10-21)
 
 Branch **`epic/master-completion`**. Mobile (`apps/mobile`) and admin (`apps/admin`) only: **no API,

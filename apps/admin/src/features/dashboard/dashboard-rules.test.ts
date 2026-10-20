@@ -1,10 +1,14 @@
-import type { AdminVendorView } from '@hamro-pasal/shared-types';
+import { irdReviewReasons, type AdminVendorView } from '@hamro-pasal/shared-types';
+
+import { fakeAdminApi } from '../../api/fake-admin-api';
 
 import {
   approvalQueue,
   dashboardStats,
   shopsByMunicipality,
+  REVIEW_REASON_LABELS,
   signupsPerMonth,
+  similarityLabel,
 } from './dashboard-rules';
 
 let next = 0;
@@ -87,5 +91,32 @@ describe('dashboard figures', () => {
     const late = vendor({ status: 'SANDBOXED', created_at: '2026-10-10T00:00:00.000Z' });
     const early = vendor({ status: 'SANDBOXED', created_at: '2026-10-01T00:00:00.000Z' });
     expect(approvalQueue([late, vendor({}), early]).map((v) => v.id)).toEqual([early.id, late.id]);
+  });
+});
+
+describe('the IRD manual review queue', () => {
+  it('words every review reason and the name score', () => {
+    for (const reason of irdReviewReasons) {
+      expect(REVIEW_REASON_LABELS[reason].length).toBeGreaterThan(0);
+    }
+    expect(similarityLabel(0.724)).toBe('72% name match (auto-verify needs 85%)');
+  });
+
+  it('reads the queue and retries a check through their routes', async () => {
+    const checkId = '7b1f0c8e-0000-4000-8000-000000000003';
+    const { api, calls } = fakeAdminApi((call) =>
+      call.startsWith('GET')
+        ? { body: { checks: [] } }
+        : { status: 202, body: { check_id: checkId, status: 'QUEUED' } },
+    );
+    await expect(api.listIrdManualReview()).resolves.toEqual({ checks: [] });
+    await expect(api.retryIrdCheck(checkId)).resolves.toEqual({
+      check_id: checkId,
+      status: 'QUEUED',
+    });
+    expect(calls.map((call) => call.call)).toEqual([
+      'GET /api/admin/kyc/manual-review',
+      `POST /api/admin/kyc/checks/${checkId}/retry`,
+    ]);
   });
 });

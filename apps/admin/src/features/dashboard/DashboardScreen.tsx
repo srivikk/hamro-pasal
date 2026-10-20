@@ -9,6 +9,7 @@ import {
   signupsPerMonth,
   type BarDatum,
 } from './dashboard-rules';
+import { MANUAL_REVIEW_KEY, ManualReviewQueue } from './ManualReviewQueue';
 
 /** The same cache entries the Vendors and Settlements tabs use: no extra request on switching. */
 const VENDORS_KEY = ['admin', 'vendors'] as const;
@@ -89,6 +90,10 @@ function BarChart({
 export function DashboardScreen() {
   const api = useAdminApi();
   const vendors = useQuery({ queryKey: VENDORS_KEY, queryFn: () => api.listVendors() });
+  const reviews = useQuery({
+    queryKey: MANUAL_REVIEW_KEY,
+    queryFn: () => api.listIrdManualReview(),
+  });
   const settlements = useQuery({ queryKey: SETTLEMENTS_KEY, queryFn: () => api.listSettlements() });
 
   if (vendors.isPending) return <p className="muted">Loading…</p>;
@@ -126,6 +131,8 @@ export function DashboardScreen() {
     <section className="dashboard" aria-labelledby="dashboard-title">
       <h1 id="dashboard-title">Dashboard</h1>
 
+      <ManualReviewQueue />
+
       <div className="stat-grid">
         <StatCard label="Live shops" value={String(stats.liveShops)} testId="stat-live" />
         <StatCard
@@ -133,6 +140,12 @@ export function DashboardScreen() {
           value={String(stats.awaitingApproval)}
           tone={stats.awaitingApproval > 0 ? 'attention' : 'plain'}
           testId="stat-pending"
+        />
+        <StatCard
+          label="KYC manual reviews"
+          value={reviews.data === undefined ? '…' : String(reviews.data.checks.length)}
+          tone={(reviews.data?.checks.length ?? 0) > 0 ? 'attention' : 'plain'}
+          testId="stat-kyc-review"
         />
         <StatCard label="Suspended shops" value={String(stats.suspended)} testId="stat-suspended" />
         <StatCard label="Payable to shops" value={owed} testId="stat-payable" />

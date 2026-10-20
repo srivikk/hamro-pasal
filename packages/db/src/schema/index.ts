@@ -10,6 +10,7 @@ export * from './disputes';
 export * from './enums';
 export * from './exports';
 export * from './invoices';
+export * from './kyc';
 export * from './ledger';
 export * from './marketing';
 export * from './notification-centre';

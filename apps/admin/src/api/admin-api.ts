@@ -1,4 +1,8 @@
 import {
+  adminIrdCheckRetryResponseSchema,
+  adminIrdManualReviewListResponseSchema,
+  type AdminIrdCheckRetryResponse,
+  type AdminIrdManualReviewListResponse,
   adminVendorApprovedResponseSchema,
   adminVendorCreatedResponseSchema,
   tutorialListResponseSchema,
@@ -198,6 +202,10 @@ export interface AdminApi {
   listComplianceVendors(): Promise<AdminComplianceVendorListResponseBody>;
   /** No body. Stamps the check on a PAN on file; a repeat keeps the first stamp. Never changes `status`. */
   verifyVendorPan(id: string): Promise<PanVerificationResponseBody>;
+  /** 2026-10-21: the IRD checks the worker could not settle ("Action Required: Manual Review"). */
+  listIrdManualReview(): Promise<AdminIrdManualReviewListResponse>;
+  /** Queues a check in manual review again (202). */
+  retryIrdCheck(checkId: string): Promise<AdminIrdCheckRetryResponse>;
   /** Phase 26: every pricing plan, withdrawn ones included. */
   listPricingPlans(): Promise<AdminPricingPlanListResponseBody>;
   createPricingPlan(input: PricingPlanCreate): Promise<AdminPricingPlanResponseBody>;
@@ -422,6 +430,18 @@ export function createAdminApi(client: ApiClient): AdminApi {
         method: 'GET',
         path: '/api/admin/compliance/vendors',
         schema: adminComplianceVendorListResponseSchema,
+      }),
+    listIrdManualReview: () =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/kyc/manual-review',
+        schema: adminIrdManualReviewListResponseSchema,
+      }),
+    retryIrdCheck: (checkId) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/kyc/checks/${encodeURIComponent(checkId)}/retry`,
+        schema: adminIrdCheckRetryResponseSchema,
       }),
     verifyVendorPan: (id) =>
       client.request({

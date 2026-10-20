@@ -76,6 +76,8 @@ export function buildTestApp(
     walletTopUpMode?: WalletTopUpMode;
     /** MOCK_SERVICES: serves POST /api/test/mock-payment. */
     mockServices?: boolean;
+    /** PAN_CHECKSUM_ENFORCED: the MOD 11-2 check digit on a saved PAN. */
+    panChecksumEnforced?: boolean;
   } = {},
 ): TestApp {
   const sms = options.sms ?? new MockSmsGateway();
@@ -98,6 +100,9 @@ export function buildTestApp(
       },
       walletTopUpMode: options.walletTopUpMode ?? 'MOCK',
       ...(options.mockServices === undefined ? {} : { mockServices: options.mockServices }),
+      ...(options.panChecksumEnforced === undefined
+        ? {}
+        : { panChecksumEnforced: options.panChecksumEnforced }),
     },
     {
       db: testDatabase(),

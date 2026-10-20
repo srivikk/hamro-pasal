@@ -33,6 +33,8 @@ export const auditEntityTypes = [
   'export_job',
   /** Step 7.8: an in-app tutorial video. */
   'app_tutorial',
+  /** 2026-10-21: an automated IRD lookup of a vendor's PAN (ird_pan_checks). */
+  'ird_pan_check',
 ] as const;
 export const auditEntityTypeSchema = z.enum(auditEntityTypes);
 export type AuditEntityType = z.infer<typeof auditEntityTypeSchema>;
@@ -83,6 +85,10 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   TAX_IDENTITY_SAVED: 'vendor',
   PAN_VERIFIED: 'vendor',
   PAN_VERIFICATION_CLEARED: 'vendor',
+  // IRD PAN verification (2026-10-21): the worker's outcome (verified, or sent to manual review),
+  // and a Super Admin's request for another try.
+  IRD_PAN_CHECK_COMPLETED: 'ird_pan_check',
+  IRD_PAN_CHECK_RETRIED: 'ird_pan_check',
   // Phase 34: the PAN document a vendor uploaded (first, or in place of an earlier one).
   PAN_DOCUMENT_UPLOADED: 'vendor',
   // Phase 35: a changed PAN number took the document of the old one with it.

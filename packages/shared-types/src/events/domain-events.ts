@@ -281,6 +281,18 @@ export const exportRequestedPayloadSchema = z.strictObject({
   job_id: z.uuid(),
 });
 
+/**
+ * IRD PAN verification (2026-10-21): a vendor's PAN and its document are both on file and not yet
+ * verified, so the worker should look the PAN up. Written in the transaction that saved the PAN or
+ * uploaded the document, with the ird_pan_checks row it names.
+ */
+export const vendorPanCheckRequestedPayloadSchema = z.strictObject({
+  check_id: z.uuid(),
+  vendor_id: z.uuid(),
+  tax_id: z.string().regex(/^[0-9]{9}$/),
+  requested_at: z.iso.datetime(),
+});
+
 /** Step 7.7 (SPEC core 11): a shop signed itself up in the Seller app (SANDBOXED), for review. */
 export const vendorSignedUpPayloadSchema = z.strictObject({
   vendor_id: z.uuid(),
@@ -448,6 +460,10 @@ export const exportRequestedEventSchema = envelope(
   exportRequestedPayloadSchema,
 );
 export const vendorSignedUpEventSchema = envelope('vendor.signed_up', vendorSignedUpPayloadSchema);
+export const vendorPanCheckRequestedEventSchema = envelope(
+  'vendor.pan_check_requested',
+  vendorPanCheckRequestedPayloadSchema,
+);
 export const marketingAdEndedEventSchema = envelope(
   'marketing.ad_ended',
   marketingAdEndedPayloadSchema,
@@ -482,6 +498,7 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   disputeResolvedEventSchema,
   notificationBroadcastRequestedEventSchema,
   exportRequestedEventSchema,
+  vendorPanCheckRequestedEventSchema,
   vendorSignedUpEventSchema,
   marketingAdEndedEventSchema,
   marketingAdPausedEventSchema,
@@ -547,6 +564,7 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'notification.broadcast_requested': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'export.requested': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.signed_up': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.pan_check_requested': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_ended': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.ad_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'marketing.campaign_terms_changed': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,

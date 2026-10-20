@@ -40,6 +40,14 @@ import {
 } from './queues/definitions';
 import { createExportProcessor, createProcessors, createTimerHandlers } from './queues/processors';
 import { ExportJobService } from './exports/export-job';
+import { IrdPanVerificationService } from './kyc/ird-pan-verification';
+import {
+  bullIrdCheckScheduler,
+  createIrdProcessor,
+  createIrdQueue,
+  irdLookupFromEnv,
+  IRD_RATE_LIMIT_MS,
+} from './kyc/ird-queue';
 import { DisputeHoldReleaseService } from './finance/dispute-hold-release';
 import { AdminPushService } from './notifications/admin-push';
 import { DisputeNoticeService } from './notifications/dispute-notices';
@@ -126,6 +134,21 @@ async function main(): Promise<void> {
       concurrency: 2,
     }),
   ];
+  // 2026-10-21: the automated IRD PAN check. IRD_VERIFICATION_PROVIDER=PLAYWRIGHT drives the IRD's
+  // public PAN search in headless Chromium (2Captcha for its reCAPTCHA, IRD_PROXY_URLS in turn);
+  // MOCK answers locally; DISABLED sends every check to the admin's manual review. One check at a
+  // time, at most one start every 10 s.
+  const irdQueue = createIrdQueue(connection);
+  lifecycle.register(() => irdQueue.close());
+  const irdLookup = irdLookupFromEnv(env, db);
+  if (irdLookup !== null) lifecycle.register(() => irdLookup.close());
+  workers.push(
+    new Worker(
+      irdQueue.name,
+      createIrdProcessor(new IrdPanVerificationService({ db, lookup: irdLookup })),
+      { connection, concurrency: 1, limiter: { max: 1, duration: IRD_RATE_LIMIT_MS } },
+    ),
+  );
   for (const worker of workers) {
     worker.on('failed', (job, error) => {
       console.error(`[worker] ${worker.name} job ${job?.id ?? '?'} failed`, error);
@@ -177,6 +200,7 @@ async function main(): Promise<void> {
     // Step 7.5: the Super Admin's messages reach the devices.
     adminPush: new AdminPushService(db, push),
     dataExports: { schedule: (jobId) => scheduleDataExport(queues.dataExport, jobId) },
+    irdChecks: bullIrdCheckScheduler(irdQueue),
   });
   if (consumers.length > 0) {
     const handlers = routeByTopic(consumers);

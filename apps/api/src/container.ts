@@ -105,6 +105,8 @@ export interface ApiConfig {
   readonly mockServices?: boolean;
   /** Step 7.7: the Seller app link in an onboarding invite (SELLER_APP_URL). */
   readonly sellerAppUrl?: string;
+  /** PAN_CHECKSUM_ENFORCED (2026-10-21): the MOD 11-2 check digit on a saved PAN. */
+  readonly panChecksumEnforced?: boolean;
 }
 
 export interface Infrastructure {
@@ -169,6 +171,7 @@ export function apiConfigFromEnv(env: ServerEnv): ApiConfig {
     walletTopUpMode: env.WALLET_TOP_UP_MODE,
     mockServices: mockServicesEnabled(env),
     sellerAppUrl: env.SELLER_APP_URL,
+    panChecksumEnforced: env.PAN_CHECKSUM_ENFORCED,
   };
 }
 
@@ -253,7 +256,9 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     vendorFinance: new VendorFinanceService(infra.db, ledger),
     adminPayouts: new AdminPayoutService(infra.db, ledger),
     vendorBilling: new VendorBillingService(infra.db),
-    vendorCompliance: new VendorComplianceService(infra.db, infra.kycDocuments),
+    vendorCompliance: new VendorComplianceService(infra.db, infra.kycDocuments, {
+      panChecksumEnforced: config.panChecksumEnforced === true,
+    }),
     vendorDeliverySettings: new VendorDeliverySettingsService(infra.db),
     vendorAvailability: new VendorAvailabilityService(infra.db),
     adminAuditLogs: new AuditLogService(infra.db),

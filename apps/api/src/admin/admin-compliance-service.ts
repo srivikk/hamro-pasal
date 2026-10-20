@@ -1,11 +1,13 @@
 import {
   auditLogs,
   enqueueDomainEvent,
+  irdPanChecks,
   recordAuditLog,
   vendors,
   type Database,
   type Transaction,
 } from '@hamro-pasal/db';
+import { PanVendorNotFoundError, verifyVendorPan } from '@hamro-pasal/ledger';
 import {
   ADMIN_VENDOR_LIST_LIMIT,
   NO_AUDIT_CONTEXT,
@@ -13,12 +15,34 @@ import {
 } from '@hamro-pasal/shared-types';
 import { and, asc, eq, sql } from 'drizzle-orm';
 
+export type IrdCheckRow = typeof irdPanChecks.$inferSelect;
+
+/** One check in the manual-review queue, with the vendor it is about. */
+export interface ManualReviewEntry {
+  readonly check: IrdCheckRow;
+  readonly vendor: VendorRow;
+}
+
+/** No IRD check with that id. */
+export class IrdCheckNotFoundError extends Error {
+  constructor(readonly checkId: string) {
+    super(`IRD check ${checkId} not found`);
+    this.name = 'IrdCheckNotFoundError';
+  }
+}
+
+/** Only a check waiting in manual review can be tried again. */
+export class IrdCheckNotInReviewError extends Error {
+  constructor(
+    readonly checkId: string,
+    readonly status: string,
+  ) {
+    super(`IRD check ${checkId} is ${status}, not in manual review`);
+    this.name = 'IrdCheckNotInReviewError';
+  }
+}
+
 import type { KycDocumentStorage, StoredDocument } from '../uploads/kyc-document-storage';
-import {
-  issueWaitingInvoices,
-  standingWithVerifiedPan,
-  waitingOrders,
-} from '../vendor/compliance-standing';
 import { AdminVendorNotFoundError } from '../wallet/wallet-service';
 
 type VendorRow = typeof vendors.$inferSelect;
@@ -29,24 +53,9 @@ export interface ComplianceVendor {
   readonly complianceSuspendedAt: Date | null;
 }
 
-/** The vendor has saved no PAN: there is nothing to verify. */
-export class PanMissingError extends Error {
-  constructor(readonly vendorId: string) {
-    super(`Vendor ${vendorId} has no PAN on file`);
-    this.name = 'PanMissingError';
-  }
-}
-
-/**
- * Phase 35: the vendor has a PAN but uploaded no document for it. A Super Admin verifies a
- * document, never a bare number, so there is nothing to verify yet.
- */
-export class PanDocumentMissingError extends Error {
-  constructor(readonly vendorId: string) {
-    super(`Vendor ${vendorId} has uploaded no PAN document to verify`);
-    this.name = 'PanDocumentMissingError';
-  }
-}
+// The verification transaction and its refusals live in @hamro-pasal/ledger (2026-10-21): the
+// automated IRD check runs the same transaction.
+export { PanDocumentMissingError, PanMissingError } from '@hamro-pasal/ledger';
 
 /** The vendor uploaded no PAN document (or its object is gone from the store). */
 export class PanDocumentNotFoundError extends Error {
@@ -57,11 +66,9 @@ export class PanDocumentNotFoundError extends Error {
 }
 
 /**
- * The Super Admin's side of PAN compliance (SPEC core section 10, "PAN verification").
- *
- * Verifying a PAN gates payouts, never trading: it does not touch `status`. It cannot lift a
- * compliance suspension either; only the transaction that saves the vendor's PAN does
- * (VendorComplianceService), and that same transaction clears this stamp when the PAN changes.
+ * The Super Admin's side of PAN compliance (SPEC core section 10, "PAN verification"). Since
+ * 2026-10-20 the verification is what lets a shop trade; since 2026-10-21 the automated IRD check
+ * can make it too, and the checks it cannot settle wait here for a person (AdminKycService).
  */
 export class AdminComplianceService {
   constructor(
@@ -113,113 +120,109 @@ export class AdminComplianceService {
   }
 
   /**
-   * One transaction under the vendor row lock (the lock a PAN change takes, so a verification
-   * never lands on a PAN or a document that was replaced first), with its audit entries. A repeat
-   * keeps the first stamp and records nothing.
-   *
-   * Phase 35: a PAN without an uploaded document cannot be verified (422 DOCUMENT_MISSING). The
-   * check comes before the repeat: a shop that is marked verified with no document on file (only
-   * a seeded one can be) answers the same refusal, never a confirmation.
-   *
-   * SPEC core 10 (amended 2026-10-20): the verification is what lets a shop trade. In the same
-   * transaction it lifts the compliance suspension (the shop returns to the status it remembered),
-   * issues the invoices that waited for a verified seller, and writes `vendor.compliance_restored`.
-   *
-   * Lock order, the one a delivery uses: the waiting orders' rows, then the vendor row, then
-   * (inside generateFiscalInvoice) the invoice sequence row, last. The order rows come first
-   * because the invoice insert's foreign key reads the order row: taken after the sequence row, it
-   * could wait on a transaction (the nightly reconciliation) that holds that order and waits for
-   * this shop's vendor or sequence row. An order delivered after that first pass is picked up
-   * under the vendor lock with SKIP LOCKED; one skipped there is held by a delivery or
-   * reconciliation, which reads the vendor row after this commit and issues the invoice itself.
+   * A Super Admin verifies the PAN: `verifyVendorPan` in @hamro-pasal/ledger, the transaction the
+   * automated IRD check also runs (lift the compliance suspension, issue the waiting invoices,
+   * `vendor.compliance_restored`, and close the vendor's open IRD checks). A repeat keeps the
+   * first stamp and records nothing; a PAN without a document is refused (422 DOCUMENT_MISSING).
    */
-  verifyPan(
+  /**
+   * "Action Required: Manual Review" (2026-10-21): every IRD check the worker could not settle,
+   * oldest first, with its vendor. A Super Admin then verifies the PAN by hand (which resolves the
+   * check) or asks for another try.
+   */
+  manualReviewQueue(): Promise<ManualReviewEntry[]> {
+    return this.db
+      .select({ check: irdPanChecks, vendor: vendors })
+      .from(irdPanChecks)
+      .innerJoin(vendors, eq(vendors.id, irdPanChecks.vendor_id))
+      .where(eq(irdPanChecks.status, 'MANUAL_REVIEW'))
+      .orderBy(asc(irdPanChecks.created_at), asc(irdPanChecks.id))
+      .limit(ADMIN_VENDOR_LIST_LIMIT);
+  }
+
+  /**
+   * Queues a check in manual review again (after the IRD site came back, say): its attempts start
+   * over, under the check row lock, with `vendor.pan_check_requested` and an audit entry in the
+   * same transaction. Only a check in MANUAL_REVIEW: anything else is 409.
+   */
+  retryIrdCheck(
+    adminUserId: string,
+    checkId: string,
+    context: AuditContext = NO_AUDIT_CONTEXT,
+  ): Promise<IrdCheckRow> {
+    return this.db.transaction(async (tx) => {
+      const [before] = await tx
+        .select()
+        .from(irdPanChecks)
+        .where(eq(irdPanChecks.id, checkId))
+        .for('update');
+      if (before === undefined) throw new IrdCheckNotFoundError(checkId);
+      if (before.status !== 'MANUAL_REVIEW') {
+        throw new IrdCheckNotInReviewError(checkId, before.status);
+      }
+      const [after] = await tx
+        .update(irdPanChecks)
+        .set({
+          status: 'QUEUED',
+          review_reason: null,
+          attempts: 0,
+          last_error: null,
+          started_at: null,
+          completed_at: null,
+        })
+        .where(eq(irdPanChecks.id, checkId))
+        .returning();
+      if (after === undefined) throw new Error(`IRD check ${checkId} vanished`);
+      await recordAuditLog(tx, {
+        actor: { kind: 'USER', user_id: adminUserId, role: 'SUPER_ADMIN' },
+        action: 'IRD_PAN_CHECK_RETRIED',
+        entityId: checkId,
+        vendorId: before.vendor_id,
+        beforeState: { status: before.status, review_reason: before.review_reason },
+        afterState: { status: 'QUEUED' },
+        context,
+      });
+      const requestedAt = new Date();
+      await enqueueDomainEvent(tx, {
+        type: 'vendor.pan_check_requested',
+        aggregateId: before.vendor_id,
+        occurredAt: requestedAt,
+        payload: {
+          check_id: checkId,
+          vendor_id: before.vendor_id,
+          tax_id: before.tax_id,
+          requested_at: requestedAt.toISOString(),
+        },
+      });
+      return after;
+    });
+  }
+
+  async verifyPan(
     adminUserId: string,
     vendorId: string,
     context: AuditContext = NO_AUDIT_CONTEXT,
   ): Promise<ComplianceVendor> {
-    return this.db.transaction(async (tx) => {
-      // Before the vendor lock (see the lock order above). An unverified shop is the only one
-      // that can have invoices waiting; reading the stamp unlocked only decides this pass.
-      const [shop] = await tx
-        .select({ verifiedAt: vendors.pan_verified_at })
-        .from(vendors)
-        .where(eq(vendors.id, vendorId));
-      if (shop?.verifiedAt === null) await waitingOrders(tx, vendorId, 'WAIT');
-
-      const [before] = await tx
-        .select()
-        .from(vendors)
-        .where(eq(vendors.id, vendorId))
-        .for('update');
-      if (before === undefined) throw new AdminVendorNotFoundError(vendorId);
-      if (before.tax_id === null) throw new PanMissingError(vendorId);
-      if (before.pan_document_url === null) throw new PanDocumentMissingError(vendorId);
-      const standing = standingWithVerifiedPan(before);
-      if (before.pan_verified_at !== null && !standing.lifted) return complianceVendor(tx, before);
-
-      const actor = { kind: 'USER', user_id: adminUserId, role: 'SUPER_ADMIN' } as const;
-      const [after] = await tx
-        .update(vendors)
-        .set({
-          pan_verified_at: before.pan_verified_at ?? sql`now()`,
-          pan_verified_by_user_id: before.pan_verified_by_user_id ?? adminUserId,
-          ...standing.columns,
-        })
-        .where(eq(vendors.id, vendorId))
-        .returning();
-      if (after === undefined) throw new Error(`Vendor ${vendorId} vanished`);
-
-      await recordAuditLog(tx, {
-        actor,
-        action: 'PAN_VERIFIED',
-        entityId: vendorId,
+    try {
+      const { vendor } = await verifyVendorPan(
+        this.db,
         vendorId,
-        beforeState: {
-          tax_id: before.tax_id,
-          pan_verified_at: null,
-          pan_verified_by_user_id: null,
-        },
-        afterState: {
-          tax_id: after.tax_id,
-          pan_verified_at: after.pan_verified_at?.toISOString() ?? null,
-          pan_verified_by_user_id: after.pan_verified_by_user_id,
-          status: after.status,
-          ...(standing.lifted ? { compliance_suspension_lifted: true } : {}),
-        },
-        context,
-      });
-
-      // After the update: the invoices copy the seller as this verification leaves it.
-      const waitingInvoicesIssued = await issueWaitingInvoices(tx, actor, after, context);
-      // The shop is told it is back (or what still keeps it offline). Last in the transaction, so
-      // the event exists exactly when the lift committed.
-      if (
-        standing.lifted &&
-        after.status !== 'SUSPENDED_COMPLIANCE' &&
-        after.status !== 'DEACTIVATED'
-      ) {
-        const restoredAt = new Date();
-        await enqueueDomainEvent(tx, {
-          type: 'vendor.compliance_restored',
-          aggregateId: after.id,
-          occurredAt: restoredAt,
-          payload: {
-            vendor_id: after.id,
-            vendor_phone: after.phone,
-            status: after.status,
-            waiting_invoices_issued: waitingInvoicesIssued,
-            restored_at: restoredAt.toISOString(),
-          },
-        });
-      }
-      return complianceVendor(tx, after);
-    });
+        { kind: 'USER', userId: adminUserId },
+        { context },
+      );
+      return await complianceVendor(this.db, vendor);
+    } catch (error: unknown) {
+      if (error instanceof PanVendorNotFoundError) throw new AdminVendorNotFoundError(vendorId);
+      throw error;
+    }
   }
 }
 
 /** The suspension time is the sweep's own audit entry: the table has no column for it. */
-async function complianceVendor(tx: Transaction, vendor: VendorRow): Promise<ComplianceVendor> {
+async function complianceVendor(
+  tx: Database | Transaction,
+  vendor: VendorRow,
+): Promise<ComplianceVendor> {
   if (vendor.status_before_compliance_suspension === null) {
     return { vendor, complianceSuspendedAt: null };
   }

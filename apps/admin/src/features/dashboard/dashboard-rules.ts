@@ -1,4 +1,8 @@
-import type { AdminVendorView } from '@hamro-pasal/shared-types';
+import {
+  IRD_NAME_MATCH_THRESHOLD,
+  type AdminVendorView,
+  type IrdReviewReason,
+} from '@hamro-pasal/shared-types';
 
 /*
  * The Dashboard tab's figures ("Sajilo cha hai" admin layout, 2026-10-21). Every number is
@@ -91,4 +95,20 @@ export function approvalQueue(vendors: readonly AdminVendorView[]): AdminVendorV
   return vendors
     .filter((vendor) => vendor.status === 'SANDBOXED')
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+/** Why an IRD check needs a person, in the admin's words. */
+export const REVIEW_REASON_LABELS: Readonly<Record<IrdReviewReason, string>> = {
+  NAME_MISMATCH: 'Names do not match',
+  PAN_NOT_FOUND: 'PAN not found at the IRD',
+  IRD_ACCOUNT_INACTIVE: 'IRD account not active',
+  LAYOUT_CHANGED: 'IRD page changed',
+  SCRAPER_FAILED: 'IRD lookup failed 3 times',
+  AUTOMATION_DISABLED: 'Automatic check is off',
+  DOCUMENT_MISSING: 'PAN document missing',
+};
+
+/** "72% name match (auto-verify needs 85%)". */
+export function similarityLabel(score: number): string {
+  return `${String(Math.round(score * 100))}% name match (auto-verify needs ${String(Math.round(IRD_NAME_MATCH_THRESHOLD * 100))}%)`;
 }

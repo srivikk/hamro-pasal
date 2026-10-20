@@ -1,10 +1,9 @@
-import type { FeedResponse, HomePromotionsResponseBody } from '@hamro-pasal/shared-types';
+import type { HomePromotionsResponseBody } from '@hamro-pasal/shared-types';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
 import { fetchHomePromotions } from '../../api/promotions';
 import { retryTransientFailures } from '../../api/query-client';
-import { homePromotions } from './mock-promotions';
 import { NO_PROMOTIONS, type HomePromotions } from './promo-model';
 
 export const homePromotionsQueryKey = ['home', 'promotions'] as const;
@@ -32,11 +31,12 @@ export function toHomePromotions(body: HomePromotionsResponseBody): HomePromotio
  * The Home banners and Featured Offers: GET /api/home/promotions (the Super Admin's promotions
  * that are running now, stale targets already dropped by the server).
  *
- * While the server has none (or cannot be reached), a development build still shows the sample
- * promotions of `mock-promotions.ts` so the rows can be worked on; a production build shows only
- * what the server sent, and nothing when it sent nothing.
+ * Only what the server sent, in every build (2026-10-20: a development build no longer shows
+ * sample banners). The server sends only the promotions the Super Admin has switched on and that
+ * are inside their dates. No banner: the carousel is not drawn; no offer: neither is the Featured
+ * Offers row (nor its heading). Until the answer is in, or if it fails, both rows stay away.
  */
-export function useHomePromotions(feed: FeedResponse | undefined): HomePromotions {
+export function useHomePromotions(): HomePromotions {
   const query = useQuery({
     queryKey: homePromotionsQueryKey,
     queryFn: fetchHomePromotions,
@@ -47,5 +47,5 @@ export function useHomePromotions(feed: FeedResponse | undefined): HomePromotion
     () => (query.data === undefined ? NO_PROMOTIONS : toHomePromotions(query.data)),
     [query.data],
   );
-  return live.banners.length + live.offers.length > 0 ? live : homePromotions(feed);
+  return live;
 }

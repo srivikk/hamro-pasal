@@ -138,7 +138,7 @@ export default function FeedScreen() {
 
   // The admin's banners and offers (GET /api/home/promotions, STATE_HANDOFF §8Z.29). With none,
   // both rows render nothing and the categories sit directly under the header as before.
-  const promotions = useHomePromotions(feed.data);
+  const promotions = useHomePromotions();
   const openPromotion = (target: PromoTarget): void => {
     if (target.type === 'SHOP') {
       router.push({ pathname: '/vendor/[id]', params: { id: target.value } });

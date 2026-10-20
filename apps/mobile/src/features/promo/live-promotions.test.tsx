@@ -8,7 +8,7 @@ import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
 import { renderHookWithProviders, renderWithProviders } from '../../test/render';
 import { matchingVendors } from '../discovery/ProductResults';
 import { BannerCarousel } from './BannerCarousel';
-import { homePromotions } from './mock-promotions';
+import { NO_PROMOTIONS } from './promo-model';
 import { toHomePromotions, useHomePromotions } from './useHomePromotions';
 
 setupApiTestEnvironment();
@@ -52,7 +52,7 @@ describe('Home promotions from the API', () => {
       }),
     );
 
-    const { result } = renderHookWithProviders(() => useHomePromotions(feedResponse()));
+    const { result } = renderHookWithProviders(() => useHomePromotions());
 
     await waitFor(() => {
       expect(result.current.banners.map((each) => each.id)).toEqual([ID]);
@@ -65,7 +65,7 @@ describe('Home promotions from the API', () => {
     expect(authorization).toBeNull();
   });
 
-  it('keeps the development samples while the server has no promotion', async () => {
+  it('shows nothing, in any build, while the server has no running promotion (2026-10-20)', async () => {
     let asked = 0;
     server.use(
       http.get(apiUrl(HOME_PROMOTIONS_PATH), () => {
@@ -73,14 +73,27 @@ describe('Home promotions from the API', () => {
         return HttpResponse.json({ banners: [], offers: [] });
       }),
     );
-    const feed = feedResponse();
 
-    const { result } = renderHookWithProviders(() => useHomePromotions(feed));
+    const { result } = renderHookWithProviders(() => useHomePromotions());
 
     await waitFor(() => {
       expect(asked).toBe(1);
     });
-    expect(result.current).toEqual(homePromotions(feed));
+    // No sample banner fills the gap: an empty database shows an empty Home.
+    expect(result.current).toEqual(NO_PROMOTIONS);
+  });
+
+  it('shows nothing while the server cannot be reached', async () => {
+    server.use(
+      http.get(apiUrl(HOME_PROMOTIONS_PATH), () =>
+        HttpResponse.json({ error: { code: 'INTERNAL', message: 'down' } }, { status: 500 }),
+      ),
+    );
+
+    const { result } = renderHookWithProviders(() => useHomePromotions());
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(result.current).toEqual(NO_PROMOTIONS);
   });
 
   it('labels a sponsored banner "Ad" and no other', () => {

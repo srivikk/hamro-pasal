@@ -1,19 +1,12 @@
-import type { FeedResponse } from '@hamro-pasal/shared-types';
-
-import {
-  NO_PROMOTIONS,
-  NO_VENDOR_EXTRAS,
-  type ExtrasSubject,
-  type HomePromotions,
-  type Promotion,
-  type VendorExtras,
-} from './promo-model';
+import { NO_VENDOR_EXTRAS, type ExtrasSubject, type VendorExtras } from './promo-model';
 
 /**
- * TEMPORARY MOCK DATA (STATE_HANDOFF §8Z.3, §8Z.4). The API serves no banners, offers, shop
- * covers, ratings, preparation times, costs or offer labels yet, so this file invents them. It is
- * the only place that does: delete it once `homePromotions` and `vendorExtras` can read real
- * responses.
+ * TEMPORARY MOCK DATA (STATE_HANDOFF §8Z.3, §8Z.4). The API serves no shop covers, ratings,
+ * preparation times, costs or offer labels yet, so this file invents them for the seeded shops. It
+ * is the only place that does: delete it once `vendorExtras` can read real responses.
+ *
+ * The Home banners and Featured Offers are no longer invented here (2026-10-20): they come only
+ * from GET /api/home/promotions (useHomePromotions), so an empty database shows none.
  *
  * Invented ratings and offers must never reach customers, so the mocks exist in development
  * builds only. A preview or production build gets no promotions and no extras, and every screen
@@ -160,146 +153,5 @@ export function vendorExtras(vendor: ExtrasSubject): VendorExtras {
     offer_tags: offer === null ? [] : [offer],
     // Only the curated shops below are sponsored.
     is_sponsored: false,
-  };
-}
-
-/**
- * A mock promotion before its target is final. A SHOP promotion names the seeded shop here and
- * gets that shop's real id from the feed (`target_value` must be a vendor id, like the API's).
- */
-type MockPromotion = Omit<Promotion, 'target_type' | 'target_value'> &
-  (
-    | { target_type: 'SHOP'; shop_name: string }
-    | { target_type: 'CATEGORY' | 'DISCOUNT_TAG'; target_value: string }
-    | { target_type: null }
-  );
-
-const MOCK_BANNERS: readonly (MockPromotion & { placement: 'CAROUSEL'; image_url: string })[] = [
-  {
-    id: 'mock-banner-festive',
-    placement: 'CAROUSEL',
-    image_url: image('banner-1', 960, 420),
-    title: 'Dashain offers are here',
-    subtitle: 'Tika, sweets and gifts from shops near you',
-    target_type: 'CATEGORY',
-    target_value: 'festive',
-  },
-  {
-    id: 'mock-banner-asan',
-    placement: 'CAROUSEL',
-    image_url: image('banner-2', 960, 420),
-    title: 'Asan Masala & Snacks',
-    subtitle: 'Titaura, dalmoth and more',
-    target_type: 'SHOP',
-    shop_name: 'Asan Masala & Snacks',
-  },
-  {
-    id: 'mock-banner-ten',
-    placement: 'CAROUSEL',
-    image_url: image('banner-3', 960, 420),
-    title: '10% OFF this week',
-    subtitle: 'See the shops taking part',
-    target_type: 'DISCOUNT_TAG',
-    target_value: '10% OFF',
-  },
-  {
-    // Artwork only: no text over it and nowhere to go.
-    id: 'mock-banner-artwork',
-    placement: 'CAROUSEL',
-    image_url: image('banner-4', 960, 420),
-    title: null,
-    subtitle: null,
-    target_type: null,
-  },
-];
-
-const MOCK_OFFERS: readonly (MockPromotion & { placement: 'FEATURED'; title: string })[] = [
-  {
-    id: 'mock-offer-ten',
-    placement: 'FEATURED',
-    image_url: image('offer-1', 320, 320),
-    title: '10% OFF',
-    subtitle: 'Selected shops',
-    target_type: 'DISCOUNT_TAG',
-    target_value: '10% OFF',
-  },
-  {
-    id: 'mock-offer-free-delivery',
-    placement: 'FEATURED',
-    image_url: null,
-    title: 'Free delivery',
-    subtitle: 'Selected shops',
-    target_type: 'DISCOUNT_TAG',
-    target_value: 'Free delivery',
-  },
-  {
-    id: 'mock-offer-electronics',
-    placement: 'FEATURED',
-    image_url: image('offer-3', 320, 320),
-    title: 'Electronics',
-    subtitle: 'Chargers, earbuds, kettles',
-    target_type: 'CATEGORY',
-    target_value: 'electronics',
-  },
-  {
-    id: 'mock-offer-snacks',
-    placement: 'FEATURED',
-    image_url: image('offer-4', 320, 320),
-    title: 'Snacks',
-    subtitle: 'Titaura to biscuits',
-    target_type: 'CATEGORY',
-    target_value: 'snacks',
-  },
-  {
-    id: 'mock-offer-new-road',
-    placement: 'FEATURED',
-    image_url: image('offer-5', 320, 320),
-    title: 'New Road Electronics',
-    subtitle: 'Visit the shop',
-    target_type: 'SHOP',
-    shop_name: 'New Road Electronics',
-  },
-  {
-    id: 'mock-offer-dashain',
-    placement: 'FEATURED',
-    image_url: image('offer-6', 320, 320),
-    title: 'Dashain Sale',
-    subtitle: 'Festive deals',
-    target_type: 'DISCOUNT_TAG',
-    target_value: 'Dashain Sale',
-  },
-];
-
-/** The mock as the API would send it. Null: its shop is not in the feed, so it is not shown. */
-function resolve<Mock extends MockPromotion>(
-  mock: Mock,
-  shopIds: ReadonlyMap<string, string>,
-): (Promotion & Pick<Mock, 'placement' | 'image_url' | 'title'>) | null {
-  const { id, placement, image_url, title, subtitle } = mock;
-  const base = { id, placement, image_url, title, subtitle };
-  if (mock.target_type === null) return { ...base, target_type: null, target_value: null };
-  if (mock.target_type !== 'SHOP') {
-    return { ...base, target_type: mock.target_type, target_value: mock.target_value };
-  }
-  const vendorId = shopIds.get(mock.shop_name);
-  return vendorId === undefined ? null : { ...base, target_type: 'SHOP', target_value: vendorId };
-}
-
-/**
- * The Home banners and featured offers. Empty outside development: both rows then hide. The feed
- * is needed only to give the SHOP mocks a real vendor id; until it has loaded they are left out.
- */
-export function homePromotions(feed: FeedResponse | undefined): HomePromotions {
-  if (!PROMO_MOCKS_ENABLED) return NO_PROMOTIONS;
-  const shopIds = new Map(
-    [...(feed?.serviceable ?? []), ...(feed?.explore_further ?? [])].map(({ vendor }) => [
-      vendor.business_name,
-      vendor.id,
-    ]),
-  );
-  const present = <Item>(item: Item | null): item is Item => item !== null;
-  return {
-    banners: MOCK_BANNERS.map((mock) => resolve(mock, shopIds)).filter(present),
-    offers: MOCK_OFFERS.map((mock) => resolve(mock, shopIds)).filter(present),
   };
 }

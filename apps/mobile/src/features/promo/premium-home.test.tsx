@@ -1,3 +1,4 @@
+import type { HomePromotionView } from '@hamro-pasal/shared-types';
 import { act, fireEvent, screen, within } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import { http, HttpResponse } from 'msw';
@@ -18,30 +19,45 @@ import { sortFeed, type FeedSort } from '../feed/feed-sort';
 import { SortFilterSheet } from '../feed/SortFilterSheet';
 import { BANNER_INTERVAL_MS, BannerCarousel } from './BannerCarousel';
 import { FeaturedOffers } from './FeaturedOffers';
+import type * as PromotionsApiModule from '../../api/promotions';
+import { fetchHomePromotions } from '../../api/promotions';
 import type * as MockPromotionsModule from './mock-promotions';
-import { homePromotions, vendorExtras } from './mock-promotions';
+import { vendorExtras } from './mock-promotions';
 import {
   deliveryWindow,
   estimatedDeliveryMinutes,
-  NO_PROMOTIONS,
   NO_VENDOR_EXTRAS,
   type FeaturedOffer,
   type ExtrasSubject,
   type PromoBanner,
+  type Promotion,
   type VendorExtras,
 } from './promo-model';
 
 jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: jest.fn() }));
 // The screens read promotions and shop extras from one module; the tests decide what it answers.
+jest.mock('../../api/promotions', () => ({
+  ...jest.requireActual<typeof PromotionsApiModule>('../../api/promotions'),
+  fetchHomePromotions: jest.fn(),
+}));
+// The shop extras still come from one module; the tests decide what it answers.
 jest.mock('./mock-promotions', () => ({
   PROMO_MOCKS_ENABLED: true,
-  homePromotions: jest.fn(),
   vendorExtras: jest.fn(),
 }));
 
 setupApiTestEnvironment();
 
 const realMocks = jest.requireActual<typeof MockPromotionsModule>('./mock-promotions');
+
+/**
+ * A model promotion as GET /api/home/promotions sends it (not sponsored unless it says so). The
+ * fetch is mocked, so the readable fixture ids are not checked against the uuid schema.
+ */
+const asServed = (promotion: Promotion): HomePromotionView => ({
+  is_sponsored: false,
+  ...promotion,
+});
 
 const BANNERS: PromoBanner[] = [
   {
@@ -123,7 +139,10 @@ const extrasOf = (vendor: ExtrasSubject): VendorExtras => EXTRAS[vendor.id] ?? N
 
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.mocked(homePromotions).mockReturnValue({ banners: BANNERS, offers: OFFERS });
+  jest.mocked(fetchHomePromotions).mockResolvedValue({
+    banners: BANNERS.map(asServed),
+    offers: OFFERS.map(asServed),
+  });
   jest.mocked(vendorExtras).mockImplementation(extrasOf);
 });
 
@@ -150,12 +169,6 @@ describe('the temporary mock source', () => {
   const subject = (id: string, business_name = 'Some Shop'): ExtrasSubject => ({
     id,
     business_name,
-  });
-
-  it('serves banners and offers in a development build', () => {
-    expect(realMocks.PROMO_MOCKS_ENABLED).toBe(true);
-    expect(realMocks.homePromotions(undefined).banners.length).toBeGreaterThan(1);
-    expect(realMocks.homePromotions(undefined).offers.length).toBeGreaterThan(0);
   });
 
   it('gives a shop the same plausible values every time', () => {
@@ -482,7 +495,7 @@ describe('Home: promotions and the sort sheet', () => {
   });
 
   it('collapses both sections when the admin has published nothing', async () => {
-    jest.mocked(homePromotions).mockReturnValue(NO_PROMOTIONS);
+    jest.mocked(fetchHomePromotions).mockResolvedValue({ banners: [], offers: [] });
     renderWithProviders(<FeedScreen />);
     await screen.findByText('Delivers to you');
 

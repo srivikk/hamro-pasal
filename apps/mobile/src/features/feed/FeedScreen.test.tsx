@@ -90,6 +90,17 @@ describe('Feed screen (GET /api/vendors)', () => {
     expect(screen.queryByTestId('feed-onboarding')).toBeNull();
   });
 
+  it('draws neither promotion row when the server has no running promotion (empty database)', async () => {
+    serveFeed();
+    // The default answer of GET /api/home/promotions in these tests: nothing is running.
+    renderWithProviders(<FeedScreen />);
+
+    expect(await screen.findByText('Delivers to you')).toBeOnTheScreen();
+    expect(screen.queryByTestId('banner-carousel')).toBeNull();
+    expect(screen.queryByTestId('featured-offers')).toBeNull();
+    expect(screen.queryByText('Featured offers')).toBeNull();
+  });
+
   it('offers a retry when the feed cannot be loaded', async () => {
     let fail = true;
     const calls = serveFeed(() =>

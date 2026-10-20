@@ -1,3 +1,4 @@
+import type { HomePromotionView } from '@hamro-pasal/shared-types';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import { http, HttpResponse } from 'msw';
@@ -10,7 +11,6 @@ import {
   categoryList,
   ELECTRONICS_ID,
   feedResponse,
-  feedVendor,
   GROCERIES_ID,
   NEW_ROAD_VENDOR,
   PATAN_VENDOR,
@@ -23,8 +23,10 @@ import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
 import { findCategoryByTarget } from '../discovery/discovery-rules';
 import { vendorIdsWithOfferTag } from '../feed/feed-sort';
+import type * as PromotionsApiModule from '../../api/promotions';
+import { fetchHomePromotions } from '../../api/promotions';
 import type * as MockPromotionsModule from './mock-promotions';
-import { homePromotions, vendorExtras } from './mock-promotions';
+import { vendorExtras } from './mock-promotions';
 import {
   hasOfferTag,
   NO_VENDOR_EXTRAS,
@@ -39,15 +41,28 @@ import {
 } from './promo-model';
 
 jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: jest.fn() }));
+jest.mock('../../api/promotions', () => ({
+  ...jest.requireActual<typeof PromotionsApiModule>('../../api/promotions'),
+  fetchHomePromotions: jest.fn(),
+}));
+// The shop extras still come from one module; the tests decide what it answers.
 jest.mock('./mock-promotions', () => ({
   PROMO_MOCKS_ENABLED: true,
-  homePromotions: jest.fn(),
   vendorExtras: jest.fn(),
 }));
 
 setupApiTestEnvironment();
 
 const realMocks = jest.requireActual<typeof MockPromotionsModule>('./mock-promotions');
+
+/**
+ * A model promotion as GET /api/home/promotions sends it (not sponsored unless it says so). The
+ * fetch is mocked, so the readable fixture ids are not checked against the uuid schema.
+ */
+const asServed = (promotion: Promotion): HomePromotionView => ({
+  is_sponsored: false,
+  ...promotion,
+});
 
 const banner = (
   id: string,
@@ -120,7 +135,10 @@ const scrollTo = jest.fn();
 
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.mocked(homePromotions).mockReturnValue({ banners: BANNERS, offers: OFFERS });
+  jest.mocked(fetchHomePromotions).mockResolvedValue({
+    banners: BANNERS.map(asServed),
+    offers: OFFERS.map(asServed),
+  });
   jest.mocked(vendorExtras).mockImplementation(extrasOf);
   jest
     .spyOn(SectionList.prototype, 'getScrollResponder')
@@ -211,69 +229,6 @@ describe('promotion targets (model)', () => {
 });
 
 describe('the mock promotions and shops', () => {
-  const ASAN_ID = '6f1c2a10-0000-4000-8000-0000000000a1';
-  const SEEDED_NEW_ROAD_ID = '6f1c2a10-0000-4000-8000-0000000000a2';
-  const seededFeed = feedResponse({
-    serviceable: [
-      {
-        vendor: feedVendor({ id: ASAN_ID, business_name: 'Asan Masala & Snacks' }),
-        distance_km: 0.8,
-        serviceable: true,
-      },
-    ],
-    explore_further: [
-      {
-        vendor: feedVendor({ id: SEEDED_NEW_ROAD_ID, business_name: 'New Road Electronics' }),
-        distance_km: 9,
-        serviceable: false,
-      },
-    ],
-  });
-
-  it('uses all three target types across the carousel and the featured row', () => {
-    const { banners, offers } = realMocks.homePromotions(seededFeed);
-    const types = (list: Promotion[]) => new Set(list.map((entry) => entry.target_type));
-
-    const placements = (list: Promotion[]) => new Set(list.map((entry) => entry.placement));
-    expect(placements(banners)).toEqual(new Set(['CAROUSEL']));
-    expect(placements(offers)).toEqual(new Set(['FEATURED']));
-    expect(types(banners)).toEqual(new Set(['CATEGORY', 'SHOP', 'DISCOUNT_TAG', null]));
-    expect(types(offers)).toEqual(new Set(['CATEGORY', 'SHOP', 'DISCOUNT_TAG']));
-  });
-
-  it('gives a SHOP promotion the id the feed has for that shop, in either section', () => {
-    const { banners, offers } = realMocks.homePromotions(seededFeed);
-
-    expect(banners.find((entry) => entry.target_type === 'SHOP')?.target_value).toBe(ASAN_ID);
-    expect(offers.find((entry) => entry.target_type === 'SHOP')?.target_value).toBe(
-      SEEDED_NEW_ROAD_ID,
-    );
-  });
-
-  it('leaves a SHOP promotion out while its shop is not in the feed', () => {
-    const before = realMocks.homePromotions(undefined);
-    const elsewhere = realMocks.homePromotions(
-      feedResponse({
-        serviceable: [{ vendor: feedVendor(), distance_km: 0, serviceable: true }],
-        explore_further: [],
-      }),
-    );
-
-    for (const { banners, offers } of [before, elsewhere]) {
-      expect([...banners, ...offers].some((entry) => entry.target_type === 'SHOP')).toBe(false);
-      expect(banners.length).toBeGreaterThan(1);
-    }
-  });
-
-  it('points every DISCOUNT_TAG promotion at a label some seeded shop carries', () => {
-    const { banners, offers } = realMocks.homePromotions(seededFeed);
-    const labels = Object.values(realMocks.MOCK_SHOPS).flatMap((shop) => shop.offer_tags);
-
-    for (const entry of [...banners, ...offers]) {
-      if (entry.target_type === 'DISCOUNT_TAG') expect(labels).toContain(entry.target_value);
-    }
-  });
-
   it('knows the nine live shops of the development seed by name', () => {
     expect(Object.keys(realMocks.MOCK_SHOPS)).toHaveLength(9);
     const asan = realMocks.vendorExtras({ id: 'any-id', business_name: 'Asan Masala & Snacks' });

@@ -19,7 +19,6 @@ jest.mock('expo-router', () => ({
 }));
 jest.mock('../promo/mock-promotions', () => ({
   PROMO_MOCKS_ENABLED: true,
-  homePromotions: jest.fn(),
   vendorExtras: jest.fn(),
 }));
 

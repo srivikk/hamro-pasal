@@ -62,7 +62,7 @@ async function runMidnightReconciliation(): Promise<string> {
         COUNTRY_CODE: 'NP',
         DATABASE_URL: process.env.TEST_DATABASE_URL,
         REDIS_URL: process.env.TEST_REDIS_URL,
-        KAFKA_BROKERS: '127.0.0.1:9092',
+        KAFKA_BROKERS: process.env.TEST_KAFKA_BROKERS,
         KAFKA_CLIENT_ID: 'hamro-pasal-e2e',
         KAFKA_CONSUMER_GROUP_ID: 'hamro-pasal-e2e',
         JWT_ACCESS_SECRET: 'e2e-access-secret-0123456789abcdef-0123',

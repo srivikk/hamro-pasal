@@ -1,4 +1,4 @@
-/** Integration tests against the local Kafka broker (pnpm infra:up). */
+/** Integration tests against the kafka-test broker (pnpm infra:up), never the dev one. */
 /** @type {import('jest').Config} */
 module.exports = {
   preset: 'ts-jest',

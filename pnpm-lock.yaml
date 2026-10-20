@@ -311,6 +311,9 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
     devDependencies:
+      '@hamro-pasal/kafka':
+        specifier: workspace:*
+        version: link:../../packages/kafka
       '@socket.io/redis-emitter':
         specifier: ^5.1.0
         version: 5.1.0(supports-color@8.1.1)

@@ -17,7 +17,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "clean": "turbo run clean",
-    "infra:up": "docker compose up --detach --wait && docker compose run --rm kafka-init",
+    "infra:up": "docker compose up --detach --wait && docker compose run --rm kafka-init && docker compose run --rm kafka-test-init",
     "infra:down": "docker compose down --remove-orphans",
     "infra:reset": "docker compose --profile init down --volumes --remove-orphans && pnpm infra:up",
     "db:generate": "turbo run db:generate",

@@ -71,6 +71,11 @@ export interface VendorFixture {
   radiusKm?: number;
   palika?: string;
   location?: GeoPoint;
+  /**
+   * A PAN a Super Admin has verified. Since 2026-10-20 (SPEC core 10) every path back to LIVE (a
+   * debt or admin restore, a reopening) needs one, or lands in SUSPENDED_COMPLIANCE.
+   */
+  verifiedPan?: boolean;
 }
 
 export async function createVendor(db: Database, options: VendorFixture = {}): Promise<string> {
@@ -93,9 +98,25 @@ export async function createVendor(db: Database, options: VendorFixture = {}): P
         min_order_value: options.minOrderValue ?? 0,
         base_delivery_fee_npr: options.baseDeliveryFee ?? 50,
         location: options.location ?? { x: 85.3123, y: 27.7154 },
+        ...(options.verifiedPan === true
+          ? { tax_id: '302118845', ...(await verifiedPanColumns(db)) }
+          : {}),
       })
       .returning({ id: vendors.id }),
   ).id;
+}
+
+/**
+ * The columns of a PAN a Super Admin has verified. Since 2026-10-20 (SPEC core 10) a shop trades and
+ * invoices only on a verified PAN; spread these next to `tax_id`.
+ */
+export async function verifiedPanColumns(
+  db: Database,
+): Promise<{ pan_verified_at: Date; pan_verified_by_user_id: string }> {
+  return {
+    pan_verified_at: new Date(),
+    pan_verified_by_user_id: await createUser(db, 'SUPER_ADMIN'),
+  };
 }
 
 /** The user who runs a vendor (the subject of that vendor's access tokens). */

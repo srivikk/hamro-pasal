@@ -8,7 +8,9 @@ import {
 } from '@hamro-pasal/db';
 import {
   ADMIN_VENDOR_LIST_LIMIT,
+  isPanVerified,
   NO_AUDIT_CONTEXT,
+  panGatedStanding,
   type AuditContext,
 } from '@hamro-pasal/shared-types';
 import { asc, eq } from 'drizzle-orm';
@@ -82,8 +84,9 @@ export class AdminVendorService {
   /**
    * Phase 37: reopens a shop its vendor closed (SPEC vendor flow 23: only a Super Admin can).
    * One transaction under the vendor row lock, with its audit entry. The shop returns LIVE, or
-   * SUSPENDED_COMPLIANCE (remembering LIVE) when it has no PAN: no path sets LIVE without one,
-   * and saving the PAN then brings it back by itself. The account can sign in again at once.
+   * SUSPENDED_COMPLIANCE (remembering LIVE) when its PAN is not verified: no path sets LIVE
+   * without a verified PAN (SPEC core 10, amended 2026-10-20), and the verification then brings it
+   * back. The account can sign in again at once.
    * Ads and campaign opt-ins closed with the shop stay closed: the vendor buys and joins anew.
    */
   reactivate(
@@ -102,13 +105,10 @@ export class AdminVendorService {
         throw new VendorStatusConflictError(vendorId, before.status, 'RESTORE');
       }
       const hasPan = before.tax_id !== null;
+      const standing = panGatedStanding('LIVE', isPanVerified(before));
       const [vendor] = await tx
         .update(vendors)
-        .set(
-          hasPan
-            ? { status: 'LIVE' }
-            : { status: 'SUSPENDED_COMPLIANCE', status_before_compliance_suspension: 'LIVE' },
-        )
+        .set(standing)
         .where(eq(vendors.id, vendorId))
         .returning();
       if (vendor === undefined) throw new Error(`Vendor ${vendorId} vanished`);
@@ -118,7 +118,11 @@ export class AdminVendorService {
         entityId: vendorId,
         vendorId,
         beforeState: { status: before.status },
-        afterState: { status: vendor.status, has_pan: hasPan },
+        afterState: {
+          status: vendor.status,
+          has_pan: hasPan,
+          pan_verified: isPanVerified(before),
+        },
         context,
       });
       // Phase 38: the vendor is told it can sign in again. Last in the transaction; a second
@@ -131,7 +135,7 @@ export class AdminVendorService {
         payload: {
           vendor_id: vendorId,
           vendor_phone: vendor.phone,
-          status: hasPan ? 'LIVE' : 'SUSPENDED_COMPLIANCE',
+          status: standing.status === 'LIVE' ? 'LIVE' : 'SUSPENDED_COMPLIANCE',
           reactivated_by_user_id: adminUserId,
           reactivated_at: reactivatedAt.toISOString(),
         },

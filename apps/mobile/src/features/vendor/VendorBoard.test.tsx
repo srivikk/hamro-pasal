@@ -356,7 +356,7 @@ describe('vendor board: the PAN reminder', () => {
           is_vat_registered: false,
           legal_name: null,
           registered_address: null,
-          status: 'LIVE',
+          status: 'SUSPENDED_COMPLIANCE',
           pan_verified_at: null,
           has_pan_document: false,
           ...overrides,
@@ -372,7 +372,7 @@ describe('vendor board: the PAN reminder', () => {
     expect(screen.queryByTestId('vendor-pan-banner')).not.toBeOnTheScreen();
 
     const banner = await screen.findByTestId('vendor-pan-banner');
-    expect(banner).toHaveTextContent(/^Add your PAN to keep your shop visible/);
+    expect(banner).toHaveTextContent(/^Your shop is offline until your PAN is added and verified/);
     fireEvent.press(banner);
 
     expect(router.push).toHaveBeenCalledWith('/settings');
@@ -383,12 +383,26 @@ describe('vendor board: the PAN reminder', () => {
     renderWithProviders(<VendorDashboardScreen />);
 
     expect(await screen.findByTestId('vendor-pan-banner')).toHaveTextContent(
-      /^Upload your PAN certificate so your payouts can be released/,
+      /^Your shop is offline until you upload your PAN certificate and Hamro Pasal verifies it/,
     );
   });
 
-  it('is gone once the PAN and its document are on file, whatever this phone once saved', async () => {
+  it('says the shop is offline pending verification once the PAN and certificate are in', async () => {
     identity({ tax_id: '302118845', has_pan_document: true });
+    renderWithProviders(<VendorDashboardScreen />);
+
+    expect(await screen.findByTestId('vendor-pan-banner')).toHaveTextContent(
+      /^Your shop is offline pending admin document verification/,
+    );
+  });
+
+  it('is gone once the PAN is verified, whatever this phone once saved', async () => {
+    identity({
+      tax_id: '302118845',
+      has_pan_document: true,
+      status: 'LIVE',
+      pan_verified_at: '2026-10-20T06:00:00.000Z',
+    });
     useVendorShopStore.setState({ stored: null });
     const queryClient = createTestQueryClient();
     renderWithProviders(<VendorDashboardScreen />, { queryClient });

@@ -152,7 +152,7 @@ export function createTimerHandlers(deps: {
   readonly debtReconciliation: Pick<VendorDebtReconciliationService, 'suspendIndebtedVendors'>;
   readonly orderReconciliation: Pick<OrderReconciliationService, 'reconcileDeliveredOrders'>;
   /** Phase 25. Optional so a worker built without them logs the task instead of failing it. */
-  readonly complianceSweep?: Pick<ComplianceSweepService, 'suspendVendorsWithoutPan'>;
+  readonly complianceSweep?: Pick<ComplianceSweepService, 'suspendUnverifiedVendors'>;
   readonly billingRenewal?: Pick<BillingCycleRenewalService, 'renewDueCycles'>;
   /** Phase 28. Optional like the two above. */
   readonly marketingSweep?: Pick<MarketingStatusSweepService, 'run'>;
@@ -227,7 +227,7 @@ export function createTimerHandlers(deps: {
           if (deps.complianceSweep === undefined) {
             return pendingImplementationHandlers.runMidnightTask(task);
           }
-          const suspended = await deps.complianceSweep.suspendVendorsWithoutPan();
+          const suspended = await deps.complianceSweep.suspendUnverifiedVendors();
           console.info(
             `[worker] compliance sweep: ${String(suspended.length)} vendor(s) without a PAN suspended`,
           );

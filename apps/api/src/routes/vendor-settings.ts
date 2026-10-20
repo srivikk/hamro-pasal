@@ -129,11 +129,18 @@ export function vendorSettingsRouter({
     res.status(201).json(body);
   });
 
-  /** Saving the PAN lifts a compliance suspension in the same transaction (SPEC core 10). */
+  /**
+   * Saving the PAN never brings a shop online (SPEC core 10, amended 2026-10-20): the Super
+   * Admin's verification does. `compliance_suspension_lifted` and `waiting_invoices_issued` stay
+   * in the contract for the apps already installed, always false and 0.
+   */
   router.put('/tax-identity', async (req, res) => {
     const input = parseInput(taxIdentityRequestSchema, req.body);
-    const { vendor, complianceSuspensionLifted, waitingInvoicesIssued, panDocumentRemoved } =
-      await compliance.saveTaxIdentity(vendorActor(req), input, auditContextOf(req, res));
+    const { vendor, panDocumentRemoved } = await compliance.saveTaxIdentity(
+      vendorActor(req),
+      input,
+      auditContextOf(req, res),
+    );
     const body: TaxIdentityResponseBody = {
       vendor_id: vendor.id,
       tax_id: input.tax_id,
@@ -141,9 +148,9 @@ export function vendorSettingsRouter({
       legal_name: vendor.legal_name,
       registered_address: vendor.registered_address,
       status: vendor.status,
-      compliance_suspension_lifted: complianceSuspensionLifted,
+      compliance_suspension_lifted: false,
       pan_verified_at: vendor.pan_verified_at?.toISOString() ?? null,
-      waiting_invoices_issued: waitingInvoicesIssued,
+      waiting_invoices_issued: 0,
       pan_document_removed: panDocumentRemoved,
       has_pan_document: vendor.pan_document_url !== null,
     };

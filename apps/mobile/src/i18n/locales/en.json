@@ -463,7 +463,8 @@
     "awaitingRider": "Riders have been told. Waiting for one to collect it.",
     "samplePickup": "Rider picked up (sample)",
     "dispatchIn": "Ready for Pickup in {{seconds, localizedNumber}} s",
-    "dispatchWait": "The customer can still cancel this order."
+    "dispatchWait": "The customer can still cancel this order.",
+    "complianceSuspended": "Your shop is offline until your PAN is verified, so it cannot accept orders."
   },
   "vendorTabs": {
     "orders": "Live Orders",
@@ -492,8 +493,8 @@
     "offline": "Offline",
     "toggleLabel": "Shop is taking orders",
     "offlineBanner": "Your shop is set to Offline. Switch to Online to take new orders.",
-    "panBanner": "Add your PAN to keep your shop visible. Tap to open Shop settings.",
-    "documentBanner": "Upload your PAN certificate so your payouts can be released. Tap to open Shop settings.",
+    "panBanner": "Your shop is offline until your PAN is added and verified. Tap to open Shop settings.",
+    "documentBanner": "Your shop is offline until you upload your PAN certificate and Hamro Pasal verifies it. Tap to open Shop settings.",
     "openSettings": "Shop settings",
     "settingsTitle": "Shop settings",
     "taxTitle": "Tax identity",
@@ -504,11 +505,9 @@
     "taxSave": "Save tax identity",
     "taxSaving": "Saving…",
     "taxSaved": "Tax identity saved.",
-    "taxSavedRestored": "PAN saved. Your shop is back online.",
     "taxSavedDocumentRemoved": "PAN changed. Upload the certificate for the new number so it can be verified.",
-    "taxSavedInvoices": "PAN saved. Waiting invoices issued: {{count, localizedNumber}}.",
     "taxChangeTitle": "Change your PAN?",
-    "taxChangeBody": "The document on file is for your current PAN. Changing the number removes it, and payouts are paused until you upload the new certificate and Hamro Pasal verifies it. Your shop keeps taking orders.",
+    "taxChangeBody": "The document on file is for your current PAN. Changing the number removes it, and your shop goes offline until you upload the new certificate and Hamro Pasal verifies it.",
     "taxChangeConfirm": "Change PAN",
     "taxLoadError": "Couldn't check what is on file. You can still save.",
     "taxErrors": {
@@ -518,7 +517,7 @@
     },
     "document": {
       "title": "PAN document",
-      "hint": "Upload a clear photo of your PAN certificate. Hamro Pasal checks it before paying out your earnings.",
+      "hint": "Upload a clear photo of your PAN certificate. Your shop goes live only after Hamro Pasal verifies it.",
       "statusMissing": "No document uploaded yet.",
       "statusPending": "Document uploaded. Waiting for Hamro Pasal to verify it.",
       "statusVerified": "Verified on {{date}}.",
@@ -530,7 +529,7 @@
       "preparing": "Preparing the photo…",
       "uploading": "Uploading…",
       "uploaded": "PAN document uploaded.",
-      "replacedVerified": "PAN document replaced. Payouts wait until the new one is verified.",
+      "replacedVerified": "PAN document replaced. Your shop is offline until the new one is verified.",
       "previewLabel": "The photo you just uploaded",
       "replaceTitle": "Replace your verified document?",
       "replaceVerifiedBody": "Your current document is verified. If you replace it, payouts are paused until Hamro Pasal verifies the new one. Your shop keeps taking orders.",
@@ -636,7 +635,9 @@
     "minOrder": "Minimum order value (Rs.)",
     "minOrderHint": "Customers cannot order less than this. Leave 0 for no minimum.",
     "paused": "Paused",
-    "availabilityFailed": "Couldn't change your shop. Check your connection and try again."
+    "availabilityFailed": "Couldn't change your shop. Check your connection and try again.",
+    "verificationBanner": "Your shop is offline pending admin document verification. We will let you know as soon as it is verified.",
+    "taxSavedPendingVerification": "PAN saved. Your shop stays offline until Hamro Pasal verifies your PAN certificate."
   },
   "vendorCatalogue": {
     "sampleNote": "Sample catalogue on this phone. Changes are not sent to the server yet.",
@@ -1229,7 +1230,7 @@
       "APPROVED": "Approved: you can go live.",
       "LIVE": "Live: customers can order.",
       "SUSPENDED": "Suspended.",
-      "SUSPENDED_COMPLIANCE": "Offline until your PAN is added.",
+      "SUSPENDED_COMPLIANCE": "Offline until your PAN is verified.",
       "DEACTIVATED": "Closed."
     },
     "taxId": "PAN number saved",

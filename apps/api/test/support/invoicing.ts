@@ -55,8 +55,25 @@ export async function soldOrder(
   return row;
 }
 
-export async function setPan(db: Database, vendorId: string, pan: string | null = '302118845') {
-  await db.update(vendors).set({ tax_id: pan }).where(eq(vendors.id, vendorId));
+/**
+ * Puts a PAN on file. Verified unless told otherwise: since 2026-10-20 (SPEC core 10) only a verified
+ * PAN is printed on an invoice. Null clears the PAN and its verification.
+ */
+export async function setPan(
+  db: Database,
+  vendorId: string,
+  pan: string | null = '302118845',
+  verified = true,
+) {
+  const verifier = pan !== null && verified ? await createUser(db, 'SUPER_ADMIN') : null;
+  await db
+    .update(vendors)
+    .set({
+      tax_id: pan,
+      pan_verified_at: verifier === null ? null : new Date(),
+      pan_verified_by_user_id: verifier,
+    })
+    .where(eq(vendors.id, vendorId));
 }
 
 /** As a delivery would: the order row locked, then its invoice, in one transaction. */

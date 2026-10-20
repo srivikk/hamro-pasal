@@ -28,7 +28,13 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import request from 'supertest';
 
 import { signRefreshToken } from '../src/auth/refresh-token';
-import { createOrder, createUser, createVendor, vendorUserIdOf } from './support/fixtures';
+import {
+  createOrder,
+  createUser,
+  createVendor,
+  vendorUserIdOf,
+  verifiedPanColumns,
+} from './support/fixtures';
 import {
   bearer,
   bodyOf,
@@ -633,9 +639,12 @@ describe('Vendor deactivation API', () => {
       return token === null ? req : req.set('authorization', token);
     };
 
-    it('reopens a closed shop with a PAN as LIVE, audits it, and the vendor can sign in again', async () => {
+    it('reopens a closed shop with a verified PAN as LIVE, audits it, and the vendor can sign in again', async () => {
       const { vendorId, userId, token } = await shop({ balance: 250 });
-      await db.update(vendors).set({ tax_id: '302118845' }).where(eq(vendors.id, vendorId));
+      await db
+        .update(vendors)
+        .set({ tax_id: '302118845', ...(await verifiedPanColumns(db)) })
+        .where(eq(vendors.id, vendorId));
       expect((await deactivate(token)).status).toBe(200);
       const [user] = await db.select().from(users).where(eq(users.id, userId));
       const send = () => request(t.app).post('/api/auth/otp/send').send({ phone: user?.phone });
@@ -657,12 +666,12 @@ describe('Vendor deactivation API', () => {
         actor_user_id: adminId,
         actor_role: 'SUPER_ADMIN',
         before_state: { status: 'DEACTIVATED' },
-        after_state: { status: 'LIVE', has_pan: true },
+        after_state: { status: 'LIVE', has_pan: true, pan_verified: true },
       });
       expect((await send()).status).toBe(200);
     });
 
-    it('reopens a shop without a PAN as SUSPENDED_COMPLIANCE, which saving the PAN then lifts', async () => {
+    it('reopens a shop without a verified PAN as SUSPENDED_COMPLIANCE, which only the verification lifts', async () => {
       const { vendorId, token } = await shop();
       expect((await deactivate(token)).status).toBe(200);
 
@@ -673,12 +682,24 @@ describe('Vendor deactivation API', () => {
         status: 'SUSPENDED_COMPLIANCE',
         status_before_compliance_suspension: 'LIVE',
       });
-      // No path sets LIVE without a PAN; the vendor's own save brings the shop back.
+      // No path sets LIVE without a verified PAN (SPEC core 10, amended 2026-10-20): the vendor's
+      // own save is not enough...
       const saved = await request(t.app)
         .put('/api/vendor/tax-identity')
         .set('authorization', token)
         .send({ tax_id: '302118845', is_vat_registered: false });
       expect(saved.status).toBe(200);
+      expect((await vendorRow(vendorId)).status).toBe('SUSPENDED_COMPLIANCE');
+
+      // ...the Super Admin's verification of the PAN and its certificate brings the shop back.
+      await db
+        .update(vendors)
+        .set({ pan_document_url: `kyc/pan/${vendorId}/certificate.webp` })
+        .where(eq(vendors.id, vendorId));
+      const verified = await request(t.app)
+        .post(`/api/admin/vendors/${vendorId}/pan-verification`)
+        .set('authorization', admin);
+      expect(verified.status).toBe(200);
       expect((await vendorRow(vendorId)).status).toBe('LIVE');
     });
 
@@ -777,7 +798,10 @@ describe('Vendor deactivation API', () => {
 
     it('writes vendor.reactivated once, saying whether the shop came back LIVE', async () => {
       const withPan = await shop();
-      await db.update(vendors).set({ tax_id: '302118845' }).where(eq(vendors.id, withPan.vendorId));
+      await db
+        .update(vendors)
+        .set({ tax_id: '302118845', ...(await verifiedPanColumns(db)) })
+        .where(eq(vendors.id, withPan.vendorId));
       expect((await deactivate(withPan.token)).status).toBe(200);
 
       const answers = await Promise.all(
@@ -832,16 +856,29 @@ describe('Vendor deactivation API', () => {
             WHERE id = ${vendorId}`,
       );
 
-    it('is written when a saved PAN lifts the suspension, with the shop back LIVE', async () => {
+    /** The Super Admin's check through the API, once the certificate is on file. */
+    const verify = async (vendorId: string) => {
+      await db
+        .update(vendors)
+        .set({ pan_document_url: `kyc/pan/${vendorId}/${randomUUID()}.webp` })
+        .where(eq(vendors.id, vendorId));
+      return request(t.app)
+        .post(`/api/admin/vendors/${vendorId}/pan-verification`)
+        .set('authorization', admin);
+    };
+
+    it('is written when the verification lifts the suspension, with the shop back LIVE (2026-10-20)', async () => {
       const { vendorId, token } = await shop();
       await sweep(vendorId);
+      expect(bodyOf(taxIdentityResponseSchema, await save(token)).status).toBe(
+        'SUSPENDED_COMPLIANCE',
+      );
+      expect(await events(vendorId)).toEqual([]);
 
-      const res = await save(token);
+      const res = await verify(vendorId);
 
-      expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
-        status: 'LIVE',
-        compliance_suspension_lifted: true,
-      });
+      expect(res.status).toBe(200);
+      expect((await vendorRow(vendorId)).status).toBe('LIVE');
       const [event, ...more] = await events(vendorId);
       expect(more).toEqual([]);
       expect(event).toMatchObject({
@@ -863,50 +900,47 @@ describe('Vendor deactivation API', () => {
         .update(vendors)
         .set({ status: 'SUSPENDED', status_before_admin_suspension: 'SUSPENDED_COMPLIANCE' })
         .where(eq(vendors.id, vendorId));
-
       expect((await save(token)).status).toBe(200);
+
+      expect((await verify(vendorId)).status).toBe(200);
 
       const [event] = await events(vendorId);
       expect(event?.payload).toMatchObject({ status: 'SUSPENDED' });
-      expect((await vendorRow(vendorId)).status).toBe('SUSPENDED');
+      expect(await vendorRow(vendorId)).toMatchObject({
+        status: 'SUSPENDED',
+        status_before_admin_suspension: 'LIVE',
+      });
     });
 
-    it('is not written for a shop that was never suspended, a repeat, or a refused PAN', async () => {
-      const never = await shop();
-      expect((await save(never.token)).status).toBe(200);
-      expect((await save(never.token, '609871234')).status).toBe(200);
-      expect(await events(never.vendorId)).toEqual([]);
-
+    it('is never written by a save, for a shop that was never suspended, or twice', async () => {
+      // A save lifts nothing, whatever it sends.
       const swept = await shop();
       await sweep(swept.vendorId);
       expect((await save(swept.token, '12345')).status).toBe(400);
+      expect((await save(swept.token)).status).toBe(200);
+      expect((await save(swept.token)).status).toBe(200);
       expect(await events(swept.vendorId)).toEqual([]);
 
-      expect((await save(swept.token)).status).toBe(200);
-      expect((await save(swept.token)).status).toBe(200);
-      expect(await Promise.all(Array.from({ length: 4 }, () => save(swept.token)))).toHaveLength(4);
-      expect(await events(swept.vendorId)).toHaveLength(1);
-    });
+      // Verifying a shop that was never suspended announces nothing.
+      const never = await shop();
+      expect((await save(never.token)).status).toBe(200);
+      expect((await verify(never.vendorId)).status).toBe(200);
+      expect(await events(never.vendorId)).toEqual([]);
 
-    it('is never written by the admin’s verification, which lifts nothing', async () => {
-      const { vendorId } = await shop();
+      // Five verifications at once lift the suspension once.
       await db
         .update(vendors)
-        .set({
-          tax_id: '302118845',
-          pan_document_url: `kyc/pan/${vendorId}/${randomUUID()}.webp`,
-          status: 'SUSPENDED',
-          status_before_compliance_suspension: 'LIVE',
-        })
-        .where(eq(vendors.id, vendorId));
-
-      const res = await request(t.app)
-        .post(`/api/admin/vendors/${vendorId}/pan-verification`)
-        .set('authorization', admin);
-
-      expect(res.status).toBe(200);
-      expect((await vendorRow(vendorId)).status).toBe('SUSPENDED');
-      expect(await events(vendorId)).toEqual([]);
+        .set({ pan_document_url: `kyc/pan/${swept.vendorId}/${randomUUID()}.webp` })
+        .where(eq(vendors.id, swept.vendorId));
+      const answers = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          request(t.app)
+            .post(`/api/admin/vendors/${swept.vendorId}/pan-verification`)
+            .set('authorization', admin),
+        ),
+      );
+      expect(answers.map((res) => res.status)).toEqual([200, 200, 200, 200, 200]);
+      expect(await events(swept.vendorId)).toHaveLength(1);
     });
   });
 });

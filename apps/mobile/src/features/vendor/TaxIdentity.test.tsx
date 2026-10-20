@@ -325,10 +325,11 @@ describe('Shop settings: tax identity on the server', () => {
     });
   });
 
-  it('tells a shop suspended for compliance that it is back online', async () => {
+  it('tells a shop suspended for compliance that it stays offline until the PAN is verified', async () => {
+    // SPEC core 10 (amended 2026-10-20): a save never brings the shop online.
     serve({
       identity: { status: 'SUSPENDED_COMPLIANCE' },
-      answer: { compliance_suspension_lifted: true, waiting_invoices_issued: 3 },
+      answer: { status: 'SUSPENDED_COMPLIANCE' },
     });
     await open();
 
@@ -337,21 +338,10 @@ describe('Shop settings: tax identity on the server', () => {
 
     await waitFor(() => {
       expect(toast()).toMatchObject({
-        message: 'PAN saved. Your shop is back online.',
+        message:
+          'PAN saved. Your shop stays offline until Hamro Pasal verifies your PAN certificate.',
         tone: 'success',
       });
-    });
-  });
-
-  it('says how many waiting invoices the first PAN issued', async () => {
-    serve({ answer: { waiting_invoices_issued: 4 } });
-    await open();
-
-    type('settings-tax-id', '302118845');
-    press('settings-tax-save');
-
-    await waitFor(() => {
-      expect(toast()).toMatchObject({ message: 'PAN saved. Waiting invoices issued: 4.' });
     });
   });
 

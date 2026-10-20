@@ -9,36 +9,39 @@ export interface ComplianceSuspension {
 }
 
 /**
- * SPEC core section 10, "PAN is mandatory": no vendor is LIVE without a PAN. The nightly sweep
- * moves every LIVE vendor whose `tax_id` is null to SUSPENDED_COMPLIANCE, remembering LIVE, so the
- * shop returns the moment its PAN is saved (PUT /api/vendor/tax-identity).
+ * SPEC core section 10, "PAN is mandatory" and "PAN verification" (amended 2026-10-20): no vendor
+ * is LIVE without a PAN a Super Admin has verified. The sweep moves every LIVE vendor whose
+ * `pan_verified_at` is null (which covers having no PAN at all) to SUSPENDED_COMPLIANCE,
+ * remembering LIVE, so the shop returns the moment its PAN is verified
+ * (POST /api/admin/vendors/:id/pan-verification).
  *
- * The test is the PAN itself, not its verification: an unverified PAN freezes payouts, never
- * trading.
+ * Every path to LIVE already checks the verification; this is the backstop. It runs at midnight
+ * and once at every worker start, which is what takes the shops from before the rule offline.
  */
 export class ComplianceSweepService {
   constructor(private readonly db: Database) {}
 
   /**
-   * One transaction per vendor, under the vendor row lock the PAN save also takes: a PAN saved
-   * just before the sweep keeps the shop LIVE, and a rerun or a second worker finds nothing left.
+   * One transaction per vendor, under the vendor row lock the verification also takes: a PAN
+   * verified just before the sweep keeps the shop LIVE, and a rerun or a second worker finds
+   * nothing left.
    * Each suspension is audited in its own transaction, with the job as the actor, and writes
    * `vendor.suspended_for_compliance` to the outbox there (Phase 35): the event exists exactly
    * when the suspension committed.
    */
-  async suspendVendorsWithoutPan(): Promise<ComplianceSuspension[]> {
+  async suspendUnverifiedVendors(): Promise<ComplianceSuspension[]> {
     const candidates = await this.db
       .select({ id: vendors.id })
       .from(vendors)
-      .where(and(eq(vendors.status, 'LIVE'), isNull(vendors.tax_id)))
+      .where(and(eq(vendors.status, 'LIVE'), isNull(vendors.pan_verified_at)))
       .orderBy(asc(vendors.id));
 
     const suspended: ComplianceSuspension[] = [];
     for (const { id } of candidates) {
       const result = await this.db.transaction(async (tx) => {
         const [vendor] = await tx.select().from(vendors).where(eq(vendors.id, id)).for('update');
-        // Re-checked under the lock: the PAN may have arrived, or the status changed, meanwhile.
-        if (vendor?.status !== 'LIVE' || vendor.tax_id !== null) return null;
+        // Re-checked under the lock: the PAN may have been verified, or the status changed.
+        if (vendor?.status !== 'LIVE' || vendor.pan_verified_at !== null) return null;
 
         await tx
           .update(vendors)
@@ -49,8 +52,13 @@ export class ComplianceSweepService {
           action: 'VENDOR_SUSPENDED_FOR_COMPLIANCE',
           entityId: id,
           vendorId: id,
-          beforeState: { status: 'LIVE', tax_id: null },
-          afterState: { status: 'SUSPENDED_COMPLIANCE', tax_id: null, restores_to: 'LIVE' },
+          beforeState: { status: 'LIVE', tax_id: vendor.tax_id, pan_verified_at: null },
+          afterState: {
+            status: 'SUSPENDED_COMPLIANCE',
+            tax_id: vendor.tax_id,
+            restores_to: 'LIVE',
+            reason: vendor.tax_id === null ? 'NO_PAN' : 'PAN_NOT_VERIFIED',
+          },
         });
         const suspendedAt = new Date();
         await enqueueDomainEvent(tx, {

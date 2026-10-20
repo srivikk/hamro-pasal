@@ -97,7 +97,7 @@ describe('vendor notices (outbox row → consumer → logger, real PostgreSQL + 
 
   it('turns the compliance sweep’s outbox event into one SMS line and one push line', async () => {
     const shop = await vendor();
-    await new ComplianceSweepService(db).suspendVendorsWithoutPan();
+    await new ComplianceSweepService(db).suspendUnverifiedVendors();
     const message = await messageOf(shop.id, 'vendor.suspended_for_compliance');
     expect(message.topic).toBe('notifications.broadcast');
 
@@ -107,14 +107,14 @@ describe('vendor notices (outbox row → consumer → logger, real PostgreSQL + 
     await handle(message);
 
     expect(lines).toEqual([
-      `[notify:sms] to ${shop.phone}: Hamro Pasal: your shop is offline because no PAN is on file. Please add your 9-digit PAN in the app (Shop settings) and your shop goes back online at once.`,
-      `[notify:push] to vendor ${shop.id}: Your shop is offline | Please add your PAN in Shop settings. Your shop goes back online as soon as it is saved.`,
+      `[notify:sms] to ${shop.phone}: Hamro Pasal: your shop is offline until Hamro Pasal verifies your PAN. Please add your PAN and upload your PAN certificate in the app (Shop settings).`,
+      `[notify:push] to vendor ${shop.id}: Your shop is offline | It goes back online once Hamro Pasal verifies your PAN. Please add your PAN and certificate in Shop settings.`,
     ]);
   });
 
   it('holds its claims in Redis: a second worker handling the same event stays silent', async () => {
     const shop = await vendor();
-    await new ComplianceSweepService(db).suspendVendorsWithoutPan();
+    await new ComplianceSweepService(db).suspendUnverifiedVendors();
     const message = await messageOf(shop.id, 'vendor.suspended_for_compliance');
     const other: string[] = [];
     const second = vendorNoticeConsumer({

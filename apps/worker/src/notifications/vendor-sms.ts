@@ -32,11 +32,16 @@ export function vendorNotificationSms(event: DomainEvent): SmsMessage | null {
       };
     }
     case 'vendor.restored':
+      // SPEC core 10 (amended 2026-10-20): clearing dues never makes a shop LIVE without a
+      // verified PAN; it then lands in SUSPENDED_COMPLIANCE and must not be told it is online.
       return {
         to: event.payload.vendor_phone,
         text:
-          `Hamro Pasal: your dues are cleared and your shop is back online. ` +
-          `Wallet balance: ${formatNpr(event.payload.wallet_balance_npr)}.`,
+          event.payload.restored_status === 'SUSPENDED_COMPLIANCE'
+            ? `Hamro Pasal: your dues are cleared. Your shop stays offline until Hamro Pasal ` +
+              `verifies your PAN certificate. Wallet balance: ${formatNpr(event.payload.wallet_balance_npr)}.`
+            : `Hamro Pasal: your dues are cleared and your shop is back online. ` +
+              `Wallet balance: ${formatNpr(event.payload.wallet_balance_npr)}.`,
       };
     case 'vendor.escalation.required':
       return {

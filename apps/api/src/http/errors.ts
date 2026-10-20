@@ -137,6 +137,7 @@ import {
 import {
   CancellationWindowOpenError,
   OrderDecisionConflictError,
+  VendorComplianceSuspendedError,
   VendorAccountNotFoundError,
   WrongFulfillmentModeError,
 } from '../orders/vendor-order-service';
@@ -255,6 +256,9 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof OrderDecisionConflictError) {
     return new HttpError(409, 'ORDER_STATE_CONFLICT', error.message, { state: error.state });
+  }
+  if (error instanceof VendorComplianceSuspendedError) {
+    return new HttpError(409, 'VENDOR_COMPLIANCE_SUSPENDED', error.message);
   }
   if (error instanceof CancellationWindowOpenError) {
     return new HttpError(422, 'CANCELLATION_WINDOW_OPEN', error.message, {

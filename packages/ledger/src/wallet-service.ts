@@ -1,5 +1,10 @@
 import { enqueueDomainEvent, platformSettings, vendors, type Transaction } from '@hamro-pasal/db';
-import type { VendorStatus } from '@hamro-pasal/shared-types';
+import {
+  isPanVerified,
+  panGatedStanding,
+  type GatedStanding,
+  type VendorStatus,
+} from '@hamro-pasal/shared-types';
 import { asc, eq, inArray } from 'drizzle-orm';
 
 type ActiveStatus = Exclude<VendorStatus, 'SUSPENDED'>;
@@ -25,6 +30,12 @@ export type StandingChange =
 
 function isActive(status: VendorStatus): status is ActiveStatus {
   return status !== 'SUSPENDED';
+}
+
+/** A restore lands on what the shop had before its suspension, never SUSPENDED again. */
+function restoredStatusOf(standing: GatedStanding): ActiveStatus {
+  if (!isActive(standing.status)) throw new Error('A restore cannot land on SUSPENDED');
+  return standing.status;
 }
 
 /**
@@ -81,6 +92,7 @@ export class WalletService {
           status: vendors.status,
           walletBalanceNpr: vendors.wallet_balance_npr,
           restoreTo: vendors.status_before_debt_suspension,
+          panVerifiedAt: vendors.pan_verified_at,
         })
         .from(vendors)
         .where(eq(vendors.id, vendorId));
@@ -121,9 +133,15 @@ export class WalletService {
         vendor.restoreTo !== null &&
         vendor.walletBalanceNpr >= 0
       ) {
+        // SPEC core 10 (amended 2026-10-20): clearing dues never makes a shop LIVE without a
+        // verified PAN. It lands in SUSPENDED_COMPLIANCE instead, and the verification lifts it.
+        const standing = panGatedStanding(
+          vendor.restoreTo,
+          isPanVerified({ pan_verified_at: vendor.panVerifiedAt }),
+        );
         await tx
           .update(vendors)
-          .set({ status: vendor.restoreTo, status_before_debt_suspension: null })
+          .set({ ...standing, status_before_debt_suspension: null })
           .where(eq(vendors.id, vendorId));
         await enqueueDomainEvent(tx, {
           type: 'vendor.restored',
@@ -132,7 +150,7 @@ export class WalletService {
           payload: {
             vendor_id: vendorId,
             vendor_phone: vendor.phone,
-            restored_status: vendor.restoreTo,
+            restored_status: restoredStatusOf(standing),
             wallet_balance_npr: vendor.walletBalanceNpr,
             transaction_id: transactionId,
             restored_at: at.toISOString(),
@@ -141,7 +159,7 @@ export class WalletService {
         changes.push({
           type: 'RESTORED',
           vendorId,
-          restoredStatus: vendor.restoreTo,
+          restoredStatus: restoredStatusOf(standing),
           walletBalanceNpr: vendor.walletBalanceNpr,
         });
       }
@@ -201,10 +219,15 @@ export class WalletService {
     if (vendor.walletBalanceNpr < limit) {
       throw new WalletBelowSuspensionLimitError(vendorId, vendor.walletBalanceNpr, limit);
     }
+    // Never LIVE without a verified PAN (SPEC core 10, amended 2026-10-20).
+    const standing = panGatedStanding(
+      restoreTo,
+      isPanVerified({ pan_verified_at: vendor.panVerifiedAt }),
+    );
     await tx
       .update(vendors)
       .set({
-        status: restoreTo,
+        ...standing,
         status_before_admin_suspension: null,
         status_before_debt_suspension: null,
       })
@@ -213,7 +236,7 @@ export class WalletService {
       vendorId,
       action: 'RESTORE',
       fromStatus: 'SUSPENDED',
-      toStatus: restoreTo,
+      toStatus: standing.status,
       walletBalanceNpr: vendor.walletBalanceNpr,
       adminUserId,
       overriddenAt: this.now(),
@@ -248,6 +271,7 @@ async function lockVendor(tx: Transaction, vendorId: string) {
       walletBalanceNpr: vendors.wallet_balance_npr,
       debtRestoreTo: vendors.status_before_debt_suspension,
       adminRestoreTo: vendors.status_before_admin_suspension,
+      panVerifiedAt: vendors.pan_verified_at,
     })
     .from(vendors)
     .where(eq(vendors.id, vendorId))

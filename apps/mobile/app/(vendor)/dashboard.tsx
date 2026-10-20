@@ -36,6 +36,7 @@ import {
   useVendorOrdersQuery,
   useVendorOrdersRealtime,
 } from '../../src/features/vendor/useVendorOrders';
+import { complianceReminder } from '../../src/features/vendor/compliance-reminder';
 import { useVendorAlarm } from '../../src/features/vendor/vendor-alarm';
 import { VENDOR_ORDER_MOCKS_ENABLED } from '../../src/features/vendor/vendor-order-mocks';
 import { VendorOrderCard } from '../../src/features/vendor/VendorOrderCard';
@@ -149,17 +150,8 @@ export default function VendorDashboardScreen() {
   useVendorAlarm(ringing);
 
   const online = useVendorShopStore((state) => state.online);
-  // Phase 37: the reminder follows what the server holds, not what this phone once saved. It
-  // shows only once the answer is in: for a missing PAN, then for a missing certificate.
-  const identity = useTaxIdentityQuery().data;
-  const reminder =
-    identity === undefined
-      ? null
-      : identity.tax_id === null
-        ? 'panBanner'
-        : identity.has_pan_document
-          ? null
-          : 'documentBanner';
+  // What still keeps the shop offline (no PAN, no certificate, or the verification to come).
+  const reminder = complianceReminder(useTaxIdentityQuery().data);
   const toast = useToastStore((store) => store.show);
   const mocks = useVendorBoardStore((state) => state.mocks);
   const departed = useVendorBoardStore((state) => state.departed);

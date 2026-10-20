@@ -96,17 +96,35 @@ export interface VerifyButton {
 /**
  * The "Verify document" button of one row. Only a PAN that is on file, unchecked and backed by
  * an uploaded document can be verified (Phase 35: the server answers 422 DOCUMENT_MISSING
- * otherwise; an admin verifies a document, never a bare number). An admin cannot lift a compliance suspension: the vendor saving its PAN does (SPEC
- * core section 10).
+ * otherwise; an admin verifies a document, never a bare number).
+ *
+ * SPEC core 10 (amended 2026-10-20): the verification is what lets a shop trade. A shop suspended
+ * for compliance comes back only through this button, once its PAN and certificate are on file.
  */
 export function verifyButton(vendor: ComplianceVendorView): VerifyButton {
   switch (panStandingOf(vendor)) {
-    case 'SUSPENDED':
+    case 'SUSPENDED': {
+      const restoresTo = vendor.restore_status ?? 'its previous status';
+      if (vendor.tax_id === null) {
+        return {
+          label: 'Verify document',
+          enabled: false,
+          note: `Offline: no PAN on file. The vendor adds its PAN and certificate in the Vendor App; verifying them restores the shop to ${restoresTo}.`,
+        };
+      }
+      if (!vendor.has_pan_document) {
+        return {
+          label: 'Verify document',
+          enabled: false,
+          note: `Offline: no certificate uploaded for this PAN yet. Verifying it, once uploaded, restores the shop to ${restoresTo}.`,
+        };
+      }
       return {
         label: 'Verify document',
-        enabled: false,
-        note: `No PAN on file. The vendor adds it in the Vendor App; saving it restores the shop to ${vendor.restore_status ?? 'its previous status'}.`,
+        enabled: true,
+        note: `Offline until verified. Verifying restores the shop to ${restoresTo} and issues its waiting invoices.`,
       };
+    }
     case 'MISSING':
       return {
         label: 'Verify document',
@@ -115,21 +133,24 @@ export function verifyButton(vendor: ComplianceVendorView): VerifyButton {
           vendor.status === 'SUSPENDED'
             ? 'No PAN on file. When this suspension is lifted the shop moves to SUSPENDED_COMPLIANCE, not LIVE.'
             : vendor.status === 'LIVE'
-              ? 'No PAN on file. The nightly compliance sweep takes this shop offline until it saves one.'
-              : 'No PAN on file. The shop cannot go LIVE without one.',
+              ? 'No PAN on file. The compliance sweep takes this shop offline until its PAN is verified.'
+              : 'No PAN on file. The shop cannot go LIVE without a verified PAN.',
       };
     case 'UNVERIFIED':
       if (!vendor.has_pan_document) {
         return {
           label: 'Verify document',
           enabled: false,
-          note: 'No document uploaded. The vendor uploads its PAN certificate in the Vendor App; there is nothing to verify until then. Its payouts are held.',
+          note: 'No document uploaded. The vendor uploads its PAN certificate in the Vendor App; there is nothing to verify until then. The shop cannot go LIVE and its payouts are held.',
         };
       }
       return {
         label: 'Verify document',
         enabled: true,
-        note: 'The shop trades normally. Its payouts are held until the PAN is verified.',
+        note:
+          vendor.status === 'LIVE'
+            ? 'LIVE without a verified PAN: the compliance sweep takes it offline. Verify to keep it trading.'
+            : 'The shop cannot go LIVE, and its payouts are held, until the PAN is verified.',
       };
     case 'VERIFIED':
       return {

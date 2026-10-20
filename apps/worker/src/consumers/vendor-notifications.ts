@@ -37,7 +37,7 @@ export interface VendorNotificationDeps {
 /**
  * Kafka `notifications.broadcast` → vendor SMS (Phase 13) and IVR call (Phase 14):
  *   vendor.suspended_for_debt  → SMS "your shop is offline, pay Rs. N"
- *   vendor.restored            → SMS "your shop is back online"
+ *   vendor.restored            → SMS "your shop is back online" (or "still offline until your PAN is verified")
  *   vendor.escalation.required → SMS "order #CODE has waited over 90 seconds" + a voice call,
  *                                concurrently, only while the order is still PLACED
  *

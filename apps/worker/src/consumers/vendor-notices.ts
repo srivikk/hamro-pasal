@@ -33,8 +33,8 @@ export interface VendorNoticeDeps {
 
 /**
  * Kafka `notifications.broadcast` → vendor notices (Phase 36):
- *   vendor.suspended_for_compliance   → "your shop is offline, add your PAN"
- *   vendor.compliance_restored        → "PAN saved, your shop is back online"
+ *   vendor.suspended_for_compliance   → "your shop is offline until your PAN is verified"
+ *   vendor.compliance_restored        → "PAN verified, your shop is back online"
  *   vendor.deactivated                → "your shop account is closed" (Phase 38)
  *   vendor.reactivated                → "your shop has been reopened" (Phase 38)
  *   marketing.ad_ended                → "your ad ended" (+ the budget returned)

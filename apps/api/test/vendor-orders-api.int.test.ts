@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { orders } from '@hamro-pasal/db';
+import { orders, vendors } from '@hamro-pasal/db';
 import {
   cancelOrderResponseSchema,
   checkoutResponseSchema,
@@ -165,6 +165,25 @@ describe('vendor orders API', () => {
         expect(bodyOf(vendorOrderDecisionResponseSchema, res).state).toBe('PREPARING');
       }
       expect((await transitions(order.id)).filter(([, to]) => to === 'PREPARING')).toHaveLength(1);
+    });
+
+    it('refuses a shop suspended for compliance: no verified PAN, no new order (2026-10-20)', async () => {
+      const { customerId, vendorId, vendorUserId, productId } = await setup();
+      const order = await checkout(customerId, vendorId, productId);
+      // Placed while LIVE; then the vendor changed a verified PAN, or replaced its certificate.
+      await db()
+        .update(vendors)
+        .set({ status: 'SUSPENDED_COMPLIANCE', status_before_compliance_suspension: 'LIVE' })
+        .where(eq(vendors.id, vendorId));
+
+      const res = await decide(vendorUserId, order.id, 'accept');
+
+      expect(res.status).toBe(409);
+      expect(errorOf(res).code).toBe('VENDOR_COMPLIANCE_SUSPENDED');
+      expect(await rowOf(order.id)).toMatchObject({ state: 'PLACED' });
+      // It can still turn the order down, so the customer is not left waiting.
+      expect((await decide(vendorUserId, order.id, 'reject')).status).toBe(200);
+      expect(await rowOf(order.id)).toMatchObject({ state: 'CANCELED' });
     });
 
     it('refuses orders that are not waiting for the vendor (409 with the state)', async () => {

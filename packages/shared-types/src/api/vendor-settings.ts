@@ -42,15 +42,19 @@ export const taxIdentityResponseSchema = z.strictObject({
   is_vat_registered: z.boolean(),
   legal_name: z.string().nullable(),
   registered_address: z.string().nullable(),
-  /** The shop's status after the save: never SUSPENDED_COMPLIANCE. */
+  /**
+   * The shop's status after the save. SUSPENDED_COMPLIANCE until the PAN is verified (SPEC core
+   * 10, amended 2026-10-20): a save never brings a shop online, and changing a verified PAN takes
+   * a LIVE shop offline.
+   */
   status: vendorStatusSchema,
-  /** True when this save lifted a compliance suspension. */
+  /** Always false since 2026-10-20 (only the verification lifts a compliance suspension). */
   compliance_suspension_lifted: z.boolean(),
   /** Null until a Super Admin verifies this PAN; payouts wait for it. */
   pan_verified_at: z.iso.datetime().nullable(),
   /**
-   * Phase 32: invoices this save issued for orders delivered while the shop had no PAN (SPEC core
-   * 10). 0 for a response from before the field.
+   * Phase 32: invoices this save issued for orders delivered while the shop had no PAN. Always 0
+   * since 2026-10-20: waiting invoices are issued when the PAN is verified.
    */
   waiting_invoices_issued: z.number().int().min(0).default(0),
   /**

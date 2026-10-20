@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { orders } from '@hamro-pasal/db';
+import { orders, vendors } from '@hamro-pasal/db';
 import {
   vendorWalletBalanceResponseSchema,
   vendorWalletLedgerResponseSchema,
@@ -24,6 +24,7 @@ import {
   markDelivered,
   vendorUserIdOf,
   type VendorFixture,
+  verifiedPanColumns,
 } from './support/fixtures';
 import { bearer, bodyOf, buildTestApp, errorOf, type TestApp } from './support/http';
 
@@ -355,8 +356,13 @@ describe('vendor wallet API', () => {
         .set('authorization', bearer(userId, 'VENDOR'))
         .send(body);
 
+    /** A vendor in debt, with a verified PAN, so paying it off brings the shop back LIVE. */
     async function suspendedVendor() {
       const v = await vendor();
+      await db()
+        .update(vendors)
+        .set({ tax_id: '302118845', ...(await verifiedPanColumns(db())) })
+        .where(eq(vendors.id, v.vendorId));
       await settled(v.vendorId, { subtotal: 25_000 }); // −2500, SUSPENDED
       expect((await balanceBody(v.userId)).is_suspended).toBe(true);
       return v;

@@ -569,13 +569,26 @@ describe('nightly order reconciliation (real PostgreSQL + BullMQ)', () => {
   });
 
   describe('the fiscal invoice of an order this job reconciles (Phase 31)', () => {
-    /** A shop with a PAN, and a delivered 2 x 500 order of it with its item line. */
+    /**
+     * A shop with a verified PAN (SPEC core 10, amended 2026-10-20: only a verified PAN is printed),
+     * and a delivered 2 x 500 order of it with its item line.
+     */
     async function invoiceable(options: { pan?: boolean } = {}) {
       const vendorId = await vendor();
       if (options.pan !== false) {
+        const phone = `+9779${String(randomInt(0, 1_000_000_000)).padStart(9, '0')}`;
+        const [verifier] = await db
+          .insert(users)
+          .values({ phone, role: 'SUPER_ADMIN' })
+          .returning({ id: users.id });
         await db
           .update(vendors)
-          .set({ tax_id: '302118845', is_vat_registered: true })
+          .set({
+            tax_id: '302118845',
+            is_vat_registered: true,
+            pan_verified_at: new Date(),
+            pan_verified_by_user_id: verifier?.id ?? null,
+          })
           .where(eq(vendors.id, vendorId));
       }
       const orderId = await order(vendorId, { subtotal: 1000, commission: 100, deliveryFee: 50 });

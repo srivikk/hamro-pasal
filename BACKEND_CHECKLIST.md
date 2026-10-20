@@ -334,12 +334,12 @@ Rules: SPEC.md Dual-Fulfillment "Delivery Modularity", Vendor Pricing "Billing C
 - [ ] **Worker:** SMS + push templates for `vendor.suspended_for_compliance`.
 - [ ] **Admin vendor list:** show the new status and suspension kind `COMPLIANCE`; Restore is refused while the PAN is missing.
 - [ ] **No admin route lifts a compliance suspension (confirmed 2026-10-07).** Only the PAN-saving transaction does.
-- [ ] **PAN verification (decided 2026-10-07; gates payouts, not LIVE).**
+- [ ] **PAN verification (decided 2026-10-07; gates payouts, not LIVE).** **Amended and built 2026-10-20 (strict verification gate, SPEC core 10): it gates LIVE too.** A shop without a verified PAN is `SUSPENDED_COMPLIANCE` (hidden, not orderable, `409 VENDOR_COMPLIANCE_SUSPENDED` at Accept). Saving a PAN never lifts the suspension; `POST /api/admin/vendors/:id/pan-verification` does, in its transaction, and issues the waiting invoices (moved from the PAN save) and writes `vendor.compliance_restored`. A changed PAN or a replaced certificate of a verified PAN takes a LIVE shop offline at once (`vendor.suspended_for_compliance`). Debt / admin restores and reopenings land in `SUSPENDED_COMPLIANCE` instead of LIVE while unverified (`panGatedStanding` in shared-types). Invoices need a verified seller (`SELLER_PAN_UNVERIFIED`). The compliance sweep moves LIVE shops without a verified PAN, nightly and once at every worker start. Still open: a DB CHECK (no LIVE without `pan_verified_at`), to add once the sweep has run in every environment.
   - [x] Migration (0022, 2026-10-08): `vendors.pan_verified_at timestamptz NULL`, `pan_verified_by_user_id uuid NULL → users` (+ its partial index); CHECK both null or both set, and never set without a `tax_id`. Drizzle schema, `vendorSchema` and `contract.ts` together.
   - [x] **`GET /api/admin/compliance/vendors`** (SUPER_ADMIN): every vendor (at most 500) with `status`, `restore_status`, `compliance_suspended_at`, `legal_name`, `tax_id`, `is_vat_registered`, `pan_verified_at`, **grouped by PAN standing, worst first** (suspended for compliance, PAN missing, awaiting verification, verified; `PAN_STANDINGS` / `panStandingOf` in shared-types). **Built 2026-10-08** (STATE_HANDOFF.md §8Z.23).
     - [x] **Admin app:** the Compliance tab reads this route through the shared `complianceVendorViewSchema` / `panStandingOf` and verifies through `POST …/pan-verification`. A LIVE shop without a PAN is shown as "PAN missing", not refused. **Wired 2026-10-08** (STATE_HANDOFF.md §8Z.25).
   - [x] **`POST /api/admin/vendors/:id/pan-verification`** (no body) → `200 { vendor }`, also on repeat (the first stamp is kept); `409 PAN_MISSING`; `404 VENDOR_NOT_FOUND`. Vendor row lock; audit row `PAN_VERIFIED`; never changes `status`. **Built 2026-10-08** (§8Z.22).
-  - `PUT /api/vendor/tax-identity` with a different `tax_id` sets `pan_verified_at` to null in its transaction (**confirmed 2026-10-07**): payouts freeze until the new PAN is verified; the shop stays LIVE.
+  - `PUT /api/vendor/tax-identity` with a different `tax_id` sets `pan_verified_at` to null in its transaction (**confirmed 2026-10-07**): payouts freeze until the new PAN is verified; the shop stays LIVE (amended 2026-10-20: a LIVE shop goes to `SUSPENDED_COMPLIANCE` in the same transaction).
   - The gate itself: section 6.11.
 - [ ] Test: SPEC verification 13.
 
@@ -461,7 +461,7 @@ The Vendor App's Marketing tab is built on sample data to these contracts. Build
 
 ### 6.11 The PAN payout gate and settlement approvals — P0 for the gate (decided 2026-10-07)
 
-A vendor trades as soon as its PAN is saved, but **no money is transferred to its bank account until a Super Admin has verified the PAN document** (`vendors.pan_verified_at`, section 6.2). Details: STATE_HANDOFF.md §8Z.15.
+~~A vendor trades as soon as its PAN is saved~~ (amended 2026-10-20: a vendor trades only once its PAN is verified), and **no money is transferred to its bank account until a Super Admin has verified the PAN document** (`vendors.pan_verified_at`, section 6.2). Details: STATE_HANDOFF.md §8Z.15.
 
 - [ ] **Retire vendor-requested payouts (decided 2026-10-07): payouts are admin-initiated or scheduled, never requested.**
   - Remove `POST /api/vendor/finance/payout` and `POST /api/admin/finance/payouts/:id/approve | reject`. Keep `GET /api/admin/finance/payouts` as read-only history.

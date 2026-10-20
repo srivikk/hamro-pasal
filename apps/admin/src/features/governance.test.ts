@@ -217,7 +217,7 @@ describe('compliance rules', () => {
     expect(verifyButton(legacy)).toEqual({
       label: 'Verify document',
       enabled: false,
-      note: 'No PAN on file. The nightly compliance sweep takes this shop offline until it saves one.',
+      note: 'No PAN on file. The compliance sweep takes this shop offline until its PAN is verified.',
     });
   });
 
@@ -249,16 +249,20 @@ describe('compliance rules', () => {
   });
 
   it('offers verification only for a PAN that is on file, unchecked and has its document', () => {
+    // A LIVE shop with an unchecked PAN predates the 2026-10-20 rule: the sweep takes it offline.
     expect(verifyButton({ ...live, has_pan_document: true })).toEqual({
       label: 'Verify document',
       enabled: true,
-      note: 'The shop trades normally. Its payouts are held until the PAN is verified.',
+      note: 'LIVE without a verified PAN: the compliance sweep takes it offline. Verify to keep it trading.',
     });
+    expect(verifyButton({ ...live, status: 'APPROVED', has_pan_document: true }).note).toBe(
+      'The shop cannot go LIVE, and its payouts are held, until the PAN is verified.',
+    );
     // Phase 35: a number without its certificate is not something an admin can check.
     expect(verifyButton(live)).toEqual({
       label: 'Verify document',
       enabled: false,
-      note: 'No document uploaded. The vendor uploads its PAN certificate in the Vendor App; there is nothing to verify until then. Its payouts are held.',
+      note: 'No document uploaded. The vendor uploads its PAN certificate in the Vendor App; there is nothing to verify until then. The shop cannot go LIVE and its payouts are held.',
     });
     expect(verifyErrorMessage(new ApiError(422, 'DOCUMENT_MISSING', 'x'))).toBe(
       'This vendor has no PAN document on file (a changed PAN number removes the old one). The list has been refreshed.',
@@ -270,12 +274,26 @@ describe('compliance rules', () => {
     });
   });
 
-  it('cannot verify or lift a compliance suspension: the vendor must save its PAN', () => {
-    const button = verifyButton(swept);
-    expect(button.enabled).toBe(false);
-    expect(button.note).toBe(
-      'No PAN on file. The vendor adds it in the Vendor App; saving it restores the shop to LIVE.',
-    );
+  it('lifts a compliance suspension only by verifying a PAN and certificate on file (2026-10-20)', () => {
+    // No PAN yet: nothing to verify.
+    expect(verifyButton(swept)).toEqual({
+      label: 'Verify document',
+      enabled: false,
+      note: 'Offline: no PAN on file. The vendor adds its PAN and certificate in the Vendor App; verifying them restores the shop to LIVE.',
+    });
+    // A PAN without its certificate: still nothing to verify.
+    const withPan = { ...swept, tax_id: '301456789' };
+    expect(verifyButton(withPan)).toEqual({
+      label: 'Verify document',
+      enabled: false,
+      note: 'Offline: no certificate uploaded for this PAN yet. Verifying it, once uploaded, restores the shop to LIVE.',
+    });
+    // Both on file: the verification is the way back.
+    expect(verifyButton({ ...withPan, has_pan_document: true })).toEqual({
+      label: 'Verify document',
+      enabled: true,
+      note: 'Offline until verified. Verifying restores the shop to LIVE and issues its waiting invoices.',
+    });
   });
 
   it('warns that a debt-suspended shop without a PAN will not return to LIVE', () => {
@@ -285,7 +303,7 @@ describe('compliance rules', () => {
       note: 'No PAN on file. When this suspension is lifted the shop moves to SUSPENDED_COMPLIANCE, not LIVE.',
     });
     expect(verifyButton({ ...indebted, status: 'APPROVED' }).note).toBe(
-      'No PAN on file. The shop cannot go LIVE without one.',
+      'No PAN on file. The shop cannot go LIVE without a verified PAN.',
     );
   });
 

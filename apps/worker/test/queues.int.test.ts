@@ -8,6 +8,7 @@ import {
   cancelGhostCustomerTimer,
   cancelVendorAcceptanceTimeout,
   createTimerQueues,
+  queueComplianceSweepNow,
   registerMidnightJobs,
   scheduleGhostCustomerTimer,
   scheduleVendorAcceptanceTimeout,
@@ -80,6 +81,16 @@ describe('timer queues (real Redis)', () => {
   });
 
   describe('midnight crons', () => {
+    it('queues one compliance sweep at start-up, besides the midnight one (2026-10-20)', async () => {
+      await queueComplianceSweepNow(queues.midnight);
+
+      const waiting = await queues.midnight.getJobs(['waiting', 'prioritized', 'delayed']);
+      const sweeps = waiting.filter((job) => job.name === 'VENDOR_COMPLIANCE_SWEEP');
+      expect(sweeps).toHaveLength(1);
+      expect(sweeps[0]?.data).toEqual({ task: 'VENDOR_COMPLIANCE_SWEEP' });
+      await Promise.all(sweeps.map((job) => job.remove()));
+    });
+
     it('registers one scheduler per task at 00:00 Asia/Kathmandu, idempotently', async () => {
       await registerMidnightJobs(queues.midnight);
       await registerMidnightJobs(queues.midnight);

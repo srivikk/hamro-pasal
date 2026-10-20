@@ -197,14 +197,13 @@ export default function VendorSettingsScreen() {
           // From here on the form follows the server again.
           setTaxIdTouched(false);
           setVatDraft(null);
+          // A save never brings the shop online: the verification does (SPEC core 10).
           toast(
-            result.compliance_suspension_lifted
-              ? t('vendorShop.taxSavedRestored')
-              : result.pan_document_removed
-                ? t('vendorShop.taxSavedDocumentRemoved')
-                : result.waiting_invoices_issued > 0
-                  ? t('vendorShop.taxSavedInvoices', { count: result.waiting_invoices_issued })
-                  : t('vendorShop.taxSaved'),
+            result.pan_document_removed
+              ? t('vendorShop.taxSavedDocumentRemoved')
+              : result.status === 'SUSPENDED_COMPLIANCE'
+                ? t('vendorShop.taxSavedPendingVerification')
+                : t('vendorShop.taxSaved'),
             'success',
           );
         },

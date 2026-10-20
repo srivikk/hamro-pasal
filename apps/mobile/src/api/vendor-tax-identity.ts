@@ -39,7 +39,8 @@ export const TAX_IDENTITY_ERROR_CODES = {
 } as const;
 
 /**
- * PUT /api/vendor/tax-identity. Saving the PAN lifts a compliance suspension; saving a different
+ * PUT /api/vendor/tax-identity. Saving the PAN never lifts a compliance suspension (only Hamro
+ * Pasal's verification does, SPEC core 10 amended 2026-10-20); saving a different
  * number clears the verification and removes the document of the old one. The legal name and the
  * registered address are not sent, so the server keeps what it has. Checked with the API's own
  * schema first: a number that breaks it is not sent.

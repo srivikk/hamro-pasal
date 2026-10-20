@@ -55,13 +55,22 @@ describe('generateFiscalInvoice (real PostgreSQL)', () => {
     await db.$client.end();
   });
 
-  /** A shop with a PAN on file; VAT registered unless told otherwise. */
-  async function seller(options: { vat?: boolean; pan?: string | null } = {}): Promise<string> {
+  /**
+   * A shop with a verified PAN on file (SPEC core 10, amended 2026-10-20: only a verified PAN is
+   * printed); VAT registered unless told otherwise.
+   */
+  async function seller(
+    options: { vat?: boolean; pan?: string | null; verified?: boolean } = {},
+  ): Promise<string> {
     const vendorId = await createVendor(db, { businessName: 'Thamel Kirana Pasal' });
+    const pan = options.pan === undefined ? '302118845' : options.pan;
+    const verified = pan !== null && options.verified !== false;
     await db
       .update(vendors)
       .set({
-        tax_id: options.pan === undefined ? '302118845' : options.pan,
+        tax_id: pan,
+        pan_verified_at: verified ? new Date() : null,
+        pan_verified_by_user_id: verified ? adminId : null,
         is_vat_registered: options.vat ?? true,
         legal_name: 'Thamel Kirana Pasal Pvt. Ltd.',
         registered_address: 'Thamel Marg, Kathmandu-26',
@@ -430,6 +439,20 @@ describe('generateFiscalInvoice (real PostgreSQL)', () => {
   });
 
   describe('when no invoice is issued', () => {
+    it('issues none for a seller whose PAN is not verified, and takes no number', async () => {
+      const vendorId = await seller({ verified: false });
+      const target = await order(vendorId);
+
+      expect(await result(target)).toEqual({
+        status: 'SELLER_PAN_UNVERIFIED',
+        invoice: null,
+        replayed: false,
+      });
+      expect(
+        await db.select().from(invoiceSequences).where(eq(invoiceSequences.vendor_id, vendorId)),
+      ).toEqual([]);
+    });
+
     it('issues none for a seller without a PAN, and takes no number', async () => {
       const vendorId = await seller({ pan: null });
       const target = await order(vendorId);

@@ -31,6 +31,7 @@ import {
   DELIVERY_ADDRESS,
   stockOf,
   vendorUserIdOf,
+  verifiedPanColumns,
 } from './support/fixtures';
 import { bearer, bodyOf, buildTestApp, esewaCallback, errorOf, type TestApp } from './support/http';
 
@@ -60,7 +61,7 @@ describe('discount stacking: vendor offer, then platform campaign', () => {
     const vendorId = await createVendor(db, { baseDeliveryFee: 50 });
     await db
       .update(vendors)
-      .set({ tax_id: '302118845', is_vat_registered: true })
+      .set({ tax_id: '302118845', is_vat_registered: true, ...(await verifiedPanColumns(db)) })
       .where(eq(vendors.id, vendorId));
     const vendorUserId = await vendorUserIdOf(db, vendorId);
     const productId = await createProduct(db, vendorId, 20, 500);

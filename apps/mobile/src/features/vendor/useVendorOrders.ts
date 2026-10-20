@@ -194,8 +194,16 @@ export function useVendorOrderDecisions() {
         error instanceof ApiError &&
         (error.code === 'ORDER_STATE_CONFLICT' || error.code === 'ORDER_NOT_FOUND');
       if (!stale) setAcknowledgedFor(orderId, false);
+      // SPEC core 10: a shop without a verified PAN cannot take on an order.
+      const suspended = error instanceof ApiError && error.code === 'VENDOR_COMPLIANCE_SUSPENDED';
       toast(
-        t(stale ? 'vendorDashboard.noLongerWaiting' : 'vendorDashboard.decisionFailed'),
+        t(
+          stale
+            ? 'vendorDashboard.noLongerWaiting'
+            : suspended
+              ? 'vendorDashboard.complianceSuspended'
+              : 'vendorDashboard.decisionFailed',
+        ),
         'error',
       );
     },

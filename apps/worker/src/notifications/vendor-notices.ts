@@ -108,43 +108,43 @@ function wordingOf(event: VendorNoticeEvent): Wording {
     case 'vendor.suspended_for_compliance':
       return {
         sms:
-          'Hamro Pasal: your shop is offline because no PAN is on file. Please add your ' +
-          '9-digit PAN in the app (Shop settings) and your shop goes back online at once.',
+          'Hamro Pasal: your shop is offline until Hamro Pasal verifies your PAN. Please add ' +
+          'your PAN and upload your PAN certificate in the app (Shop settings).',
         push: {
           title: 'Your shop is offline',
-          body: 'Please add your PAN in Shop settings. Your shop goes back online as soon as it is saved.',
+          body: 'It goes back online once Hamro Pasal verifies your PAN. Please add your PAN and certificate in Shop settings.',
         },
       };
     case 'vendor.compliance_restored':
       if (event.payload.status === 'LIVE') {
         return {
           sms:
-            'Hamro Pasal: thank you, your PAN is saved and your shop is back online. Please ' +
-            'upload your PAN certificate in the app so your payouts can be released.',
+            'Hamro Pasal: your PAN is verified and your shop is back online. Please open the ' +
+            'app to take orders again.',
           push: {
             title: 'Your shop is back online',
-            body: 'Thank you for adding your PAN. Please upload your PAN certificate so payouts can be released.',
+            body: 'Your PAN is verified. You can take orders again.',
           },
         };
       }
       if (event.payload.status === 'SUSPENDED') {
         return {
           sms:
-            'Hamro Pasal: thank you, your PAN is saved. Your shop is still offline for another ' +
+            'Hamro Pasal: your PAN is verified. Your shop is still offline for another ' +
             'reason. Please check Wallet in the app or contact Hamro Pasal support.',
           push: {
-            title: 'PAN saved',
+            title: 'PAN verified',
             body: 'Your shop is still offline for another reason. Please check your Wallet or contact support.',
           },
         };
       }
       return {
         sms:
-          'Hamro Pasal: thank you, your PAN is saved. Your shop is not live yet: we will let ' +
-          'you know when it is. Please upload your PAN certificate in the app meanwhile.',
+          'Hamro Pasal: your PAN is verified. Your shop is not live yet: we will let you ' +
+          'know when it is. Please keep the app signed in meanwhile.',
         push: {
-          title: 'PAN saved',
-          body: 'Your shop is not live yet. Please upload your PAN certificate in the app meanwhile.',
+          title: 'PAN verified',
+          body: 'Your shop is not live yet. We will let you know when it is.',
         },
       };
     case 'vendor.deactivated': {
@@ -176,11 +176,11 @@ function wordingOf(event: VendorNoticeEvent): Wording {
       }
       return {
         sms:
-          'Hamro Pasal: your shop has been reopened, but it stays offline until a PAN is on ' +
-          'file. Please sign in to the app and add your 9-digit PAN in Shop settings.',
+          'Hamro Pasal: your shop has been reopened, but it stays offline until Hamro Pasal ' +
+          'verifies your PAN. Please sign in and check your PAN and certificate in Shop settings.',
         push: {
           title: 'Your shop is reopened',
-          body: 'It stays offline until a PAN is on file. Please sign in and add your PAN in Shop settings.',
+          body: 'It stays offline until Hamro Pasal verifies your PAN. Please check your PAN and certificate in Shop settings.',
         },
       };
     case 'vendor.auto_paused':

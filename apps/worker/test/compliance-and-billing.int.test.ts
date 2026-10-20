@@ -101,7 +101,7 @@ describe('compliance sweep and billing cycle renewal (real PostgreSQL)', () => {
     it('suspends a LIVE vendor without a PAN and audits it with the job as the actor', async () => {
       const vendorId = await vendor();
 
-      const suspended = await sweep.suspendVendorsWithoutPan();
+      const suspended = await sweep.suspendUnverifiedVendors();
 
       expect(suspended.map((s) => s.vendorId)).toContain(vendorId);
       expect(await row(vendorId)).toMatchObject({
@@ -138,8 +138,26 @@ describe('compliance sweep and billing cycle renewal (real PostgreSQL)', () => {
       expect(outboxRowToDomainEvent(event).event_type).toBe('vendor.suspended_for_compliance');
     });
 
-    it('leaves a vendor with a PAN alone, verified or not, and any vendor that is not LIVE', async () => {
+    it('suspends a LIVE vendor whose PAN is saved but not verified (2026-10-20)', async () => {
       const withPan = await vendor({ tax_id: '302118845' });
+
+      const suspended = await sweep.suspendUnverifiedVendors();
+
+      expect(suspended.map((s) => s.vendorId)).toContain(withPan);
+      expect(await row(withPan)).toMatchObject({
+        status: 'SUSPENDED_COMPLIANCE',
+        status_before_compliance_suspension: 'LIVE',
+        tax_id: '302118845',
+      });
+      expect((await audit(withPan))[0]).toMatchObject({
+        action: 'VENDOR_SUSPENDED_FOR_COMPLIANCE',
+        before_state: { status: 'LIVE', tax_id: '302118845', pan_verified_at: null },
+        after_state: { status: 'SUSPENDED_COMPLIANCE', reason: 'PAN_NOT_VERIFIED' },
+      });
+      expect(await suspensionEvents(withPan)).toHaveLength(1);
+    });
+
+    it('leaves a vendor with a verified PAN alone, and any vendor that is not LIVE', async () => {
       const verified = await vendor({
         tax_id: '609871234',
         pan_verified_at: new Date(),
@@ -149,14 +167,13 @@ describe('compliance sweep and billing cycle renewal (real PostgreSQL)', () => {
       const sandboxed = await vendor({ status: 'SANDBOXED', pricing_model: null });
       const suspendedForDebt = await vendor({ status: 'SUSPENDED' });
 
-      await sweep.suspendVendorsWithoutPan();
+      await sweep.suspendUnverifiedVendors();
 
-      expect((await row(withPan)).status).toBe('LIVE');
       expect((await row(verified)).status).toBe('LIVE');
       expect((await row(approved)).status).toBe('APPROVED');
       expect((await row(sandboxed)).status).toBe('SANDBOXED');
       expect((await row(suspendedForDebt)).status).toBe('SUSPENDED');
-      for (const id of [withPan, verified, approved, sandboxed, suspendedForDebt]) {
+      for (const id of [verified, approved, sandboxed, suspendedForDebt]) {
         expect(await audit(id)).toEqual([]);
         expect(await suspensionEvents(id)).toEqual([]);
       }
@@ -166,8 +183,8 @@ describe('compliance sweep and billing cycle renewal (real PostgreSQL)', () => {
       const first = await vendor();
       const second = await vendor();
 
-      await Promise.all(Array.from({ length: 4 }, () => sweep.suspendVendorsWithoutPan()));
-      const rerun = await sweep.suspendVendorsWithoutPan();
+      await Promise.all(Array.from({ length: 4 }, () => sweep.suspendUnverifiedVendors()));
+      const rerun = await sweep.suspendUnverifiedVendors();
 
       expect(rerun.map((s) => s.vendorId)).not.toContain(first);
       for (const id of [first, second]) {

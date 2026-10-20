@@ -117,8 +117,9 @@ describe('WalletService: debt suspension and restoration', () => {
     );
   }
 
-  async function suspendedForDebt(status: VendorStatus = 'LIVE') {
-    const vendorId = await createVendor(db, { status });
+  /** A vendor in debt; with a verified PAN unless told otherwise (it can then go back LIVE). */
+  async function suspendedForDebt(status: VendorStatus = 'LIVE', verifiedPan = true) {
+    const vendorId = await createVendor(db, { status, verifiedPan });
     await codCommission(vendorId, 2500);
     expect(await vendorRow(vendorId)).toMatchObject({
       status: 'SUSPENDED',
@@ -246,6 +247,34 @@ describe('WalletService: debt suspension and restoration', () => {
         restored_status: 'LIVE',
         wallet_balance_npr: 0,
         transaction_id: result.transactionId,
+      });
+    });
+
+    it('restores a vendor without a verified PAN to SUSPENDED_COMPLIANCE, never LIVE (2026-10-20)', async () => {
+      const vendorId = await suspendedForDebt('LIVE', false);
+
+      const result = await topUp(vendorId, 2500);
+
+      expect(await vendorRow(vendorId)).toMatchObject({
+        status: 'SUSPENDED_COMPLIANCE',
+        status_before_compliance_suspension: 'LIVE',
+        status_before_debt_suspension: null,
+        wallet_balance_npr: 0,
+      });
+      expect(result).toMatchObject({
+        standingChanges: [
+          {
+            type: 'RESTORED',
+            vendorId,
+            restoredStatus: 'SUSPENDED_COMPLIANCE',
+            walletBalanceNpr: 0,
+          },
+        ],
+      });
+      // The vendor is texted that its dues are cleared but the shop stays offline.
+      const [event] = await events(vendorId, 'vendor.restored');
+      expect(vendorRestoredPayloadSchema.parse(event?.payload)).toMatchObject({
+        restored_status: 'SUSPENDED_COMPLIANCE',
       });
     });
 

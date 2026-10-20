@@ -175,6 +175,17 @@ export function midnightSchedulerId(task: MidnightTask): string {
   return task.toLowerCase().replaceAll('_', '-');
 }
 
+/**
+ * Queues one compliance sweep now (SPEC core 10, amended 2026-10-20). Called at worker start, so a
+ * shop that is LIVE without a verified PAN (one from before the rule, or restored by a path a bug
+ * left ungated) stops trading within minutes of a deploy, not at the next midnight. The sweep is
+ * idempotent: several workers starting together each queue one, and all but the first find nothing.
+ */
+export async function queueComplianceSweepNow(queue: Queue<MidnightMaintenanceJob>): Promise<void> {
+  const task = 'VENDOR_COMPLIANCE_SWEEP';
+  await queue.add(task, { task }, { attempts: 3, ...RETENTION });
+}
+
 /** Upserts one cron per midnight task at 00:00 Asia/Kathmandu. Idempotent across restarts. */
 export async function registerMidnightJobs(queue: Queue<MidnightMaintenanceJob>): Promise<void> {
   for (const task of midnightTasks) {

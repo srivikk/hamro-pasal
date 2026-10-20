@@ -34,6 +34,7 @@ import { OutboxRelay } from './outbox/outbox-relay';
 import {
   allTimerQueues,
   createTimerQueues,
+  queueComplianceSweepNow,
   registerMidnightJobs,
   scheduleDataExport,
 } from './queues/definitions';
@@ -89,6 +90,7 @@ async function main(): Promise<void> {
   const connection = buildBullConnection(env.REDIS_URL);
   const queues = createTimerQueues(connection);
   await registerMidnightJobs(queues.midnight);
+  await queueComplianceSweepNow(queues.midnight);
   const reconciliationLedger = new LedgerService(new WalletService());
   const processors = createProcessors(
     createTimerHandlers({

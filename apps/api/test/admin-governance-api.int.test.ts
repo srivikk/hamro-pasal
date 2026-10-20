@@ -684,14 +684,18 @@ describe('Admin governance API', () => {
       });
     });
 
-    it('is cleared by a changed PAN, which must then be verified again', async () => {
+    it('is cleared by a changed PAN, which takes the shop offline until verified again (2026-10-20)', async () => {
       const vendorId = await vendorWithPan();
       const vendorUserId = await vendorUserIdOf(db, vendorId);
       const first = bodyOf(panVerificationResponseSchema, await verify(vendorId)).vendor;
 
       expect((await savePan(vendorUserId, '609988776')).status).toBe(200);
       const cleared = await vendorRow(vendorId);
-      expect(cleared).toMatchObject({ pan_verified_at: null, status: 'LIVE' });
+      expect(cleared).toMatchObject({
+        pan_verified_at: null,
+        status: 'SUSPENDED_COMPLIANCE',
+        status_before_compliance_suspension: 'LIVE',
+      });
 
       // The document was the old number's: it went with it, and nothing can be verified yet.
       expect(cleared.pan_document_url).toBeNull();
@@ -710,6 +714,8 @@ describe('Admin governance API', () => {
       expect(second.tax_id).toBe('609988776');
       expect(second.pan_verified_at).not.toBeNull();
       expect(second.pan_verified_at).not.toBe(first.pan_verified_at);
+      // The new verification is what brings the shop back.
+      expect(second).toMatchObject({ status: 'LIVE', restore_status: null });
       const verified = await verifiedEntries(vendorId);
       expect(verified.map((entry) => entry.after_state.tax_id).sort()).toEqual([
         '302118845',
@@ -721,15 +727,20 @@ describe('Admin governance API', () => {
         'PAN_VERIFIED',
         'PAN_VERIFIED',
         'TAX_IDENTITY_SAVED',
+        'VENDOR_SUSPENDED_FOR_COMPLIANCE',
       ]);
     });
 
-    it('reports a compliance suspension that lies under another one, with the sweep’s time', async () => {
+    it('lifts a compliance suspension that lies under an admin one, and leaves that one in place', async () => {
       const vendorId = await vendorWithPan();
-      const swept = await jobEntry(vendorId);
+      await jobEntry(vendorId);
       await db
         .update(vendors)
-        .set({ status: 'SUSPENDED', status_before_compliance_suspension: 'APPROVED' })
+        .set({
+          status: 'SUSPENDED',
+          status_before_compliance_suspension: 'APPROVED',
+          status_before_admin_suspension: 'SUSPENDED_COMPLIANCE',
+        })
         .where(eq(vendors.id, vendorId));
 
       const res = await verify(vendorId);
@@ -737,10 +748,15 @@ describe('Admin governance API', () => {
       expect(res.status).toBe(200);
       expect(bodyOf(panVerificationResponseSchema, res).vendor).toMatchObject({
         status: 'SUSPENDED',
-        restore_status: 'APPROVED',
-        compliance_suspended_at: swept.occurred_at.toISOString(),
+        restore_status: null,
+        compliance_suspended_at: null,
       });
-      expect((await vendorRow(vendorId)).status).toBe('SUSPENDED');
+      // The admin's Restore now returns the shop to what it was before the compliance suspension.
+      expect(await vendorRow(vendorId)).toMatchObject({
+        status: 'SUSPENDED',
+        status_before_compliance_suspension: null,
+        status_before_admin_suspension: 'APPROVED',
+      });
     });
 
     it('answers 404 for an unknown vendor and 400 for a malformed id', async () => {

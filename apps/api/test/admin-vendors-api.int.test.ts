@@ -242,7 +242,7 @@ describe('Admin vendor management API', () => {
     });
 
     it('audits a restore after the suspension, and nothing for a refused override', async () => {
-      const vendorId = await createVendor(db);
+      const vendorId = await createVendor(db, { verifiedPan: true });
       expect((await suspend(vendorId)).status).toBe(200);
       expect((await suspend(vendorId)).status).toBe(409);
       expect((await restore(vendorId)).status).toBe(200);
@@ -334,7 +334,7 @@ describe('Admin vendor management API', () => {
     it.each<VendorStatus>(['LIVE', 'APPROVED', 'SANDBOXED'])(
       'returns an admin-suspended %s vendor to %s',
       async (status) => {
-        const vendorId = await createVendor(db, { status });
+        const vendorId = await createVendor(db, { status, verifiedPan: true });
         expect((await suspend(vendorId)).status).toBe(200);
 
         const res = await restore(vendorId);
@@ -352,6 +352,27 @@ describe('Admin vendor management API', () => {
       },
     );
 
+    it('returns a vendor without a verified PAN to SUSPENDED_COMPLIANCE, never LIVE (2026-10-20)', async () => {
+      const vendorId = await createVendor(db);
+      expect((await suspend(vendorId)).status).toBe(200);
+
+      const res = await restore(vendorId);
+
+      expect(res.status).toBe(200);
+      expect(bodyOf(adminVendorOverrideResponseSchema, res).vendor.status).toBe(
+        'SUSPENDED_COMPLIANCE',
+      );
+      expect(await vendorRow(vendorId)).toMatchObject({
+        status: 'SUSPENDED_COMPLIANCE',
+        status_before_compliance_suspension: 'LIVE',
+        status_before_admin_suspension: null,
+      });
+      expect((await overrideEvents(vendorId)).map((e) => [e.action, e.to_status])).toEqual([
+        ['SUSPEND', 'SUSPENDED'],
+        ['RESTORE', 'SUSPENDED_COMPLIANCE'],
+      ]);
+    });
+
     it('refuses a debt-suspended vendor while the wallet is below the limit', async () => {
       const vendorId = await createVendor(db);
       await codCommission(vendorId, 2500);
@@ -368,7 +389,7 @@ describe('Admin vendor management API', () => {
     });
 
     it('lifts a debt suspension early once the wallet is back within the limit', async () => {
-      const vendorId = await createVendor(db);
+      const vendorId = await createVendor(db, { verifiedPan: true });
       await codCommission(vendorId, 2500);
       // A partial payment: -1500 is within the limit but still negative, so paying alone does not
       // bring the shop back (Phase 12.5); the admin may.

@@ -47,6 +47,18 @@ export class OrderDecisionConflictError extends Error {
 }
 
 /**
+ * SPEC core 10 (amended 2026-10-20): a shop without a verified PAN does not trade. It cannot take
+ * on a new order, even one placed just before its PAN changed; orders it had already accepted are
+ * completed.
+ */
+export class VendorComplianceSuspendedError extends Error {
+  constructor(readonly orderId: string) {
+    super(`Order ${orderId} cannot be accepted: the shop is offline until its PAN is verified`);
+    this.name = 'VendorComplianceSuspendedError';
+  }
+}
+
+/**
  * Dispatch was asked while the customer's 60 s cancellation window is still open. Once out for
  * delivery an order can no longer be canceled, so dispatching early would cut the window short.
  */
@@ -167,6 +179,11 @@ export class VendorOrderService {
    * same commit (the customer's tracker and the vendor's other devices hear it over /orders).
    * Accepting stops the 90 s escalation: its worker re-reads the state under the same row lock.
    * The customer's 60 s cancellation window is not shortened by an early accept.
+   *
+   * A shop suspended for compliance (no verified PAN, SPEC core 10) is refused (409). Its status is
+   * read FOR SHARE after the order row, the order a delivery locks them in: a PAN change taking
+   * the shop offline (vendor row FOR UPDATE) either commits first and is seen here, or waits for
+   * this accept to commit.
    */
   accept(vendorUserId: string, orderId: string): Promise<VendorDecisionResult> {
     return this.db.transaction(async (tx) => {
@@ -174,6 +191,13 @@ export class VendorOrderService {
       if (order.state === 'PREPARING') return { order, replayed: true };
       if (order.state !== 'PLACED')
         throw new OrderDecisionConflictError(orderId, 'accept', order.state);
+      const [shop] = await tx
+        .select({ status: vendors.status })
+        .from(vendors)
+        .where(eq(vendors.id, order.vendor_id))
+        .for('share');
+      if (shop?.status === 'SUSPENDED_COMPLIANCE')
+        throw new VendorComplianceSuspendedError(orderId);
 
       const [accepted] = await tx
         .update(orders)

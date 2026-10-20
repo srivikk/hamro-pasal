@@ -182,30 +182,31 @@ describe('vendor notice wording', () => {
     return notice;
   };
 
-  it('tells a shop swept for compliance why it is offline and how to come back', async () => {
+  it('tells a shop suspended for compliance why it is offline and how to come back', async () => {
+    // SPEC core 10 (amended 2026-10-20): only the verification brings it back.
     const event = suspended();
     expect(await wording(event)).toEqual({
       eventId: event.event_id,
       eventType: 'vendor.suspended_for_compliance',
       vendorId: event.payload.vendor_id,
       phone: PHONE,
-      sms: 'Hamro Pasal: your shop is offline because no PAN is on file. Please add your 9-digit PAN in the app (Shop settings) and your shop goes back online at once.',
+      sms: 'Hamro Pasal: your shop is offline until Hamro Pasal verifies your PAN. Please add your PAN and upload your PAN certificate in the app (Shop settings).',
       push: {
         title: 'Your shop is offline',
-        body: 'Please add your PAN in Shop settings. Your shop goes back online as soon as it is saved.',
+        body: 'It goes back online once Hamro Pasal verifies your PAN. Please add your PAN and certificate in Shop settings.',
       },
     });
   });
 
   it('says the shop is back online only when it is', async () => {
     expect((await wording(restored('LIVE'))).sms).toBe(
-      'Hamro Pasal: thank you, your PAN is saved and your shop is back online. Please upload your PAN certificate in the app so your payouts can be released.',
+      'Hamro Pasal: your PAN is verified and your shop is back online. Please open the app to take orders again.',
     );
-    // A debt or admin suspension lies on top: the PAN did not bring the shop back.
+    // A debt or admin suspension lies on top: the verification did not bring the shop back.
     const still = await wording(restored('SUSPENDED'));
     expect(still.sms).toContain('Your shop is still offline for another reason');
     expect(still.sms).not.toContain('back online');
-    expect(still.push.title).toBe('PAN saved');
+    expect(still.push.title).toBe('PAN verified');
     const waiting = await wording(restored('APPROVED'));
     expect(waiting.sms).toContain('Your shop is not live yet');
     expect(waiting.sms).not.toContain('back online');
@@ -225,13 +226,13 @@ describe('vendor notice wording', () => {
     expect(nothing.push.body).not.toContain('wallet');
   });
 
-  it('says a reopened shop is online only when it has a PAN', async () => {
+  it('says a reopened shop is online only when its PAN is verified', async () => {
     expect((await wording(reactivated('LIVE'))).sms).toBe(
       'Hamro Pasal: your shop has been reopened and is back online. Please sign in to the app to take orders. Your ads and campaigns must be set up again.',
     );
     const offline = await wording(reactivated('SUSPENDED_COMPLIANCE'));
     expect(offline.sms).toBe(
-      'Hamro Pasal: your shop has been reopened, but it stays offline until a PAN is on file. Please sign in to the app and add your 9-digit PAN in Shop settings.',
+      'Hamro Pasal: your shop has been reopened, but it stays offline until Hamro Pasal verifies your PAN. Please sign in and check your PAN and certificate in Shop settings.',
     );
     expect(offline.sms).not.toContain('back online');
     expect(offline.push.body).toContain('stays offline');

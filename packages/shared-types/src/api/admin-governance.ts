@@ -133,19 +133,19 @@ export const complianceVendorViewSchema = z
     municipality_palika_string: z.string().min(1),
     status: vendorStatusSchema,
     /**
-     * The status a saved PAN returns the shop to. Set while a compliance suspension is in force,
-     * also when a debt or admin suspension lies on top of it.
+     * The status the PAN verification returns the shop to. Set while a compliance suspension is in
+     * force, also when a debt or admin suspension lies on top of it.
      */
     restore_status: vendorStatusSchema.exclude(['SUSPENDED', 'SUSPENDED_COMPLIANCE']).nullable(),
-    /** When the compliance sweep suspended the shop; null when it is not so suspended. */
+    /** When the shop was last suspended for compliance; null when it is not so suspended. */
     compliance_suspended_at: z.iso.datetime().nullable(),
     legal_name: z.string().min(1).nullable(),
     tax_id: panSchema.nullable(),
     is_vat_registered: z.boolean(),
     /**
-     * When a Super Admin checked the PAN document (decided 2026-10-07). It gates payouts, not
-     * visibility: a shop trades from the moment its PAN is saved, but no money is transferred to
-     * its bank account while this is null.
+     * When a Super Admin checked the PAN document. Amended 2026-10-20: it gates trading as well as
+     * payouts. A shop is never LIVE while this is null (it is SUSPENDED_COMPLIANCE, hidden and
+     * unable to accept orders), and no money is transferred to its bank account.
      */
     pan_verified_at: z.iso.datetime().nullable(),
     /**
@@ -176,8 +176,8 @@ export const PAN_STANDINGS = ['SUSPENDED', 'MISSING', 'UNVERIFIED', 'VERIFIED'] 
 export type PanStanding = (typeof PAN_STANDINGS)[number];
 
 /**
- * SUSPENDED: offline for compliance. MISSING: no PAN on file. UNVERIFIED: a PAN awaiting a Super
- * Admin's check (trading, payouts held). VERIFIED: checked.
+ * SUSPENDED: offline for compliance (no verified PAN). MISSING: no PAN on file. UNVERIFIED: a PAN
+ * awaiting a Super Admin's check (the shop cannot be LIVE, payouts held). VERIFIED: checked.
  */
 export function panStandingOf(
   vendor: Pick<ComplianceVendorView, 'status' | 'tax_id' | 'pan_verified_at'>,

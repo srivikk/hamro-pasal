@@ -53,7 +53,14 @@ export type FiscalInvoiceResult =
    * The seller has no PAN on file (a shop swept for compliance still delivers its open orders,
    * SPEC core 10): no invoice can name it, so none is issued and no number is taken.
    */
-  | { readonly status: 'SELLER_HAS_NO_PAN'; readonly invoice: null; readonly replayed: false };
+  | { readonly status: 'SELLER_HAS_NO_PAN'; readonly invoice: null; readonly replayed: false }
+  /**
+   * SPEC core 10 (amended 2026-10-20): the seller's PAN is not verified yet. An invoice printing an
+   * unchecked PAN is legally invalid, so it waits like one with no PAN: the Super Admin's
+   * verification issues the shop's waiting invoices. A shop whose PAN changed while it had orders
+   * open delivers them while suspended, and their invoices wait for the new number's check.
+   */
+  | { readonly status: 'SELLER_PAN_UNVERIFIED'; readonly invoice: null; readonly replayed: false };
 
 /**
  * Issues the fiscal invoice of a delivered order (SPEC core 10), inside the caller's transaction:
@@ -76,9 +83,9 @@ export type FiscalInvoiceResult =
  * Locks: a delivery holds the order row, and by then usually the vendor row, the ledger accounts
  * and the ad purchase row (settlement, ad premium). This takes the vendor row `FOR SHARE` (never
  * stronger than what a wallet journal already holds), then the sequence row **last**, and nothing
- * after it: a transaction holding a sequence row never waits for another lock. The PAN save, which
- * issues a shop's waiting invoices, follows the same order: vendor row, then sequence rows; it
- * locks no order row.
+ * after it: a transaction holding a sequence row never waits for another lock. The PAN
+ * verification, which issues a shop's waiting invoices, follows the same order: vendor row, then
+ * sequence rows (the waiting order rows it locks come before the vendor row).
  *
  * `issuedAt` defaults to the database clock; tests pass it to cross a fiscal year.
  */
@@ -99,18 +106,21 @@ export async function generateFiscalInvoice(
       municipality: vendors.municipality_palika_string,
       phone: vendors.phone,
       tax_id: vendors.tax_id,
+      pan_verified_at: vendors.pan_verified_at,
       is_vat_registered: vendors.is_vat_registered,
     })
     .from(vendors)
     .where(eq(vendors.id, order.vendor_id))
-    // Read under a share lock: a PAN being saved at this moment (which holds the row FOR UPDATE
-    // and issues the shop's waiting invoices) is either seen here, or sees this delivery. Without
-    // it, a delivery that posts no wallet journal could read "no PAN" while the save, not yet
-    // seeing the delivery, skips it: an order with no invoice from either side.
+    // Read under a share lock: a PAN being verified at this moment (which holds the row FOR
+    // UPDATE and issues the shop's waiting invoices) is either seen here, or sees this delivery.
+    // Without it, a delivery that posts no wallet journal could read "unverified" while the
+    // verification, not yet seeing the delivery, skips it: an order with no invoice from either side.
     .for('share');
   if (seller === undefined) throw new InvoiceNotIssuableError(order.id, 'its vendor is gone');
   if (seller.tax_id === null)
     return { status: 'SELLER_HAS_NO_PAN', invoice: null, replayed: false };
+  if (seller.pan_verified_at === null)
+    return { status: 'SELLER_PAN_UNVERIFIED', invoice: null, replayed: false };
 
   const at = issuedAt ?? (await databaseClock(tx));
   const fiscalYear = fiscalYearOf(at);

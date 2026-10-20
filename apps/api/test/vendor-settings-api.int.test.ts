@@ -1,4 +1,4 @@
-import { auditLogs, platformSettings, vendors, type Database } from '@hamro-pasal/db';
+import { auditLogs, outboxEvents, platformSettings, vendors, type Database } from '@hamro-pasal/db';
 import {
   auditLogSchema,
   deliverySettingsResponseSchema,
@@ -6,7 +6,7 @@ import {
   PALIKAS,
   type UserRole,
 } from '@hamro-pasal/shared-types';
-import { asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import request from 'supertest';
 
 import { createUser, createVendor, vendorUserIdOf } from './support/fixtures';
@@ -72,6 +72,17 @@ describe('Vendor settings API', () => {
       .set({ pan_verified_at: sql`now()`, pan_verified_by_user_id: adminId })
       .where(eq(vendors.id, vendorId));
 
+  /** The Super Admin's check through the API, once the certificate is on file. */
+  const verifyThroughApi = async (vendorId: string) => {
+    await db
+      .update(vendors)
+      .set({ pan_document_url: `kyc/pan/${vendorId}/certificate.webp` })
+      .where(eq(vendors.id, vendorId));
+    return request(t.app)
+      .post(`/api/admin/vendors/${vendorId}/pan-verification`)
+      .set('authorization', bearer(adminId, 'SUPER_ADMIN'));
+  };
+
   describe('PUT /api/vendor/tax-identity', () => {
     const save = (
       token: string,
@@ -134,7 +145,7 @@ describe('Vendor settings API', () => {
       });
     });
 
-    it('lifts a compliance suspension in the same transaction, back to the status it had', async () => {
+    it('never lifts a compliance suspension: the shop stays offline until its PAN is verified (2026-10-20)', async () => {
       for (const status of ['LIVE', 'APPROVED'] as const) {
         const { vendorId, token } = await shop({ status });
         await sweep(vendorId);
@@ -144,19 +155,27 @@ describe('Vendor settings API', () => {
 
         expect(res.status).toBe(200);
         expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
-          status,
-          compliance_suspension_lifted: true,
+          status: 'SUSPENDED_COMPLIANCE',
+          compliance_suspension_lifted: false,
+          waiting_invoices_issued: 0,
         });
         expect(await vendorRow(vendorId)).toMatchObject({
-          status,
-          status_before_compliance_suspension: null,
+          status: 'SUSPENDED_COMPLIANCE',
+          status_before_compliance_suspension: status,
           tax_id: '302118845',
         });
         const [entry] = await auditEntries(vendorId);
         expect(entry).toMatchObject({
           action: 'TAX_IDENTITY_SAVED',
           before_state: { status: 'SUSPENDED_COMPLIANCE', tax_id: null },
-          after_state: { status, tax_id: '302118845' },
+          after_state: { status: 'SUSPENDED_COMPLIANCE', tax_id: '302118845' },
+        });
+
+        // The Super Admin's verification is what brings it back, to the status it had.
+        expect((await verifyThroughApi(vendorId)).status).toBe(200);
+        expect(await vendorRow(vendorId)).toMatchObject({
+          status,
+          status_before_compliance_suspension: null,
         });
       }
     });
@@ -193,12 +212,20 @@ describe('Vendor settings API', () => {
         status_before_compliance_suspension: 'LIVE',
       });
 
-      // The PAN never lifts the admin's suspension...
+      // Saving the PAN changes neither suspension (SPEC core 10, amended 2026-10-20)...
       const res = await save(token);
       expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
         status: 'SUSPENDED',
-        compliance_suspension_lifted: true,
+        compliance_suspension_lifted: false,
       });
+      expect(await vendorRow(vendorId)).toMatchObject({
+        status: 'SUSPENDED',
+        status_before_admin_suspension: 'SUSPENDED_COMPLIANCE',
+        status_before_compliance_suspension: 'LIVE',
+      });
+
+      // ...the verification never lifts the admin's, but makes it restore to the real status...
+      expect((await verifyThroughApi(vendorId)).status).toBe(200);
       expect(await vendorRow(vendorId)).toMatchObject({
         status: 'SUSPENDED',
         status_before_admin_suspension: 'LIVE',
@@ -213,7 +240,7 @@ describe('Vendor settings API', () => {
       expect((await vendorRow(vendorId)).status).toBe('LIVE');
     });
 
-    it('clears the verification when the PAN changes, and audits the freeze', async () => {
+    it('clears the verification when the PAN changes and takes the LIVE shop offline at once (2026-10-20)', async () => {
       const { vendorId, token } = await shop();
       await save(token);
       await verifyPan(vendorId);
@@ -223,21 +250,40 @@ describe('Vendor settings API', () => {
       expect(res.status).toBe(200);
       expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
         tax_id: '609871234',
-        status: 'LIVE',
+        status: 'SUSPENDED_COMPLIANCE',
         pan_verified_at: null,
       });
       expect(await vendorRow(vendorId)).toMatchObject({
         tax_id: '609871234',
         pan_verified_at: null,
         pan_verified_by_user_id: null,
-        status: 'LIVE',
+        status: 'SUSPENDED_COMPLIANCE',
+        status_before_compliance_suspension: 'LIVE',
       });
       const actions = (await auditEntries(vendorId)).map((entry) => entry.action);
       expect(actions).toEqual([
         'TAX_IDENTITY_SAVED',
+        'VENDOR_SUSPENDED_FOR_COMPLIANCE',
         'TAX_IDENTITY_SAVED',
         'PAN_VERIFICATION_CLEARED',
       ]);
+      expect((await auditEntries(vendorId))[1]).toMatchObject({
+        actor_user_id: (await vendorRow(vendorId)).user_id,
+        before_state: { status: 'LIVE', tax_id: '302118845' },
+        after_state: { status: 'SUSPENDED_COMPLIANCE', restores_to: 'LIVE', reason: 'PAN_CHANGED' },
+      });
+      // The vendor is told, from the same commit.
+      const events = await db
+        .select()
+        .from(outboxEvents)
+        .where(
+          and(
+            eq(outboxEvents.aggregate_id, vendorId),
+            eq(outboxEvents.event_type, 'vendor.suspended_for_compliance'),
+          ),
+        );
+      expect(events).toHaveLength(1);
+      expect(events[0]?.payload).toMatchObject({ vendor_id: vendorId, previous_status: 'LIVE' });
       const cleared = (await auditEntries(vendorId)).at(-1);
       expect(cleared).toMatchObject({
         before_state: { tax_id: '302118845', pan_verified_by_user_id: adminId },
@@ -295,8 +341,9 @@ describe('Vendor settings API', () => {
         responses.filter(
           (res) => bodyOf(taxIdentityResponseSchema, res).compliance_suspension_lifted,
         ),
-      ).toHaveLength(1);
-      expect((await vendorRow(vendorId)).status).toBe('LIVE');
+      ).toHaveLength(0);
+      // Saved once; the shop waits for the verification (SPEC core 10, amended 2026-10-20).
+      expect((await vendorRow(vendorId)).status).toBe('SUSPENDED_COMPLIANCE');
       expect(await auditEntries(vendorId)).toHaveLength(1);
     });
 

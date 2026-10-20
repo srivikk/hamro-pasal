@@ -466,7 +466,7 @@ describe('PAN document card', () => {
 
       await waitFor(() => {
         expect(toast()).toMatchObject({
-          message: 'PAN document replaced. Payouts wait until the new one is verified.',
+          message: 'PAN document replaced. Your shop is offline until the new one is verified.',
           tone: 'success',
         });
       });

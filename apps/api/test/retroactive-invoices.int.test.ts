@@ -1,33 +1,57 @@
-import { auditLogs, invoices, invoiceSequences, orders, type Database } from '@hamro-pasal/db';
+import {
+  auditLogs,
+  invoices,
+  invoiceSequences,
+  orders,
+  vendors,
+  type Database,
+} from '@hamro-pasal/db';
 import { generateFiscalInvoice } from '@hamro-pasal/ledger';
-import { taxIdentityResponseSchema } from '@hamro-pasal/shared-types';
+import { panVerificationResponseSchema } from '@hamro-pasal/shared-types';
 import { and, eq, sql } from 'drizzle-orm';
 import request from 'supertest';
 
-import { createVendor, vendorUserIdOf } from './support/fixtures';
+import { createUser, createVendor, vendorUserIdOf } from './support/fixtures';
 import { bearer, bodyOf, buildTestApp, type TestApp } from './support/http';
 import { invoicesOf, issueInvoice, setPan, soldOrder } from './support/invoicing';
 
 /**
- * Phase 32 on real PostgreSQL: the invoices that waited for a shop's PAN (SPEC core 10: a shop
- * swept for compliance still delivers its open orders, and "their invoices are issued when the
- * PAN arrives"). PUT /api/vendor/tax-identity issues them in its own transaction.
+ * Phase 32 on real PostgreSQL, amended 2026-10-20 (SPEC core 10): the invoices that waited for a
+ * verified seller. A shop that is suspended for compliance still delivers the orders it had
+ * accepted, and an invoice printing an unchecked PAN is legally invalid, so "their invoices are
+ * issued when the PAN is verified": POST /api/admin/vendors/:id/pan-verification issues them in its
+ * own transaction. Saving the PAN issues nothing.
  */
-describe('Retroactive invoices on PAN save', () => {
+describe('Retroactive invoices on PAN verification', () => {
   let t: TestApp;
   let db: Database;
+  let adminToken: string;
+  let adminId: string;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     t = buildTestApp();
     db = t.container.db;
+    adminId = await createUser(db, 'SUPER_ADMIN');
+    adminToken = bearer(adminId, 'SUPER_ADMIN');
   });
 
   afterAll(async () => {
     await t.container.close();
   });
 
-  async function shop(options: { swept?: boolean } = {}) {
+  /** A shop with an unverified PAN and its certificate on file; suspended for compliance by default. */
+  async function shop(options: { swept?: boolean; vat?: boolean } = {}) {
     const vendorId = await createVendor(db, { businessName: 'Asan Masala & Snacks' });
+    await db
+      .update(vendors)
+      .set({
+        tax_id: '302118845',
+        is_vat_registered: options.vat ?? true,
+        legal_name: 'Asan Masala Pvt. Ltd.',
+        registered_address: 'Asan Tole, Kathmandu-27',
+        pan_document_url: `kyc/pan/${vendorId}/certificate.webp`,
+      })
+      .where(eq(vendors.id, vendorId));
     if (options.swept !== false) {
       await db.execute(
         sql`UPDATE vendors SET status = 'SUSPENDED_COMPLIANCE', status_before_compliance_suspension = status
@@ -37,6 +61,11 @@ describe('Retroactive invoices on PAN save', () => {
     const userId = await vendorUserIdOf(db, vendorId);
     return { vendorId, userId, token: bearer(userId, 'VENDOR') };
   }
+
+  const verify = (vendorId: string) =>
+    request(t.app)
+      .post(`/api/admin/vendors/${vendorId}/pan-verification`)
+      .set('authorization', adminToken);
 
   const save = (token: string, body: object = { tax_id: '302118845', is_vat_registered: true }) =>
     request(t.app).put('/api/vendor/tax-identity').set('authorization', token).send(body);
@@ -51,12 +80,18 @@ describe('Retroactive invoices on PAN save', () => {
         and(eq(auditLogs.entity_id, vendorId), eq(auditLogs.action, 'WAITING_INVOICES_ISSUED')),
       );
 
+  const issuedCount = async (vendorId: string) =>
+    (await waitingAudit(vendorId)).reduce(
+      (sum, row) => sum + (row.after_state as { issued_count: number }).issued_count,
+      0,
+    );
+
   const counterOf = async (vendorId: string) =>
     (await db.select().from(invoiceSequences).where(eq(invoiceSequences.vendor_id, vendorId)))[0]
       ?.last_number;
 
-  it('issues the waiting invoices in the order of delivery, in the transaction that saves the PAN', async () => {
-    const { vendorId, userId, token } = await shop();
+  it('issues the waiting invoices in the order of delivery, in the transaction that verifies the PAN', async () => {
+    const { vendorId } = await shop();
     // Created out of delivery order on purpose.
     const second = await soldOrder(db, vendorId, { deliveredAt: minutesAgo(20), prices: [300] });
     const third = await soldOrder(db, vendorId, { deliveredAt: minutesAgo(10), prices: [1130] });
@@ -66,18 +101,12 @@ describe('Retroactive invoices on PAN save', () => {
     });
     expect(await invoicesOf(db, vendorId)).toEqual([]);
 
-    const res = await save(token, {
-      tax_id: '302118845',
-      is_vat_registered: true,
-      legal_name: 'Asan Masala Pvt. Ltd.',
-      registered_address: 'Asan Tole, Kathmandu-27',
-    });
+    const res = await verify(vendorId);
 
     expect(res.status).toBe(200);
-    expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
+    expect(bodyOf(panVerificationResponseSchema, res).vendor).toMatchObject({
       status: 'LIVE',
-      compliance_suspension_lifted: true,
-      waiting_invoices_issued: 3,
+      restore_status: null,
     });
     const issued = await invoicesOf(db, vendorId);
     expect(issued.map((invoice) => [invoice.bill_number, invoice.order_id])).toEqual([
@@ -86,7 +115,7 @@ describe('Retroactive invoices on PAN save', () => {
       [3, third.id],
     ]);
     expect(await counterOf(vendorId)).toBe(3);
-    // The seller is the shop as this save left it; the totals are what each customer paid.
+    // The seller is the shop as the verification found it; the totals are what each customer paid.
     for (const invoice of issued) {
       expect(invoice).toMatchObject({
         seller_tax_id: '302118845',
@@ -97,15 +126,15 @@ describe('Retroactive invoices on PAN save', () => {
     }
     expect(issued.map((invoice) => invoice.grand_total_npr)).toEqual([800, 350, 1180]);
     expect(issued[2]).toMatchObject({ taxable_amount_npr: 1044.25, vat_amount_npr: 135.75 });
-    // Numbered and dated when the PAN arrived, in delivery order.
+    // Numbered and dated when the PAN was verified, in delivery order.
     const times = issued.map((invoice) => invoice.issued_at.getTime());
     expect([...times].sort((a, b) => a - b)).toEqual(times);
     expect(Math.min(...times)).toBeGreaterThan(minutesAgo(1).getTime());
 
     const [audit] = await waitingAudit(vendorId);
     expect(audit).toMatchObject({
-      actor_user_id: userId,
-      actor_role: 'VENDOR',
+      actor_user_id: adminId,
+      actor_role: 'SUPER_ADMIN',
       vendor_id: vendorId,
       before_state: null,
       after_state: {
@@ -117,8 +146,28 @@ describe('Retroactive invoices on PAN save', () => {
     });
   });
 
-  it('invoices only DELIVERED orders of this shop', async () => {
+  it('issues nothing while the PAN is only saved: an unchecked PAN is never printed', async () => {
     const { vendorId, token } = await shop();
+    await db
+      .update(vendors)
+      .set({ tax_id: null, pan_document_url: null })
+      .where(eq(vendors.id, vendorId));
+    await soldOrder(db, vendorId);
+
+    const res = await save(token);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      status: 'SUSPENDED_COMPLIANCE',
+      compliance_suspension_lifted: false,
+      waiting_invoices_issued: 0,
+    });
+    expect(await invoicesOf(db, vendorId)).toEqual([]);
+    expect(await waitingAudit(vendorId)).toEqual([]);
+  });
+
+  it('invoices only DELIVERED orders of this shop', async () => {
+    const { vendorId } = await shop();
     const other = await shop();
     const delivered = await soldOrder(db, vendorId);
     await soldOrder(db, vendorId, { deliveredAt: null, state: 'PLACED' });
@@ -127,9 +176,8 @@ describe('Retroactive invoices on PAN save', () => {
     await soldOrder(db, vendorId, { deliveredAt: null, state: 'CANCELED' });
     await soldOrder(db, other.vendorId);
 
-    const res = await save(token);
+    expect((await verify(vendorId)).status).toBe(200);
 
-    expect(bodyOf(taxIdentityResponseSchema, res).waiting_invoices_issued).toBe(1);
     expect((await invoicesOf(db, vendorId)).map((invoice) => invoice.order_id)).toEqual([
       delivered.id,
     ]);
@@ -141,16 +189,13 @@ describe('Retroactive invoices on PAN save', () => {
     });
   });
 
-  it('also serves a shop that was never swept: its first PAN issues what waited', async () => {
-    const { vendorId, token } = await shop({ swept: false });
+  it('also serves a shop that was never swept: its verification issues what waited', async () => {
+    const { vendorId } = await shop({ swept: false, vat: false });
     await soldOrder(db, vendorId);
 
-    const res = await save(token, { tax_id: '302118845', is_vat_registered: false });
+    const res = await verify(vendorId);
 
-    expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
-      compliance_suspension_lifted: false,
-      waiting_invoices_issued: 1,
-    });
+    expect(bodyOf(panVerificationResponseSchema, res).vendor.status).toBe('LIVE');
     // Not VAT registered: a PAN invoice with no VAT.
     expect((await invoicesOf(db, vendorId))[0]).toMatchObject({
       seller_is_vat_registered: false,
@@ -160,28 +205,25 @@ describe('Retroactive invoices on PAN save', () => {
   });
 
   it('issues nothing when no order waited, and records no audit entry for it', async () => {
-    const { vendorId, token } = await shop();
+    const { vendorId } = await shop();
 
-    const res = await save(token);
+    const res = await verify(vendorId);
 
-    expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
-      compliance_suspension_lifted: true,
-      waiting_invoices_issued: 0,
-    });
+    expect(bodyOf(panVerificationResponseSchema, res).vendor.status).toBe('LIVE');
     expect(await waitingAudit(vendorId)).toEqual([]);
     expect(await counterOf(vendorId)).toBeUndefined();
   });
 
-  it('issues once: a repeated save and a changed PAN issue nothing more', async () => {
+  it('issues once: a repeated verification and a changed PAN issue nothing more', async () => {
     const { vendorId, token } = await shop();
     await soldOrder(db, vendorId);
     await soldOrder(db, vendorId);
 
-    expect(bodyOf(taxIdentityResponseSchema, await save(token)).waiting_invoices_issued).toBe(2);
-    expect(bodyOf(taxIdentityResponseSchema, await save(token)).waiting_invoices_issued).toBe(0);
+    await verify(vendorId);
+    await verify(vendorId);
     const changed = await save(token, { tax_id: '609998877', is_vat_registered: true });
 
-    expect(bodyOf(taxIdentityResponseSchema, changed).waiting_invoices_issued).toBe(0);
+    expect(changed.status).toBe(200);
     const issued = await invoicesOf(db, vendorId);
     expect(issued.map((invoice) => invoice.bill_number)).toEqual([1, 2]);
     // An issued invoice keeps the PAN it was issued with.
@@ -189,29 +231,28 @@ describe('Retroactive invoices on PAN save', () => {
     expect(await waitingAudit(vendorId)).toHaveLength(1);
   });
 
-  it('leaves alone an uninvoiced order of a shop that already had its PAN', async () => {
-    const { vendorId, token } = await shop({ swept: false });
+  it('leaves alone an uninvoiced order of a shop already verified: a repeat sweeps nothing in', async () => {
+    const { vendorId } = await shop({ swept: false });
     await setPan(db, vendorId, '302118845');
-    // Delivered before invoicing existed: not this save's to sweep in.
+    // Delivered before invoicing existed: not this verification's to sweep in.
     await soldOrder(db, vendorId);
 
-    const res = await save(token, { tax_id: '609998877', is_vat_registered: false });
+    expect((await verify(vendorId)).status).toBe(200);
 
-    expect(bodyOf(taxIdentityResponseSchema, res).waiting_invoices_issued).toBe(0);
     expect(await invoicesOf(db, vendorId)).toEqual([]);
   });
 
   it('never invoices an order twice: one already invoiced is not counted again', async () => {
-    const { vendorId, token } = await shop();
+    const { vendorId } = await shop();
     await setPan(db, vendorId, '302118845');
     const invoiced = await soldOrder(db, vendorId, { deliveredAt: minutesAgo(30) });
     await issueInvoice(db, invoiced);
-    await setPan(db, vendorId, null);
+    await setPan(db, vendorId, '302118845', false);
     const waiting = await soldOrder(db, vendorId, { deliveredAt: minutesAgo(5) });
 
-    const res = await save(token);
+    await verify(vendorId);
 
-    expect(bodyOf(taxIdentityResponseSchema, res).waiting_invoices_issued).toBe(1);
+    expect(await issuedCount(vendorId)).toBe(1);
     expect(
       (await invoicesOf(db, vendorId)).map((invoice) => [invoice.bill_number, invoice.order_id]),
     ).toEqual([
@@ -220,20 +261,17 @@ describe('Retroactive invoices on PAN save', () => {
     ]);
   });
 
-  it('saves the PAN although one order cannot be invoiced, names it, and leaves no gap', async () => {
-    const { vendorId, token } = await shop();
+  it('verifies the PAN although one order cannot be invoiced, names it, and leaves no gap', async () => {
+    const { vendorId } = await shop();
     const first = await soldOrder(db, vendorId, { deliveredAt: minutesAgo(30) });
     // Its lines do not add up to what the customer paid.
     const broken = await soldOrder(db, vendorId, { deliveredAt: minutesAgo(20), withItems: false });
     const last = await soldOrder(db, vendorId, { deliveredAt: minutesAgo(10) });
 
-    const res = await save(token);
+    const res = await verify(vendorId);
 
     expect(res.status).toBe(200);
-    expect(bodyOf(taxIdentityResponseSchema, res)).toMatchObject({
-      status: 'LIVE',
-      waiting_invoices_issued: 2,
-    });
+    expect(bodyOf(panVerificationResponseSchema, res).vendor.status).toBe('LIVE');
     expect(
       (await invoicesOf(db, vendorId)).map((invoice) => [invoice.bill_number, invoice.order_id]),
     ).toEqual([
@@ -247,28 +285,15 @@ describe('Retroactive invoices on PAN save', () => {
     });
   });
 
-  it('issues nothing when the PAN is refused', async () => {
-    const { vendorId, token } = await shop();
-    await soldOrder(db, vendorId);
-
-    const res = await save(token, { tax_id: '12345', is_vat_registered: false });
-
-    expect(res.status).toBe(400);
-    expect(await invoicesOf(db, vendorId)).toEqual([]);
-  });
-
-  it('issues each invoice once under five simultaneous saves', async () => {
-    const { vendorId, token } = await shop();
+  it('issues each invoice once under five simultaneous verifications', async () => {
+    const { vendorId } = await shop();
     for (let index = 0; index < 4; index += 1) {
       await soldOrder(db, vendorId, { deliveredAt: minutesAgo(40 - index) });
     }
 
-    const responses = await Promise.all(Array.from({ length: 5 }, () => save(token)));
+    const responses = await Promise.all(Array.from({ length: 5 }, () => verify(vendorId)));
 
     expect(responses.map((res) => res.status)).toEqual([200, 200, 200, 200, 200]);
-    expect(
-      responses.map((res) => bodyOf(taxIdentityResponseSchema, res).waiting_invoices_issued).sort(),
-    ).toEqual([0, 0, 0, 0, 4]);
     expect((await invoicesOf(db, vendorId)).map((invoice) => invoice.bill_number)).toEqual([
       1, 2, 3, 4,
     ]);
@@ -276,7 +301,7 @@ describe('Retroactive invoices on PAN save', () => {
   });
 
   it('waits for a transaction that holds a waiting order, then invoices that order too', async () => {
-    const { vendorId, token } = await shop();
+    const { vendorId } = await shop();
     const held = await soldOrder(db, vendorId, { deliveredAt: minutesAgo(20) });
     await soldOrder(db, vendorId, { deliveredAt: minutesAgo(10) });
 
@@ -296,22 +321,23 @@ describe('Retroactive invoices on PAN save', () => {
     });
     await isLocked;
 
-    const saving = save(token).then((res) => res);
+    const verifying = verify(vendorId).then((res) => res);
     const early = await Promise.race([
-      saving.then(() => 'answered'),
+      verifying.then(() => 'answered'),
       new Promise((resolve) => setTimeout(resolve, 300, 'waiting')),
     ]);
     release();
     await holder;
-    const res = await saving;
+    const res = await verifying;
 
     expect(early).toBe('waiting');
-    expect(bodyOf(taxIdentityResponseSchema, res).waiting_invoices_issued).toBe(2);
+    expect(res.status).toBe(200);
+    expect(await issuedCount(vendorId)).toBe(2);
     expect((await invoicesOf(db, vendorId)).map((invoice) => invoice.order_id)).toContain(held.id);
   });
 
-  it('invoices an order whose delivery read "no PAN" just before the save and committed after it', async () => {
-    const { vendorId, token } = await shop();
+  it('invoices an order whose delivery read "unverified" just before the verification and committed after it', async () => {
+    const { vendorId } = await shop();
     const order = await soldOrder(db, vendorId, { deliveredAt: null, state: 'OUT_FOR_DELIVERY' });
 
     let finish: () => void = () => undefined;
@@ -322,8 +348,8 @@ describe('Retroactive invoices on PAN save', () => {
     const decision = new Promise<string>((resolve) => {
       decided = resolve;
     });
-    // A handoff that posts no wallet journal. It finds no PAN, so it issues nothing, and is
-    // still open when the PAN is saved: the save cannot see this delivery yet.
+    // A handoff that posts no wallet journal. It finds the PAN unverified, so it issues nothing,
+    // and is still open when the PAN is verified: the verification cannot see this delivery yet.
     const delivery = db.transaction(async (tx) => {
       await tx.select().from(orders).where(eq(orders.id, order.id)).for('update');
       const [delivered] = await tx
@@ -335,27 +361,27 @@ describe('Retroactive invoices on PAN save', () => {
       decided((await generateFiscalInvoice(tx, delivered)).status);
       await finishing;
     });
-    expect(await decision).toBe('SELLER_HAS_NO_PAN');
+    expect(await decision).toBe('SELLER_PAN_UNVERIFIED');
 
-    const saving = save(token).then((res) => res);
-    // The save waits for the delivery (the vendor row is share-locked by it) ...
+    const verifying = verify(vendorId).then((res) => res);
+    // The verification waits for the delivery (the vendor row is share-locked by it) ...
     const early = await Promise.race([
-      saving.then(() => 'answered'),
+      verifying.then(() => 'answered'),
       new Promise((resolve) => setTimeout(resolve, 300, 'waiting')),
     ]);
     finish();
     await delivery;
-    const res = await saving;
+    const res = await verifying;
 
     // ... and so finds the delivered order and issues its invoice.
     expect(early).toBe('waiting');
-    expect(bodyOf(taxIdentityResponseSchema, res).waiting_invoices_issued).toBe(1);
+    expect(res.status).toBe(200);
     expect((await invoicesOf(db, vendorId)).map((invoice) => invoice.order_id)).toEqual([order.id]);
   });
 
-  it('leaves no order without an invoice when deliveries race the PAN save', async () => {
+  it('leaves no order without an invoice when deliveries race the verification', async () => {
     for (let round = 0; round < 6; round += 1) {
-      const { vendorId, token } = await shop();
+      const { vendorId } = await shop();
       const before = [
         await soldOrder(db, vendorId, { deliveredAt: minutesAgo(30) }),
         await soldOrder(db, vendorId, { deliveredAt: minutesAgo(20) }),
@@ -379,7 +405,10 @@ describe('Retroactive invoices on PAN save', () => {
           return generateFiscalInvoice(tx, delivered);
         });
 
-      const [res] = await Promise.all([save(token), ...racing.map((order) => deliver(order.id))]);
+      const [res] = await Promise.all([
+        verify(vendorId),
+        ...racing.map((order) => deliver(order.id)),
+      ]);
 
       expect(res.status).toBe(200);
       const issued = await invoicesOf(db, vendorId);
@@ -393,9 +422,9 @@ describe('Retroactive invoices on PAN save', () => {
   });
 
   it('refuses any later change to an invoice it issued', async () => {
-    const { vendorId, token } = await shop();
+    const { vendorId } = await shop();
     await soldOrder(db, vendorId);
-    await save(token);
+    await verify(vendorId);
     const [issued] = await invoicesOf(db, vendorId);
     if (issued === undefined) throw new Error('no invoice');
 

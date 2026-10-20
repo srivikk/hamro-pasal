@@ -29,6 +29,7 @@ import {
   DELIVERY_ADDRESS,
   stockOf,
   vendorUserIdOf,
+  verifiedPanColumns,
 } from './support/fixtures';
 import { bearer, bodyOf, buildTestApp, esewaCallback, errorOf, type TestApp } from './support/http';
 
@@ -59,7 +60,11 @@ describe('campaign discounts and the invoice at delivery', () => {
     if (options.pan !== false) {
       await db
         .update(vendors)
-        .set({ tax_id: '302118845', is_vat_registered: options.vat ?? true })
+        .set({
+          tax_id: '302118845',
+          is_vat_registered: options.vat ?? true,
+          ...(await verifiedPanColumns(db)),
+        })
         .where(eq(vendors.id, vendorId));
     }
     const vendorUserId = await vendorUserIdOf(db, vendorId);

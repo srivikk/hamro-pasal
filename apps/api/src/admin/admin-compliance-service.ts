@@ -1,5 +1,6 @@
 import {
   auditLogs,
+  enqueueDomainEvent,
   recordAuditLog,
   vendors,
   type Database,
@@ -13,6 +14,11 @@ import {
 import { and, asc, eq, sql } from 'drizzle-orm';
 
 import type { KycDocumentStorage, StoredDocument } from '../uploads/kyc-document-storage';
+import {
+  issueWaitingInvoices,
+  standingWithVerifiedPan,
+  waitingOrders,
+} from '../vendor/compliance-standing';
 import { AdminVendorNotFoundError } from '../wallet/wallet-service';
 
 type VendorRow = typeof vendors.$inferSelect;
@@ -108,12 +114,24 @@ export class AdminComplianceService {
 
   /**
    * One transaction under the vendor row lock (the lock a PAN change takes, so a verification
-   * never lands on a PAN or a document that was replaced first), with its audit entry. A repeat
+   * never lands on a PAN or a document that was replaced first), with its audit entries. A repeat
    * keeps the first stamp and records nothing.
    *
    * Phase 35: a PAN without an uploaded document cannot be verified (422 DOCUMENT_MISSING). The
    * check comes before the repeat: a shop that is marked verified with no document on file (only
    * a seeded one can be) answers the same refusal, never a confirmation.
+   *
+   * SPEC core 10 (amended 2026-10-20): the verification is what lets a shop trade. In the same
+   * transaction it lifts the compliance suspension (the shop returns to the status it remembered),
+   * issues the invoices that waited for a verified seller, and writes `vendor.compliance_restored`.
+   *
+   * Lock order, the one a delivery uses: the waiting orders' rows, then the vendor row, then
+   * (inside generateFiscalInvoice) the invoice sequence row, last. The order rows come first
+   * because the invoice insert's foreign key reads the order row: taken after the sequence row, it
+   * could wait on a transaction (the nightly reconciliation) that holds that order and waits for
+   * this shop's vendor or sequence row. An order delivered after that first pass is picked up
+   * under the vendor lock with SKIP LOCKED; one skipped there is held by a delivery or
+   * reconciliation, which reads the vendor row after this commit and issues the invoice itself.
    */
   verifyPan(
     adminUserId: string,
@@ -121,6 +139,14 @@ export class AdminComplianceService {
     context: AuditContext = NO_AUDIT_CONTEXT,
   ): Promise<ComplianceVendor> {
     return this.db.transaction(async (tx) => {
+      // Before the vendor lock (see the lock order above). An unverified shop is the only one
+      // that can have invoices waiting; reading the stamp unlocked only decides this pass.
+      const [shop] = await tx
+        .select({ verifiedAt: vendors.pan_verified_at })
+        .from(vendors)
+        .where(eq(vendors.id, vendorId));
+      if (shop?.verifiedAt === null) await waitingOrders(tx, vendorId, 'WAIT');
+
       const [before] = await tx
         .select()
         .from(vendors)
@@ -129,17 +155,23 @@ export class AdminComplianceService {
       if (before === undefined) throw new AdminVendorNotFoundError(vendorId);
       if (before.tax_id === null) throw new PanMissingError(vendorId);
       if (before.pan_document_url === null) throw new PanDocumentMissingError(vendorId);
-      if (before.pan_verified_at !== null) return complianceVendor(tx, before);
+      const standing = standingWithVerifiedPan(before);
+      if (before.pan_verified_at !== null && !standing.lifted) return complianceVendor(tx, before);
 
+      const actor = { kind: 'USER', user_id: adminUserId, role: 'SUPER_ADMIN' } as const;
       const [after] = await tx
         .update(vendors)
-        .set({ pan_verified_at: sql`now()`, pan_verified_by_user_id: adminUserId })
+        .set({
+          pan_verified_at: before.pan_verified_at ?? sql`now()`,
+          pan_verified_by_user_id: before.pan_verified_by_user_id ?? adminUserId,
+          ...standing.columns,
+        })
         .where(eq(vendors.id, vendorId))
         .returning();
       if (after === undefined) throw new Error(`Vendor ${vendorId} vanished`);
 
       await recordAuditLog(tx, {
-        actor: { kind: 'USER', user_id: adminUserId, role: 'SUPER_ADMIN' },
+        actor,
         action: 'PAN_VERIFIED',
         entityId: vendorId,
         vendorId,
@@ -152,9 +184,35 @@ export class AdminComplianceService {
           tax_id: after.tax_id,
           pan_verified_at: after.pan_verified_at?.toISOString() ?? null,
           pan_verified_by_user_id: after.pan_verified_by_user_id,
+          status: after.status,
+          ...(standing.lifted ? { compliance_suspension_lifted: true } : {}),
         },
         context,
       });
+
+      // After the update: the invoices copy the seller as this verification leaves it.
+      const waitingInvoicesIssued = await issueWaitingInvoices(tx, actor, after, context);
+      // The shop is told it is back (or what still keeps it offline). Last in the transaction, so
+      // the event exists exactly when the lift committed.
+      if (
+        standing.lifted &&
+        after.status !== 'SUSPENDED_COMPLIANCE' &&
+        after.status !== 'DEACTIVATED'
+      ) {
+        const restoredAt = new Date();
+        await enqueueDomainEvent(tx, {
+          type: 'vendor.compliance_restored',
+          aggregateId: after.id,
+          occurredAt: restoredAt,
+          payload: {
+            vendor_id: after.id,
+            vendor_phone: after.phone,
+            status: after.status,
+            waiting_invoices_issued: waitingInvoicesIssued,
+            restored_at: restoredAt.toISOString(),
+          },
+        });
+      }
       return complianceVendor(tx, after);
     });
   }

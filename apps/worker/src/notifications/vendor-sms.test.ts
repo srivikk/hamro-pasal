@@ -87,6 +87,19 @@ describe('vendorNotificationSms', () => {
     });
   });
 
+  it('restore without a verified PAN: says the shop stays offline (SPEC core 10, 2026-10-20)', () => {
+    const event = restored(0);
+    if (event.event_type !== 'vendor.restored') throw new Error('fixture');
+    const gated: DomainEvent = {
+      ...event,
+      payload: { ...event.payload, restored_status: 'SUSPENDED_COMPLIANCE' },
+    };
+    expect(vendorNotificationSms(gated)).toEqual({
+      to: PHONE,
+      text: 'Hamro Pasal: your dues are cleared. Your shop stays offline until Hamro Pasal verifies your PAN certificate. Wallet balance: Rs. 0.',
+    });
+  });
+
   it('escalation: names the order by its dashboard code and the SLA', () => {
     const orderId = '3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4fa5b6';
     expect(vendorNotificationSms(escalation(orderId))).toEqual({

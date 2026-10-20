@@ -572,7 +572,7 @@ describe('cloud storage and vendor KYC', () => {
       });
     });
 
-    it('clears a verification when the verified document is replaced, not on a first document', async () => {
+    it('clears a verification when the verified document is replaced, taking the shop offline, not on a first document', async () => {
       const first = await shop();
       await verify(first.vendorId);
       const firstUpload = await uploaded(first.token);
@@ -594,11 +594,14 @@ describe('cloud storage and vendor KYC', () => {
         pan_verified_at: null,
         pan_verified_by_user_id: null,
         tax_id: '302118845',
-        status: 'LIVE',
+        // SPEC core 10 (amended 2026-10-20): the Super Admin checked the document now gone.
+        status: 'SUSPENDED_COMPLIANCE',
+        status_before_compliance_suspension: 'LIVE',
       });
       const actions = (await auditOf(first.vendorId)).map((entry) => entry.action);
       expect(actions).toEqual([
         'PAN_DOCUMENT_UPLOADED',
+        'VENDOR_SUSPENDED_FOR_COMPLIANCE',
         'PAN_DOCUMENT_UPLOADED',
         'PAN_VERIFICATION_CLEARED',
       ]);
@@ -820,7 +823,7 @@ describe('cloud storage and vendor KYC', () => {
           pan_document_url: null,
           pan_verified_at: null,
           pan_verified_by_user_id: null,
-          status: 'LIVE',
+          status: 'SUSPENDED_COMPLIANCE',
         });
         // Exactly the old number's document, deleted from the private bucket.
         expect(s3.log).toEqual([{ operation: 'DeleteObject', bucket: PRIVATE, key: oldKey }]);

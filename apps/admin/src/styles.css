@@ -350,6 +350,12 @@ h2 {
   color: var(--queued-text);
 }
 
+/* Amber: in force, but not by its own choice (a category hidden by a parent). */
+.status-warn {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
 .status-replayed,
 .status-approved,
 .suspension-none {

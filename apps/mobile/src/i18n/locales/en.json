@@ -187,7 +187,9 @@
       "CHECKOUT_BUSY": "Checkout is busy right now. Try again in a moment.",
       "generic": "Checkout failed. Please try again.",
       "OUTSIDE_DELIVERY_AREA": "This shop does not deliver to your selected address. Change the address to continue.",
-      "DELIVERY_UNAVAILABLE": "Delivery is unavailable right now. Please try again later."
+      "DELIVERY_UNAVAILABLE": "Delivery is unavailable right now. Please try again later.",
+      "CATEGORY_UNAVAILABLE": "An item belongs to a category that is no longer available. Remove it and try again.",
+      "CATEGORY_UNAVAILABLE_NAMED": "{{name}} belongs to a category that is no longer available. Remove it and try again."
     },
     "quoteChanged": {
       "title": "The price has changed",
@@ -644,7 +646,6 @@
     "empty": "No products yet. Add your first one.",
     "add": "Add product",
     "edit": "Edit {{name}}",
-    "uncategorised": "No category",
     "stockSwitch": "{{name}} in stock",
     "inStock": "In stock: {{count, localizedNumber}}",
     "outOfStock": "Out of stock",
@@ -669,7 +670,8 @@
       "category": "Choose a category.",
       "stock": "Enter a whole number, 0 or more."
     },
-    "noStockLeft": "No stock left"
+    "noStockLeft": "No stock left",
+    "categoryHidden": "Category hidden by Hamro Pasal"
   },
   "vendorMarketing": {
     "section": {

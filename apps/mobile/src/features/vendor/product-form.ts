@@ -1,4 +1,9 @@
-import { toAsciiDigits } from '@hamro-pasal/shared-types';
+import {
+  buildCategoryTree,
+  flattenCategoryTree,
+  toAsciiDigits,
+  type CategoryView,
+} from '@hamro-pasal/shared-types';
 
 import { sanitizeAmountInput } from './shop-settings';
 
@@ -7,22 +12,38 @@ export const MAX_PRODUCT_NAME_LENGTH = 120;
 export const MAX_PRODUCT_PRICE_NPR = 1_000_000;
 export const MAX_STOCK_QUANTITY = 1_000_000;
 
-/**
- * TEMPORARY: the categories a product can be filed under. The seeded taxonomy's subcategories
- * (packages/db seed), keyed by slug. To be replaced by `GET /api/categories` (it is public and
- * the app already reads it for customers).
- */
-export const MOCK_PRODUCT_CATEGORIES = [
-  { id: 'rice-flour-pulses', name: 'Rice, Flour & Pulses' },
-  { id: 'noodles-snacks', name: 'Noodles & Snacks' },
-  { id: 'tea-coffee', name: 'Tea & Coffee' },
-  { id: 'dairy', name: 'Dairy' },
-  { id: 'fresh-vegetables', name: 'Fresh Vegetables' },
-  { id: 'honey-spreads', name: 'Honey & Spreads' },
-] as const;
+/** One choice of the category picker. */
+export interface ProductCategoryOption {
+  /** The category's slug: the local catalogue keys products by it until it is wired to the API. */
+  readonly value: string;
+  /** Indented by depth, for the list. */
+  readonly label: string;
+  readonly name: string;
+}
 
-export function categoryName(categoryId: string): string | null {
-  return MOCK_PRODUCT_CATEGORIES.find((category) => category.id === categoryId)?.name ?? null;
+/**
+ * The categories a product can be filed under: the live taxonomy from `GET /api/categories`, in
+ * tree order, subcategories indented. Decided 2026-10-20: a category the Super Admin has hidden is
+ * never offered, nor is anything below it, even if it is active itself. The server already leaves
+ * them out; the tree is rebuilt from its roots here as well, so a category whose parent is missing
+ * from the list is dropped rather than offered on its own.
+ */
+export function productCategoryOptions(
+  categories: readonly CategoryView[],
+): ProductCategoryOption[] {
+  return flattenCategoryTree(buildCategoryTree(categories)).map((node) => ({
+    value: node.slug,
+    label: `${'— '.repeat(node.depth - 1)}${node.name}`,
+    name: node.name,
+  }));
+}
+
+/** The name of an offered category, or null when it is hidden or unknown. */
+export function categoryNameOf(
+  options: readonly ProductCategoryOption[],
+  value: string,
+): string | null {
+  return options.find((option) => option.value === value)?.name ?? null;
 }
 
 /** What the vendor fills in for a product. */
@@ -82,6 +103,7 @@ const normaliseName = (name: string): string => name.trim().replace(/\s+/g, ' ')
 export function validateProductForm(
   form: ProductForm,
   otherNames: readonly string[] = [],
+  categories: readonly ProductCategoryOption[] = [],
 ): ProductFormResult {
   const errors: ProductFormErrors = {};
 
@@ -98,7 +120,10 @@ export function validateProductForm(
   if (Number.isNaN(price) || price <= 0 || price > MAX_PRODUCT_PRICE_NPR) errors.price = 'price';
 
   const categoryId = form.categoryId;
-  if (categoryId === null || categoryName(categoryId) === null) errors.categoryId = 'category';
+  // Only a category that is still offered: one hidden since the form was opened is refused.
+  if (categoryId === null || categoryNameOf(categories, categoryId) === null) {
+    errors.categoryId = 'category';
+  }
 
   const stock = /^[0-9]{1,7}$/.test(form.stock.trim()) ? Number(form.stock) : Number.NaN;
   if (Number.isNaN(stock) || stock > MAX_STOCK_QUANTITY) errors.stock = 'stock';

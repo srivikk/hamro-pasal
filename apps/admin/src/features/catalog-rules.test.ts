@@ -12,11 +12,14 @@ import {
   canHaveChildren,
   categoryErrorMessage,
   categoryRows,
+  categoryVisibility,
   deleteBlockedReason,
   emptyCategoryForm,
   formFromCategory,
+  hiddenCounts,
   parentOptions,
   validateCategoryForm,
+  visibilityBadge,
   withName,
 } from './categories/category-rules';
 import {
@@ -397,5 +400,60 @@ describe('createAdminApi (catalog endpoints)', () => {
       status: 409,
       code: 'CATEGORY_IN_USE',
     });
+  });
+});
+
+describe('computed category visibility (decided 2026-10-20)', () => {
+  const byId = new Map(TAXONOMY.map((row) => [row.id, row]));
+  const of = (id: string) => {
+    const row = byId.get(id);
+    if (row === undefined) throw new Error('fixture');
+    return categoryVisibility(row, byId);
+  };
+
+  it('shows an active category under active ancestors as Active, in green', () => {
+    expect(of(ID.snacks)).toEqual({ kind: 'ACTIVE' });
+    expect(visibilityBadge(of(ID.groceries))).toMatchObject({
+      label: 'Active',
+      className: 'status-replayed',
+    });
+  });
+
+  it('shows a hidden category as Hidden, in red', () => {
+    expect(visibilityBadge(of(ID.dairy))).toMatchObject({
+      label: 'Hidden',
+      className: 'status-pending',
+    });
+  });
+
+  it('shows an active category under a hidden parent as Inactive (Parent Hidden), in amber', () => {
+    // Milk is active itself; Dairy above it is hidden.
+    expect(of(ID.milk)).toEqual({ kind: 'INHERITED_HIDDEN', hiddenAncestorName: 'Dairy' });
+    expect(visibilityBadge(of(ID.milk))).toEqual({
+      label: 'Inactive (Parent Hidden)',
+      className: 'status-warn',
+      title:
+        'Active itself, but hidden because "Dairy" above it is hidden. Show that category to make this one visible again.',
+    });
+  });
+
+  it('looks past any number of levels, naming the nearest hidden ancestor', () => {
+    const deep = [
+      category(ID.groceries, 'Groceries', null, { is_active: false }),
+      category(ID.dairy, 'Dairy', ID.groceries),
+      category(ID.milk, 'Milk', ID.dairy),
+    ];
+    const deepById = new Map(deep.map((row) => [row.id, row]));
+    const milk = deepById.get(ID.milk);
+    if (milk === undefined) throw new Error('fixture');
+    expect(categoryVisibility(milk, deepById)).toEqual({
+      kind: 'INHERITED_HIDDEN',
+      hiddenAncestorName: 'Groceries',
+    });
+    expect(hiddenCounts(deep)).toEqual({ hidden: 1, inherited: 2 });
+  });
+
+  it('counts the hidden and the inherited apart', () => {
+    expect(hiddenCounts(TAXONOMY)).toEqual({ hidden: 1, inherited: 1 });
   });
 });

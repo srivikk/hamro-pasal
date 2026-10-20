@@ -27,6 +27,21 @@ export class ProductUnavailableError extends Error {
   }
 }
 
+/**
+ * Items whose category, or a category above it, the Super Admin has hidden (decided 2026-10-20):
+ * they are no longer sold, even from a cart filled before.
+ */
+export class ProductCategoryHiddenError extends Error {
+  constructor(readonly items: readonly { readonly id: string; readonly name: string }[]) {
+    super(
+      items.length === 1
+        ? `Item ${items[0]?.name ?? ''} belongs to an unavailable category`
+        : `Items ${items.map((item) => item.name).join(', ')} belong to an unavailable category`,
+    );
+    this.name = 'ProductCategoryHiddenError';
+  }
+}
+
 /** The 600 s lock is gone (expired or released): SPEC §3 "Session Expired". */
 export class ReservationExpiredError extends Error {
   constructor(readonly reservationId: string) {

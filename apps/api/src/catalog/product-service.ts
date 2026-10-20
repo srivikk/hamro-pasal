@@ -1,6 +1,8 @@
 import {
   categories,
   enqueueDomainEvent,
+  inVisibleCategory,
+  isVisibleCategory,
   products,
   productSearchDocument,
   vendors,
@@ -310,11 +312,12 @@ export class ProductService {
     await Promise.allSettled(urls.map((url) => this.images.remove(productId, url)));
   }
 
+  /** The category exists and is visible: active, under active ancestors (2026-10-20). */
   private async assertCategoryActive(categoryId: string): Promise<void> {
     const [category] = await this.db
       .select({ id: categories.id })
       .from(categories)
-      .where(and(eq(categories.id, categoryId), eq(categories.is_active, true)));
+      .where(and(eq(categories.id, categoryId), isVisibleCategory(categoryId)));
     if (category === undefined) throw new CategoryUnavailableError(categoryId);
   }
 
@@ -337,8 +340,11 @@ export class ProductService {
 
   /**
    * GET /api/products: active products of LIVE vendors, by name. `category_id` also matches the
-   * category's active descendants (an unknown or inactive category is 404); `search` is served by
+   * category's active descendants (an unknown or hidden category is 404); `search` is served by
    * the GIN index `products_search_idx`.
+   *
+   * Decided 2026-10-20: a product filed under a hidden category, or under any category below a
+   * hidden one, is never listed, filtered or not; nor is a category under a hidden ancestor.
    */
   async listPublic({
     category_id: categoryId,
@@ -351,7 +357,7 @@ export class ProductService {
       const [category] = await this.db
         .select({ id: categories.id })
         .from(categories)
-        .where(and(eq(categories.id, categoryId), eq(categories.is_active, true)));
+        .where(and(eq(categories.id, categoryId), isVisibleCategory(categoryId)));
       if (category === undefined) throw new CategoryNotFoundError(categoryId);
     }
     const tsquery = search === undefined ? undefined : prefixSearchQuery(search);
@@ -367,6 +373,7 @@ export class ProductService {
         and(
           eq(products.is_active, true),
           eq(vendors.status, 'LIVE'),
+          inVisibleCategory(products.category_id),
           vendorId === undefined ? undefined : eq(products.vendor_id, vendorId),
           categoryId === undefined ? undefined : inActiveSubtree(categoryId),
           tsquery === undefined

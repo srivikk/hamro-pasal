@@ -5,6 +5,7 @@ import {
 } from '@hamro-pasal/shared-types';
 import type { TFunction } from 'i18next';
 import type { AlertButton } from 'react-native';
+import { z } from 'zod';
 
 import type { ApiError } from '../../api/http';
 
@@ -15,6 +16,17 @@ export const CHECKOUT_DIALOG_CODES = {
   /** 422: the shop does not take the chosen payment method (any more). */
   paymentMethodUnavailable: 'PAYMENT_METHOD_UNAVAILABLE',
 } as const;
+
+const categoryRefusalSchema = z.object({ product_names: z.array(z.string().min(1)).min(1) });
+
+/**
+ * 422 CATEGORY_UNAVAILABLE (decided 2026-10-20): the Super Admin hid the category of an item, or a
+ * category above it, after it went into the cart. The first such item, to name in the message.
+ */
+export function hiddenCategoryItem(details: unknown): string | null {
+  const parsed = categoryRefusalSchema.safeParse(details);
+  return parsed.success ? (parsed.data.product_names[0] ?? null) : null;
+}
 
 export function isDialogRefusal(code: string): boolean {
   return (Object.values(CHECKOUT_DIALOG_CODES) as string[]).includes(code);

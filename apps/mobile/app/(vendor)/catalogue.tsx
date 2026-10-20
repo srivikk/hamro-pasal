@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router } from 'expo-router';
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import {
   FlatList,
   Platform,
@@ -12,7 +12,12 @@ import {
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { categoryName } from '../../src/features/vendor/product-form';
+import { useCategoriesQuery } from '../../src/features/discovery/useCategoriesQuery';
+import {
+  categoryNameOf,
+  productCategoryOptions,
+  type ProductCategoryOption,
+} from '../../src/features/vendor/product-form';
 import { VendorSectionPlaceholder } from '../../src/features/vendor/VendorSectionPlaceholder';
 import {
   useVendorCatalogueStore,
@@ -23,12 +28,19 @@ import { colors } from '../../src/theme/colors';
 
 interface ProductRowProps {
   product: CatalogueProduct;
+  /** The offered categories, or null while the taxonomy is loading. */
+  categories: readonly ProductCategoryOption[] | null;
   onToggle: (id: string, isAvailable: boolean) => void;
   onEdit: (id: string) => void;
 }
 
 /** One product: what it is, what it costs, how many are left, and the In Stock switch. */
-const ProductRow = memo(function ProductRow({ product, onToggle, onEdit }: ProductRowProps) {
+const ProductRow = memo(function ProductRow({
+  product,
+  categories,
+  onToggle,
+  onEdit,
+}: ProductRowProps) {
   const { t } = useTranslation();
   // On sale only when the vendor has it switched on and there is stock to sell.
   const inStock = product.isAvailable && product.stockQuantity > 0;
@@ -54,7 +66,10 @@ const ProductRow = memo(function ProductRow({ product, onToggle, onEdit }: Produ
             {product.name}
           </Text>
           <Text className="text-sm text-gray-500" numberOfLines={1}>
-            {categoryName(product.categoryId) ?? t('vendorCatalogue.uncategorised')}
+            {categories === null
+              ? null
+              : (categoryNameOf(categories, product.categoryId) ??
+                t('vendorCatalogue.categoryHidden'))}
           </Text>
           <Text className="text-sm font-semibold text-gray-800">
             {t('common.price', { amount: product.priceNpr })}
@@ -101,13 +116,20 @@ export default function VendorCatalogueScreen() {
   const { t } = useTranslation();
   const products = useVendorCatalogueStore((state) => state.products);
   const setAvailable = useVendorCatalogueStore((state) => state.setAvailable);
+  const taxonomy = useCategoriesQuery().data;
+  const categories = useMemo(
+    () => (taxonomy === undefined ? null : productCategoryOptions(taxonomy.categories)),
+    [taxonomy],
+  );
 
   const onEdit = useCallback((id: string) => {
     router.push({ pathname: '/product', params: { id } });
   }, []);
   const renderItem = useCallback<ListRenderItem<CatalogueProduct>>(
-    ({ item }) => <ProductRow product={item} onToggle={setAvailable} onEdit={onEdit} />,
-    [onEdit, setAvailable],
+    ({ item }) => (
+      <ProductRow product={item} categories={categories} onToggle={setAvailable} onEdit={onEdit} />
+    ),
+    [categories, onEdit, setAvailable],
   );
 
   if (!VENDOR_CATALOGUE_MOCKS_ENABLED) {

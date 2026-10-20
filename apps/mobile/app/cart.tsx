@@ -19,7 +19,11 @@ import { DeliveryAreaModal } from '../src/features/checkout/DeliveryAreaModal';
 import { CUSTOMER_PLATFORM_FEE_NPR } from '../src/features/cart/cart-summary';
 import { cartTotals } from '../src/features/cart/cart-totals';
 import { useCartQuote } from '../src/features/cart/useCartQuote';
-import { checkoutRefusalDialog, isDialogRefusal } from '../src/features/checkout/checkout-refusals';
+import {
+  checkoutRefusalDialog,
+  hiddenCategoryItem,
+  isDialogRefusal,
+} from '../src/features/checkout/checkout-refusals';
 import { vendorExtras } from '../src/features/promo/mock-promotions';
 import {
   CheckoutOutcome,
@@ -54,6 +58,7 @@ const KNOWN_CHECKOUT_ERRORS = [
   'COD_NOT_AVAILABLE',
   'VENDOR_UNAVAILABLE',
   'PRODUCT_UNAVAILABLE',
+  'CATEGORY_UNAVAILABLE',
   'CHECKOUT_IN_PROGRESS',
   'CHECKOUT_BUSY',
   'OUTSIDE_DELIVERY_AREA',
@@ -161,6 +166,12 @@ export default function CartScreen() {
     // and a refused payment method by their own dialogs.
     if (error === null || error.code === 'RESERVATION_EXPIRED' || isDialogRefusal(error.code)) {
       return null;
+    }
+    if (error.code === 'CATEGORY_UNAVAILABLE') {
+      const name = hiddenCategoryItem(error.details);
+      return name === null
+        ? t('checkout.errors.CATEGORY_UNAVAILABLE')
+        : t('checkout.errors.CATEGORY_UNAVAILABLE_NAMED', { name });
     }
     return isKnownCheckoutError(error.code)
       ? t(`checkout.errors.${error.code}`)

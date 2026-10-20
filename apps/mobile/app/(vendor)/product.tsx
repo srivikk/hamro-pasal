@@ -6,12 +6,13 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '../../src/components/Button';
 import { KeyboardScreen } from '../../src/components/KeyboardScreen';
 import { SearchableSelect } from '../../src/components/SearchableSelect';
+import { useCategoriesQuery } from '../../src/features/discovery/useCategoriesQuery';
 import {
-  categoryName,
+  categoryNameOf,
   EMPTY_PRODUCT_FORM,
   formFromProduct,
   MAX_PRODUCT_NAME_LENGTH,
-  MOCK_PRODUCT_CATEGORIES,
+  productCategoryOptions,
   sanitizePriceInput,
   sanitizeStockInput,
   validateProductForm,
@@ -21,11 +22,6 @@ import {
 } from '../../src/features/vendor/product-form';
 import { useToastStore } from '../../src/store/useToastStore';
 import { useVendorCatalogueStore } from '../../src/store/useVendorCatalogueStore';
-
-const CATEGORY_OPTIONS = MOCK_PRODUCT_CATEGORIES.map((category) => ({
-  value: category.id,
-  label: category.name,
-}));
 
 /**
  * Add a product, or edit the one named by `?id=` (opened from the Catalogue tab): name, price,
@@ -42,6 +38,8 @@ export default function VendorProductScreen() {
   const addProduct = useVendorCatalogueStore((state) => state.addProduct);
   const updateProduct = useVendorCatalogueStore((state) => state.updateProduct);
   const toast = useToastStore((store) => store.show);
+  // The live taxonomy: hidden categories and everything below them are never offered.
+  const categoryOptions = productCategoryOptions(useCategoriesQuery().data?.categories ?? []);
 
   const editing = products.find((product) => product.id === id) ?? null;
   const [form, setForm] = useState<ProductForm>(() =>
@@ -68,7 +66,7 @@ export default function VendorProductScreen() {
     const otherNames = products
       .filter((product) => product.id !== editing?.id)
       .map((product) => product.name);
-    const result = validateProductForm(form, otherNames);
+    const result = validateProductForm(form, otherNames, categoryOptions);
     if (!result.ok) {
       setErrors(result.errors);
       return;
@@ -143,9 +141,11 @@ export default function VendorProductScreen() {
         <Text className="text-sm font-semibold text-gray-700">{t('vendorCatalogue.category')}</Text>
         <SearchableSelect
           testID="product-category"
-          options={CATEGORY_OPTIONS}
+          options={categoryOptions}
           placeholder={t('vendorCatalogue.categoryPlaceholder')}
-          selectedLabel={form.categoryId === null ? null : categoryName(form.categoryId)}
+          selectedLabel={
+            form.categoryId === null ? null : categoryNameOf(categoryOptions, form.categoryId)
+          }
           searchPlaceholder={t('vendorCatalogue.categorySearch')}
           emptyText={t('vendorCatalogue.categoryNone')}
           invalid={categoryError !== null}

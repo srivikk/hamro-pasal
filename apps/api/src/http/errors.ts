@@ -120,6 +120,7 @@ import { PayoutExceedsBalanceError, PayoutKeyReusedError } from '../finance/vend
 import {
   InsufficientStockError,
   InvalidCartError,
+  ProductCategoryHiddenError,
   ProductUnavailableError,
   ReservationContentionError,
   ReservationExpiredError,
@@ -619,6 +620,12 @@ export function toHttpError(error: unknown): HttpError {
   }
   if (error instanceof PaymentNotFoundError) {
     return new HttpError(404, 'PAYMENT_NOT_FOUND', 'Payment not found');
+  }
+  if (error instanceof ProductCategoryHiddenError) {
+    return new HttpError(422, 'CATEGORY_UNAVAILABLE', error.message, {
+      product_ids: error.items.map((item) => item.id),
+      product_names: error.items.map((item) => item.name),
+    });
   }
   if (error instanceof ProductUnavailableError) {
     return new HttpError(422, 'PRODUCT_UNAVAILABLE', error.message, {

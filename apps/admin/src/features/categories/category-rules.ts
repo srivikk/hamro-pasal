@@ -18,6 +18,76 @@ export function categoryRows(categories: readonly AdminCategoryView[]): Category
   return flattenCategoryTree(buildCategoryTree(categories));
 }
 
+/**
+ * What customers and vendors actually see of a category (decided 2026-10-20): hiding a category
+ * hides everything below it, so an active category under a hidden ancestor is not visible either.
+ * INHERITED_HIDDEN names the nearest hidden ancestor, the one to show again.
+ */
+export type CategoryVisibility =
+  | { readonly kind: 'ACTIVE' }
+  | { readonly kind: 'HIDDEN' }
+  | { readonly kind: 'INHERITED_HIDDEN'; readonly hiddenAncestorName: string };
+
+export function categoryVisibility(
+  category: Pick<AdminCategoryView, 'is_active' | 'parent_id'>,
+  byId: ReadonlyMap<string, Pick<AdminCategoryView, 'name' | 'is_active' | 'parent_id'>>,
+): CategoryVisibility {
+  if (!category.is_active) return { kind: 'HIDDEN' };
+  const seen = new Set<string>();
+  for (let id = category.parent_id; id !== null && !seen.has(id);) {
+    seen.add(id);
+    const ancestor = byId.get(id);
+    if (ancestor === undefined) break;
+    if (!ancestor.is_active) return { kind: 'INHERITED_HIDDEN', hiddenAncestorName: ancestor.name };
+    id = ancestor.parent_id;
+  }
+  return { kind: 'ACTIVE' };
+}
+
+/** The badge of one row: green Active, red Hidden, amber when a parent hides it. */
+export function visibilityBadge(visibility: CategoryVisibility): {
+  readonly label: string;
+  readonly className: string;
+  readonly title: string;
+} {
+  switch (visibility.kind) {
+    case 'ACTIVE':
+      return {
+        label: 'Active',
+        className: 'status-replayed',
+        title: 'Visible to vendors and customers.',
+      };
+    case 'HIDDEN':
+      return {
+        label: 'Hidden',
+        className: 'status-pending',
+        title: 'Hidden, with everything below it.',
+      };
+    case 'INHERITED_HIDDEN':
+      return {
+        label: 'Inactive (Parent Hidden)',
+        className: 'status-warn',
+        title: `Active itself, but hidden because "${visibility.hiddenAncestorName}" above it is hidden. Show that category to make this one visible again.`,
+      };
+  }
+}
+
+/** How many categories customers cannot see: hidden themselves, or under a hidden one. */
+export function hiddenCounts(categories: readonly AdminCategoryView[]): {
+  readonly hidden: number;
+  readonly inherited: number;
+} {
+  const byId = new Map(categories.map((category) => [category.id, category]));
+  let hidden = 0;
+  let inherited = 0;
+  for (const category of categories) {
+    const kind = categoryVisibility(category, byId).kind;
+    if (kind === 'HIDDEN') hidden += 1;
+    if (kind === 'INHERITED_HIDDEN') inherited += 1;
+  }
+  return { hidden, inherited };
+}
+
 /** The modal's fields, as typed (text inputs hold text). `parentId` '' means a root category. */
 export interface CategoryFormValues {
   readonly name: string;

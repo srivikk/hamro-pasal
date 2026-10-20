@@ -259,7 +259,7 @@ This is the definitive System Architecture and Implementation Blueprint for "Ham
 **Super Admin Flow**
 
 1. Verifies KYC uploads against national registries.
-2. Manages immutable Master Category Taxonomy.
+2. Manages immutable Master Category Taxonomy. **Hierarchical visibility (decided 2026-10-20):** hiding a category hides every category below it and every product filed anywhere in that subtree, whatever their own active flag: they leave the customer catalogue (categories, product lists, search, shop menus) and the vendors' category choice; a cart item whose category, or a category above it, is hidden since it was added is refused at the cart quote and at checkout (`422 CATEGORY_UNAVAILABLE`, naming the item). A product may stay in a hidden category but cannot be moved into one. The Admin dashboard shows such an active category as "Inactive (Parent Hidden)".
 3. Arbitrates Disputes: Reviews in-app text/photo chat transcript. Clicks "Refund Customer" (API call to eSewa/Khalti) or "Release to Vendor" (Unfreezes Escrow).
 4. Toggles platform logistics (Enable/Disable Self-Delivery or 3rd Party Fleet). Disabling both is the global Emergency Stop (Dual-Fulfillment, Delivery Modularity).
 5. **(Added 2026-10-07, not yet implemented.)** Creates platform campaigns and invites shops; cannot enrol a shop. Publishes the Ad Marketplace products and their prices; cannot create a sponsored promotion or an ad charge without the vendor's purchase.

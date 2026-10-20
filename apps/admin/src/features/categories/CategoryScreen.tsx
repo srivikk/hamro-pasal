@@ -8,7 +8,11 @@ import {
   canHaveChildren,
   categoryErrorMessage,
   categoryRows,
+  categoryVisibility,
   deleteBlockedReason,
+  hiddenCounts,
+  visibilityBadge,
+  type CategoryVisibility,
   emptyCategoryForm,
   formFromCategory,
   parentOptions,
@@ -66,7 +70,8 @@ export function CategoryScreen() {
   }
 
   const rows = categoryRows(query.data.categories);
-  const hidden = rows.filter((row) => !row.is_active).length;
+  const byId = new Map(query.data.categories.map((category) => [category.id, category]));
+  const { hidden, inherited } = hiddenCounts(query.data.categories);
 
   return (
     <section>
@@ -74,8 +79,10 @@ export function CategoryScreen() {
         <div>
           <h2>Categories</h2>
           <p className="muted">
-            {rows.length} categories · {hidden} hidden. Vendors map products to these; customers see
-            the active ones. Hiding a category hides everything under it.
+            {rows.length} categories · {hidden} hidden
+            {inherited > 0 ? `, ${String(inherited)} more under a hidden parent` : ''}. Vendors map
+            products to these; customers see the active ones. Hiding a category hides everything
+            under it.
           </p>
         </div>
         <button
@@ -97,6 +104,7 @@ export function CategoryScreen() {
             <CategoryItem
               key={row.id}
               row={row}
+              visibility={categoryVisibility(row, byId)}
               confirming={confirming === row.id}
               deleting={remove.isPending && remove.variables === row.id}
               error={errors[row.id] ?? null}
@@ -137,6 +145,7 @@ export function CategoryScreen() {
 
 function CategoryItem({
   row,
+  visibility,
   confirming,
   deleting,
   error,
@@ -147,6 +156,7 @@ function CategoryItem({
   onConfirmDelete,
 }: {
   readonly row: CategoryRow;
+  readonly visibility: CategoryVisibility;
   readonly confirming: boolean;
   readonly deleting: boolean;
   readonly error: string | null;
@@ -157,14 +167,15 @@ function CategoryItem({
   readonly onConfirmDelete: () => void;
 }) {
   const blocked = deleteBlockedReason(row);
+  const badge = visibilityBadge(visibility);
 
   return (
     <li className={`tree-row depth-${String(row.depth)}`}>
       <div className="tree-main">
         <div className="tree-title">
           <strong>{row.name}</strong>
-          <span className={`badge ${row.is_active ? 'status-replayed' : 'status-pending'}`}>
-            {row.is_active ? 'Active' : 'Hidden'}
+          <span className={`badge ${badge.className}`} title={badge.title}>
+            {badge.label}
           </span>
         </div>
         <div className="muted small">

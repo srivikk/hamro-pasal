@@ -1,6 +1,7 @@
 import {
   adProducts,
   adPurchases,
+  inVisibleCategory,
   platformSettings,
   products,
   vendorClosedReason,
@@ -112,7 +113,10 @@ export class CatalogService {
     };
   }
 
-  /** GET /api/vendors/:id/products: a LIVE vendor's active catalogue with real product ids. */
+  /**
+   * GET /api/vendors/:id/products: a LIVE vendor's active catalogue with real product ids. A product
+   * filed under a hidden category, or below one, is left out (decided 2026-10-20).
+   */
   async getMenu(vendorId: string, customer: VendorFeedQuery): Promise<VendorMenu> {
     const [row] = await this.db
       .select(this.vendorColumns(customer, await enabledModes(this.db)))
@@ -129,7 +133,13 @@ export class CatalogService {
         stock_quantity: products.stock_quantity,
       })
       .from(products)
-      .where(and(eq(products.vendor_id, vendorId), eq(products.is_active, true)))
+      .where(
+        and(
+          eq(products.vendor_id, vendorId),
+          eq(products.is_active, true),
+          inVisibleCategory(products.category_id),
+        ),
+      )
       .orderBy(asc(products.name));
 
     return {

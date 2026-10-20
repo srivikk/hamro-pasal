@@ -1,6 +1,7 @@
 import {
   campaignOptIns,
   enqueueDomainEvent,
+  inVisibleCategory,
   orderAddresses,
   orderItems,
   orders,
@@ -24,13 +25,14 @@ import {
   type Order,
   type SettlementModel,
 } from '@hamro-pasal/shared-types';
-import { and, avg, count, eq, gt, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, avg, count, eq, gt, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 
 import { deliveryFeePaisa, haversineKm, type DeliveryTerms } from './delivery-fee';
 import { isUniqueViolation } from '../infra/pg-errors';
 import type { RedisKeyedMutex } from '../infra/redis-mutex';
 import {
   InsufficientStockError,
+  ProductCategoryHiddenError,
   ProductUnavailableError,
   ReservationExpiredError,
 } from '../inventory/errors';
@@ -484,6 +486,23 @@ export class CheckoutService {
     if (missing.length > 0) {
       throw new ProductUnavailableError(missing);
     }
+    // Decided 2026-10-20: an item whose category, or any category above it, the Super Admin has
+    // hidden since it was put in the cart cannot be ordered. The quote and the checkout both come
+    // through here, so the cart shows the refusal before the customer pays.
+    const hidden = await this.db
+      .select({ id: products.id, name: products.name })
+      .from(products)
+      .where(
+        and(
+          inArray(
+            products.id,
+            catalogue.map((p) => p.id),
+          ),
+          sql`NOT ${inVisibleCategory(products.category_id)}`,
+        ),
+      )
+      .orderBy(asc(products.name));
+    if (hidden.length > 0) throw new ProductCategoryHiddenError(hidden);
     assertInStock(byId, items);
 
     const [settings] = await this.db

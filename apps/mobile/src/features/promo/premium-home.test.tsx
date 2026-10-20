@@ -31,7 +31,7 @@ import {
   type VendorExtras,
 } from './promo-model';
 
-jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
+jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: jest.fn() }));
 // The screens read promotions and shop extras from one module; the tests decide what it answers.
 jest.mock('./mock-promotions', () => ({
   PROMO_MOCKS_ENABLED: true,

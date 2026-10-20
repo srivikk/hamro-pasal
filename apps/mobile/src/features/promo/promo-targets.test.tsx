@@ -38,7 +38,7 @@ import {
   type VendorExtras,
 } from './promo-model';
 
-jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
+jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: jest.fn() }));
 jest.mock('./mock-promotions', () => ({
   PROMO_MOCKS_ENABLED: true,
   homePromotions: jest.fn(),

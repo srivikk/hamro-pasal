@@ -20,7 +20,8 @@
     "exploreFurtherHeading": "Explore Further",
     "exploreFurtherHint": "These shops don't deliver to your location yet.",
     "empty": "No shops deliver to your location yet.",
-    "loadError": "Couldn't load shops. Check your connection."
+    "loadError": "Couldn't load shops. Check your connection.",
+    "onboarding": "We are currently onboarding new shops! Check back soon."
   },
   "vendor": {
     "scope": {
@@ -1068,7 +1069,8 @@
   "categories": {
     "title": "What's on your mind?",
     "all": "All Shops",
-    "empty": "No shops near you sell {{category}} yet."
+    "empty": "No shops near you sell {{category}} yet.",
+    "onboarding": "We are currently onboarding new shops in {{category}}! Check back soon."
   },
   "promo": {
     "banner": "Promotion",

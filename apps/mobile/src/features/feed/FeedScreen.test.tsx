@@ -15,7 +15,7 @@ import {
 import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
 
-jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
+jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: jest.fn() }));
 
 setupApiTestEnvironment();
 
@@ -62,6 +62,32 @@ describe('Feed screen (GET /api/vendors)', () => {
     expect(await screen.findByText('Delivers to you')).toBeOnTheScreen();
     expect(screen.getByTestId(`vendor-card-${PATAN_VENDOR.id}`)).toBeDisabled();
     expect(screen.queryByTestId(`vendor-card-${THAMEL_VENDOR.id}`)).toBeNull();
+    // Shops exist, just not here: the location wording is right.
+    expect(screen.getByTestId('feed-empty')).toHaveTextContent(
+      'No shops deliver to your location yet.',
+    );
+  });
+
+  it('welcomes the customer instead of blaming the location when no shop is live anywhere', async () => {
+    serveFeed(() => HttpResponse.json(feedResponse({ serviceable: [], explore_further: [] })));
+    renderWithProviders(<FeedScreen />);
+
+    expect(await screen.findByTestId('feed-onboarding')).toHaveTextContent(
+      'We are currently onboarding new shops! Check back soon.',
+    );
+    expect(screen.queryByTestId('feed-empty')).toBeNull();
+  });
+
+  it('keeps the usual wording while deliveries are switched off (nothing is listed for that reason)', async () => {
+    serveFeed(() =>
+      HttpResponse.json(
+        feedResponse({ serviceable: [], explore_further: [], delivery_available: false }),
+      ),
+    );
+    renderWithProviders(<FeedScreen />);
+
+    expect(await screen.findByTestId('feed-empty')).toBeOnTheScreen();
+    expect(screen.queryByTestId('feed-onboarding')).toBeNull();
   });
 
   it('offers a retry when the feed cannot be loaded', async () => {

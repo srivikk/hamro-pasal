@@ -26,6 +26,8 @@ export function createQueryClient(): QueryClient {
       queries: {
         staleTime: 30_000,
         gcTime: 24 * 60 * 60 * 1000,
+        // Returning to the app refetches only the queries that opt in (see app-focus.ts).
+        refetchOnWindowFocus: false,
         retry: MAX_QUERY_RETRIES,
         retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 30_000),
       },

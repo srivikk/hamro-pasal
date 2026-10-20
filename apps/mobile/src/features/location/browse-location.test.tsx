@@ -16,7 +16,7 @@ import { LocationHeader } from './LocationHeader';
 import { mapPinHtml, parseMapPinMessage } from './map-pin';
 import { PLACE_SEARCH_URL } from './place-search';
 
-jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
+jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: jest.fn() }));
 
 setupApiTestEnvironment();
 

@@ -16,6 +16,7 @@ import type { describePlace } from '../location/describe-place';
 import { nominatimPlaceName } from '../location/describe-place';
 
 jest.mock('expo-router', () => ({
+  useFocusEffect: jest.fn(),
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: jest.fn() },
   Stack: { Screen: () => null },
   Redirect: () => null,

@@ -6,9 +6,10 @@ import { QueryClientProvider, type QueryClient } from '@tanstack/react-query';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useColorScheme } from 'nativewind';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
 
+import { bindQueryFocusToAppState } from '../src/api/app-focus';
 import { createQueryClient } from '../src/api/query-client';
 import { ReplaceCartModal } from '../src/components/ReplaceCartModal';
 import { ToastHost } from '../src/components/Toast';
@@ -46,6 +47,8 @@ function SessionExpiryHandler({ queryClient }: { queryClient: QueryClient }) {
 
 export default function RootLayout() {
   const [queryClient] = useState(createQueryClient);
+  // React Query learns when the app returns to the foreground (opted-in queries then refetch).
+  useEffect(() => bindQueryFocusToAppState(), []);
   // Headers, the tab bar and screen backgrounds follow the app theme with the dark: classes.
   const { colorScheme } = useColorScheme();
 

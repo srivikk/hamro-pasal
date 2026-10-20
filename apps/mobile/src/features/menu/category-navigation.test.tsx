@@ -28,6 +28,7 @@ import { filterFeedByVendors } from '../discovery/category-shops';
 import { groupMenu, OTHER_SECTION_KEY } from './menu-sections';
 
 jest.mock('expo-router', () => ({
+  useFocusEffect: jest.fn(),
   router: { push: jest.fn() },
   useLocalSearchParams: () => ({ id: '6f1c2a10-0000-4000-8000-000000000011' }),
   Stack: { Screen: () => null },
@@ -165,8 +166,24 @@ describe('Home: "What\'s on your mind?" category filter', () => {
     expect(screen.getByTestId('category-all')).toBeSelected();
   });
 
-  it('says so when no nearby shop carries the category, with a way back', async () => {
+  it('welcomes rather than blames the location when no shop anywhere sells the category yet', async () => {
     serveHome({});
+    renderWithProviders(<FeedScreen />);
+    await screen.findByText('Delivers to you');
+
+    fireEvent.press(await screen.findByTestId(`category-${ELECTRONICS_ID}`));
+
+    const empty = within(await screen.findByTestId('category-empty'));
+    expect(
+      empty.getByText('We are currently onboarding new shops in Electronics! Check back soon.'),
+    ).toBeOnTheScreen();
+    fireEvent.press(empty.getByRole('button', { name: 'All Shops' }));
+    expect(shopIds()).toHaveLength(3);
+  });
+
+  it('says no nearby shop carries it when shops elsewhere do, with a way back', async () => {
+    // A shop that sells Electronics but is not in this customer's list.
+    serveHome({ [ELECTRONICS_ID]: ['6f1c2a10-0000-4000-8000-0000000000ff'] });
     renderWithProviders(<FeedScreen />);
     await screen.findByText('Delivers to you');
 

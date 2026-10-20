@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { MAX_PRODUCT_SEARCH_LENGTH } from '@hamro-pasal/shared-types';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
@@ -25,6 +25,7 @@ import {
   vendorIdsWithOfferTag,
   type FeedSort,
 } from '../../../src/features/feed/feed-sort';
+import { categoryEmptyState } from '../../../src/features/feed/empty-states';
 import { ShopsFeed } from '../../../src/features/feed/ShopsFeed';
 import { FeedFilterBar, SortFilterSheet } from '../../../src/features/feed/SortFilterSheet';
 import { useFeedQuery } from '../../../src/features/feed/useFeedQuery';
@@ -83,6 +84,25 @@ export default function FeedScreen() {
   const chosenCategory = allCategories.find((category) => category.id === chosenCategoryId);
   const categoryId = chosenCategory?.id ?? null;
   const categoryShops = useCategoryVendorIds(categoryId);
+
+  // The categories stay current without a restart: refetched when Home comes back into view (from
+  // a shop, another tab), besides the app's return to the foreground and the pull to refresh.
+  const refetchCategories = categories.refetch;
+  const firstFocus = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      if (firstFocus.current) {
+        firstFocus.current = false;
+        return;
+      }
+      void refetchCategories();
+    }, [refetchCategories]),
+  );
+  const refreshHome = (): void => {
+    void feed.refetch();
+    void categories.refetch();
+    if (categoryId !== null) void categoryShops.refetch();
+  };
 
   // An offer label chosen by tapping a DISCOUNT_TAG promotion: only the shops that carry it.
   // Purely a filter: no price in the app depends on it (STATE_HANDOFF §8Z.4).
@@ -249,9 +269,12 @@ export default function FeedScreen() {
                 testID={discountTag === null ? 'category-empty' : 'tag-empty'}
               >
                 <Text className="text-center text-base text-gray-700">
-                  {discountTag === null
-                    ? t('categories.empty', { category: chosenCategory?.name ?? '' })
-                    : t('promo.tagEmpty', { tag: discountTag })}
+                  {discountTag !== null
+                    ? t('promo.tagEmpty', { tag: discountTag })
+                    : // No shop anywhere sells it yet: an inventory shortage, said welcomingly.
+                      categoryEmptyState(categoryShops.data ?? []) === 'ONBOARDING'
+                      ? t('categories.onboarding', { category: chosenCategory?.name ?? '' })
+                      : t('categories.empty', { category: chosenCategory?.name ?? '' })}
                 </Text>
                 <Button label={t('categories.all')} variant="secondary" onPress={clearFilters} />
               </View>
@@ -264,6 +287,7 @@ export default function FeedScreen() {
               header={discovery}
               scrollToShops={scrollToShops}
               onScrolledToShops={onScrolledToShops}
+              onRefresh={refreshHome}
             />
           )}
           <SortFilterSheet

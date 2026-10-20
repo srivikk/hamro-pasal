@@ -9,6 +9,7 @@ import { FeedSkeleton } from '../../components/Skeleton';
 import { VendorCard } from '../../components/VendorCard';
 import { filterFeedByVendors } from '../discovery/category-shops';
 import { vendorExtras } from '../promo/mock-promotions';
+import { feedEmptyState } from './empty-states';
 import { toFeedSections, type FeedSection } from './feed-sections';
 import { DEFAULT_FEED_SORT, sortFeed, type FeedSort } from './feed-sort';
 import type { useFeedQuery } from './useFeedQuery';
@@ -21,6 +22,7 @@ export function ShopsFeed({
   header = null,
   scrollToShops = false,
   onScrolledToShops,
+  onRefresh,
 }: {
   feed: ReturnType<typeof useFeedQuery>;
   /** A category or an offer label is chosen: only these shops are listed. Null lists every shop. */
@@ -35,6 +37,8 @@ export function ShopsFeed({
    */
   scrollToShops?: boolean;
   onScrolledToShops?: () => void;
+  /** Pull to refresh; refetches the feed when not given. Home also refreshes its categories. */
+  onRefresh?: () => void;
 }) {
   const { t } = useTranslation();
   const list = useRef<SectionList<FeedEntry, FeedSection>>(null);
@@ -89,7 +93,7 @@ export function ShopsFeed({
       keyExtractor={(entry) => entry.vendor.id}
       stickySectionHeadersEnabled={false}
       refreshing={feed.isRefetching}
-      onRefresh={() => void feed.refetch()}
+      onRefresh={onRefresh ?? (() => void feed.refetch())}
       ListHeaderComponent={
         <View
           testID="feed-header"
@@ -106,7 +110,16 @@ export function ShopsFeed({
           <View className="px-4 pb-2 pt-4">
             <Text className="text-lg font-bold text-gray-900">{t('feed.serviceableHeading')}</Text>
             {section.data.length === 0 ? (
-              <Text className="mt-1 text-sm text-gray-500">{t('feed.empty')}</Text>
+              // No shop live anywhere yet reads as onboarding, not as a problem with the address.
+              feedEmptyState(feed.data) === 'ONBOARDING' ? (
+                <Text className="mt-1 text-sm text-gray-500" testID="feed-onboarding">
+                  {t('feed.onboarding')}
+                </Text>
+              ) : (
+                <Text className="mt-1 text-sm text-gray-500" testID="feed-empty">
+                  {t('feed.empty')}
+                </Text>
+              )
             ) : null}
           </View>
         ) : (

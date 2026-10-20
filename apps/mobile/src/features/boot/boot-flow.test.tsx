@@ -30,6 +30,7 @@ import { renderWithProviders } from '../../test/render';
 import { placeName } from '../location/describe-place';
 
 jest.mock('expo-router', () => ({
+  useFocusEffect: jest.fn(),
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: jest.fn() },
   Stack: { Screen: () => null },
   Redirect: () => null,

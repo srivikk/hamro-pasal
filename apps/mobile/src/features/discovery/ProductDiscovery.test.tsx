@@ -30,7 +30,7 @@ import {
 import { renderWithProviders } from '../../test/render';
 import { matchingVendors } from './ProductResults';
 
-jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
+jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: jest.fn() }));
 
 setupApiTestEnvironment();
 

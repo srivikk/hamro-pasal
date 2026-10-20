@@ -28,6 +28,7 @@ import { renderWithProviders } from '../../test/render';
 
 let mockParams: Record<string, string> = {};
 jest.mock('expo-router', () => ({
+  useFocusEffect: jest.fn(),
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: jest.fn() },
   Stack: { Screen: () => null },
   Redirect: () => null,

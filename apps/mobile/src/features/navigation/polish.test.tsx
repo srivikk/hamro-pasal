@@ -26,6 +26,7 @@ import { NO_VENDOR_EXTRAS } from '../promo/promo-model';
 import { tabResetAction, type TabsState } from './tab-reset';
 
 jest.mock('expo-router', () => ({
+  useFocusEffect: jest.fn(),
   router: { push: jest.fn() },
   Stack: { Screen: () => null },
   Redirect: () => null,

@@ -58,7 +58,7 @@ function Item({
         {children}
       </View>
       <Text
-        className={`text-center text-xs ${selected ? 'font-bold text-brand' : 'font-medium text-gray-700'}`}
+        className={`text-center text-xs ${selected ? 'font-body-semibold text-brand' : 'font-body-medium text-gray-700'}`}
         numberOfLines={2}
       >
         {label}
@@ -84,7 +84,7 @@ export function CategoryCarousel({
   const { t } = useTranslation();
   return (
     <View className="pb-2 pt-3" testID="category-carousel">
-      <Text className="px-4 pb-3 text-lg font-bold text-gray-900">{t('categories.title')}</Text>
+      <Text className="px-4 pb-3 font-heading text-lg text-gray-900">{t('categories.title')}</Text>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}

@@ -198,7 +198,7 @@ export default function FeedScreen() {
       <HeaderGradient>
         <LocationHeader open={pickerOpen} onOpenChange={setPickerOpen} />
         <View className="px-4 pb-4 pt-1">
-          <View className="flex-row items-center rounded-xl bg-white px-3 shadow-sm">
+          <View className="flex-row items-center rounded-full bg-white py-1 pl-4 pr-1 shadow-sm">
             <Ionicons name="search" size={18} color={colors.inactive} />
             <View className="flex-1 justify-center">
               {/* What can be searched for, one suggestion at a time, while the field is empty. */}
@@ -221,7 +221,7 @@ export default function FeedScreen() {
                 autoCorrect={false}
                 returnKeyType="search"
                 clearButtonMode="while-editing"
-                className="px-2 py-3 text-base text-gray-900"
+                className="px-2 py-2.5 font-body text-base text-gray-900"
               />
             </View>
             {/* PLACEHOLDER: the microphone only announces that voice search is coming. */}
@@ -233,8 +233,9 @@ export default function FeedScreen() {
               onPress={() => {
                 showToast(t('discovery.voiceSearchSoon'), 'info');
               }}
+              className="h-10 w-10 items-center justify-center rounded-full bg-brand active:bg-brand-dark"
             >
-              <Ionicons name="mic-outline" size={22} color={colors.brand} />
+              <Ionicons name="mic" size={20} color="#FFFFFF" />
             </Pressable>
           </View>
         </View>

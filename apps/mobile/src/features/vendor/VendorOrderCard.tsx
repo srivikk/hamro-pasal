@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '../../components/Button';
 import { useSecondsUntil } from '../../lib/countdown';
 import { CashToCollect } from '../delivery/CashToCollect';
+import { STATUS_TONES, StatusChip, type StatusTone } from '../../ui';
 import { DeliveryOtpForm } from '../delivery/DeliveryOtpForm';
 
 /** Short, human-readable order reference: the last 6 characters of the id (as the customer sees). */
@@ -119,20 +120,40 @@ export function VendorOrderCard({
   const handOver = order.state === 'OUT_FOR_DELIVERY' && order.fulfillment === 'SELF_DELIVERY';
   const withRider = order.state === 'OUT_FOR_DELIVERY' && !handOver;
   const address = order.delivery_address;
+  // "Sajilo cha hai" colour code: marigold = new, Himalayan blue = preparing, green = dispatched.
+  const tone: StatusTone = waiting
+    ? 'new'
+    : order.state === 'PREPARING'
+      ? 'preparing'
+      : order.state === 'OUT_FOR_DELIVERY'
+        ? 'dispatched'
+        : 'done';
+  const stage = waiting
+    ? 'NEW'
+    : order.state === 'PREPARING'
+      ? 'PREPARING'
+      : handOver || awaitingRider
+        ? 'READY'
+        : 'HANDED_OVER';
 
   return (
     <View
-      className={`gap-3 rounded-2xl p-4 ${waiting ? 'border-2 border-red-500 bg-red-50' : 'bg-white'}`}
+      className={`gap-3 rounded-card border-2 p-4 ${STATUS_TONES[tone].card}`}
       testID={`vendor-order-${order.id}`}
     >
       <View className="flex-row items-center justify-between">
         <View className="flex-row items-center gap-2">
           {waiting && !answered ? <PulseDot testID={`order-pulse-${order.id}`} /> : null}
-          <Text className="text-lg font-bold text-gray-900">
+          <StatusChip
+            label={t(`vendorDashboard.stage.${stage}`)}
+            tone={tone}
+            testID={`order-status-${order.id}`}
+          />
+          <Text className="font-display text-lg text-gray-900">
             {t('order.code', { code: vendorOrderCode(order.id) })}
           </Text>
         </View>
-        <Text className="text-base font-semibold text-gray-900">
+        <Text className="font-display text-base text-gray-900">
           {t('order.total', { amount: order.total_npr })}
         </Text>
       </View>

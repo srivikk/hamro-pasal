@@ -24,6 +24,7 @@ import { startDevMocks } from '../src/mocks/dev-mocks';
 import { useAuthStore } from '../src/store/useAuthStore';
 import { useThemeStore } from '../src/store/useThemeStore';
 import { bindTheme } from '../src/theme/apply-theme';
+import { useBrandFonts } from '../src/theme/fonts';
 
 // The auth store hydrates synchronously from MMKV, so the persisted locale is known here.
 const i18n = createI18n(useAuthStore.getState().locale);
@@ -51,6 +52,8 @@ export default function RootLayout() {
   useEffect(() => bindQueryFocusToAppState(), []);
   // Headers, the tab bar and screen backgrounds follow the app theme with the dark: classes.
   const { colorScheme } = useColorScheme();
+  // Outfit and Mukta; nothing waits on them (the boot splash covers the load).
+  useBrandFonts();
 
   return (
     <QueryClientProvider client={queryClient}>

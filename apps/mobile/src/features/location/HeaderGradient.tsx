@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LinearGradient } from '../../lib/optional-linear-gradient';
 import {
+  BRAND_HEADER_THEME,
   HEADER_THEMES,
   HeaderToneProvider,
   useHeaderPhase,
@@ -80,17 +81,33 @@ export function Stars() {
  * the location row and the search bar on it. At night it adds stars, and tells what is drawn on
  * it (through HeaderToneProvider) to use light text.
  *
- * `phase` overrides the clock (tests, previews).
+ * Since the "Sajilo cha hai" redesign the default `look` is the brand red with rounded bottom
+ * corners; `look="time-of-day"` brings the sky back. `phase` overrides the clock (tests,
+ * previews) and implies the time-of-day look.
  */
-export function HeaderGradient({ children, phase }: { children: ReactNode; phase?: HeaderPhase }) {
+export function HeaderGradient({
+  children,
+  phase,
+  look = phase === undefined ? 'brand' : 'time-of-day',
+}: {
+  children: ReactNode;
+  phase?: HeaderPhase;
+  look?: 'brand' | 'time-of-day';
+}) {
   const { top } = useSafeAreaInsets();
   const clockPhase = useHeaderPhase();
   const current = phase ?? clockPhase;
-  const theme = HEADER_THEMES[current];
+  const brand = look === 'brand';
+  const theme = brand ? BRAND_HEADER_THEME : HEADER_THEMES[current];
   return (
-    <View style={{ paddingTop: top }} testID="home-header" accessibilityLabel={current}>
+    <View
+      style={{ paddingTop: top }}
+      testID="home-header"
+      accessibilityLabel={brand ? 'brand' : current}
+      className={brand ? 'overflow-hidden rounded-b-card-lg' : ''}
+    >
       <Background theme={theme} />
-      {current === 'night' ? <Stars /> : null}
+      {!brand && current === 'night' ? <Stars /> : null}
       <HeaderToneProvider value={theme.tone}>{children}</HeaderToneProvider>
     </View>
   );

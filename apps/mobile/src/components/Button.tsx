@@ -57,9 +57,9 @@ export function Button({
       disabled={disabled}
       onPress={onPress}
       testID={testID}
-      className={`items-center justify-center rounded-xl ${containerBySize[size]} ${containerByVariant[variant]} ${disabled ? 'opacity-40' : ''}`}
+      className={`items-center justify-center rounded-full ${containerBySize[size]} ${containerByVariant[variant]} ${disabled ? 'opacity-40' : ''}`}
     >
-      <Text className={`font-semibold ${labelBySize[size]} ${labelByVariant[variant]}`}>
+      <Text className={`font-body-semibold ${labelBySize[size]} ${labelByVariant[variant]}`}>
         {label}
       </Text>
     </Pressable>

@@ -1100,6 +1100,81 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.41 "Sajilo cha hai" design system: tokens, fonts, brand artwork, component library, three app layouts (2026-10-21)
+
+Branch **`epic/master-completion`**. Mobile (`apps/mobile`) and admin (`apps/admin`) only: **no API,
+shared-types, database or SPEC change.** Built from the user's two mockup images (the app icons, and
+the brand sheet with the customer, Seller and admin screens). Not seen on a device or in a browser.
+
+### Tokens and fonts
+
+| Token (`src/theme/palette.json`) | Value                      | Note                                                                                                                         |
+| -------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `brand`                          | `#C8232B` (dark `#A11A21`) | Primary red, as given                                                                                                        |
+| `himalaya`                       | `#2251C7`                  | Sampled from the mockup swatch                                                                                               |
+| `marigold`                       | `#F59C0E`                  | Sampled                                                                                                                      |
+| `nepal`                          | `#19763D`                  | Sampled; also `success`                                                                                                      |
+| `canvas`                         | `#FCFAF6`                  | Background, as given. **Tailwind `gray-50` is remapped to it**, so every screen laid out on `bg-gray-50` moved without edits |
+
+- Fonts: `@expo-google-fonts/outfit` and `@expo-google-fonts/mukta` (+ `expo-font`), loaded by
+  `useBrandFonts` in the root layout without blocking. Classes `font-display` (Outfit Bold),
+  `font-heading` (Mukta Bold), `font-body` / `-medium` / `-semibold`. One file per class
+  (`src/theme/fonts.json`); never combine with `font-bold`. Per-weight imports: only six files ship.
+- **There is no global default font in React Native.** Only the redesigned components and the new
+  `src/ui/` typography use Mukta / Outfit; the rest of the app keeps the system font until migrated.
+- Radii: `rounded-card` 16 px, `rounded-card-lg` 20 px. `Button` is now a pill.
+- Admin `styles.css`: the same tokens as CSS variables (light and dark), Mukta / Outfit from Google
+  Fonts in `index.html`.
+
+### Brand artwork (`assets/branding/<variant>/`, `assets/images/basket-loader.png`)
+
+- Cropped from the mockup PNGs (scripts kept out of the repo): customer icon = "Hamro Pasal - sajilo
+  cha hai", Seller icon = "Hamro Pasal Vendor", customer logo / splash = the round emblem (geometric
+  circle mask), basket = the loader illustration with the mockup's ring removed (the ring is drawn
+  natively and turns). **Raster crops of a rendering, not vector masters:** replace with the
+  designer's exports under the same names when they exist. Quantised PNGs (≤ 375 KB each).
+- **The app is still named "Hamro Pasal Seller"** (SPEC core 11) although the art says "Vendor".
+- `notification-icon.png` (both) is still the placeholder: it must be a white silhouette.
+- The wordmark is text (Outfit), not an image.
+
+### Components (`src/ui/`)
+
+`Display`, `H1`, `H2`, `Body`, `Caption`; `Card`; `StatusChip` + `STATUS_TONES` (marigold new,
+Himalayan blue preparing, green dispatched/done, red danger); `BrandMark`, `BrandLockup`,
+`BasketLoader` (still under reduced motion), `MadeInNepal`. `LogoPlaceholder` keeps its name and
+test id and renders `BrandMark`.
+
+### Screens
+
+- **Boot splash:** warm canvas, lockup, basket loader, tagline, "Made in Nepal". About: logo, name in
+  Outfit, "Made in Nepal".
+- **Customer Home:** the header defaults to the brand red with 20 px rounded bottom corners
+  (`BRAND_HEADER_THEME`); the four time-of-day themes stay behind `look="time-of-day"` / `phase`.
+  Pill search bar with the mic in a red circle (still the placeholder). Shop cards are horizontal
+  (photo left, details right), offer tag in green, and a green "N items in cart" chip that opens the
+  cart on the shop whose items are in it. View Cart bar is a green pill.
+- **Not built from the mockup:** a +/- stepper on a shop card (a shop has no single product to step;
+  the chip is the inline cart control) and the "Price Update" toggles (no such setting exists). The
+  mockup's "₹" was not used: amounts stay "Rs.".
+- **Seller app:** the header switch reads "Pasal Active" / "Pasal Closed" (`vendorShop.online` /
+  `offline`), green; a red summary card (`TodaySummaryCard`) with today's sales and orders from
+  `GET /api/vendor/analytics/summary` (shared cache with Analytics; hidden until answered); order
+  cards coloured and chipped by state.
+- **Admin:** a grouped sidebar (Overview, Shops, Catalogue, Marketing, Money, Platform) replaces the
+  tab bar; a new **Dashboard** tab opens first (`#/` → `dashboard`): stat cards (live shops, pending
+  approvals, suspended, payable to shops), two single-series bar charts (shops by municipality, new
+  shops per month in Nepal Time) and the approval queue table. Every figure is counted from
+  `GET /api/admin/vendors` and `GET /api/admin/finance/settlements`; **revenue and order volume are
+  not shown: no admin route reports them.**
+
+### Tests
+
+Mobile **1626** passing (+12: `src/ui/design-system.test.tsx`, font classes in `branding.test.ts`);
+updated: brand colours, the "Pasal Active" label, the splash's logo. Admin **340** (+4,
+`dashboard-rules.test.ts`); tab order and default updated. `tsc`, ESLint, Prettier clean in both;
+`vite build` and `expo export --platform android` succeed. **Rebuild the development client** for the
+icons, splash and `expo-font`.
+
 ## 8Z.40 Phase 39: step 7.1 foundations — /api/me, Vendor Code, notification centre, @hamro-pasal/mail (2026-10-15)
 
 Decisions (user, 2026-10-15): one account may hold several roles (built in step 8); Amazon SES

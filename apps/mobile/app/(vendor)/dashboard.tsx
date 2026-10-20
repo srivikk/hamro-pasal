@@ -34,6 +34,7 @@ import {
   useVendorOrdersRealtime,
 } from '../../src/features/vendor/useVendorOrders';
 import { complianceReminder } from '../../src/features/vendor/compliance-reminder';
+import { TodaySummaryCard } from '../../src/features/vendor/TodaySummaryCard';
 import { useVendorAlarm } from '../../src/features/vendor/vendor-alarm';
 import { VendorOrderCard } from '../../src/features/vendor/VendorOrderCard';
 import { useVendorBoardStore } from '../../src/store/useVendorBoardStore';
@@ -267,6 +268,8 @@ export default function VendorDashboardScreen() {
           </Text>
         </Pressable>
       )}
+
+      <TodaySummaryCard />
 
       <OrderStageTabs
         selected={stage}

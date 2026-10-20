@@ -78,10 +78,14 @@ describe('branding (step 7.9)', () => {
   });
 
   it('builds the raw colours and both schemes from the palette', () => {
+    // "Sajilo cha hai" design system (2026-10-21): the colours sampled from the approved mockups.
     expect(colors).toMatchObject({
-      brand: '#C8102E',
-      brandDark: '#9E0C24',
-      success: '#059669',
+      brand: '#C8232B',
+      himalaya: '#2251C7',
+      marigold: '#F59C0E',
+      nepal: '#19763D',
+      canvas: '#FCFAF6',
+      success: '#19763D',
       inactive: '#737373',
     });
     expect(schemeColors.dark.surface).toBe(palette.surface.dark);
@@ -93,7 +97,26 @@ describe('branding (step 7.9)', () => {
     const tailwind = require('../../tailwind.config.js') as {
       theme: { extend: { colors: unknown } };
     };
-    expect(tailwind.theme.extend.colors).toEqual(palette);
+    // gray-50, the class every screen was laid out on, is the design system's warm canvas.
+    expect(tailwind.theme.extend.colors).toEqual({
+      ...palette,
+      gray: { 50: palette.canvas.DEFAULT },
+    });
+  });
+
+  it('turns every font role into a class naming one font file', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const tailwind = require('../../tailwind.config.js') as {
+      theme: { extend: { fontFamily: Record<string, string[]> } };
+    };
+    expect(tailwind.theme.extend.fontFamily).toEqual({
+      display: ['Outfit_700Bold'],
+      'display-semibold': ['Outfit_600SemiBold'],
+      heading: ['Mukta_700Bold'],
+      body: ['Mukta_400Regular'],
+      'body-medium': ['Mukta_500Medium'],
+      'body-semibold': ['Mukta_600SemiBold'],
+    });
   });
 
   it('keeps the admin dashboard brand tokens in step', () => {

@@ -39,18 +39,18 @@ function Banner() {
           accessibilityRole="button"
           accessibilityLabel={t('cartBanner.label', { items: itemCount, amount: totalNpr })}
           testID="cart-banner"
-          className="flex-row items-center justify-between rounded-xl bg-green-700 px-4 py-3 shadow-sm active:bg-green-800"
+          className="flex-row items-center justify-between rounded-full bg-nepal px-5 py-3.5 shadow-sm active:bg-nepal-dark"
           onPress={() => {
             router.push('/cart');
           }}
         >
-          <Text className="text-sm font-bold text-white" testID="cart-banner-summary">
+          <Text className="font-body-semibold text-sm text-white" testID="cart-banner-summary">
             {t('cart.itemCount', { count: itemCount })}
             {'  |  '}
             {t('common.price', { amount: totalNpr })}
           </Text>
           <View className="flex-row items-center gap-1">
-            <Text className="text-sm font-extrabold text-white">{t('cartBanner.view')}</Text>
+            <Text className="font-display text-base text-white">{t('cartBanner.view')}</Text>
             <Ionicons name="chevron-forward" size={16} color="#FFFFFF" />
           </View>
         </Pressable>

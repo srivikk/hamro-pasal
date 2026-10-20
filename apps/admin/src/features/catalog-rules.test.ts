@@ -96,8 +96,8 @@ describe('tabs', () => {
     expect(tabFromHash('#/categories')).toBe('categories');
     expect(tabFromHash('#/products')).toBe('products');
     expect(tabFromHash('#/vendors')).toBe('vendors');
-    expect(tabFromHash('')).toBe('dlq');
-    expect(tabFromHash('#/nowhere')).toBe('dlq');
+    expect(tabFromHash('')).toBe('dashboard');
+    expect(tabFromHash('#/nowhere')).toBe('dashboard');
   });
 });
 

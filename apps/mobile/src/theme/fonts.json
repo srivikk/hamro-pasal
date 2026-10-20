@@ -1,0 +1,10 @@
+{
+  "fontFamilies": {
+    "display": "Outfit_700Bold",
+    "display-semibold": "Outfit_600SemiBold",
+    "heading": "Mukta_700Bold",
+    "body": "Mukta_400Regular",
+    "body-medium": "Mukta_500Medium",
+    "body-semibold": "Mukta_600SemiBold"
+  }
+}

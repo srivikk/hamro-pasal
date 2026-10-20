@@ -39,7 +39,9 @@
     "sponsoredLabel": "Sponsored",
     "ratingCountShort": "({{count, localizedNumber}})",
     "ratingCountShortPlus": "({{count, localizedNumber}}+)",
-    "closedNow": "Closed now"
+    "closedNow": "Closed now",
+    "inCart_one": "{{count}} item in cart",
+    "inCart_other": "{{count}} items in cart"
   },
   "cart": {
     "itemCount_one": "{{count, localizedNumber}} item",
@@ -489,8 +491,8 @@
     }
   },
   "vendorShop": {
-    "online": "Online",
-    "offline": "Offline",
+    "online": "Pasal Active",
+    "offline": "Pasal Closed",
     "toggleLabel": "Shop is taking orders",
     "offlineBanner": "Your shop is set to Offline. Switch to Online to take new orders.",
     "panBanner": "Your shop is offline until your PAN is added and verified. Tap to open Shop settings.",
@@ -1019,7 +1021,12 @@
   },
   "boot": {
     "appName": "Hamro Pasal",
-    "tagline": "Hamro pasal sajilo cha hai"
+    "tagline": "Hamro pasal sajilo cha hai",
+    "sellerName": "Hamro Pasal Seller",
+    "sellerTagline": "Hamro sajha byapar",
+    "loading": "Sajilo cha hai…",
+    "madeInNepal": "Made in Nepal",
+    "taglineShort": "Sajilo cha hai"
   },
   "welcome": {
     "title": "Welcome to Hamro Pasal",
@@ -1262,5 +1269,11 @@
     "play": "Play the video: {{title}}",
     "dontShowAgain": "Don’t show again",
     "close": "Close the video"
+  },
+  "vendorBoard": {
+    "todaySales": "Today's sales",
+    "todayOrders": "Orders today",
+    "ordersUnit_one": "{{count}} order",
+    "ordersUnit_other": "{{count}} orders"
   }
 }

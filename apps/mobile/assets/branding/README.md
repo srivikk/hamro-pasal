@@ -1,7 +1,11 @@
 # Brand assets (step 7.9)
 
-Every file in `customer/` and `seller/` is a **placeholder** (a plain disc). Replace each one with
-the final artwork **under the same file name**. `app.config.ts` picks the folder from
+Since 2026-10-21 the files are the **"Sajilo cha hai" artwork**, cut from the approved brand mockups:
+the customer app has the "Hamro Pasal - sajilo cha hai" icon and the round emblem (a Nepali shop under
+the Himalaya); the Seller app has the "Hamro Pasal Vendor" icon. They were cropped from the mockup
+renderings (not from vector masters), so replace each one with the designer's export when it exists,
+**under the same file name**. The two `notification-icon.png` files are still **placeholders**: Android
+needs a white silhouette, which the illustrations cannot provide. `app.config.ts` picks the folder from
 `APP_VARIANT`, and `src/theme/branding.test.ts` fails if a file is missing or the wrong size.
 
 | File                    | Size (px)   | Format and rules                                                                                                                         | Used for                                 |
@@ -30,15 +34,10 @@ the branding test checks this.
 
 ## In-app logo
 
-The boot splash, Welcome, Language and About screens draw `LogoPlaceholder` in
-`src/features/boot/SplashView.tsx`. When `logo.png` is final, change that component to render it:
-
-```tsx
-<Image source={isSellerApp() ? sellerLogo : customerLogo} style={{ width: size, height: size }} />
-```
-
-Here `sellerLogo` and `customerLogo` are `require()`s of the two `logo.png` files. Keep the
-component's name and `testID`.
+`BrandMark`, `BrandLockup` and `BasketLoader` in `src/ui/Brand.tsx` draw `logo.png` for the running build
+and `assets/images/basket-loader.png`. The wordmark ("Hamro Pasal", the tagline) is text in the Outfit
+font, not part of the image, so it stays sharp and follows the language. `LogoPlaceholder` in
+`src/features/boot/SplashView.tsx` keeps its name and `testID` and now renders `BrandMark`.
 
 The Welcome auth-wall photo is shared by both apps:
 `assets/images/auth-wall-placeholder.png`. Replace that file and keep its name.

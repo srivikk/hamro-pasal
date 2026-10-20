@@ -1,6 +1,8 @@
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 
+import brandLogo from './assets/brand-logo.png';
+
 import { useAdminApi, useSession, useSessionStore } from './app-context';
 import { AdProductScreen } from './features/ads/AdProductScreen';
 import { ApprovalScreen } from './features/approvals/ApprovalScreen';
@@ -9,6 +11,7 @@ import { LoginScreen } from './features/auth/LoginScreen';
 import { portalOf } from './features/auth/login-rules';
 import { CampaignScreen } from './features/campaigns/CampaignScreen';
 import { CategoryScreen } from './features/categories/CategoryScreen';
+import { DashboardScreen } from './features/dashboard/DashboardScreen';
 import { ComplianceScreen } from './features/compliance/ComplianceScreen';
 import { DeadLetterScreen } from './features/dlq/DeadLetterScreen';
 import { PayoutScreen } from './features/finance/PayoutScreen';
@@ -25,7 +28,7 @@ import { VendorEarningsScreen } from './features/vendor-portal/VendorEarningsScr
 import { VendorProductScreen } from './features/vendor-portal/VendorProductScreen';
 import { VendorScreen } from './features/vendors/VendorScreen';
 import {
-  TABS,
+  TAB_GROUPS,
   tabFromHash,
   VENDOR_TABS,
   vendorTabFromHash,
@@ -35,6 +38,8 @@ import {
 
 function Screen({ tab }: { readonly tab: Tab }) {
   switch (tab) {
+    case 'dashboard':
+      return <DashboardScreen />;
     case 'dlq':
       return <DeadLetterScreen />;
     case 'vendors':
@@ -151,13 +156,18 @@ export function App() {
 
   return (
     <div className="shell">
-      <header className="topbar">
+      <aside className="sidebar" aria-label="Sections">
         <div className="brand">
-          Hamro Pasal <span className="brand-sub">{vendor ? 'Vendor Portal' : 'Super Admin'}</span>
+          <img className="brand-logo" src={brandLogo} alt="" width={44} height={44} />
+          <div>
+            <div className="brand-name">Hamro Pasal</div>
+            <div className="brand-sub">{vendor ? 'Vendor Portal' : 'Super Admin'}</div>
+          </div>
         </div>
-        <nav className="tabs" aria-label="Sections">
-          {vendor
-            ? VENDOR_TABS.map(({ id, label }) => (
+        <nav className="side-nav">
+          {vendor ? (
+            <div className="side-group">
+              {VENDOR_TABS.map(({ id, label }) => (
                 <button
                   key={id}
                   type="button"
@@ -169,25 +179,36 @@ export function App() {
                 >
                   {label}
                 </button>
-              ))
-            : TABS.map(({ id, label }) => (
-                <button
-                  key={id}
-                  type="button"
-                  className="tab"
-                  aria-current={tab === id ? 'page' : undefined}
-                  onClick={() => {
-                    setTab(id);
-                  }}
-                >
-                  {label}
-                </button>
               ))}
+            </div>
+          ) : (
+            TAB_GROUPS.map((group) => (
+              <div className="side-group" key={group.name}>
+                <div className="side-group-name">{group.name}</div>
+                {group.tabs.map(({ id, label, icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className="tab"
+                    aria-current={tab === id ? 'page' : undefined}
+                    onClick={() => {
+                      setTab(id);
+                    }}
+                  >
+                    <span className="tab-icon" aria-hidden="true">
+                      {icon}
+                    </span>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ))
+          )}
         </nav>
         <div className="account">
           {signOut.isError && (
             <span className="error small" role="alert">
-              Couldn't sign out. Try again.
+              Couldn&apos;t sign out. Try again.
             </span>
           )}
           <span className="muted">{session.phone}</span>
@@ -201,8 +222,9 @@ export function App() {
           >
             {signOut.isPending ? 'Signing out…' : 'Sign out'}
           </button>
+          <span className="made-in-nepal">Made in Nepal</span>
         </div>
-      </header>
+      </aside>
       <main className="content">
         {!vendor ? (
           <Screen tab={tab} />

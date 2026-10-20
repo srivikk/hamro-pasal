@@ -17,9 +17,11 @@ jest.mock('react-native-mmkv', () => {
 jest.mock('react-native-worklets', () =>
   jest.requireActual<Record<string, unknown>>('react-native-worklets/src/mock'),
 );
-jest.mock('react-native-reanimated', () =>
-  jest.requireActual<Record<string, unknown>>('react-native-reanimated/mock'),
-);
+// Reanimated's own mock has no useReducedMotion (the basket loader reads it): motion is on.
+jest.mock('react-native-reanimated', () => ({
+  ...jest.requireActual<Record<string, unknown>>('react-native-reanimated/mock'),
+  useReducedMotion: () => false,
+}));
 
 // WebView is a native view. The stand-in records its props so tests can drive navigation
 // (src/test/mock-webview.tsx); it is loaded lazily, when a test first imports the WebView.

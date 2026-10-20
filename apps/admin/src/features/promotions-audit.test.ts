@@ -140,7 +140,7 @@ describe('tabs', () => {
   it('opens Promotions and the Audit log, and leaves no placeholder section', () => {
     expect(tabs.tabFromHash('#/promotions')).toBe('promotions');
     expect(tabs.tabFromHash('#/audit-log')).toBe('audit-log');
-    expect(tabs.TABS).toHaveLength(18);
+    expect(tabs.TABS).toHaveLength(19);
     expect(Object.keys(tabs)).not.toContain('PLANNED_SECTIONS');
   });
 });

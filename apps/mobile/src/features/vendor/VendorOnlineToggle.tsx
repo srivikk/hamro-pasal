@@ -7,7 +7,7 @@ import { colors } from '../../theme/colors';
 import { useVendorAvailability } from './useVendorAvailability';
 
 /**
- * The Online / Offline switch in every Vendor App header: whether the shop takes new orders.
+ * The "Pasal Active" switch (Online / Offline) in every Vendor App header: whether the shop takes new orders.
  * Step 7.3: it is the server's (`PUT /api/vendor/availability`). On means AUTO: the opening
  * hours decide, and an auto-paused shop resumes. Off means CLOSED until the next scheduled
  * boundary (indefinitely for a shop without hours). Until the server has answered, the phone's
@@ -29,7 +29,7 @@ export function VendorOnlineToggle() {
     <View className="mr-3 flex-row items-center gap-2">
       <Text
         testID="vendor-online-label"
-        className={`text-sm font-semibold ${online ? 'text-emerald-700' : 'text-gray-500'}`}
+        className={`font-body-semibold text-sm ${online ? 'text-nepal' : 'text-gray-500'}`}
       >
         {label}
       </Text>
@@ -49,7 +49,7 @@ export function VendorOnlineToggle() {
           );
         }}
         // Switch takes raw colours, not a className.
-        trackColor={{ true: colors.success, false: colors.inactive }}
+        trackColor={{ true: colors.nepal, false: colors.inactive }}
       />
     </View>
   );

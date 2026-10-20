@@ -53,6 +53,19 @@ export const server = setupServer(
       signups_open: true,
     }),
   ),
+  // The Seller dashboard's summary card asks for today's figures; an empty day by default.
+  http.get(apiUrl('/api/vendor/analytics/summary'), () =>
+    HttpResponse.json({
+      today_sales_npr: 0,
+      today_order_count: 0,
+      top_item: null,
+      ad_roi: null,
+      daily_sales: ['THU', 'FRI', 'SAT', 'SUN', 'MON', 'TUE', 'WED'].map((day) => ({
+        day,
+        sales_npr: 0,
+      })),
+    }),
+  ),
   // Home always asks for the admin's promotions; none by default.
   http.get(apiUrl('/api/home/promotions'), () => HttpResponse.json({ banners: [], offers: [] })),
   http.get(apiUrl('/api/vendors/:id/products'), () => HttpResponse.json(vendorMenu())),

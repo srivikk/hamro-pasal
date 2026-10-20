@@ -39,7 +39,9 @@
     "sponsoredLabel": "प्रायोजित",
     "ratingCountShort": "({{count, localizedNumber}})",
     "ratingCountShortPlus": "({{count, localizedNumber}}+)",
-    "closedNow": "अहिले बन्द"
+    "closedNow": "अहिले बन्द",
+    "inCart_one": "कार्टमा {{count}} सामान",
+    "inCart_other": "कार्टमा {{count}} सामान"
   },
   "cart": {
     "itemCount_one": "{{count, localizedNumber}} वटा सामान",
@@ -489,8 +491,8 @@
     }
   },
   "vendorShop": {
-    "online": "अनलाइन",
-    "offline": "अफलाइन",
+    "online": "पसल खुला",
+    "offline": "पसल बन्द",
     "toggleLabel": "पसलले अर्डर लिँदै छ",
     "offlineBanner": "तपाईंको पसल अफलाइन राखिएको छ। नयाँ अर्डर लिन अनलाइन गर्नुहोस्।",
     "panBanner": "प्यान थपेर प्रमाणित नभएसम्म तपाईंको पसल अफलाइन रहन्छ। पसल सेटिङ खोल्न थिच्नुहोस्।",
@@ -1019,7 +1021,12 @@
   },
   "boot": {
     "appName": "हाम्रो पसल",
-    "tagline": "Hamro pasal sajilo cha hai"
+    "tagline": "Hamro pasal sajilo cha hai",
+    "sellerName": "हाम्रो पसल सेलर",
+    "sellerTagline": "हाम्रो साझा व्यापार",
+    "loading": "Sajilo cha hai…",
+    "madeInNepal": "नेपालमा बनेको",
+    "taglineShort": "Sajilo cha hai"
   },
   "welcome": {
     "title": "हाम्रो पसलमा स्वागत छ",
@@ -1262,5 +1269,11 @@
     "play": "भिडियो हेर्नुहोस्: {{title}}",
     "dontShowAgain": "फेरि नदेखाउनुहोस्",
     "close": "भिडियो बन्द गर्नुहोस्"
+  },
+  "vendorBoard": {
+    "todaySales": "आजको बिक्री",
+    "todayOrders": "आजका अर्डर",
+    "ordersUnit_one": "{{count}} अर्डर",
+    "ordersUnit_other": "{{count}} अर्डर"
   }
 }

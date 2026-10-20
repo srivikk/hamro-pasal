@@ -1,11 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { FeedEntry } from '@hamro-pasal/shared-types';
+import { router } from 'expo-router';
 import { Image, Pressable, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { vendorExtras } from '../features/promo/mock-promotions';
 import { deliveryWindow } from '../features/promo/promo-model';
 import { selectHasSession, useAuthStore } from '../store/useAuthStore';
+import { useCartStore } from '../store/useCartStore';
 import { useFavouritesStore } from '../store/useFavouritesStore';
 import { useToastStore } from '../store/useToastStore';
 import { colors } from '../theme/colors';
@@ -23,9 +25,10 @@ export function roundKm(km: number): number {
 }
 
 /**
- * A shop in the feed: a cover with a heart to save the shop (signed-in customers only), then the name with its rating, the
- * delivery time and distance with the running offer as a small tag beside them, and the delivery
- * terms. Whatever the shop has no value for (cover, rating, offer, time) is simply left out.
+ * A shop in the feed ("Sajilo cha hai" layout): a square photo on the left with a heart to save the
+ * shop (signed-in customers only), and beside it the name with its rating, the delivery time and
+ * distance with the running offer as a small green tag, the delivery terms, and, when the cart
+ * holds this shop's items, a chip that opens the cart. Whatever the shop has no value for (cover, rating, offer, time) is simply left out.
  */
 export function VendorCard({ entry, onPress }: VendorCardProps) {
   const { t } = useTranslation();
@@ -39,6 +42,10 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
   const showToast = useToastStore((state) => state.show);
   // Favourites belong to an account: a guest sees no heart.
   const signedIn = useAuthStore(selectHasSession);
+  // The cart holds one shop's items (SPEC edge case 4): this card shows them when they are its own.
+  const cartCount = useCartStore((state) =>
+    state.vendor?.id === vendor.id ? state.lines.reduce((sum, line) => sum + line.quantity, 0) : 0,
+  );
 
   const scopeLabel =
     vendor.delivery_scope === 'RADIUS_BOUND'
@@ -59,19 +66,17 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
       onPress={() => {
         if (interactive) onPress(vendor.id);
       }}
-      className={`mx-4 mb-4 rounded-2xl bg-white shadow-sm ${
+      className={`mx-4 mb-3 flex-row gap-3 rounded-card border border-line bg-white p-3 shadow-sm ${
         muted ? 'opacity-60' : 'active:opacity-90'
       }`}
     >
       {/* The cover clips its own corners: clipping the card itself would cut its shadow on iOS. */}
       <View
-        className={`items-center justify-center overflow-hidden rounded-t-2xl bg-brand-light ${
-          extras.cover_image_url === null ? 'h-24' : 'h-40'
-        }`}
+        className="h-24 w-24 items-center justify-center overflow-hidden rounded-card bg-brand-light"
         testID={`vendor-cover-${vendor.id}`}
       >
         {extras.cover_image_url === null ? (
-          <Ionicons name="storefront" size={36} color={colors.brand} />
+          <Ionicons name="storefront" size={32} color={colors.brand} />
         ) : (
           <Image
             source={{ uri: extras.cover_image_url }}
@@ -88,7 +93,7 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
             accessibilityState={{ selected: favourite }}
             testID={`vendor-favourite-${vendor.id}`}
             hitSlop={8}
-            className="absolute right-2 top-2 z-10 h-9 w-9 items-center justify-center rounded-full bg-white shadow-sm active:bg-gray-100"
+            className="absolute right-1 top-1 z-10 h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm active:bg-gray-100"
             onPress={() => {
               const saved = toggleFavourite({
                 vendorId: vendor.id,
@@ -102,7 +107,7 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
           >
             <Ionicons
               name={favourite ? 'heart' : 'heart-outline'}
-              size={18}
+              size={15}
               color={favourite ? colors.brand : '#111827'}
             />
           </Pressable>
@@ -111,9 +116,11 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
         {!entry.open_now ? (
           <View
             testID={`vendor-closed-${vendor.id}`}
-            className="absolute bottom-3 left-3 rounded-md bg-gray-900/80 px-2 py-0.5"
+            className="absolute bottom-1 left-1 rounded-md bg-gray-900/80 px-1.5 py-0.5"
           >
-            <Text className="text-xs font-bold text-white">{t('vendor.closedNow')}</Text>
+            <Text className="font-body-semibold text-[10px] text-white">
+              {t('vendor.closedNow')}
+            </Text>
           </View>
         ) : null}
         {entry.is_sponsored || extras.is_sponsored ? (
@@ -122,7 +129,7 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
             accessible
             accessibilityLabel={t('vendor.sponsoredLabel')}
             testID={`vendor-ad-${vendor.id}`}
-            className="absolute left-3 top-3 rounded-md bg-black/60 px-1.5 py-0.5"
+            className="absolute left-1 top-1 rounded-md bg-black/60 px-1.5 py-0.5"
           >
             <Text className="text-[10px] font-bold uppercase tracking-wide text-white">
               {t('vendor.sponsored')}
@@ -131,10 +138,10 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
         ) : null}
       </View>
 
-      <View className="p-4">
+      <View className="flex-1 justify-center">
         <View className="flex-row items-center justify-between gap-2">
           <Text
-            className={`flex-1 text-lg font-bold ${muted ? 'text-gray-500' : 'text-gray-900'}`}
+            className={`flex-1 font-heading text-base ${muted ? 'text-gray-500' : 'text-gray-900'}`}
             numberOfLines={1}
           >
             {vendor.business_name}
@@ -153,7 +160,7 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
             <>
               <Ionicons name="time-outline" size={14} color={colors.inactive} />
               <Text
-                className="text-sm font-semibold text-gray-700"
+                className="font-body-medium text-sm text-gray-700"
                 testID={`vendor-eta-${vendor.id}`}
               >
                 {t('vendor.deliveryTime', eta)}
@@ -166,10 +173,10 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
           </Text>
           {/* The running offer: a small tag beside the delivery details. A label only. */}
           {extras.top_offer === null ? null : (
-            <View className="flex-row items-center gap-1 rounded-sm bg-red-50 px-2 py-1">
-              <Ionicons name="pricetag" size={10} color={colors.brand} />
+            <View className="flex-row items-center gap-1 rounded-full bg-nepal-light px-2 py-0.5">
+              <Ionicons name="pricetag" size={10} color={colors.nepal} />
               <Text
-                className="text-xs font-semibold text-red-600"
+                className="font-body-semibold text-xs text-nepal-dark"
                 numberOfLines={1}
                 testID={`vendor-offer-${vendor.id}`}
               >
@@ -191,8 +198,26 @@ export function VendorCard({ entry, onPress }: VendorCardProps) {
           </Text>
         </View>
 
+        {cartCount > 0 && !muted ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('vendor.inCart', { count: cartCount })}
+            testID={`vendor-cart-${vendor.id}`}
+            hitSlop={6}
+            onPress={() => {
+              router.push('/cart');
+            }}
+            className="mt-2 flex-row items-center gap-1.5 self-start rounded-full bg-nepal px-3 py-1 active:bg-nepal-dark"
+          >
+            <Ionicons name="basket" size={13} color="#FFFFFF" />
+            <Text className="font-body-semibold text-xs text-white">
+              {t('vendor.inCart', { count: cartCount })}
+            </Text>
+          </Pressable>
+        ) : null}
+
         {muted ? (
-          <View className="mt-3 self-start rounded-full bg-gray-200 px-3 py-1">
+          <View className="mt-2 self-start rounded-full bg-gray-200 px-3 py-1">
             <Text className="text-xs font-semibold text-gray-500">{t('vendor.unavailable')}</Text>
           </View>
         ) : null}

@@ -288,7 +288,9 @@ describe('TerritoryGate (SPEC §1 tenant isolation)', () => {
         await jest.advanceTimersByTimeAsync(1499);
       });
       expect(screen.getByTestId('boot-splash')).toBeOnTheScreen();
-      expect(screen.getByTestId('logo-placeholder')).toBeOnTheScreen();
+      expect(screen.getByTestId('brand-mark')).toBeOnTheScreen();
+      expect(screen.getByTestId('basket-loader')).toBeOnTheScreen();
+      expect(screen.getByText('Made in Nepal')).toBeOnTheScreen();
       expect(deps.requestPermission).not.toHaveBeenCalled();
 
       await act(async () => {

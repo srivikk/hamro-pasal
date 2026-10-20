@@ -18,18 +18,18 @@ describe('the Online / Offline switch (step 7.3: server-driven)', () => {
     renderWithProviders(<VendorOnlineToggle />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Online');
+      expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Pasal Active');
     });
 
     fireEvent(screen.getByTestId('vendor-online-toggle'), 'valueChange', false);
     await waitFor(() => {
-      expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Offline');
+      expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Pasal Closed');
     });
     expect(useVendorShopStore.getState().online).toBe(false);
 
     fireEvent(screen.getByTestId('vendor-online-toggle'), 'valueChange', true);
     await waitFor(() => {
-      expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Online');
+      expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Pasal Active');
     });
     expect(useVendorShopStore.getState().online).toBe(true);
   });
@@ -65,7 +65,7 @@ describe('the Online / Offline switch (step 7.3: server-driven)', () => {
     );
     renderWithProviders(<VendorOnlineToggle />);
     await waitFor(() => {
-      expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Online');
+      expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Pasal Active');
     });
 
     fireEvent(screen.getByTestId('vendor-online-toggle'), 'valueChange', false);
@@ -75,6 +75,6 @@ describe('the Online / Offline switch (step 7.3: server-driven)', () => {
         "Couldn't change your shop. Check your connection and try again.",
       );
     });
-    expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Online');
+    expect(screen.getByTestId('vendor-online-label')).toHaveTextContent('Pasal Active');
   });
 });

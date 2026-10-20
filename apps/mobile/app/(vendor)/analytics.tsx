@@ -5,7 +5,7 @@ import { RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { retryTransientFailures } from '../../src/api/query-client';
-import { fetchVendorAnalytics } from '../../src/api/vendor-analytics';
+import { fetchVendorAnalytics, VENDOR_ANALYTICS_QUERY_KEY } from '../../src/api/vendor-analytics';
 import { Button } from '../../src/components/Button';
 import { SkeletonBlock, SkeletonGroup } from '../../src/components/Skeleton';
 import {
@@ -15,7 +15,7 @@ import {
 } from '../../src/features/vendor/analytics-format';
 import { colors } from '../../src/theme/colors';
 
-export const VENDOR_ANALYTICS_QUERY_KEY = ['vendor', 'analytics'] as const;
+export { VENDOR_ANALYTICS_QUERY_KEY };
 
 const cardClass = 'gap-1 rounded-2xl bg-white p-4 shadow-sm';
 

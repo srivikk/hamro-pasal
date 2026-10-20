@@ -2,7 +2,7 @@ import { createAdminApi } from '../api/admin-api';
 import { ApiError, createApiClient, type FetchLike } from '../api/client';
 import { fakeAdminApi, refusalOf } from '../api/fake-admin-api';
 import { createSessionStore } from '../auth/session-store';
-import { TABS, tabFromHash, vendorTabFromHash } from '../tabs';
+import { TAB_GROUPS, TABS, tabFromHash, vendorTabFromHash } from '../tabs';
 import {
   adminCampaignViewSchema,
   campaignPhase,
@@ -129,31 +129,46 @@ function requestOf(values: CampaignFormValues): CampaignWrite {
 describe('tabs', () => {
   it('lists the dashboard sections in order, the new ones included', () => {
     expect(TABS.map((tab) => tab.id)).toEqual([
-      'dlq',
+      'dashboard',
       'vendors',
+      'onboarding',
       'compliance',
+      'approvals',
       'categories',
       'products',
-      'pricing-plans',
       'campaigns',
       'ad-products',
       'promotions',
-      'logistics',
-      'payouts',
       'settlements',
-      'approvals',
+      'payouts',
+      'pricing-plans',
+      'logistics',
       'notifications',
-      'exports',
-      'onboarding',
       'tutorials',
+      'exports',
+      'dlq',
       'audit-log',
     ]);
   });
 
-  it('opens every section by its hash and the first one otherwise', () => {
+  it('groups the sections for the sidebar, every section once and in order', () => {
+    expect(TAB_GROUPS.map((group) => group.name)).toEqual([
+      'Overview',
+      'Shops',
+      'Catalogue',
+      'Marketing',
+      'Money',
+      'Platform',
+    ]);
+    expect(TAB_GROUPS.flatMap((group) => group.tabs.map((tab) => tab.id))).toEqual(
+      TABS.map((tab) => tab.id),
+    );
+  });
+
+  it('opens every section by its hash and the Dashboard otherwise', () => {
     for (const tab of TABS) expect(tabFromHash(`#/${tab.id}`)).toBe(tab.id);
-    expect(tabFromHash('')).toBe('dlq');
-    expect(tabFromHash('#/compliance/extra')).toBe('dlq');
+    expect(tabFromHash('')).toBe('dashboard');
+    expect(tabFromHash('#/compliance/extra')).toBe('dashboard');
     // An admin section is not a vendor section.
     expect(vendorTabFromHash('#/campaigns')).toBe('my-products');
   });

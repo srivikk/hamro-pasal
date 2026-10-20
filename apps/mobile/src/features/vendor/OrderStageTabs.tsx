@@ -15,7 +15,7 @@ interface OrderStageTabsProps {
 export function OrderStageTabs({ selected, counts, unanswered, onSelect }: OrderStageTabsProps) {
   const { t } = useTranslation();
   return (
-    <View className="flex-row bg-white" accessibilityRole="tablist">
+    <View className="mt-3 flex-row bg-white" accessibilityRole="tablist">
       {BOARD_STAGES.map((stage) => {
         const active = stage === selected;
         const alert = stage === 'NEW' && unanswered > 0;
@@ -32,7 +32,7 @@ export function OrderStageTabs({ selected, counts, unanswered, onSelect }: Order
           >
             <Text
               numberOfLines={1}
-              className={`text-sm font-semibold ${active ? 'text-brand' : 'text-gray-500'}`}
+              className={`font-body-semibold text-sm ${active ? 'text-brand' : 'text-gray-500'}`}
             >
               {t(`vendorDashboard.stage.${stage}`)}
             </Text>

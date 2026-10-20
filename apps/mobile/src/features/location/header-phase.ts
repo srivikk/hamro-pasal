@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 
+import palette from '../../theme/palette.json';
+
 /** The four looks of the Home header, by the hour on the phone's own clock. */
 export type HeaderPhase = 'morning' | 'afternoon' | 'evening' | 'night';
 
@@ -42,6 +44,17 @@ export const HEADER_THEMES: Record<HeaderPhase, HeaderTheme> = {
     locations: [0, 0.5, 1],
     tone: 'light',
   },
+};
+
+/**
+ * The "Sajilo cha hai" header (2026-10-21 mockups): the brand red, top to bottom, with light text.
+ * It is Home's default look; the four time-of-day themes above stay available through
+ * HeaderGradient's `look="time-of-day"` (or `phase`).
+ */
+export const BRAND_HEADER_THEME: HeaderTheme = {
+  colors: [palette.brand.DEFAULT, palette.brand.DEFAULT, palette.brand.dark],
+  locations: [0, 0.7, 1],
+  tone: 'light',
 };
 
 /**

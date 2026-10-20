@@ -108,7 +108,9 @@ export function ShopsFeed({
       renderSectionHeader={({ section }) =>
         section.key === 'serviceable' ? (
           <View className="px-4 pb-2 pt-4">
-            <Text className="text-lg font-bold text-gray-900">{t('feed.serviceableHeading')}</Text>
+            <Text className="font-heading text-lg text-gray-900">
+              {t('feed.serviceableHeading')}
+            </Text>
             {section.data.length === 0 ? (
               // No shop live anywhere yet reads as onboarding, not as a problem with the address.
               feedEmptyState(feed.data) === 'ONBOARDING' ? (
@@ -124,7 +126,7 @@ export function ShopsFeed({
           </View>
         ) : (
           <View className="px-4 pb-2 pt-6" testID="explore-further-header">
-            <Text className="text-lg font-bold text-gray-500">
+            <Text className="font-heading text-lg text-gray-500">
               {t('feed.exploreFurtherHeading')}
             </Text>
             <Text className="mt-1 text-sm text-gray-500">{t('feed.exploreFurtherHint')}</Text>

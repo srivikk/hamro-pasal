@@ -106,3 +106,31 @@ describe('branding (step 7.9)', () => {
     expect(token('brand-light')).toBe(palette.brand.light);
   });
 });
+
+describe('app variants install side by side (step 7.7)', () => {
+  it.each([
+    ['customer', 'Hamro Pasal', 'com.hamro.pasal', 'hamropasal'],
+    ['seller', 'Hamro Pasal Seller', 'com.hamro.pasal.seller', 'hamropasalseller'],
+  ])('the %s build has its own name, package and scheme', (variant, name, id, scheme) => {
+    const config = configFor(variant);
+    expect(config).toMatchObject({
+      name,
+      scheme,
+      android: { package: id },
+      ios: { bundleIdentifier: id },
+      extra: { appVariant: variant },
+    });
+  });
+
+  it('keeps one EAS project and slug for both, as EAS requires', () => {
+    const customer = configFor('customer');
+    const seller = configFor('seller');
+    expect(seller.slug).toBe('hamro-pasal');
+    expect(seller.slug).toBe(customer.slug);
+    expect(seller.extra?.eas).toEqual(customer.extra?.eas);
+  });
+
+  it('refuses an unknown variant rather than building the customer app under it', () => {
+    expect(() => configFor('sellr')).toThrow('APP_VARIANT must be "customer" or "seller"');
+  });
+});

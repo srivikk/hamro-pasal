@@ -5,7 +5,9 @@ import palette from './src/theme/palette.json';
 /*
  * Step 7.7 (SPEC core 11, decided 2026-10-15): two store builds from one codebase. APP_VARIANT
  * picks the build: `customer` (default) is "Hamro Pasal", `seller` is "Hamro Pasal Seller", each
- * with its own name, slug, URL scheme and package / bundle id, so both install side by side.
+ * with its own name, URL scheme and package / bundle id, so both install side by side. Both are
+ * one EAS project (one slug and project id; EAS refuses a slug that differs from the project's),
+ * which builds and signs each package separately: Expo's documented app-variant setup.
  * The app reads `extra.appVariant` (src/lib/app-variant.ts) to sign in with the right role and
  * to mount only its own screens. Riders stay in the customer build.
  *
@@ -22,7 +24,6 @@ const VARIANTS: Readonly<
     Variant,
     {
       name: string;
-      slug: string;
       scheme: string;
       bundleId: string;
       /** Behind the adaptive icon and the light splash; the Seller app is a shade darker. */
@@ -32,14 +33,12 @@ const VARIANTS: Readonly<
 > = {
   customer: {
     name: 'Hamro Pasal',
-    slug: 'hamro-pasal',
     scheme: 'hamropasal',
     bundleId: 'com.hamro.pasal',
     accent: palette.brand.DEFAULT,
   },
   seller: {
     name: 'Hamro Pasal Seller',
-    slug: 'hamro-pasal-seller',
     scheme: 'hamropasalseller',
     bundleId: 'com.hamro.pasal.seller',
     accent: palette.brand.dark,
@@ -59,7 +58,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   return {
     ...config,
     name: app.name,
-    slug: app.slug,
+    slug: 'hamro-pasal',
     scheme: app.scheme,
     version: '0.0.0',
     orientation: 'portrait',
@@ -113,12 +112,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     extra: {
       router: {},
       eas: {
-        // EAS ties a project to its slug: the Seller app gets its own (`eas init` with
-        // APP_VARIANT=seller), given here; until then it shares the customer project.
-        projectId:
-          variant === 'seller' && process.env.EAS_PROJECT_ID_SELLER !== undefined
-            ? process.env.EAS_PROJECT_ID_SELLER
-            : 'f91dc398-deb8-4af4-9b50-0210e8cb080f',
+        // Shared by both variants (see the top of this file).
+        projectId: 'f91dc398-deb8-4af4-9b50-0210e8cb080f',
       },
       appVariant: variant,
     },

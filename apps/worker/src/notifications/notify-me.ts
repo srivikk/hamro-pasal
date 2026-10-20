@@ -1,5 +1,6 @@
 import {
   deviceTokens,
+  inVisibleCategory,
   products,
   recordNotificationMessage,
   shopOpenAlerts,
@@ -56,13 +57,18 @@ export class NotifyMeService {
   /**
    * `product.back_in_stock`: everyone waiting for the product. Not re-checked against the stock:
    * a product restocked and sold out again within the minute still tells them (edge case 22).
+   *
+   * Decided 2026-10-20: a product filed under a hidden category, or under any category below a
+   * hidden one, tells nobody yet: the customer could not find it in the app. The requests are
+   * left untouched (delayed, never deleted), and the sweep sends the notices once the category is
+   * shown again while the product is still in stock.
    */
   async productBackInStock(productId: string): Promise<NotifyMeOutcome> {
     const [product] = await this.db
       .select({ name: products.name, vendorId: products.vendor_id, shop: vendors.business_name })
       .from(products)
       .innerJoin(vendors, eq(vendors.id, products.vendor_id))
-      .where(eq(products.id, productId));
+      .where(and(eq(products.id, productId), inVisibleCategory(products.category_id)));
     if (product === undefined) return { notified: 0 };
     return this.drain(
       { kind: 'BACK_IN_STOCK', productId },
@@ -93,14 +99,21 @@ export class NotifyMeService {
   /**
    * Every 5 minutes on the maintenance queue. Opening by the clock writes nothing, so this is how
    * a shop opening by its hours tells its customers; it also catches a product whose stock came
-   * back another way (a cancelled order's items returned).
+   * back another way (a cancelled order's items returned), and one whose hidden category was shown
+   * again (2026-10-20: a product under a hidden category waits here, its requests kept).
    */
   async sweep(): Promise<NotifyMeSweepSummary> {
     const readyProducts = await this.db
       .selectDistinct({ id: stockAlerts.product_id })
       .from(stockAlerts)
       .innerJoin(products, eq(products.id, stockAlerts.product_id))
-      .where(and(eq(products.is_active, true), gt(products.stock_quantity, 0)));
+      .where(
+        and(
+          eq(products.is_active, true),
+          gt(products.stock_quantity, 0),
+          inVisibleCategory(products.category_id),
+        ),
+      );
     const readyShops = await this.db
       .selectDistinct({ id: shopOpenAlerts.vendor_id })
       .from(shopOpenAlerts)

@@ -1,6 +1,7 @@
 import { randomInt, randomUUID } from 'node:crypto';
 
 import {
+  categories,
   createDatabase,
   deviceTokens,
   notificationMessages,
@@ -156,6 +157,81 @@ describe('Notify Me (real PostgreSQL)', () => {
     // A redelivered event finds nobody left.
     await expect(notifyMe.productBackInStock(productId)).resolves.toEqual({ notified: 0 });
     expect(await messagesFor(english)).toHaveLength(1);
+  });
+
+  /** Groceries › Tea & Coffee, the product filed under Tea & Coffee; Groceries active unless told. */
+  async function filedUnder(productId: string, rootActive = true) {
+    const slug = () => `test-${randomUUID()}`;
+    const [root] = await db
+      .insert(categories)
+      .values({ name: 'Groceries', slug: slug(), is_active: rootActive })
+      .returning({ id: categories.id });
+    if (root === undefined) throw new Error('category not created');
+    const [child] = await db
+      .insert(categories)
+      .values({ name: 'Tea & Coffee', slug: slug(), parent_id: root.id })
+      .returning({ id: categories.id });
+    if (child === undefined) throw new Error('category not created');
+    await db.update(products).set({ category_id: child.id }).where(eq(products.id, productId));
+    return { rootId: root.id, childId: child.id };
+  }
+
+  const waitingFor = (productId: string) =>
+    db.select().from(stockAlerts).where(eq(stockAlerts.product_id, productId));
+
+  it('tells nobody while the product sits under a hidden category, and keeps every request (2026-10-20)', async () => {
+    const { productId } = await shop(5);
+    // Its own category is active; the parent above it is hidden.
+    await filedUnder(productId, false);
+    const first = await customer('en', `ExponentPushToken[${randomUUID()}]`);
+    const second = await customer('ne');
+    await db.insert(stockAlerts).values([
+      { user_id: first, product_id: productId },
+      { user_id: second, product_id: productId },
+    ]);
+
+    await expect(notifyMe.productBackInStock(productId)).resolves.toEqual({ notified: 0 });
+    const summary = await notifyMe.sweep();
+
+    expect(summary.notified).toBe(0);
+    expect(await messagesFor(first)).toEqual([]);
+    expect(await messagesFor(second)).toEqual([]);
+    expect(push.sent).toEqual([]);
+    // Delayed, not deleted: both requests are still waiting.
+    expect((await waitingFor(productId)).map((row) => row.user_id).sort()).toEqual(
+      [first, second].sort(),
+    );
+  });
+
+  it('sends the delayed notices on the next sweep once the category is shown again', async () => {
+    const { productId } = await shop(5);
+    const { rootId } = await filedUnder(productId, false);
+    const waiting = await customer('en', `ExponentPushToken[${randomUUID()}]`);
+    await db.insert(stockAlerts).values({ user_id: waiting, product_id: productId });
+    await notifyMe.sweep();
+    expect(await messagesFor(waiting)).toEqual([]);
+
+    // The admin shows Groceries again; the product is still in stock.
+    await db.update(categories).set({ is_active: true }).where(eq(categories.id, rootId));
+    await notifyMe.sweep();
+
+    const [message] = await messagesFor(waiting);
+    expect(message).toMatchObject({
+      title: 'Back in stock',
+      data: { kind: 'BACK_IN_STOCK', product_id: productId },
+    });
+    expect(push.sent.map((m) => m.title)).toEqual(['Back in stock']);
+    expect(await waitingFor(productId)).toEqual([]);
+  });
+
+  it('tells customers about a product under visible categories as before', async () => {
+    const { productId } = await shop(5);
+    await filedUnder(productId, true);
+    const waiting = await customer();
+    await db.insert(stockAlerts).values({ user_id: waiting, product_id: productId });
+
+    await expect(notifyMe.productBackInStock(productId)).resolves.toEqual({ notified: 1 });
+    expect(await waitingFor(productId)).toEqual([]);
   });
 
   it('still tells them when the product sold out again before the notice went (edge case 22)', async () => {

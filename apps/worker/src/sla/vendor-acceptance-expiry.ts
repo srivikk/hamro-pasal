@@ -1,5 +1,5 @@
 import { orders, type Database } from '@hamro-pasal/db';
-import { cancelPlacedOrder, recordMissedOrder } from '@hamro-pasal/ledger';
+import { cancelPlacedOrder, recordMissedOrder, type LedgerService } from '@hamro-pasal/ledger';
 import type { VendorAcceptanceTimeoutJobInput } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 
@@ -22,7 +22,11 @@ export type VendorAcceptanceExpiryOutcome =
  * case 20). A retried job finds the order no longer PLACED and does nothing.
  */
 export class VendorAcceptanceExpiryService {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    /** 2026-10-21: a cancelled wallet or Model C order moves its money back in the same commit. */
+    private readonly ledger: LedgerService,
+  ) {}
 
   cancelIfUnanswered(job: VendorAcceptanceTimeoutJobInput): Promise<VendorAcceptanceExpiryOutcome> {
     return this.db.transaction(async (tx) => {
@@ -32,7 +36,7 @@ export class VendorAcceptanceExpiryService {
         .where(eq(orders.id, job.order_id))
         .for('update');
       if (order?.state !== 'PLACED') return { kind: 'NOT_PENDING' };
-      await cancelPlacedOrder(tx, order);
+      await cancelPlacedOrder(tx, order, this.ledger);
       const missed = await recordMissedOrder(tx, order.vendor_id, {
         kind: 'SYSTEM',
         job: VENDOR_ACCEPTANCE_EXPIRY_JOB,

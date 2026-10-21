@@ -3,7 +3,12 @@ import type { Order } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 
 import type { LedgerService, PostResult } from './ledger-service';
-import { planPaymentCapture, planSettlement } from './settlement-plan';
+import {
+  planOrderFee,
+  planPaymentCapture,
+  planPaymentReversal,
+  planSettlement,
+} from './settlement-plan';
 
 export class SettlementNotAllowedError extends Error {
   constructor(
@@ -30,7 +35,7 @@ export class SettlementService {
   ) {}
 
   /** Gateway payment verified: GATEWAY_CLEARING -> SYSTEM_ESCROW, and the order is marked PAID. */
-  capturePayment(orderId: string): Promise<PostResult> {
+  capturePayment(orderId: string): Promise<SettlementResult> {
     return this.db.transaction(async (tx) =>
       this.capturePaymentInTransaction(tx, await lockOrder(tx, orderId)),
     );
@@ -40,21 +45,63 @@ export class SettlementService {
    * Capture inside the caller's transaction. The caller must already hold the order row lock
    * (SELECT ... FOR UPDATE), e.g. a gateway webhook that verified the amount under that lock.
    */
-  async capturePaymentInTransaction(tx: Transaction, order: Order): Promise<PostResult> {
+  async capturePaymentInTransaction(tx: Transaction, order: Order): Promise<SettlementResult> {
     if (order.payment_status === 'FAILED') {
       throw new SettlementNotAllowedError(order.id, 'payment has FAILED');
     }
-    const result = await this.ledger.post(tx, {
-      kind: 'PAYMENT_CAPTURE',
-      idempotencyKey: `payment-capture:${order.id}`,
-      orderId: order.id,
-      description: `${order.payment_method} payment captured into escrow`,
-      postings: planPaymentCapture(order),
-    });
+    // A Model C gateway payment went to the shop's own merchant account: nothing to post, the
+    // order is only marked PAID (2026-10-21).
+    const postings = planPaymentCapture(order);
+    const result: SettlementResult =
+      postings.length === 0
+        ? { status: 'nothing_to_post' }
+        : await this.ledger.post(tx, {
+            kind: order.payment_method === 'WALLET' ? 'WALLET_PAYMENT' : 'PAYMENT_CAPTURE',
+            idempotencyKey: `payment-capture:${order.id}`,
+            orderId: order.id,
+            description:
+              order.settlement_model_locked === 'DIRECT_PREPAID'
+                ? `${order.payment_method} payment to the shop's prepaid balance`
+                : `${order.payment_method} payment captured into escrow`,
+            postings,
+          });
     if (order.payment_status !== 'PAID') {
       await tx.update(orders).set({ payment_status: 'PAID' }).where(eq(orders.id, order.id));
     }
     return result;
+  }
+
+  /**
+   * A paid order that could not be placed (2026-10-21): its capture posted back, so a wallet
+   * payment returns to the wallet at once. The caller holds the order row.
+   */
+  async reversePaymentInTransaction(tx: Transaction, order: Order): Promise<SettlementResult> {
+    const postings = planPaymentReversal(order);
+    if (postings.length === 0) return { status: 'nothing_to_post' };
+    return this.ledger.post(tx, {
+      kind: 'ORDER_REFUND',
+      idempotencyKey: `payment-reversal:${order.id}`,
+      orderId: order.id,
+      description: `${order.payment_method} payment returned: the order could not be placed`,
+      postings,
+    });
+  }
+
+  /**
+   * Model C (2026-10-21, SPEC core 5): the platform's fee debited from the shop's prepaid balance
+   * the moment the order is placed, in the placing transaction (the caller holds the order row).
+   * Nothing for any other model. May suspend the shop below its Fixed Reserve (WalletService).
+   */
+  async debitOrderFeeInTransaction(tx: Transaction, order: Order): Promise<SettlementResult> {
+    const postings = planOrderFee(order);
+    if (postings.length === 0) return { status: 'nothing_to_post' };
+    return this.ledger.post(tx, {
+      kind: 'ORDER_FEE_DEBIT',
+      idempotencyKey: `order-fee:${order.id}`,
+      orderId: order.id,
+      description: 'Platform commission debited at placement (prepaid model)',
+      postings,
+    });
   }
 
   /**

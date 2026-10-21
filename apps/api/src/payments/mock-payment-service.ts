@@ -51,10 +51,12 @@ export class MockPaymentService {
   async pay(orderId: string): Promise<MockPaymentResult> {
     const [order] = await this.db.select().from(orders).where(eq(orders.id, orderId));
     if (order === undefined) throw new OrderNotFoundError(orderId);
-    if (order.payment_method === 'COD') {
+    if (order.payment_method === 'COD' || order.payment_method === 'WALLET') {
       throw new CheckoutRejectedError(
         'WRONG_PAYMENT_METHOD',
-        'A COD order is paid at the door, not through a gateway',
+        order.payment_method === 'COD'
+          ? 'A COD order is paid at the door, not through a gateway'
+          : 'A wallet order is paid at checkout, not through a gateway',
         undefined,
         409,
       );
@@ -64,9 +66,11 @@ export class MockPaymentService {
       order.payment_gateway_ref ?? (await this.assignGatewayRef(order.id, gateway));
     const paidPaisa = orderTotalPaisa(order);
 
-    if (gateway === 'KHALTI') {
+    // A Model C eSewa payment is signed with the shop's own secret, which a mock cannot sign
+    // as; like Khalti it enters the confirmation the gateway check ends in.
+    if (gateway === 'KHALTI' || order.settlement_model_locked === 'DIRECT_PREPAID') {
       const payment = await this.confirmation.confirm({ gateway, gatewayRef, paidPaisa });
-      return { gateway, status: KHALTI_COMPLETED, payment };
+      return { gateway, status: gateway === 'KHALTI' ? KHALTI_COMPLETED : 'COMPLETE', payment };
     }
     const { status, payment } = await this.esewa.handleCallback(
       this.signedEsewaCallback(gatewayRef, formatNpr(paidPaisa)),

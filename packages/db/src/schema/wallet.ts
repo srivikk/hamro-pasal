@@ -1,4 +1,4 @@
-import { VENDOR_WALLET_HARD_FLOOR_NPR } from '@hamro-pasal/shared-types';
+import { PREPAID_FIXED_RESERVE_NPR, VENDOR_WALLET_HARD_FLOOR_NPR } from '@hamro-pasal/shared-types';
 import { sql } from 'drizzle-orm';
 import { boolean, check, integer, pgTable, timestamp } from 'drizzle-orm/pg-core';
 
@@ -20,6 +20,8 @@ export const platformSettings = pgTable(
     // many missed or rejected orders in a row pause a shop.
     last_order_minutes_before_close: integer().notNull().default(15),
     auto_pause_threshold: integer().notNull().default(3),
+    // 2026-10-21 (SPEC core 5, Model C): the Fixed Reserve a prepaid balance may not fall below.
+    prepaid_reserve_npr: npr().notNull().default(PREPAID_FIXED_RESERVE_NPR),
     updated_at: timestamp({ withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (t) => [
@@ -31,6 +33,10 @@ export const platformSettings = pgTable(
     check(
       'platform_settings_auto_pause_threshold_check',
       sql`${t.auto_pause_threshold} BETWEEN 1 AND 20`,
+    ),
+    check(
+      'platform_settings_prepaid_reserve_check',
+      sql`${t.prepaid_reserve_npr} >= ${sql.raw(String(PREPAID_FIXED_RESERVE_NPR))}`,
     ),
     check('platform_settings_delivery_fee_check', sql`${t.platform_delivery_fee_npr} >= 0`),
     // Configurable, but never looser than the hard floor enforced on vendors.

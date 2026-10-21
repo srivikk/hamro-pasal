@@ -109,7 +109,7 @@ describe('Payment Options screen (/checkout/payment-options)', () => {
 
     expect(
       screen.getAllByRole('radio').map((row) => row.props.accessibilityLabel as string),
-    ).toEqual(['eSewa', 'Khalti', 'Cash on delivery']);
+    ).toEqual(['eSewa', 'Khalti', 'Cash on delivery', 'Hamro Pasal wallet']);
     expect(screen.getByRole('radio', { name: 'eSewa' })).toBeChecked();
     expect(screen.getByText('Pay in cash when your order arrives')).toBeOnTheScreen();
   });

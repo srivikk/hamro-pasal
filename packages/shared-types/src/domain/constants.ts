@@ -158,3 +158,13 @@ export const MAX_OPENING_RANGES_PER_DAY = 3;
 export const MAX_ALERTS_PER_USER = 50;
 /** Customers told per batch (one notification centre message and one push call each). */
 export const ALERT_NOTICE_BATCH_SIZE = 100;
+
+/** The Fixed Reserve of a Model C (`DIRECT_PREPAID`) shop: SPEC core 5, minimum 5000 NPR. */
+export const PREPAID_FIXED_RESERVE_NPR = 5000;
+
+/** 2026-10-21 (SPEC core 4, "Cycle dues"): days to clear a cycle's dues before suspension. */
+export const CYCLE_DUES_GRACE_DAYS = 7;
+
+/** 2026-10-21 (SPEC core 12): the most one customer wallet recharge may add, and hold in all. */
+export const MAX_WALLET_RECHARGE_NPR = 25_000;
+export const MAX_CUSTOMER_WALLET_BALANCE_NPR = 100_000;

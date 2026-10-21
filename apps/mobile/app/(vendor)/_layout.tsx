@@ -218,6 +218,24 @@ export default function VendorLayout() {
         }}
       />
       <Tabs.Screen
+        name="payments"
+        options={{
+          href: null,
+          title: t('vendorShop.paymentsTitle'),
+          headerLeft: () => (
+            <HeaderIcon
+              testID="vendor-payments-back"
+              icon="arrow-back"
+              label={t('common.back')}
+              side="left"
+              onPress={() => {
+                router.back();
+              }}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           href: null,

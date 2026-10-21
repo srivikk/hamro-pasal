@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { mailGatewayFromEnv } from '@hamro-pasal/mail';
 import { privateObjectStoreFromEnv } from '@hamro-pasal/storage';
 import { BillingCycleRenewalService } from './billing/billing-cycle-renewal';
+import { CycleDuesSweepService } from './billing/cycle-dues-sweep';
 import { ComplianceSweepService } from './compliance/compliance-sweep';
 import { SettlementPayoutRunService } from './finance/settlement-payout-run';
 import { MarketingStatusSweepService } from './marketing/marketing-status-sweep';
@@ -103,7 +104,10 @@ async function main(): Promise<void> {
   const processors = createProcessors(
     createTimerHandlers({
       escalation: new VendorEscalationService(db),
-      acceptanceExpiry: new VendorAcceptanceExpiryService(db),
+      acceptanceExpiry: new VendorAcceptanceExpiryService(
+        db,
+        new LedgerService(new WalletService()),
+      ),
       notifyMe,
       exports: exportJobsService,
       // Step 7.3: day 8, the held prepaid earnings of an order nobody escalated.
@@ -111,6 +115,7 @@ async function main(): Promise<void> {
       debtReconciliation: new VendorDebtReconciliationService(db),
       complianceSweep: new ComplianceSweepService(db),
       billingRenewal: new BillingCycleRenewalService(db),
+      cycleDues: new CycleDuesSweepService(db),
       marketingSweep: new MarketingStatusSweepService(db, new LedgerService(new WalletService())),
       settlementPayoutRun: new SettlementPayoutRunService(
         db,

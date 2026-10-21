@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm';
 
 import type { CheckoutService } from '../../checkout/checkout-service';
 import { toPaisa } from '../../ledger/money';
+import type { VendorGatewayAccountService } from '../gateway-accounts';
 import { assertPayable, formatNpr } from '../payable-order';
 import {
   orderTotalPaisa,
@@ -60,11 +61,26 @@ export class EsewaService {
     private readonly checkout: CheckoutService,
     private readonly confirmation: PaymentConfirmationService,
     private readonly config: EsewaConfig,
+    private readonly gatewayAccounts: VendorGatewayAccountService,
   ) {}
+
+  /**
+   * The merchant account a payment goes to: the platform's, or (2026-10-21, Model C) the shop's
+   * own verified one, whose product code and secret sign the form and verify the callback.
+   */
+  private async merchantFor(order: {
+    readonly vendor_id: string;
+    readonly settlement_model_locked: string;
+  }): Promise<{ readonly productCode: string; readonly secretKey: string }> {
+    if (order.settlement_model_locked !== 'DIRECT_PREPAID') return this.config;
+    const own = await this.gatewayAccounts.credentialsFor(order.vendor_id, 'ESEWA');
+    return { productCode: own.merchantCode, secretKey: own.secret };
+  }
 
   async initiate(customerId: string, orderId: string): Promise<EsewaPaymentRequest> {
     const { order, lock } = await this.checkout.getOrderLockStatus(customerId, orderId);
     assertPayable(order, lock, 'ESEWA');
+    const merchant = await this.merchantFor(order);
 
     // A fresh transaction_uuid per attempt (eSewa rejects reused ids). It is stored as the
     // order's gateway reference, which the callback is matched on.
@@ -78,7 +94,7 @@ export class EsewaService {
     const signed = {
       total_amount: totalAmount,
       transaction_uuid: transactionUuid,
-      product_code: this.config.productCode,
+      product_code: merchant.productCode,
     };
     return {
       paymentUrl: this.config.paymentUrl,
@@ -92,7 +108,7 @@ export class EsewaService {
         success_url: this.config.successUrl,
         failure_url: this.config.failureUrl,
         signed_field_names: ESEWA_REQUEST_SIGNED_FIELDS.join(','),
-        signature: signEsewaRequest(signed, this.config.secretKey),
+        signature: signEsewaRequest(signed, merchant.secretKey),
       },
     };
   }
@@ -109,15 +125,34 @@ export class EsewaService {
     } catch {
       throw new InvalidGatewayCallbackError('data is not base64-encoded JSON');
     }
-    if (!verifyEsewaCallbackSignature(fields, this.config.secretKey)) {
-      throw new InvalidGatewayCallbackError('signature mismatch');
-    }
     const { status, transaction_uuid: transactionUuid, product_code: productCode } = fields;
-    if (productCode !== this.config.productCode) {
-      throw new InvalidGatewayCallbackError('unexpected product_code');
-    }
     if (status === undefined || transactionUuid === undefined) {
       throw new InvalidGatewayCallbackError('missing status or transaction_uuid');
+    }
+    // The transaction id only chooses which merchant's secret to check the signature with; nothing
+    // is trusted until that signature holds.
+    const [order] = await this.db
+      .select({
+        vendor_id: orders.vendor_id,
+        settlement_model_locked: orders.settlement_model_locked,
+      })
+      .from(orders)
+      .where(
+        and(eq(orders.payment_method, 'ESEWA'), eq(orders.payment_gateway_ref, transactionUuid)),
+      );
+    let merchant: { readonly productCode: string; readonly secretKey: string } = this.config;
+    if (order !== undefined) {
+      try {
+        merchant = await this.merchantFor(order);
+      } catch {
+        throw new InvalidGatewayCallbackError('the shop has no verified eSewa account');
+      }
+    }
+    if (!verifyEsewaCallbackSignature(fields, merchant.secretKey)) {
+      throw new InvalidGatewayCallbackError('signature mismatch');
+    }
+    if (productCode !== merchant.productCode) {
+      throw new InvalidGatewayCallbackError('unexpected product_code');
     }
     if (status !== 'COMPLETE') {
       return { status, payment: null };

@@ -1,4 +1,5 @@
 import {
+  enqueueDomainEvent,
   pricingPlans,
   recordAuditLog,
   vendorSettingChanges,
@@ -7,7 +8,11 @@ import {
   type Transaction,
 } from '@hamro-pasal/db';
 import { nextBsMonthStart } from '@hamro-pasal/ledger';
-import { paymentMethodSchema, type PricingModel } from '@hamro-pasal/shared-types';
+import {
+  CYCLE_DUES_GRACE_DAYS,
+  shopPaymentMethodSchema,
+  type PricingModel,
+} from '@hamro-pasal/shared-types';
 import { and, asc, eq, isNull, lte } from 'drizzle-orm';
 import { z } from 'zod';
 
@@ -24,7 +29,7 @@ export interface BillingRenewalSummary {
 }
 
 const planValue = z.object({ pricing_plan_id: z.uuid() });
-const methodsValue = z.object({ methods: z.array(paymentMethodSchema).min(1) });
+const methodsValue = z.object({ methods: z.array(shopPaymentMethodSchema).min(1) });
 
 type VendorRow = typeof vendors.$inferSelect;
 type ChangeRow = typeof vendorSettingChanges.$inferSelect;
@@ -137,7 +142,52 @@ async function renewCycle(tx: Transaction, vendorId: string, now: Date): Promise
     .update(vendors)
     .set({ billing_cycle_started_at: startedAt, billing_cycle_ends_at: endsAt })
     .where(eq(vendors.id, vendorId));
+  await openDuesNotice(tx, vendor, now);
   return applied;
+}
+
+/**
+ * 2026-10-21 (SPEC core 4, "Cycle dues"): a cycle that ends with the shop's wallet below 0 opens a
+ * notice. The dues (that balance) must be cleared within CYCLE_DUES_GRACE_DAYS, whether or not the
+ * suspension limit was reached, or the CYCLE_DUES_SWEEP suspends the shop for debt. A Model C shop
+ * is prepaid (below its reserve it is suspended already) and gets none; an open notice is never
+ * extended by the next renewal.
+ */
+async function openDuesNotice(tx: Transaction, vendor: VendorRow, now: Date): Promise<void> {
+  if (
+    vendor.wallet_balance_npr >= 0 ||
+    vendor.settlement_model === 'DIRECT_PREPAID' ||
+    vendor.dues_due_at !== null ||
+    vendor.status === 'DEACTIVATED'
+  ) {
+    return;
+  }
+  const amount = -vendor.wallet_balance_npr;
+  const dueAt = new Date(now.getTime() + CYCLE_DUES_GRACE_DAYS * 86_400_000);
+  await tx
+    .update(vendors)
+    .set({ dues_notice_opened_at: now, dues_due_at: dueAt, dues_amount_npr: amount })
+    .where(eq(vendors.id, vendor.id));
+  await recordAuditLog(tx, {
+    actor: { kind: 'SYSTEM', job: BILLING_RENEWAL_JOB },
+    action: 'CYCLE_DUES_NOTICE_OPENED',
+    entityId: vendor.id,
+    vendorId: vendor.id,
+    beforeState: { dues_due_at: null },
+    afterState: { dues_amount_npr: amount, dues_due_at: dueAt.toISOString() },
+  });
+  await enqueueDomainEvent(tx, {
+    type: 'vendor.dues_notice_opened',
+    aggregateId: vendor.id,
+    occurredAt: now,
+    payload: {
+      vendor_id: vendor.id,
+      vendor_phone: vendor.phone,
+      dues_amount_npr: amount,
+      due_at: dueAt.toISOString(),
+      opened_at: now.toISOString(),
+    },
+  });
 }
 
 /**

@@ -41,6 +41,7 @@ export default function SellerSignupScreen() {
   const [palika, setPalika] = useState('');
   const [location, setLocation] = useState<Coordinates | null>(null);
   const [chosenMode, setChosenMode] = useState<VendorFulfillmentMode | null>(null);
+  const [chosenPlan, setChosenPlan] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<Field, true>>>({});
   const options = useQuery({
@@ -52,6 +53,10 @@ export default function SellerSignupScreen() {
   });
   const offered = options.data === undefined ? [] : offeredDeliveryModes(options.data);
   const fulfillment = effectiveDeliveryMode(offered, chosenMode);
+  // Decided 2026-10-21: a new shop chooses one of the Subscription plans on offer (the cheapest
+  // first); Commission and Free plans are assigned by Hamro Pasal.
+  const plans = options.data?.subscription_plans ?? [];
+  const plan = plans.find((p) => p.id === chosenPlan) ?? plans[0] ?? null;
 
   const signUp = useMutation({
     mutationFn: signUpSeller,
@@ -68,6 +73,12 @@ export default function SellerSignupScreen() {
       const code = error instanceof ApiError ? error.code : null;
       // The Super Admin switched the mode (or both) off after the screen opened: show what is
       // offered now.
+      if (code === 'PRICING_PLAN_NOT_SELF_SELECTABLE') {
+        setChosenPlan(null);
+        void options.refetch();
+        showToast(t('sellerSignup.planChanged'), 'error');
+        return;
+      }
       if (code === 'DELIVERY_MODE_DISABLED' || code === 'SELLER_SIGNUPS_PAUSED') {
         void options.refetch();
         showToast(
@@ -100,9 +111,17 @@ export default function SellerSignupScreen() {
       ...(location === null ? { location: true } : {}),
     };
     setErrors(missing);
-    if (Object.keys(missing).length > 0 || location === null || fulfillment === null) return;
+    if (
+      Object.keys(missing).length > 0 ||
+      location === null ||
+      fulfillment === null ||
+      plan === null
+    ) {
+      return;
+    }
     signUp.mutate({
       signup_token: token,
+      pricing_plan_id: plan.id,
       business_name: businessName.trim(),
       municipality_palika_string: palika.trim(),
       location: { lat: location.latitude, lng: location.longitude },
@@ -113,7 +132,7 @@ export default function SellerSignupScreen() {
   };
 
   // Until the switches are known nothing can be offered; with none on, nothing can be created.
-  if (options.data === undefined || offered.length === 0) {
+  if (options.data === undefined || offered.length === 0 || !options.data.signups_open) {
     return (
       <KeyboardScreen testID="seller-signup-screen">
         <Stack.Screen options={{ headerShown: true, title: t('sellerSignup.title') }} />
@@ -216,6 +235,32 @@ export default function SellerSignupScreen() {
               </Pressable>
             ))}
           </View>
+        </View>
+
+        <View className="gap-1">
+          <Text className="text-sm font-semibold text-gray-800">{t('sellerSignup.plan')}</Text>
+          {plans.map((offeredPlan) => (
+            <Pressable
+              key={offeredPlan.id}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: plan?.id === offeredPlan.id }}
+              testID={`seller-signup-plan-${offeredPlan.id}`}
+              className={`rounded-xl border px-3 py-3 ${
+                plan?.id === offeredPlan.id
+                  ? 'border-brand bg-brand-light'
+                  : 'border-gray-300 bg-white'
+              }`}
+              onPress={() => {
+                setChosenPlan(offeredPlan.id);
+              }}
+            >
+              <Text className="text-sm font-semibold text-gray-900">{offeredPlan.name}</Text>
+              <Text className="text-xs text-gray-600">
+                {t('sellerSignup.planFee', { amount: offeredPlan.monthly_fee_npr })}
+              </Text>
+            </Pressable>
+          ))}
+          <Text className="text-xs text-gray-500">{t('sellerSignup.planHint')}</Text>
         </View>
 
         <Button

@@ -46,6 +46,7 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   COD: 'Cash on Delivery',
   ESEWA: 'eSewa',
   KHALTI: 'Khalti',
+  WALLET: 'Hamro Pasal wallet',
 };
 
 const DOCUMENT_TITLES: Record<InvoiceRow['document_type'], string> = {

@@ -1,4 +1,4 @@
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 
 import {
   auditLogs,
@@ -47,6 +47,8 @@ describe('Seller onboarding and tutorials', () => {
   let db: Database;
   let admin: string;
   let verifierId: string;
+  /** Decided 2026-10-21: a self-signup chooses an offered Subscription plan. */
+  let plan: { pricing_plan_id: string };
 
   beforeAll(async () => {
     // No resend cooldown: these tests sign the same number in several times in a row.
@@ -59,6 +61,17 @@ describe('Seller onboarding and tutorials', () => {
       .select({ id: pricingPlans.id })
       .from(pricingPlans)
       .where(eq(pricingPlans.is_default, true));
+    const [subscription] = await db
+      .insert(pricingPlans)
+      .values({
+        name: `Seller Subscription ${String(randomInt(0, 1_000_000))}`,
+        model: 'SUBSCRIPTION',
+        monthly_fee_npr: 999,
+        created_by_user_id: verifierId,
+      })
+      .returning({ id: pricingPlans.id });
+    if (subscription === undefined) throw new Error('no plan');
+    plan = { pricing_plan_id: subscription.id };
     if (existing === undefined) {
       await db.insert(pricingPlans).values({
         name: `Default Commission ${String(randomInt(0, 1_000_000))}`,
@@ -102,7 +115,7 @@ describe('Seller onboarding and tutorials', () => {
   async function signUp(number: string) {
     const res = await request(t.app)
       .post('/api/seller/signup')
-      .send({ signup_token: await signupToken(number), ...SHOP });
+      .send({ signup_token: await signupToken(number), ...SHOP, ...plan });
     expect(res.status).toBe(201);
     return res;
   }
@@ -173,7 +186,7 @@ describe('Seller onboarding and tutorials', () => {
     it('refuses a forged or reused-as-access signup token, and a second shop', async () => {
       const bad = await request(t.app)
         .post('/api/seller/signup')
-        .send({ signup_token: 'not-a-token', ...SHOP });
+        .send({ signup_token: 'not-a-token', ...SHOP, ...plan });
       expect(bad.status).toBe(401);
       expect(errorOf(bad).code).toBe('INVALID_SIGNUP_TOKEN');
 
@@ -183,18 +196,49 @@ describe('Seller onboarding and tutorials', () => {
         (
           await request(t.app)
             .post('/api/seller/signup')
-            .send({ signup_token: token, ...SHOP })
+            .send({ signup_token: token, ...SHOP, ...plan })
         ).status,
       ).toBe(201);
       const twice = await request(t.app)
         .post('/api/seller/signup')
-        .send({ signup_token: token, ...SHOP });
+        .send({ signup_token: token, ...SHOP, ...plan });
       expect(twice.status).toBe(409);
       expect(errorOf(twice).code).toBe('ALREADY_A_SELLER');
     });
   });
 
   describe('self-signup', () => {
+    it('takes an offered Subscription plan only; Commission and Free are the admin’s (2026-10-21)', async () => {
+      const [commission] = await db
+        .select({ id: pricingPlans.id })
+        .from(pricingPlans)
+        .where(eq(pricingPlans.is_default, true));
+      for (const planId of [commission?.id ?? randomUUID(), randomUUID()]) {
+        const number = phone();
+        const refused = await request(t.app)
+          .post('/api/seller/signup')
+          .send({ signup_token: await signupToken(number), ...SHOP, pricing_plan_id: planId });
+        expect(refused.status).toBe(422);
+        expect(errorOf(refused).code).toBe('PRICING_PLAN_NOT_SELF_SELECTABLE');
+      }
+      const missing = await request(t.app)
+        .post('/api/seller/signup')
+        .send({ signup_token: await signupToken(phone()), ...SHOP });
+      expect(missing.status).toBe(400);
+
+      const seller = bodyOf(sellerSignupResponseSchema, await signUp(phone()));
+      const [shop] = await db
+        .select()
+        .from(vendors)
+        .where(eq(vendors.id, seller.application.vendor_id));
+      expect(shop).toMatchObject({
+        pricing_model: 'SUBSCRIPTION',
+        pricing_plan_id: plan.pricing_plan_id,
+        commission_rate: 0,
+        status: 'SANDBOXED',
+      });
+    });
+
     it('is audited, announced, and shows what the application still needs', async () => {
       const number = phone();
       const res = await signUp(number);
@@ -258,6 +302,7 @@ describe('Seller onboarding and tutorials', () => {
         .send({
           signup_token: await signupToken(number),
           ...SHOP,
+          ...plan,
           ...(fulfillmentMode === undefined ? {} : { fulfillment_mode: fulfillmentMode }),
         });
 
@@ -279,9 +324,12 @@ describe('Seller onboarding and tutorials', () => {
         self_delivery_enabled: true,
         platform_fleet_enabled: true,
         signups_open: true,
+        subscription_plans: expect.arrayContaining([
+          expect.objectContaining({ id: plan.pricing_plan_id, model: 'SUBSCRIPTION' }),
+        ]) as unknown,
       });
       await setModes(false, true);
-      expect(await options()).toEqual({
+      expect(await options()).toMatchObject({
         self_delivery_enabled: false,
         platform_fleet_enabled: true,
         signups_open: true,
@@ -525,7 +573,7 @@ describe('Seller onboarding and tutorials', () => {
       const number = phone();
       const res = await request(t.app)
         .post('/api/seller/signup')
-        .send({ signup_token: await signupToken(number), ...SHOP, ...scope });
+        .send({ signup_token: await signupToken(number), ...SHOP, ...plan, ...scope });
       expect(res.status).toBe(201);
       const seller = bodyOf(sellerSignupResponseSchema, res);
       const [shop] = await db.select().from(vendors).where(eq(vendors.user_id, seller.user.id));

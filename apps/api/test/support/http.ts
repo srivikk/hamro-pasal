@@ -21,6 +21,8 @@ export const REFRESH_SECRET = 'integration-refresh-secret-fedcba9876543210';
 /** eSewa's public UAT merchant secret for product code EPAYTEST. */
 export const ESEWA_UAT_SECRET = '8gBm/:&EnhH.1/q';
 export const KHALTI_BASE = 'https://a.khalti.com/api/v2';
+/** VENDOR_CREDENTIALS_KEY of every test app: 32 bytes, base64 (Model C merchant secrets). */
+export const TEST_CREDENTIALS_KEY = Buffer.alloc(32, 7).toString('base64');
 
 /**
  * Parses a supertest response body with its shared-types response schema. Every read is therefore
@@ -99,6 +101,7 @@ export function buildTestApp(
         websiteUrl: 'https://hamropasal.test',
       },
       walletTopUpMode: options.walletTopUpMode ?? 'MOCK',
+      vendorCredentialsKey: TEST_CREDENTIALS_KEY,
       ...(options.mockServices === undefined ? {} : { mockServices: options.mockServices }),
       ...(options.panChecksumEnforced === undefined
         ? {}

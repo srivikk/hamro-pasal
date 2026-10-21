@@ -12,8 +12,9 @@ import {
 import type { AuditActor, DomainEvent, Order, OrderState } from '@hamro-pasal/shared-types';
 import { and, asc, eq, gt, sql } from 'drizzle-orm';
 
+import type { LedgerService } from './ledger-service';
 import { toNpr } from './money';
-import { orderTotalPaisa } from './settlement-plan';
+import { orderTotalPaisa, planCancellationRefund } from './settlement-plan';
 
 /**
  * Writes `order.state_changed` to the outbox. Call it with the transaction that changed
@@ -48,10 +49,18 @@ export function enqueueOrderStateChanged(
 
 /**
  * Cancels a PLACED or PREPARING order whose row the caller holds FOR UPDATE: stock back, state
- * CANCELED, the refund flag and `order.canceled_refund_due` for a paid order. Shared by the
+ * CANCELED, the refund flag and `order.canceled_refund_due` for a gateway payment. Shared by the
  * customer's cancel, the vendor's reject and the 5-minute auto-cancel (step 7.3).
+ *
+ * 2026-10-21: the money that can move back moves in the same transaction (`planCancellationRefund`):
+ * a wallet payment goes back to the customer's wallet at once (no refund is owed, so no flag), and
+ * a Model C shop gets its fee back and is debited the payment it received.
  */
-export async function cancelPlacedOrder(tx: Transaction, order: Order): Promise<Order> {
+export async function cancelPlacedOrder(
+  tx: Transaction,
+  order: Order,
+  ledger: LedgerService,
+): Promise<Order> {
   const lines = await tx
     .select({ productId: orderItems.product_id, quantity: orderItems.quantity })
     .from(orderItems)
@@ -64,7 +73,18 @@ export async function cancelPlacedOrder(tx: Transaction, order: Order): Promise<
       .where(and(eq(products.id, line.productId), eq(products.vendor_id, order.vendor_id)));
   }
 
-  const refundRequired = order.payment_status === 'PAID';
+  const refund = planCancellationRefund(order);
+  if (refund.length > 0) {
+    await ledger.post(tx, {
+      kind: 'ORDER_REFUND',
+      idempotencyKey: `order-cancellation:${order.id}`,
+      orderId: order.id,
+      description: `${order.payment_method} order cancelled`,
+      postings: refund,
+    });
+  }
+  // A wallet payment was refunded above; a gateway payment is owed to the customer by hand.
+  const refundRequired = order.payment_status === 'PAID' && order.payment_method !== 'WALLET';
   const [canceled] = await tx
     .update(orders)
     .set({ state: 'CANCELED', refund_required: refundRequired })
@@ -77,7 +97,11 @@ export async function cancelPlacedOrder(tx: Transaction, order: Order): Promise<
   await enqueueOrderStateChanged(tx, order.state, canceled);
 
   if (refundRequired) {
-    if (canceled.payment_method === 'COD' || canceled.payment_gateway_ref === null) {
+    if (
+      canceled.payment_method === 'COD' ||
+      canceled.payment_method === 'WALLET' ||
+      canceled.payment_gateway_ref === null
+    ) {
       throw new Error(`Order ${order.id} is PAID without a gateway payment`);
     }
     await enqueueDomainEvent(tx, {

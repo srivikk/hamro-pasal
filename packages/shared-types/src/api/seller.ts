@@ -8,6 +8,7 @@ import {
 } from '../domain/enums';
 import { nepalPhoneSchema } from '../domain/entities';
 import { authTokensResponseSchema } from './responses';
+import { offeredPlanViewSchema } from './vendor-payments';
 
 /*
  * Step 7.7 (SPEC core 11, verification 32): the Seller app and vendor onboarding. One account per
@@ -56,6 +57,12 @@ const location = z.strictObject({
  */
 export const sellerSignupRequestSchema = z.strictObject({
   signup_token: z.string().min(1),
+  /**
+   * Decided 2026-10-21: a self-signing shop chooses an offered Subscription plan (422
+   * PRICING_PLAN_NOT_SELF_SELECTABLE otherwise). Commission and Free plans are assigned by a Super
+   * Admin (PUT /api/admin/vendors/:id/pricing-plan).
+   */
+  pricing_plan_id: z.uuid(),
   business_name: businessName,
   municipality_palika_string: palika,
   location,
@@ -175,6 +182,9 @@ export type SellerSignupResponseBody = z.infer<typeof sellerSignupResponseSchema
 export const sellerSignupOptionsResponseSchema = z.strictObject({
   self_delivery_enabled: z.boolean(),
   platform_fleet_enabled: z.boolean(),
+  /** False also while no Subscription plan is on offer: a self-signup needs one (2026-10-21). */
   signups_open: z.boolean(),
+  /** The Subscription plans a new shop may choose (cheapest first). */
+  subscription_plans: z.array(offeredPlanViewSchema),
 });
 export type SellerSignupOptionsResponseBody = z.infer<typeof sellerSignupOptionsResponseSchema>;

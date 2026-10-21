@@ -20,7 +20,19 @@ export type VendorSmsEvent = Extract<
 export function vendorNotificationSms(event: DomainEvent): SmsMessage | null {
   switch (event.event_type) {
     case 'vendor.suspended_for_debt': {
-      const { vendor_phone, wallet_balance_npr, suspension_limit_npr } = event.payload;
+      const { vendor_phone, wallet_balance_npr, suspension_limit_npr, restore_at_npr } =
+        event.payload;
+      // 2026-10-21, Model C: a prepaid shop is suspended below its Fixed Reserve and back online
+      // once the balance is at the reserve again.
+      if (restore_at_npr !== undefined && restore_at_npr > 0) {
+        return {
+          to: vendor_phone,
+          text:
+            `Hamro Pasal: your shop is offline. Your prepaid balance is ${formatNpr(wallet_balance_npr)}, ` +
+            `below the ${formatNpr(suspension_limit_npr)} reserve. Recharge ` +
+            `${formatNpr(restore_at_npr - wallet_balance_npr)} in the app to go back online.`,
+        };
+      }
       // A debt suspension is lifted once the balance is back to 0 or more (Phase 12.5), so the
       // top-up needed is exactly the dues.
       return {

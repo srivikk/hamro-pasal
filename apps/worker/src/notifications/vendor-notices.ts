@@ -22,6 +22,8 @@ export type VendorNoticeEvent = Extract<
       | 'vendor.deactivated'
       | 'vendor.reactivated'
       | 'vendor.auto_paused'
+      | 'vendor.dues_notice_opened'
+      | 'vendor.suspended_for_dues'
       | 'marketing.ad_ended'
       | 'marketing.ad_paused'
       | 'marketing.campaign_terms_changed';
@@ -34,6 +36,8 @@ const NOTICE_EVENT_TYPES: ReadonlySet<string> = new Set<VendorNoticeEvent['event
   'vendor.deactivated',
   'vendor.reactivated',
   'vendor.auto_paused',
+  'vendor.dues_notice_opened',
+  'vendor.suspended_for_dues',
   'marketing.ad_ended',
   'marketing.ad_paused',
   'marketing.campaign_terms_changed',
@@ -191,6 +195,27 @@ function wordingOf(event: VendorNoticeEvent): Wording {
         push: {
           title: 'Your shop is paused',
           body: `${String(event.payload.missed_orders)} orders in a row were not accepted. Please switch your shop back on when ready.`,
+        },
+      };
+    // 2026-10-21 (SPEC core 4, "Cycle dues"): a cycle ended below 0; 7 days to clear it.
+    case 'vendor.dues_notice_opened':
+      return {
+        sms:
+          `Hamro Pasal: your billing cycle ended with ${formatNpr(event.payload.dues_amount_npr)} due. ` +
+          `Please pay it in the app's Wallet by ${nepalDate(event.payload.due_at)} to keep your shop online.`,
+        push: {
+          title: 'Dues to clear',
+          body: `Pay ${formatNpr(event.payload.dues_amount_npr)} by ${nepalDate(event.payload.due_at)} to keep your shop online.`,
+        },
+      };
+    case 'vendor.suspended_for_dues':
+      return {
+        sms:
+          `Hamro Pasal: your shop is offline because your cycle's dues were not paid. ` +
+          `Pay ${formatNpr(-event.payload.wallet_balance_npr)} in the app's Wallet to go back online.`,
+        push: {
+          title: 'Your shop is offline',
+          body: `Your cycle's dues were not paid. Pay ${formatNpr(-event.payload.wallet_balance_npr)} to go back online.`,
         },
       };
     case 'marketing.ad_ended': {

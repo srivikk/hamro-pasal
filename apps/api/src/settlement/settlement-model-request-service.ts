@@ -1,4 +1,5 @@
 import {
+  platformSettings,
   recordAuditLog,
   settlementModelChangeRequests,
   vendors,
@@ -38,7 +39,7 @@ export class SettlementModelRequestNotFoundError extends Error {
   }
 }
 
-/** Model C (DIRECT_PREPAID) cannot be selected before Phase 3 (SPEC core 5). */
+/** A model that cannot be selected. Unused since Model C opened (2026-10-21); kept for the 422 mapping. */
 export class SettlementModelUnavailableError extends Error {
   constructor(readonly model: SettlementModel) {
     super(`Settlement model ${model} cannot be selected yet`);
@@ -136,7 +137,6 @@ export class SettlementModelRequestService {
         .where(eq(vendors.user_id, actor.user_id))
         .for('update');
       if (vendor === undefined) throw new VendorAccountNotFoundError(actor.user_id);
-      if (model === 'DIRECT_PREPAID') throw new SettlementModelUnavailableError(model);
       if (model === vendor.settlement_model) throw new SettlementModelUnchangedError(model);
 
       const [pending] = await tx
@@ -236,14 +236,19 @@ export class SettlementModelRequestService {
 
       if (request.status === 'APPROVED') return locked;
       if (request.status === 'REJECTED') throw new SettlementModelRequestDecidedError('REJECTED');
-      if (request.requested_model === 'DIRECT_PREPAID') {
-        throw new SettlementModelUnavailableError(request.requested_model);
-      }
-      const blockers = modelChangeBlockersOf({
-        open_order_count: locked.openOrderCount,
-        ledger_balance_npr: locked.ledgerBalanceNpr,
-        active_ad_count: locked.activeAdCount,
-      });
+      const [settings] = await tx
+        .select({ reserve: platformSettings.prepaid_reserve_npr })
+        .from(platformSettings);
+      if (settings === undefined) throw new Error('platform_settings row is missing');
+      const blockers = modelChangeBlockersOf(
+        {
+          open_order_count: locked.openOrderCount,
+          ledger_balance_npr: locked.ledgerBalanceNpr,
+          active_ad_count: locked.activeAdCount,
+          requested_model: request.requested_model,
+        },
+        settings.reserve,
+      );
       if (blockers.length > 0) throw new SettlementChangeBlockedError(blockers);
 
       await tx

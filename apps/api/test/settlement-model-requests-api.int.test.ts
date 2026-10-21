@@ -209,12 +209,8 @@ describe('settlement model requests and vendor campaigns API', () => {
       expect(rows).toHaveLength(1);
     });
 
-    it('refuses Model C, the model the shop is already on, and a malformed body', async () => {
+    it('refuses the model the shop is already on, and a malformed body', async () => {
       const { token, vendorId } = await shop();
-
-      const prepaid = await ask(token, 'DIRECT_PREPAID');
-      expect(prepaid.status).toBe(422);
-      expect(errorOf(prepaid).code).toBe('SETTLEMENT_MODEL_UNAVAILABLE');
 
       const same = await ask(token, 'PLATFORM_ESCROW');
       expect(same.status).toBe(422);
@@ -399,7 +395,7 @@ describe('settlement model requests and vendor campaigns API', () => {
       expect(await modelOf(vendorId)).toBe('COD_CREDIT');
     });
 
-    it('never approves Model C, even for a request already in the table', async () => {
+    it('approves Model C only once the prepaid balance is at the Fixed Reserve (2026-10-21)', async () => {
       const { vendorId, userId } = await shop();
       const [row] = await db
         .insert(settlementModelChangeRequests)
@@ -413,8 +409,11 @@ describe('settlement model requests and vendor campaigns API', () => {
       if (row === undefined) throw new Error('no request');
 
       const res = await decide(row.id, 'approve', admin);
-      expect(res.status).toBe(422);
-      expect(errorOf(res).code).toBe('SETTLEMENT_MODEL_UNAVAILABLE');
+      expect(res.status).toBe(409);
+      expect(errorOf(res)).toMatchObject({
+        code: 'SETTLEMENT_CHANGE_BLOCKED',
+        details: { blockers: ['BELOW_PREPAID_RESERVE'] },
+      });
       expect(await modelOf(vendorId)).toBe('PLATFORM_ESCROW');
     });
 

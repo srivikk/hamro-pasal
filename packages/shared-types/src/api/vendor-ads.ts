@@ -17,8 +17,6 @@ import {
 export const AD_PURCHASE_MAX_START_AHEAD_DAYS = 90;
 /** How far in the past `starts_at` may lie: a request sent "now" on a slow connection. */
 export const AD_PURCHASE_START_GRACE_SECONDS = 300;
-/** The Fixed Reserve of a Model C (`DIRECT_PREPAID`) shop: SPEC core 5, minimum 5000 NPR. */
-export const PREPAID_FIXED_RESERVE_NPR = 5000;
 export const MAX_AD_BUDGET_NPR = 1_000_000;
 
 const wholePaisa = (amount: number) => Math.abs(amount * 100 - Math.round(amount * 100)) < 1e-6;

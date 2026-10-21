@@ -14,7 +14,7 @@ import {
   type OrderItem,
   type OrderState,
 } from '@hamro-pasal/shared-types';
-import { recordMissedOrder, resetMissedOrders } from '@hamro-pasal/ledger';
+import { recordMissedOrder, resetMissedOrders, type LedgerService } from '@hamro-pasal/ledger';
 import { and, asc, eq, inArray, or, sql } from 'drizzle-orm';
 
 import { OrderNotFoundError } from '../checkout/checkout-service';
@@ -115,6 +115,7 @@ export class VendorOrderService {
     private readonly db: Database,
     private readonly locks: InventoryLockService,
     private readonly handoff: DeliveryHandoff,
+    private readonly ledger: LedgerService,
   ) {}
 
   /** The vendor the user runs, or null (the `vendor:subscribe` socket rule). */
@@ -224,7 +225,7 @@ export class VendorOrderService {
       if (order.state === 'CANCELED') return { order, replayed: true };
       if (order.state !== 'PLACED')
         throw new OrderDecisionConflictError(orderId, 'reject', order.state);
-      const canceled = await cancelPlacedOrder(tx, order);
+      const canceled = await cancelPlacedOrder(tx, order, this.ledger);
       // Step 7.3: a rejection counts as missed; the third in a row pauses the shop.
       await recordMissedOrder(tx, order.vendor_id, {
         kind: 'USER',

@@ -1,5 +1,5 @@
 import { orderAddresses, orderItems, orders, type Database } from '@hamro-pasal/db';
-import { cancelPlacedOrder } from '@hamro-pasal/ledger';
+import { cancelPlacedOrder, type LedgerService } from '@hamro-pasal/ledger';
 import {
   ORDER_CANCELLATION_WINDOW_SECONDS,
   type Order,
@@ -51,6 +51,7 @@ export class OrderService {
   constructor(
     private readonly db: Database,
     private readonly locks: InventoryLockService,
+    private readonly ledger: LedgerService,
   ) {}
 
   /** GET /api/orders/:id: the customer's own order with its items and delivery address. */
@@ -122,7 +123,7 @@ export class OrderService {
         throw new CancellationWindowExpiredError(orderId);
       }
 
-      return { order: await cancelPlacedOrder(tx, order), replayed: false };
+      return { order: await cancelPlacedOrder(tx, order, this.ledger), replayed: false };
     });
 
     if (!result.replayed) await releaseLingeringHold(this.locks, result.order);

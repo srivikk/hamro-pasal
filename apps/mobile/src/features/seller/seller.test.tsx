@@ -11,7 +11,7 @@ import { useSellerSignupStore } from '../../store/useSellerSignupStore';
 import { useToastStore } from '../../store/useToastStore';
 import { accessTokenFor } from '../../test/access-tokens';
 import { mockWebView } from '../../test/mock-webview';
-import { apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
+import { SIGNUP_SUBSCRIPTION_PLANS, apiUrl, server, setupApiTestEnvironment } from '../../test/msw';
 import { renderWithProviders } from '../../test/render';
 import { openSellerSignup } from './become-seller';
 import { SELLER_SIGNUP_OPTIONS_PATH, SELLER_SIGNUP_PATH, signupTokenOf } from './seller-api';
@@ -108,6 +108,9 @@ describe('Seller signup (step 7.7)', () => {
     fireEvent.changeText(screen.getByTestId('seller-signup-palika'), 'Kathmandu Metropolitan City');
     pinThamel();
     fireEvent.press(screen.getByTestId('seller-signup-PLATFORM_FLEET'));
+    // The cheapest Subscription plan is chosen until the vendor picks another (2026-10-21).
+    expect(screen.getByText('Rs. 999 a month, no commission')).toBeOnTheScreen();
+    fireEvent.press(screen.getByTestId(`seller-signup-plan-${SIGNUP_SUBSCRIPTION_PLANS[1].id}`));
     fireEvent.press(screen.getByRole('button', { name: 'Create my shop' }));
 
     await waitFor(() => {
@@ -116,6 +119,7 @@ describe('Seller signup (step 7.7)', () => {
     expect(sent).toEqual([
       {
         signup_token: 'signup-token-1',
+        pricing_plan_id: SIGNUP_SUBSCRIPTION_PLANS[1].id,
         business_name: 'Thamel Kirana Pasal',
         municipality_palika_string: 'Kathmandu Metropolitan City',
         location: { lat: 27.7154, lng: 85.3123 },
@@ -171,6 +175,7 @@ describe('delivery choices follow the platform switches (2026-10-20)', () => {
           self_delivery_enabled: self,
           platform_fleet_enabled: fleet,
           signups_open: self || fleet,
+          subscription_plans: SIGNUP_SUBSCRIPTION_PLANS,
         }),
       ),
     );
@@ -233,6 +238,7 @@ describe('delivery choices follow the platform switches (2026-10-20)', () => {
           self_delivery_enabled: selfOn,
           platform_fleet_enabled: true,
           signups_open: true,
+          subscription_plans: SIGNUP_SUBSCRIPTION_PLANS,
         }),
       ),
       http.post(apiUrl(SELLER_SIGNUP_PATH), () => {
@@ -274,6 +280,7 @@ describe('delivery choices follow the platform switches (2026-10-20)', () => {
           self_delivery_enabled: open,
           platform_fleet_enabled: open,
           signups_open: open,
+          subscription_plans: SIGNUP_SUBSCRIPTION_PLANS,
         }),
       ),
       http.post(apiUrl(SELLER_SIGNUP_PATH), () => {
@@ -296,7 +303,12 @@ describe('delivery choices follow the platform switches (2026-10-20)', () => {
 
 describe('offered delivery modes', () => {
   it('lists the switched-on modes in order, and keeps a choice only while it is offered', () => {
-    const both = { self_delivery_enabled: true, platform_fleet_enabled: true, signups_open: true };
+    const both = {
+      self_delivery_enabled: true,
+      platform_fleet_enabled: true,
+      signups_open: true,
+      subscription_plans: [],
+    };
     expect(offeredDeliveryModes(both)).toEqual(['SELF_DELIVERY', 'PLATFORM_FLEET']);
     expect(offeredDeliveryModes({ ...both, self_delivery_enabled: false })).toEqual([
       'PLATFORM_FLEET',
@@ -306,6 +318,7 @@ describe('offered delivery modes', () => {
         self_delivery_enabled: false,
         platform_fleet_enabled: false,
         signups_open: false,
+        subscription_plans: [],
       }),
     ).toEqual([]);
 
@@ -355,5 +368,61 @@ describe('Become a Seller (customer app)', () => {
       }),
     ).resolves.toBe('STORE');
     expect(fallback).toEqual([SELLER_APP_SIGNUP_URL, SELLER_APP_STORE_URL]);
+  });
+});
+
+describe('the plan a new shop chooses (2026-10-21)', () => {
+  beforeEach(() => {
+    useSellerSignupStore.getState().start('+9779800000001', 'signup-token-1', 1800);
+  });
+
+  it('is paused when no Subscription plan is on offer', async () => {
+    server.use(
+      http.get(apiUrl(SELLER_SIGNUP_OPTIONS_PATH), () =>
+        HttpResponse.json({
+          self_delivery_enabled: true,
+          platform_fleet_enabled: true,
+          signups_open: false,
+          subscription_plans: [],
+        }),
+      ),
+    );
+    renderWithProviders(<SellerSignupScreen />);
+    expect(await screen.findByTestId('seller-signup-paused')).toBeOnTheScreen();
+  });
+
+  it('asks again for the plans when the chosen one was withdrawn meanwhile', async () => {
+    let calls = 0;
+    server.use(
+      http.get(apiUrl(SELLER_SIGNUP_OPTIONS_PATH), () => {
+        calls += 1;
+        return HttpResponse.json({
+          self_delivery_enabled: true,
+          platform_fleet_enabled: true,
+          signups_open: true,
+          subscription_plans: SIGNUP_SUBSCRIPTION_PLANS,
+        });
+      }),
+      http.post(apiUrl(SELLER_SIGNUP_PATH), () =>
+        HttpResponse.json(
+          { error: { code: 'PRICING_PLAN_NOT_SELF_SELECTABLE', message: 'x' } },
+          { status: 422 },
+        ),
+      ),
+    );
+    renderWithProviders(<SellerSignupScreen />);
+    await screen.findByTestId('seller-signup-business-name');
+    fireEvent.changeText(screen.getByTestId('seller-signup-business-name'), 'Thamel Kirana Pasal');
+    fireEvent.changeText(screen.getByTestId('seller-signup-palika'), 'Kathmandu Metropolitan City');
+    pinThamel();
+    const before = calls;
+    fireEvent.press(screen.getByRole('button', { name: 'Create my shop' }));
+
+    await waitFor(() => {
+      expect(useToastStore.getState().toast?.message).toBe(
+        'That plan is no longer on offer. Choose another and try again.',
+      );
+    });
+    expect(calls).toBeGreaterThan(before);
   });
 });

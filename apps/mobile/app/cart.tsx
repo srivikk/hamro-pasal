@@ -255,7 +255,11 @@ export default function CartScreen() {
                 ? null
                 : `${address.landmark}, ${formatAddressLine(address, String(address.ward_number))}`,
           });
-          if (order.state === 'PENDING_PAYMENT' && order.payment_method !== 'COD') {
+          // A wallet order is paid by the server at checkout (2026-10-21): no gateway page.
+          if (
+            order.state === 'PENDING_PAYMENT' &&
+            (order.payment_method === 'ESEWA' || order.payment_method === 'KHALTI')
+          ) {
             payment.start(order.id, order.payment_method);
           }
         },
@@ -507,7 +511,7 @@ export default function CartScreen() {
         {checkoutPending && session !== null ? (
           <>
             <ReservationCountdown />
-            {session.paymentMethod === 'COD' ? null : (
+            {session.paymentMethod === 'COD' || session.paymentMethod === 'WALLET' ? null : (
               <Button
                 label={
                   payment.isConfirming
@@ -516,7 +520,7 @@ export default function CartScreen() {
                 }
                 disabled={payment.isStarting || payment.isConfirming}
                 onPress={() => {
-                  if (session.paymentMethod !== 'COD') {
+                  if (session.paymentMethod === 'ESEWA' || session.paymentMethod === 'KHALTI') {
                     payment.start(session.orderId, session.paymentMethod);
                   }
                 }}

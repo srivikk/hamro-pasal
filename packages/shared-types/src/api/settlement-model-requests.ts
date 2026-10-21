@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { PREPAID_FIXED_RESERVE_NPR } from '../domain/constants';
+
 import { nepalPhoneSchema } from '../domain/entities';
 import {
   campaignOptInStatusSchema,
@@ -18,8 +20,8 @@ export const MODEL_CHANGE_REJECTION_REASON_MAX_LENGTH = 500;
 
 /**
  * The body of POST /api/vendor/ledger/settlement-model. The shop is the caller's. Model C
- * (`DIRECT_PREPAID`) is a valid value that cannot be selected before Phase 3:
- * 422 SETTLEMENT_MODEL_UNAVAILABLE.
+ * (`DIRECT_PREPAID`) can be requested since 2026-10-21; its approval needs the prepaid balance
+ * at the Fixed Reserve (409 SETTLEMENT_CHANGE_BLOCKED, BELOW_PREPAID_RESERVE).
  */
 export const settlementModelChangeRequestSchema = z.strictObject({
   model: settlementModelSchema,
@@ -81,7 +83,13 @@ export const modelChangeRequestViewSchema = z
   });
 export type ModelChangeRequestView = z.infer<typeof modelChangeRequestViewSchema>;
 
-export const modelChangeBlockers = ['OPEN_ORDERS', 'NEGATIVE_BALANCE', 'ACTIVE_AD'] as const;
+export const modelChangeBlockers = [
+  'OPEN_ORDERS',
+  'NEGATIVE_BALANCE',
+  'ACTIVE_AD',
+  /** 2026-10-21: a move to Model C needs the prepaid balance at the Fixed Reserve first. */
+  'BELOW_PREPAID_RESERVE',
+] as const;
 export type ModelChangeBlocker = (typeof modelChangeBlockers)[number];
 
 /**
@@ -92,13 +100,20 @@ export type ModelChangeBlocker = (typeof modelChangeBlockers)[number];
 export function modelChangeBlockersOf(
   request: Pick<
     ModelChangeRequestView,
-    'open_order_count' | 'ledger_balance_npr' | 'active_ad_count'
+    'open_order_count' | 'ledger_balance_npr' | 'active_ad_count' | 'requested_model'
   >,
+  prepaidReserveNpr: number = PREPAID_FIXED_RESERVE_NPR,
 ): ModelChangeBlocker[] {
   const blockers: ModelChangeBlocker[] = [];
   if (request.open_order_count > 0) blockers.push('OPEN_ORDERS');
   if (request.ledger_balance_npr < 0) blockers.push('NEGATIVE_BALANCE');
   if (request.active_ad_count > 0) blockers.push('ACTIVE_AD');
+  if (
+    request.requested_model === 'DIRECT_PREPAID' &&
+    request.ledger_balance_npr < prepaidReserveNpr
+  ) {
+    blockers.push('BELOW_PREPAID_RESERVE');
+  }
   return blockers;
 }
 

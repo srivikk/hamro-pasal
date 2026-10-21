@@ -13,6 +13,8 @@ import { userRoleSchema } from '../domain/enums';
 export const auditEntityTypes = [
   'vendor',
   'vendor_bank_account',
+  /** 2026-10-21: a Model C shop's own eSewa / Khalti merchant account (vendor_gateway_accounts). */
+  'vendor_gateway_account',
   'vendor_ledger',
   'vendor_offer',
   'vendor_setting_change',
@@ -127,6 +129,13 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   // Where payouts are sent (SPEC core 5). The account number is masked in every state.
   BANK_ACCOUNT_ADDED: 'vendor_bank_account',
   BANK_ACCOUNT_UPDATED: 'vendor_bank_account',
+  // 2026-10-21: a Model C shop's merchant account (the secret is never in a state) and its check.
+  GATEWAY_ACCOUNT_SAVED: 'vendor_gateway_account',
+  GATEWAY_ACCOUNT_VERIFIED: 'vendor_gateway_account',
+  // 2026-10-21: a Super Admin assigning a plan; the cycle's dues notice and its suspension.
+  PRICING_PLAN_ASSIGNED: 'vendor',
+  CYCLE_DUES_NOTICE_OPENED: 'vendor',
+  VENDOR_SUSPENDED_FOR_DUES: 'vendor',
   // Platform settings (Super Admin flow 4)
   LOGISTICS_SETTINGS_CHANGED: 'platform_settings',
 } as const satisfies Readonly<Record<string, AuditEntityType>>;

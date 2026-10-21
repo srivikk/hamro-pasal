@@ -11,6 +11,7 @@ import { DrizzleStockReader } from '../src/inventory/stock-reader';
 import { LedgerService } from '../src/ledger/ledger-service';
 import { WalletService } from '../src/wallet/wallet-service';
 import { SettlementService } from '../src/ledger/settlement-service';
+import { VendorGatewayAccountService } from '../src/payments/gateway-accounts';
 import {
   createOrder,
   createProduct,
@@ -35,7 +36,13 @@ describe('checkout lock / claim / release workflows', () => {
     db = testDatabase();
     pool = testRedisPool(10);
     locks = new InventoryLockService(pool, new DrizzleStockReader(db));
-    checkout = new CheckoutService(db, locks, new RedisKeyedMutex(pool));
+    checkout = new CheckoutService(
+      db,
+      locks,
+      new RedisKeyedMutex(pool),
+      new SettlementService(db, new LedgerService(new WalletService())),
+      new VendorGatewayAccountService(db, null),
+    );
     vendorId = await createVendor(db);
     customerId = await createUser(db);
   });
@@ -105,6 +112,8 @@ describe('checkout lock / claim / release workflows', () => {
       db,
       shortLocks,
       new RedisKeyedMutex(pool),
+      new SettlementService(db, new LedgerService(new WalletService())),
+      new VendorGatewayAccountService(db, null),
     ).lockCart({
       vendorId,
       customerId,

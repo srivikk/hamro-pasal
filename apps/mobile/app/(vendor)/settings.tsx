@@ -1,5 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useMutation } from '@tanstack/react-query';
+import { router } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { Alert, Pressable, Switch, Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
@@ -553,6 +554,18 @@ export default function VendorSettingsScreen() {
         disabled={saveDelivery.isPending || delivery.data === undefined}
         onPress={submit}
       />
+
+      <Section title={t('vendorShop.paymentsTitle')}>
+        <Text className="text-sm text-gray-500">{t('vendorShop.paymentsHint')}</Text>
+        <Button
+          testID="settings-payments"
+          label={t('vendorShop.paymentsOpen')}
+          variant="secondary"
+          onPress={() => {
+            router.push('/payments');
+          }}
+        />
+      </Section>
 
       <Section title={t('vendorShop.preferencesTitle')}>
         <View className="flex-row items-center justify-between gap-3">

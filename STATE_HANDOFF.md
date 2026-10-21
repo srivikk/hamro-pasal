@@ -1100,6 +1100,91 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.43 Wallets & settlements: customer wallet, Model C activated, Subscription-only self-signup, cycle dues, Seller App Payments (2026-10-21)
+
+Branch `epic/master-completion`. `packages/shared-types`, `packages/db` (migration **0047**),
+`packages/ledger`, `apps/api`, `apps/worker`, `apps/admin`, `apps/mobile`. No new dependency.
+**SPEC.md amended** (core 4 "Who chooses a plan", "Cycle dues"; core 5 "Model C activated";
+core 9 "Routing with the customer wallet and Model C"; new core 12 "Customer Wallet";
+verification 33–35, 8 amended). New env: **`VENDOR_CREDENTIALS_KEY`** (base64 of 32 bytes,
+optional; without it saving a merchant account answers `503 GATEWAY_CREDENTIALS_UNAVAILABLE`).
+
+### Decisions (user, 2026-10-21, asked before building)
+
+| Question                                        | Decision                          |
+| ----------------------------------------------- | --------------------------------- |
+| Model C was deferred to Phase 3 in SPEC         | Build Model C now                 |
+| Customer stored-value wallet (NRB licence risk) | Build it, recharged through eSewa |
+| Plans a self-signing vendor may choose          | Subscription only                 |
+| Cycle dues above the -2000 limit                | Suspend after a 7-day grace       |
+
+### Asked vs built
+
+| Asked                                                                                      | Built                                                                                                                                                                   | Why                                                                                                             |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Postgres NUMERIC + decimal.js, no floating point                                           | NUMERIC(12,2) columns; all arithmetic in **integer paisa** (the existing ledger rule); decimal.js not added                                                             | Integer paisa is exact and already the ledger's contract; told the user, no objection                           |
+| Customer wallet "routes like gateways: escrow for Commission-tier, bypassed for Free-tier" | Model B: wallet payment held in escrow, settled at DELIVERED. Model C: customer wallet → vendor ledger directly                                                         | The tiers map to settlement models, not pricing plans: what decides escrow is who holds the money (SPEC core 5) |
+| Suspend at -Rs. 2000 "via backend event"                                                   | Unchanged trigger path + `vendor.suspended_for_debt` (now also for Model C below the reserve, with `restore_at_npr`)                                                    | Already built (Phase 12); extended                                                                              |
+| "Strict billing-cycle dues regardless of threshold"                                        | Notice at renewal for any balance < 0, 7-day grace, `CYCLE_DUES_SWEEP` suspends once                                                                                    | User's choice of grace                                                                                          |
+| Commission/Free "locked behind Admin assignment/approval APIs"                             | `PUT /api/admin/vendors/:id/pricing-plan`; vendors get `422 PRICING_PLAN_ADMIN_ONLY` / `PRICING_PLAN_NOT_SELF_SELECTABLE`                                               |                                                                                                                 |
+| Settlement worker for net payouts                                                          | Existing Tuesday payout run (Model B) unchanged; Model C needs no payout (the shop is paid directly)                                                                    | Prepaid balances are not paid out                                                                               |
+| Seller App toggle COD vs Prepayment                                                        | `app/(vendor)/payments.tsx`: two switches, queued as `PAYMENT_METHODS` for the next cycle (Billing Cycle Lock), withdrawable                                            | SPEC core 4 forbids mid-cycle changes                                                                           |
+| Free-tier vendors input direct eSewa or Bank details                                       | Model C shops enter their eSewa / Khalti merchant code + secret (verified by an admin before customers see it); every shop manages its bank accounts on the same screen | Direct customer-to-vendor payment is Model C                                                                    |
+
+### Routes
+
+```
+GET  /api/wallet                                   customer: balance + recharges
+POST /api/wallet/recharge/esewa/initiate|confirm   customer recharge (≤ 25 000 / recharge, balance ≤ 100 000)
+POST /api/vendors/wallet/recharge/esewa/initiate|confirm   vendor ledger recharge (VENDOR_TOP_UP)
+GET  /api/vendor/billing                           plan, methods, cycle, pending changes, self-selectable plans, dues, reserve
+GET  /api/vendor/gateway-accounts
+PUT  /api/vendor/gateway-accounts/:gateway         ESEWA | KHALTI; 409 MERCHANT_ACCOUNT_TAKEN
+PUT  /api/admin/vendors/:id/pricing-plan           NOW (no cycle) | NEXT_CYCLE
+POST /api/admin/vendors/:id/gateway-accounts/:gateway/verify
+```
+
+### Data (migration 0047, hand-edited after generation)
+
+- `vendors`: `dues_notice_opened_at`, `dues_due_at`, `dues_amount_npr` (+ check, index).
+- `platform_settings.prepaid_reserve_npr` (default 5000, CHECK ≥ 5000).
+- `ledger_accounts.customer_user_id` (unique), account type `CUSTOMER_WALLET`, non-negative CHECK; `guard_ledger_account_mutation` replaced to cover it.
+- `wallet_recharges` (customer or vendor), `vendor_gateway_accounts`; `set_updated_at` triggers.
+- Enum values added in this migration are compared as `::text` in its CHECKs (Postgres cannot use a new enum value in the same transaction).
+
+### Ledger
+
+`planPaymentCapture`, `planPaymentReversal`, `planOrderFee`, `planCancellationRefund` in
+`settlement-plan.ts`; `SettlementService.debitOrderFeeInTransaction` (`order-fee:<id>`) and
+`reversePaymentInTransaction` (`payment-reversal:<id>`); `cancelPlacedOrder` posts `ORDER_REFUND`
+(`order-cancellation:<id>`); `WalletService` thresholds per model (Model C: suspend below the
+reserve, restore at it; dues columns cleared at ≥ 0). Restores keep the PAN gate.
+
+### Known gaps
+
+- Customer app has no wallet UI (backend only). Seller App has no eSewa recharge button (the
+  existing top-up remains); admin has no UI for verifying merchant accounts, the reserve or plan
+  assignment (API only).
+- Ad purchases still use the constant reserve, not `platform_settings`.
+- Dispute refunds of wallet orders still go to refund clearing (paid by hand).
+- The Model C per-order ad premium is still charged at delivery.
+- `HttpError` moved to `apps/api/src/http/http-error.ts` (import cycle); `errors.ts` re-exports it.
+
+### Tests
+
+New: `packages/ledger/src/wallet-and-prepaid-plan.test.ts`, `apps/api/test/wallet-prepaid-and-plans.int.test.ts`,
+`apps/worker/test/cycle-dues.int.test.ts`, `apps/mobile/src/features/vendor/VendorPayments.test.tsx` (14).
+Old-rule tests updated (quotes now list `WALLET`; signups name a plan; Model C approvable).
+
+Run on 2026-10-21 (dev servers running alongside, so timing tests are slow):
+
+- Unit: shared-types 397, db 7, admin 342, ledger 61, worker 208, api 193 (one `compressImage` timeout under load; passes alone). Typecheck clean in every package touched.
+- Mobile: 1642, 3 failures fixed (the routing list, the payment picker now listing the wallet, one review timeout under load); the three files rerun: 45/45.
+- API integration: 1106, one Redis lockout timing failure under load; that file rerun alone: 21/21.
+- **Incident, 2026-10-21:** a combined worker + db integration run hung, and a later per-file run crashed the machine. Cause: `test/outbox-relay.int.test.ts` awaited a Kafka message with no deadline, so a test Jest abandoned at its timeout never reached its `finally` and left the consumer connected (Jest never exits); `drain()` was an unbounded loop. On Windows, `timeout` kills the `npx` wrapper but not Jest, so each timed-out file left a process behind, on top of the dev servers. Fixed in the test: every Kafka wait is bounded (`within`), `drain` gives up after 200 rounds, and `afterAll` disconnects every client a test opened. No new financial test leaked: each closes its pool / container in `afterAll`.
+- After the fix, run one file at a time with `--testTimeout=10000` under a watchdog that kills the process tree: worker `outbox-relay` 6/6 (19 s), `cycle-dues` 5/5, `vendor-acceptance-expiry` 4/4, `settlement-payout-run` 13/13, `vendor-debt-reconciliation` 6/6; api `wallet-prepaid-and-plans` 19/19, `ledger-settlement` 12/12, `checkout-claim` 8/8, `settlement-rules-and-ad-charging` 14/14, `billing-and-delivery-rules` 14/14, `settlement-model-requests-api` 27/27, `cart-quote-api` 10/10, `seller-onboarding-api` 21/21. Every file exited on its own.
+- **Not rerun since the crash:** the full worker and db integration suites (on the user's instruction). Run them alone, with the dev servers stopped, before merging.
+
 ## 8Z.42 Automated IRD KYC verification: MOD 11-2 pre-validation, the Playwright + 2Captcha worker, the manual-review queue (2026-10-21)
 
 Branch `epic/master-completion`. `packages/shared-types`, `packages/db` (migration **0046**),

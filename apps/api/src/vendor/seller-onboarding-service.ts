@@ -14,6 +14,7 @@ import type {
   AuditActor,
   AuditContext,
   DisputeEvidenceContentType,
+  OfferedPlanView,
   SellerApplicationView,
   SellerSignupRequest,
 } from '@hamro-pasal/shared-types';
@@ -23,9 +24,10 @@ import { and, eq } from 'drizzle-orm';
 
 import type { AuthSession, OtpAuthService } from '../auth/otp-auth-service';
 import { verifySellerSignupToken } from '../auth/seller-signup-token';
-import { HttpError } from '../http/errors';
+import { HttpError } from '../http/http-error';
 import { isUniqueViolation } from '../infra/pg-errors';
 import type { KycDocumentStorage } from '../uploads/kyc-document-storage';
+import { offeredPlanView, selfSelectablePlans } from './vendor-billing-service';
 import { DeliveryModeDisabledError } from './vendor-delivery-settings-service';
 
 type VendorRow = typeof vendors.$inferSelect;
@@ -98,6 +100,20 @@ export class SellerSignupsPausedError extends Error {
 export interface SignupOptions {
   readonly selfDeliveryEnabled: boolean;
   readonly platformFleetEnabled: boolean;
+  /** Decided 2026-10-21: the plans a self-signing shop may choose (Subscription only). */
+  readonly subscriptionPlans: readonly OfferedPlanView[];
+}
+
+/** The plan a self-signup named is not an offered Subscription plan (decided 2026-10-21). */
+export class PlanNotSelfSelectableError extends HttpError {
+  constructor(planId: string) {
+    super(
+      422,
+      'PRICING_PLAN_NOT_SELF_SELECTABLE',
+      'Choose one of the Subscription plans on offer',
+      { pricing_plan_id: planId },
+    );
+  }
 }
 
 export class SellerOnboardingService {
@@ -124,9 +140,14 @@ export class SellerOnboardingService {
     const userId = verifySellerSignupToken(request.signup_token, this.config.refreshTokenSecret);
     const vendor = await this.db.transaction(async (tx) => {
       const options = await readSignupOptions(tx, true);
-      if (!options.selfDeliveryEnabled && !options.platformFleetEnabled) {
+      if (
+        (!options.selfDeliveryEnabled && !options.platformFleetEnabled) ||
+        options.subscriptionPlans.length === 0
+      ) {
         throw new SellerSignupsPausedError();
       }
+      const plan = options.subscriptionPlans.find((p) => p.id === request.pricing_plan_id);
+      if (plan === undefined) throw new PlanNotSelfSelectableError(request.pricing_plan_id);
       const enabled =
         request.fulfillment_mode === 'SELF_DELIVERY'
           ? options.selfDeliveryEnabled
@@ -134,7 +155,11 @@ export class SellerOnboardingService {
       if (!enabled) throw new DeliveryModeDisabledError(request.fulfillment_mode);
       const [user] = await tx.select().from(users).where(eq(users.id, userId)).for('update');
       if (user === undefined) throw new HttpError(401, 'INVALID_SIGNUP_TOKEN', 'Account not found');
-      const created = await this.createShop(tx, user.id, user.phone, request, 'SANDBOXED');
+      const created = await this.createShop(tx, user.id, user.phone, request, 'SANDBOXED', {
+        id: plan.id,
+        model: 'SUBSCRIPTION',
+        rate: 0,
+      });
       await recordAuditLog(tx, {
         actor: { kind: 'USER', user_id: user.id, role: 'VENDOR' },
         action: 'VENDOR_SIGNED_UP',
@@ -229,7 +254,14 @@ export class SellerOnboardingService {
           ? await tx.select().from(users).where(eq(users.phone, request.phone)).for('update')
           : [inserted];
       if (user === undefined) throw new Error('Account vanished');
-      const created = await this.createShop(tx, user.id, user.phone, request, request.status);
+      const created = await this.createShop(
+        tx,
+        user.id,
+        user.phone,
+        request,
+        request.status,
+        await defaultPlan(tx),
+      );
       await recordAuditLog(tx, {
         actor: { kind: 'USER', user_id: adminUserId, role: 'SUPER_ADMIN' },
         action: 'VENDOR_ONBOARDED',
@@ -311,8 +343,12 @@ export class SellerOnboardingService {
     phone: string,
     details: ShopDetails,
     status: 'SANDBOXED' | 'APPROVED',
+    /**
+     * The plan the shop starts on: the Subscription plan a self-signup chose, or (an admin's
+     * onboarding) the default Commission plan, which the admin may change (2026-10-21).
+     */
+    plan: ShopPlan | undefined,
   ): Promise<VendorRow> {
-    const plan = await defaultPlan(tx);
     let created: VendorRow | undefined;
     try {
       [created] = await tx
@@ -322,7 +358,7 @@ export class SellerOnboardingService {
           business_name: details.business_name,
           phone,
           status,
-          pricing_model: plan === undefined ? null : 'COMMISSION',
+          pricing_model: plan === undefined ? null : plan.model,
           pricing_plan_id: plan?.id ?? null,
           commission_rate: plan === undefined ? 0 : plan.rate / 100,
           delivery_scope: details.delivery_scope,
@@ -392,16 +428,27 @@ async function readSignupOptions(
     .from(platformSettings);
   const [settings] = lock ? await query.for('share') : await query;
   if (settings === undefined) throw new Error('platform_settings row is missing');
-  return settings;
+  return {
+    ...settings,
+    subscriptionPlans: (await selfSelectablePlans(executor)).map(offeredPlanView),
+  };
+}
+
+/** The plan a new shop starts on. */
+interface ShopPlan {
+  readonly id: string;
+  readonly model: 'COMMISSION' | 'SUBSCRIPTION';
+  /** Percent. */
+  readonly rate: number;
 }
 
 /** The one default Commission plan (exactly one may exist), or undefined when none is published. */
-async function defaultPlan(tx: Transaction): Promise<{ id: string; rate: number } | undefined> {
+async function defaultPlan(tx: Transaction): Promise<ShopPlan | undefined> {
   const [plan] = await tx
     .select({ id: pricingPlans.id, rate: pricingPlans.commission_rate })
     .from(pricingPlans)
     .where(and(eq(pricingPlans.is_default, true), eq(pricingPlans.model, 'COMMISSION')));
-  return plan;
+  return plan === undefined ? undefined : { ...plan, model: 'COMMISSION' };
 }
 
 /**
@@ -412,6 +459,10 @@ async function defaultPlan(tx: Transaction): Promise<{ id: string; rate: number 
  */
 async function goLiveColumns(tx: Transaction, shop: VendorRow) {
   const standing = panGatedStanding('LIVE', isPanVerified(shop));
+  // SPEC core 4: a subscription's 90-day lock-in starts when the shop goes LIVE on it.
+  if (shop.pricing_model === 'SUBSCRIPTION' && shop.lock_in_expiry === null) {
+    return { ...standing, lock_in_expiry: new Date(Date.now() + 90 * 86_400_000) };
+  }
   if (shop.pricing_model !== null) return standing;
   const plan = await defaultPlan(tx);
   if (plan === undefined) {

@@ -148,6 +148,7 @@ export class LedgerService {
             driver_user_id: account.driver_user_id,
             gateway: account.gateway,
             hold_vendor_id: account.hold_vendor_id,
+            customer_user_id: account.customer_user_id,
             amount_npr: toNpr(posting.amountPaisa),
             balance_after_npr: account.balance_npr,
           };
@@ -176,6 +177,8 @@ export class LedgerService {
           return eq(ledgerAccounts.gateway, ref.gateway);
         case 'VENDOR_WALLET':
           return eq(ledgerAccounts.vendor_id, ref.vendorId);
+        case 'CUSTOMER_WALLET':
+          return eq(ledgerAccounts.customer_user_id, ref.customerUserId);
         case 'DRIVER_WALLET':
           return eq(ledgerAccounts.driver_user_id, ref.driverUserId);
       }
@@ -183,6 +186,13 @@ export class LedgerService {
 
     if (ref.type === 'DRIVER_WALLET') {
       await this.ensureDriverAccount(tx, ref.driverUserId);
+    }
+    if (ref.type === 'CUSTOMER_WALLET') {
+      // 2026-10-21: opened by the customer's first recharge (or anything else naming it).
+      await tx
+        .insert(ledgerAccounts)
+        .values({ account_type: 'CUSTOMER_WALLET', customer_user_id: ref.customerUserId })
+        .onConflictDoNothing({ target: ledgerAccounts.customer_user_id });
     }
     if (ref.type === 'VENDOR_DISPUTE_HOLD') {
       // Step 7.3: opened by the vendor's first prepaid delivery (or anything else naming it).

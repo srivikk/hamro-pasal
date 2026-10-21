@@ -7,17 +7,39 @@ import { eq, inArray } from 'drizzle-orm';
 
 import { OutboxRelay, type EventPublisher } from '../src/outbox/outbox-relay';
 
+/**
+ * Settles with `promise`, or rejects after `ms`. Every wait on Kafka goes through it: a test that
+ * awaits a message that never comes would otherwise be abandoned by Jest at its timeout with its
+ * `finally` never run, leaving the consumer connected and polling, and Jest never exits.
+ */
+function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${what}: nothing after ${String(ms)} ms`));
+    }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
 /** Transactional outbox relay against real PostgreSQL (and, end-to-end, real Kafka). */
 describe('OutboxRelay', () => {
   let db: Database;
+  /** Every Kafka client a test opened; whatever a failed test left connected is closed here. */
+  const kafkaClients: { disconnect: () => Promise<void> }[] = [];
 
   beforeAll(() => {
     db = createDatabase(process.env.TEST_DATABASE_URL ?? '', { max: 10 });
   });
 
   afterAll(async () => {
+    await Promise.allSettled(
+      kafkaClients.map((client) => within(client.disconnect(), 10_000, 'Kafka disconnect')),
+    );
     await db.$client.end();
-  });
+  }, 30_000);
 
   class RecordingPublisher implements EventPublisher {
     readonly published: DomainEvent[] = [];
@@ -50,11 +72,34 @@ describe('OutboxRelay', () => {
     return db.select().from(outboxEvents).where(inArray(outboxEvents.id, ids));
   }
 
-  /** Runs the relay until the outbox has nothing left to publish. */
-  async function drain(relay: OutboxRelay): Promise<void> {
-    for (;;) {
+  /**
+   * Runs the relay until the outbox has nothing left to publish. Bounded: a publisher that keeps
+   * failing fails the test instead of looping for ever.
+   */
+  async function drain(relay: OutboxRelay, maxRounds = 200): Promise<void> {
+    for (let round = 0; round < maxRounds; round += 1) {
       const result = await relay.runOnce();
       if (result.published + result.failed === 0) return;
+    }
+    throw new Error(`outbox not drained after ${String(maxRounds)} rounds`);
+  }
+
+  /** A connected producer and consumer, registered for afterAll before they connect. */
+  async function connectKafka(groupId: string) {
+    const kafka = createKafka(parseKafkaEnv(process.env));
+    const producer = createIdempotentProducer(kafka);
+    const consumer = kafka.consumer({ kafkaJS: { groupId, fromBeginning: false } });
+    kafkaClients.push(producer, consumer);
+    await within(Promise.all([producer.connect(), consumer.connect()]), 10_000, 'Kafka connect');
+    return { producer, consumer };
+  }
+
+  /** Waits (bounded) until the consumer has partitions, so it sees what is published next. */
+  async function awaitAssignment(consumer: { assignment: () => unknown[] }): Promise<void> {
+    const deadline = Date.now() + 20_000;
+    while (consumer.assignment().length === 0) {
+      if (Date.now() >= deadline) throw new Error('Kafka consumer got no partitions in 20 s');
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
   }
 
@@ -130,12 +175,7 @@ describe('OutboxRelay', () => {
   });
 
   it('relays an event to Kafka through the idempotent producer (end-to-end)', async () => {
-    const kafka = createKafka(parseKafkaEnv(process.env));
-    const producer = createIdempotentProducer(kafka);
-    const consumer = kafka.consumer({
-      kafkaJS: { groupId: `relay-e2e-${randomUUID()}`, fromBeginning: false },
-    });
-    await Promise.all([producer.connect(), consumer.connect()]);
+    const { producer, consumer } = await connectKafka(`relay-e2e-${randomUUID()}`);
     try {
       await consumer.subscribe({ topics: ['order.lifecycle'] });
       const event = await enqueueLocked();
@@ -149,14 +189,11 @@ describe('OutboxRelay', () => {
           },
         });
       });
-      const deadline = Date.now() + 30_000;
-      while (consumer.assignment().length === 0 && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      }
+      await awaitAssignment(consumer);
 
       await drain(new OutboxRelay(db, new DomainEventPublisher(producer)));
 
-      await expect(received).resolves.toEqual(event);
+      await expect(within(received, 20_000, 'order.locked on Kafka')).resolves.toEqual(event);
       const [row] = await db.select().from(outboxEvents).where(eq(outboxEvents.id, event.event_id));
       expect(row?.published_at).not.toBeNull();
     } finally {
@@ -165,12 +202,7 @@ describe('OutboxRelay', () => {
   }, 60_000);
 
   it('relays the vendor standing events to notifications.broadcast, keyed by vendor (Phase 12.5)', async () => {
-    const kafka = createKafka(parseKafkaEnv(process.env));
-    const producer = createIdempotentProducer(kafka);
-    const consumer = kafka.consumer({
-      kafkaJS: { groupId: `relay-vendor-${randomUUID()}`, fromBeginning: false },
-    });
-    await Promise.all([producer.connect(), consumer.connect()]);
+    const { producer, consumer } = await connectKafka(`relay-vendor-${randomUUID()}`);
     try {
       await consumer.subscribe({ topics: ['notifications.broadcast'] });
       const vendorId = randomUUID();
@@ -215,13 +247,10 @@ describe('OutboxRelay', () => {
           },
         });
       });
-      const deadline = Date.now() + 30_000;
-      while (consumer.assignment().length === 0 && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      }
+      await awaitAssignment(consumer);
 
       await drain(new OutboxRelay(db, new DomainEventPublisher(producer)));
-      await received;
+      await within(received, 20_000, 'vendor standing events on Kafka');
 
       // One key, so both land on one partition in order: suspended, then restored.
       expect(seen).toEqual([

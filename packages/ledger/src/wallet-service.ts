@@ -3,6 +3,7 @@ import {
   isPanVerified,
   panGatedStanding,
   type GatedStanding,
+  type SettlementModel,
   type VendorStatus,
 } from '@hamro-pasal/shared-types';
 import { asc, eq, inArray } from 'drizzle-orm';
@@ -79,10 +80,7 @@ export class WalletService {
     transactionId: string,
   ): Promise<StandingChange[]> {
     if (before.size === 0) return [];
-    const [settings] = await tx
-      .select({ limit: platformSettings.vendor_wallet_suspension_limit_npr })
-      .from(platformSettings);
-    if (settings === undefined) throw new Error('platform_settings row is missing');
+    const settings = await walletThresholds(tx);
 
     const changes: StandingChange[] = [];
     for (const [vendorId, statusBefore] of [...before].sort(([a], [b]) => (a < b ? -1 : 1))) {
@@ -93,13 +91,25 @@ export class WalletService {
           walletBalanceNpr: vendors.wallet_balance_npr,
           restoreTo: vendors.status_before_debt_suspension,
           panVerifiedAt: vendors.pan_verified_at,
+          settlementModel: vendors.settlement_model,
+          duesDueAt: vendors.dues_due_at,
         })
         .from(vendors)
         .where(eq(vendors.id, vendorId));
       if (vendor === undefined) throw new Error(`Vendor ${vendorId} vanished while posting`);
       const at = this.now();
+      const { suspendBelow, restoreAt } = thresholdOf(vendor.settlementModel, settings);
 
-      if (vendor.walletBalanceNpr < settings.limit) {
+      // 2026-10-21 (SPEC core 4, "Cycle dues"): a cycle's dues are cleared once the wallet is back
+      // to 0 or above, whatever brought it there.
+      if (vendor.duesDueAt !== null && vendor.walletBalanceNpr >= 0) {
+        await tx
+          .update(vendors)
+          .set({ dues_notice_opened_at: null, dues_due_at: null, dues_amount_npr: null })
+          .where(eq(vendors.id, vendorId));
+      }
+
+      if (vendor.walletBalanceNpr < suspendBelow) {
         if (!isActive(statusBefore)) continue; // already suspended (for debt or otherwise)
         await tx
           .update(vendors)
@@ -114,7 +124,8 @@ export class WalletService {
             vendor_phone: vendor.phone,
             previous_status: statusBefore,
             wallet_balance_npr: vendor.walletBalanceNpr,
-            suspension_limit_npr: settings.limit,
+            suspension_limit_npr: suspendBelow,
+            ...(restoreAt === 0 ? {} : { restore_at_npr: restoreAt }),
             suspended_at: at.toISOString(),
           },
         });
@@ -123,7 +134,7 @@ export class WalletService {
           vendorId,
           previousStatus: statusBefore,
           walletBalanceNpr: vendor.walletBalanceNpr,
-          suspensionLimitNpr: settings.limit,
+          suspensionLimitNpr: suspendBelow,
         });
         continue;
       }
@@ -131,7 +142,7 @@ export class WalletService {
       if (
         vendor.status === 'SUSPENDED' &&
         vendor.restoreTo !== null &&
-        vendor.walletBalanceNpr >= 0
+        vendor.walletBalanceNpr >= restoreAt
       ) {
         // SPEC core 10 (amended 2026-10-20): clearing dues never makes a shop LIVE without a
         // verified PAN. It lands in SUSPENDED_COMPLIANCE instead, and the verification lifts it.
@@ -215,7 +226,7 @@ export class WalletService {
     }
     const restoreTo = vendor.adminRestoreTo ?? vendor.debtRestoreTo;
     if (restoreTo === null) throw new RestoreStatusUnknownError(vendorId);
-    const limit = await suspensionLimit(tx);
+    const { suspendBelow: limit } = thresholdOf(vendor.settlementModel, await walletThresholds(tx));
     if (vendor.walletBalanceNpr < limit) {
       throw new WalletBelowSuspensionLimitError(vendorId, vendor.walletBalanceNpr, limit);
     }
@@ -272,6 +283,7 @@ async function lockVendor(tx: Transaction, vendorId: string) {
       debtRestoreTo: vendors.status_before_debt_suspension,
       adminRestoreTo: vendors.status_before_admin_suspension,
       panVerifiedAt: vendors.pan_verified_at,
+      settlementModel: vendors.settlement_model,
     })
     .from(vendors)
     .where(eq(vendors.id, vendorId))
@@ -280,12 +292,36 @@ async function lockVendor(tx: Transaction, vendorId: string) {
   return vendor;
 }
 
-async function suspensionLimit(tx: Transaction): Promise<number> {
+interface WalletThresholds {
+  /** Models A and B: suspended strictly below this (SPEC §5, -2000 by default). */
+  readonly limit: number;
+  /** Model C: the Fixed Reserve (2026-10-21). */
+  readonly reserve: number;
+}
+
+async function walletThresholds(tx: Transaction): Promise<WalletThresholds> {
   const [settings] = await tx
-    .select({ limit: platformSettings.vendor_wallet_suspension_limit_npr })
+    .select({
+      limit: platformSettings.vendor_wallet_suspension_limit_npr,
+      reserve: platformSettings.prepaid_reserve_npr,
+    })
     .from(platformSettings);
   if (settings === undefined) throw new Error('platform_settings row is missing');
-  return settings.limit;
+  return settings;
+}
+
+/**
+ * When a shop's wallet suspends it and when it lifts that suspension. Models A and B: below the
+ * credit limit, back at 0 (SPEC §5). Model C (SPEC core 5, activated 2026-10-21): below the Fixed
+ * Reserve, back at the reserve.
+ */
+export function thresholdOf(
+  model: SettlementModel,
+  thresholds: WalletThresholds,
+): { readonly suspendBelow: number; readonly restoreAt: number } {
+  return model === 'DIRECT_PREPAID'
+    ? { suspendBelow: thresholds.reserve, restoreAt: thresholds.reserve }
+    : { suspendBelow: thresholds.limit, restoreAt: 0 };
 }
 
 /** Phase 15: a Super Admin override asked for a status the vendor cannot move to from here. */

@@ -3,6 +3,7 @@ export * from './audit';
 export * from './banking';
 export * from './billing';
 export * from './categories';
+export * from './customer-wallet';
 export * from './dead-letters';
 export * from './deliveries';
 export * from './device-tokens';

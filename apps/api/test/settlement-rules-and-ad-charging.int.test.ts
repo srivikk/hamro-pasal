@@ -18,6 +18,7 @@ import {
   esewaInitiateResponseSchema,
   paymentStatusResponseSchema,
   type PaymentMethod,
+  type ShopPaymentMethod,
   type SettlementModel,
 } from '@hamro-pasal/shared-types';
 import { and, eq, sql } from 'drizzle-orm';
@@ -57,7 +58,7 @@ describe('settlement rules at checkout and ad charging at delivery', () => {
     await t.container.close();
   });
 
-  async function setup(model: SettlementModel = 'PLATFORM_ESCROW', accepted?: PaymentMethod[]) {
+  async function setup(model: SettlementModel = 'PLATFORM_ESCROW', accepted?: ShopPaymentMethod[]) {
     const customerId = await createUser(db);
     const vendorId = await createVendor(db, { baseDeliveryFee: 50 });
     await db
@@ -116,6 +117,7 @@ describe('settlement rules at checkout and ad charging at delivery', () => {
         { method: 'ESEWA', available: false, reason: 'SETTLEMENT_MODEL' },
         { method: 'KHALTI', available: false, reason: 'SETTLEMENT_MODEL' },
         { method: 'COD', available: true },
+        { method: 'WALLET', available: false, reason: 'SETTLEMENT_MODEL' },
       ]);
     });
 
@@ -159,10 +161,12 @@ describe('settlement rules at checkout and ad charging at delivery', () => {
         { method: 'ESEWA', available: true },
         { method: 'KHALTI', available: false, reason: 'NOT_ACCEPTED_BY_SHOP' },
         { method: 'COD', available: true },
+        // The wallet follows eSewa (accepted here); this customer never recharged.
+        { method: 'WALLET', available: false, reason: 'INSUFFICIENT_WALLET_BALANCE' },
       ]);
       expect(errorOf(await checkout(narrowed, 'KHALTI'))).toMatchObject({
         code: 'PAYMENT_METHOD_UNAVAILABLE',
-        details: { accepted: ['ESEWA', 'COD'], reason: 'NOT_ACCEPTED_BY_SHOP' },
+        details: { accepted: ['ESEWA', 'COD', 'WALLET'], reason: 'NOT_ACCEPTED_BY_SHOP' },
       });
 
       // A Model A shop whose own list has no cash can take nothing: its list never widens the model.
@@ -171,6 +175,7 @@ describe('settlement rules at checkout and ad charging at delivery', () => {
         { method: 'ESEWA', available: false, reason: 'SETTLEMENT_MODEL' },
         { method: 'KHALTI', available: false, reason: 'SETTLEMENT_MODEL' },
         { method: 'COD', available: false, reason: 'NOT_ACCEPTED_BY_SHOP' },
+        { method: 'WALLET', available: false, reason: 'SETTLEMENT_MODEL' },
       ]);
       for (const method of ['ESEWA', 'COD'] as const) {
         const refused = await checkout(empty, method);
@@ -182,13 +187,15 @@ describe('settlement rules at checkout and ad charging at delivery', () => {
       }
     });
 
-    it('offers nothing at a Model C shop: the model is not built', async () => {
+    it('offers nothing at a Model C shop below its Fixed Reserve (activated 2026-10-21)', async () => {
+      // An unfunded prepaid balance (0) is below the reserve: no method, and checkout refuses.
       const s = await setup('DIRECT_PREPAID');
 
       expect((await quote(s)).map((option) => [option.available, option.reason])).toEqual([
-        [false, 'SETTLEMENT_MODEL'],
-        [false, 'SETTLEMENT_MODEL'],
-        [false, 'SETTLEMENT_MODEL'],
+        [false, 'BELOW_PREPAID_RESERVE'],
+        [false, 'BELOW_PREPAID_RESERVE'],
+        [false, 'BELOW_PREPAID_RESERVE'],
+        [false, 'BELOW_PREPAID_RESERVE'],
       ]);
       expect((await checkout(s, 'COD')).status).toBe(422);
     });

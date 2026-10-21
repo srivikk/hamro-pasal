@@ -85,6 +85,13 @@ import { vendorOrdersRouter } from './routes/vendor-orders';
 import { vendorSettingsRouter } from './routes/vendor-settings';
 import type { VendorAvailabilityService } from './vendor/vendor-availability-service';
 import { vendorWalletRouter } from './routes/vendor-wallet';
+import {
+  adminPaymentsRouter,
+  walletRechargeRouter,
+  vendorPaymentsRouter,
+} from './routes/wallet-and-payments';
+import type { CustomerWalletService } from './wallet/customer-wallet-service';
+import type { VendorGatewayAccountService } from './payments/gateway-accounts';
 import { vendorsRouter } from './routes/vendors';
 import { LocalEvidenceStorage, type EvidenceStorage } from './uploads/evidence-storage';
 import {
@@ -166,6 +173,9 @@ export interface ApiServices {
   readonly vendorDeactivation: VendorDeactivationService;
   /** Phase 26: where a shop is paid. */
   readonly vendorBankAccounts: VendorBankAccountService;
+  /** 2026-10-21: the customer's stored-value wallet, and a Model C shop's own merchant accounts. */
+  readonly customerWallet: CustomerWalletService;
+  readonly gatewayAccounts: VendorGatewayAccountService;
   /** Local end-to-end runs: present only with MOCK_SERVICES outside production. */
   readonly mockPayments?: MockPaymentService;
 }
@@ -197,6 +207,12 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       '/api/admin/disputes',
       requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
       adminDisputesRouter(services.adminDisputes),
+    );
+    // 2026-10-21. Before the admin router: a plan assignment, a merchant account's check.
+    app.use(
+      '/api/admin',
+      requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
+      adminPaymentsRouter(services.vendorBilling, services.gatewayAccounts),
     );
     // Step 7.7 / 7.8. Before the admin router: onboarding, approval and the tutorials.
     app.use(
@@ -315,6 +331,12 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       requireAuth(services.accessTokenSecret, ['VENDOR']),
       vendorLedgerRouter(services.settlementModelRequests),
     );
+    // 2026-10-21. The shop's billing view and its own merchant accounts (Model C).
+    app.use(
+      '/api/vendor',
+      requireAuth(services.accessTokenSecret, ['VENDOR']),
+      vendorPaymentsRouter(services.vendorBilling, services.gatewayAccounts),
+    );
     // Phase 25. After the routers above: it only owns /tax-identity and /delivery-settings.
     app.use(
       '/api/vendor',
@@ -338,6 +360,8 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       '/api/vendors/wallet',
       requireAuth(services.accessTokenSecret, ['VENDOR']),
       vendorWalletRouter(services.vendorWallet, services.vendorTopUps),
+      // 2026-10-21: a real eSewa recharge of the shop's ledger (prepaid balance or dues).
+      walletRechargeRouter(services.customerWallet, 'VENDOR'),
     );
     // Public reads (guest browsing): the feed and a LIVE shop's menu need no token. A signed-in
     // customer's menu also carries its Notify Me flags (step 7.4).
@@ -352,6 +376,8 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       deliveriesRouter(services.deliveries),
     );
     app.use('/api/cart', customerAuth, cartRouter(services.checkout));
+    // 2026-10-21 (SPEC core 12): the customer's own stored-value wallet.
+    app.use('/api/wallet', customerAuth, walletRechargeRouter(services.customerWallet, 'CUSTOMER'));
     // Before the customer-only orders router: vendors and admins read dispute transcripts too.
     app.use(
       '/api/orders',

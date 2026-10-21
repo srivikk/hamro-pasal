@@ -103,7 +103,12 @@ describe('Billing queue and delivery rules', () => {
   describe('POST /api/vendor/billing/changes', () => {
     it('queues a pricing plan for the end of the cycle and changes nothing now', async () => {
       const { vendorId, userId, token } = await shop();
-      const planId = await plan();
+      // Decided 2026-10-21: a shop chooses Subscription plans only.
+      const planId = await plan({
+        model: 'SUBSCRIPTION',
+        commission_rate: 0,
+        monthly_fee_npr: 1500,
+      });
 
       const res = await queue(token, {
         setting: 'PRICING_PLAN',
@@ -204,24 +209,23 @@ describe('Billing queue and delivery rules', () => {
       expect(await changesOf(noCycle.vendorId)).toEqual([]);
     });
 
-    it('refuses to leave a subscription inside its lock-in, and allows it afterwards', async () => {
+    it('leaves Commission and Free plans to the Super Admin (decided 2026-10-21), lock-in or not', async () => {
       const { vendorId, token } = await shop({ pricingModel: 'SUBSCRIPTION' });
-      const planId = await plan();
-      const body = { setting: 'PRICING_PLAN', value: { pricing_plan_id: planId } };
-      await db
-        .update(vendors)
-        .set({ lock_in_expiry: sql`now() + interval '10 days'` })
-        .where(eq(vendors.id, vendorId));
-
-      const locked = await queue(token, body);
-      expect(locked.status).toBe(409);
-      expect(errorOf(locked)).toMatchObject({ code: 'LOCK_IN_ACTIVE' });
-
-      await db
-        .update(vendors)
-        .set({ lock_in_expiry: sql`now() - interval '1 day'` })
-        .where(eq(vendors.id, vendorId));
-      expect((await queue(token, body)).status).toBe(202);
+      for (const lockIn of [sql`now() + interval '10 days'`, sql`now() - interval '1 day'`]) {
+        await db.update(vendors).set({ lock_in_expiry: lockIn }).where(eq(vendors.id, vendorId));
+        for (const model of ['COMMISSION', 'FREE'] as const) {
+          const planId = await plan(
+            model === 'FREE' ? { model, commission_rate: 0, duration_cycles: 3 } : { model },
+          );
+          const refused = await queue(token, {
+            setting: 'PRICING_PLAN',
+            value: { pricing_plan_id: planId },
+          });
+          expect(refused.status).toBe(422);
+          expect(errorOf(refused)).toMatchObject({ code: 'PRICING_PLAN_ADMIN_ONLY' });
+        }
+      }
+      expect(await changesOf(vendorId)).toEqual([]);
     });
 
     it('validates the body and the caller', async () => {

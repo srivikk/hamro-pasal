@@ -2,6 +2,7 @@ import {
   campaignOptIns,
   enqueueDomainEvent,
   inVisibleCategory,
+  ledgerAccounts,
   orderAddresses,
   orderItems,
   orders,
@@ -16,11 +17,14 @@ import {
 } from '@hamro-pasal/db';
 import {
   COD_MIN_CUSTOMER_RATING,
+  isGatewayPaymentMethod,
   paymentMethods,
   SETTLEMENT_MODEL_PAYMENT_METHODS,
   type CartQuoteRequest,
   type CheckoutRequest,
+  type GatewayPaymentMethod,
   type PaymentMethod,
+  type ShopPaymentMethod,
   type DomainEvent,
   type Order,
   type SettlementModel,
@@ -28,7 +32,9 @@ import {
 import { and, asc, avg, count, eq, gt, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 
 import { deliveryFeePaisa, haversineKm, type DeliveryTerms } from './delivery-fee';
-import { isUniqueViolation } from '../infra/pg-errors';
+import { isCheckViolation, isUniqueViolation } from '../infra/pg-errors';
+import type { SettlementService } from '../ledger/settlement-service';
+import type { VendorGatewayAccountService } from '../payments/gateway-accounts';
 import type { RedisKeyedMutex } from '../infra/redis-mutex';
 import {
   InsufficientStockError,
@@ -128,9 +134,28 @@ export interface CartQuote {
   readonly paymentOptions: readonly {
     readonly method: PaymentMethod;
     readonly available: boolean;
-    readonly reason?:
-      'NOT_ACCEPTED_BY_SHOP' | 'COD_NOT_AVAILABLE' | 'DELIVERY_UNAVAILABLE' | 'SETTLEMENT_MODEL';
+    readonly reason?: PaymentRefusal | 'DELIVERY_UNAVAILABLE';
   }[];
+}
+
+/** Why a payment method is not available for one cart (SPEC core 9, "Payment routing"). */
+export type PaymentRefusal =
+  | 'SETTLEMENT_MODEL'
+  | 'NOT_ACCEPTED_BY_SHOP'
+  | 'BELOW_PREPAID_RESERVE'
+  | 'GATEWAY_NOT_VERIFIED'
+  | 'COD_NOT_AVAILABLE'
+  | 'INSUFFICIENT_WALLET_BALANCE';
+
+/** What the routing of one cart depends on besides the shop's model and accepted methods. */
+export interface RoutingContext {
+  /** Model C: the gateways whose merchant account a Super Admin has verified. */
+  readonly verifiedGateways: readonly GatewayPaymentMethod[];
+  /** Model C: the prepaid balance less this order's fee stays at or above the Fixed Reserve. */
+  readonly reserveHolds: boolean;
+  readonly codEligible: boolean;
+  /** The customer's wallet holds the order's total. */
+  readonly walletCovers: boolean;
 }
 
 export class CheckoutService {
@@ -138,6 +163,8 @@ export class CheckoutService {
     private readonly db: Database,
     private readonly locks: InventoryLockService,
     private readonly mutex: RedisKeyedMutex,
+    private readonly settlement: SettlementService,
+    private readonly gatewayAccounts: VendorGatewayAccountService,
   ) {}
 
   /**
@@ -172,11 +199,11 @@ export class CheckoutService {
     ) {
       throw quoteChanged(priced);
     }
-    assertPaymentMethodOffered(vendor, request.payment_method);
-
-    if (request.payment_method === 'COD') {
-      await this.assertCodEligible(customerId);
-    }
+    assertPaymentMethodOffered(
+      vendor,
+      request.payment_method,
+      await this.routingContext(customerId, vendor, priced, request.payment_method),
+    );
 
     const otp = generateDeliveryOtp();
     const otpHash = await hashDeliveryOtp(otp);
@@ -194,6 +221,7 @@ export class CheckoutService {
             status: vendors.status,
             settlement_model: vendors.settlement_model,
             accepted_payment_methods: vendors.accepted_payment_methods,
+            wallet_balance_npr: vendors.wallet_balance_npr,
           })
           .from(vendors)
           .where(eq(vendors.id, vendor.id))
@@ -208,7 +236,15 @@ export class CheckoutService {
             'This vendor is not accepting orders',
           );
         }
-        assertPaymentMethodOffered(shop, request.payment_method);
+        // The model, the accepted methods, the verified gateways and the prepaid balance are read
+        // again under the vendor lock. The COD rating was checked above, and the wallet's own
+        // CHECK refuses an overdraft below.
+        assertPaymentMethodOffered(shop, request.payment_method, {
+          verifiedGateways: await this.gatewayAccounts.verifiedGateways(tx, vendor.id),
+          reserveHolds: await reserveHolds(tx, shop, priced.commissionPaisa),
+          codEligible: true,
+          walletCovers: true,
+        });
         // Lock order of a checkout: vendor row (above), vendor offer row, opt-in row, each
         // FOR SHARE or weaker, then the inserts.
         //
@@ -300,6 +336,14 @@ export class CheckoutService {
         await tx
           .insert(orderAddresses)
           .values({ order_id: created.id, ...request.delivery_address });
+        // 2026-10-21 (SPEC core 12): a wallet order is paid here, in the order's own transaction,
+        // routed exactly as a gateway payment (escrow for Model B, the shop's prepaid balance for
+        // Model C). The wallet's CHECK refuses a payment it cannot cover.
+        let paidRow = created;
+        if (created.payment_method === 'WALLET') {
+          await this.settlement.capturePaymentInTransaction(tx, created);
+          paidRow = { ...created, payment_status: 'PAID' };
+        }
         await enqueueDomainEvent(tx, {
           type: 'order.locked',
           aggregateId: reservation.id,
@@ -313,7 +357,7 @@ export class CheckoutService {
             expires_at: reservation.expiresAt.toISOString(),
           },
         });
-        return created;
+        return paidRow;
       });
     } catch (error: unknown) {
       // Redis and PostgreSQL cannot commit together: never leave an orphaned lock behind.
@@ -322,16 +366,26 @@ export class CheckoutService {
         const winner = await this.findByIdempotencyKey(request.idempotency_key);
         if (winner !== undefined) return this.replay(customerId, winner);
       }
+      if (isCheckViolation(error, 'ledger_accounts_customer_wallet_non_negative_check')) {
+        throw insufficientWallet(priced.totalPaisa);
+      }
       throw error;
     }
 
-    if (order.payment_method === 'COD') {
-      const placed = await this.claim({
-        orderId: order.id,
-        vendorId: vendor.id,
-        reservationId: reservation.id,
-      });
-      order = placed.order;
+    if (order.payment_method === 'COD' || order.payment_method === 'WALLET') {
+      try {
+        const placed = await this.claim({
+          orderId: order.id,
+          vendorId: vendor.id,
+          reservationId: reservation.id,
+        });
+        order = placed.order;
+      } catch (error: unknown) {
+        // A wallet order was paid in its own transaction: if it cannot be placed (the lock or the
+        // stock went in the meantime), the money goes straight back to the wallet.
+        if (order.payment_method === 'WALLET') await this.failWalletOrder(order.id);
+        throw error;
+      }
     }
     return {
       order,
@@ -376,13 +430,7 @@ export class CheckoutService {
    */
   async quote(customerId: string, request: CartQuoteRequest): Promise<CartQuote> {
     const { vendor, priced, distanceKm, deliveryAvailable } = await this.price(request, true);
-    let codEligible = true;
-    try {
-      await this.assertCodEligible(customerId);
-    } catch (error) {
-      if (!(error instanceof CheckoutRejectedError)) throw error;
-      codEligible = false;
-    }
+    const context = await this.routingContext(customerId, vendor, priced, null);
     return {
       priced,
       distanceKm,
@@ -393,16 +441,10 @@ export class CheckoutService {
         if (!deliveryAvailable) {
           return { method, available: false, reason: 'DELIVERY_UNAVAILABLE' as const };
         }
-        if (!SETTLEMENT_MODEL_PAYMENT_METHODS[vendor.settlement_model].includes(method)) {
-          return { method, available: false, reason: 'SETTLEMENT_MODEL' as const };
-        }
-        if (!vendor.accepted_payment_methods.includes(method)) {
-          return { method, available: false, reason: 'NOT_ACCEPTED_BY_SHOP' as const };
-        }
-        if (method === 'COD' && !codEligible) {
-          return { method, available: false, reason: 'COD_NOT_AVAILABLE' as const };
-        }
-        return { method, available: true };
+        const refusal = paymentRefusal(vendor, method, context);
+        return refusal === null
+          ? { method, available: true }
+          : { method, available: false, reason: refusal };
       }),
     };
   }
@@ -630,6 +672,57 @@ export class CheckoutService {
   }
 
   /**
+   * What routing needs beyond the shop's model and methods. `only` (checkout) limits the work to
+   * the method asked for: the COD rating for COD, the wallet balance for WALLET.
+   */
+  private async routingContext(
+    customerId: string,
+    vendor: typeof vendors.$inferSelect,
+    priced: PricedCart,
+    only: PaymentMethod | null,
+  ): Promise<RoutingContext> {
+    let codEligible = true;
+    if (only === null || only === 'COD') {
+      try {
+        await this.assertCodEligible(customerId);
+      } catch (error) {
+        if (!(error instanceof CheckoutRejectedError)) throw error;
+        codEligible = false;
+      }
+    }
+    return {
+      verifiedGateways:
+        vendor.settlement_model === 'DIRECT_PREPAID'
+          ? await this.gatewayAccounts.verifiedGateways(this.db, vendor.id)
+          : [],
+      reserveHolds: await reserveHolds(this.db, vendor, priced.commissionPaisa),
+      codEligible,
+      walletCovers:
+        only === null || only === 'WALLET'
+          ? (await customerWalletPaisa(this.db, customerId)) >= priced.totalPaisa
+          : true,
+    };
+  }
+
+  /**
+   * A paid wallet order that could not be placed: FAILED, and the payment reversed to the
+   * customer's wallet in the same transaction (nothing is owed by hand).
+   */
+  private async failWalletOrder(orderId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const [locked] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update');
+      if (locked?.state !== 'PENDING_PAYMENT') return; // placed after all, or already failed
+      await this.settlement.reversePaymentInTransaction(tx, locked);
+      const [failed] = await tx
+        .update(orders)
+        .set({ state: 'FAILED' })
+        .where(eq(orders.id, locked.id))
+        .returning();
+      if (failed !== undefined) await enqueueOrderStateChanged(tx, 'PENDING_PAYMENT', failed);
+    });
+  }
+
+  /**
    * SPEC §6 / journey 7: an average rating below 3.0 disables COD for the customer. Only public
    * vendor ratings count: a quarantined one (the double blind) does not, until it is published.
    */
@@ -751,6 +844,8 @@ export class CheckoutService {
         throw new OrderNotPlaceableError(order.id, 'disappeared during placement');
       }
       await enqueueOrderStateChanged(tx, order.state, updated);
+      // Model C (2026-10-21): the platform's fee leaves the prepaid balance as the order is placed.
+      await this.settlement.debitOrderFeeInTransaction(tx, updated);
 
       const event = await enqueueDomainEvent(tx, {
         type: 'order.placed',
@@ -790,38 +885,118 @@ function quoteChanged(priced?: PricedCart): CheckoutRejectedError {
   );
 }
 
-/**
- * The methods a shop takes now (SPEC core 9, "Payment routing"): what its settlement model
- * allows, narrowed by what the shop itself accepts. In the order customers see them.
- */
-export function offeredPaymentMethods(shop: {
+interface RoutedShop {
   readonly settlement_model: SettlementModel;
-  readonly accepted_payment_methods: readonly PaymentMethod[];
-}): PaymentMethod[] {
+  readonly accepted_payment_methods: readonly ShopPaymentMethod[];
+}
+
+/** A shop accepts the customer wallet wherever it accepts eSewa or Khalti (2026-10-21). */
+function shopAccepts(shop: RoutedShop, method: PaymentMethod): boolean {
+  if (method === 'WALLET') {
+    return (
+      shop.accepted_payment_methods.includes('ESEWA') ||
+      shop.accepted_payment_methods.includes('KHALTI')
+    );
+  }
+  return shop.accepted_payment_methods.includes(method);
+}
+
+/**
+ * The methods a shop takes (SPEC core 9, "Payment routing"): what its settlement model allows,
+ * narrowed by what the shop itself accepts. In the order customers see them.
+ */
+export function offeredPaymentMethods(shop: RoutedShop): PaymentMethod[] {
   const routed = SETTLEMENT_MODEL_PAYMENT_METHODS[shop.settlement_model];
-  return paymentMethods.filter(
-    (method) => routed.includes(method) && shop.accepted_payment_methods.includes(method),
-  );
+  return paymentMethods.filter((method) => routed.includes(method) && shopAccepts(shop, method));
+}
+
+/**
+ * Why a method cannot pay this cart, or null. In order: the settlement model, the shop's own
+ * methods, Model C's Fixed Reserve and verified merchant accounts, the customer's COD rating, the
+ * customer's wallet balance.
+ */
+export function paymentRefusal(
+  shop: RoutedShop,
+  method: PaymentMethod,
+  context: RoutingContext,
+): PaymentRefusal | null {
+  if (!SETTLEMENT_MODEL_PAYMENT_METHODS[shop.settlement_model].includes(method)) {
+    return 'SETTLEMENT_MODEL';
+  }
+  if (!shopAccepts(shop, method)) return 'NOT_ACCEPTED_BY_SHOP';
+  if (shop.settlement_model === 'DIRECT_PREPAID') {
+    if (!context.reserveHolds) return 'BELOW_PREPAID_RESERVE';
+    if (isGatewayPaymentMethod(method) && !context.verifiedGateways.includes(method)) {
+      return 'GATEWAY_NOT_VERIFIED';
+    }
+  }
+  if (method === 'COD' && !context.codEligible) return 'COD_NOT_AVAILABLE';
+  if (method === 'WALLET' && !context.walletCovers) return 'INSUFFICIENT_WALLET_BALANCE';
+  return null;
 }
 
 function assertPaymentMethodOffered(
-  shop: Parameters<typeof offeredPaymentMethods>[0],
+  shop: RoutedShop,
   method: PaymentMethod,
+  context: RoutingContext,
 ): void {
-  const accepted = offeredPaymentMethods(shop);
-  if (accepted.includes(method)) return;
-  const routed = SETTLEMENT_MODEL_PAYMENT_METHODS[shop.settlement_model].includes(method);
-  throw new CheckoutRejectedError(
-    'PAYMENT_METHOD_UNAVAILABLE',
-    routed
-      ? 'This shop does not accept that payment method'
-      : 'This shop takes cash on delivery only',
-    {
-      accepted,
-      reason: routed ? 'NOT_ACCEPTED_BY_SHOP' : 'SETTLEMENT_MODEL',
-      settlement_model: shop.settlement_model,
-    },
+  const refusal = paymentRefusal(shop, method, context);
+  if (refusal === null) return;
+  if (refusal === 'COD_NOT_AVAILABLE') {
+    throw new CheckoutRejectedError(
+      'COD_NOT_AVAILABLE',
+      'Cash on delivery is not available for this account',
+    );
+  }
+  if (refusal === 'INSUFFICIENT_WALLET_BALANCE') throw insufficientWallet(null);
+  const messages: Record<typeof refusal, string> = {
+    SETTLEMENT_MODEL: 'This shop takes cash on delivery only',
+    NOT_ACCEPTED_BY_SHOP: 'This shop does not accept that payment method',
+    GATEWAY_NOT_VERIFIED: 'This shop cannot take that payment method right now',
+    BELOW_PREPAID_RESERVE: 'This shop cannot take orders right now',
+  };
+  throw new CheckoutRejectedError('PAYMENT_METHOD_UNAVAILABLE', messages[refusal], {
+    accepted: offeredPaymentMethods(shop),
+    reason: refusal,
+    settlement_model: shop.settlement_model,
+  });
+}
+
+/** 422 INSUFFICIENT_WALLET_BALANCE: the customer's wallet does not hold the order's total. */
+function insufficientWallet(totalPaisa: number | null): CheckoutRejectedError {
+  return new CheckoutRejectedError(
+    'INSUFFICIENT_WALLET_BALANCE',
+    'Your wallet does not hold enough for this order',
+    totalPaisa === null ? undefined : { total_npr: toNpr(totalPaisa) },
   );
+}
+
+type Reader = Pick<Database, 'select'>;
+
+/** A customer's wallet balance, in paisa (0 before its first recharge). */
+export async function customerWalletPaisa(executor: Reader, customerId: string): Promise<number> {
+  const [account] = await executor
+    .select({ balance: ledgerAccounts.balance_npr })
+    .from(ledgerAccounts)
+    .where(eq(ledgerAccounts.customer_user_id, customerId));
+  return account === undefined ? 0 : toPaisa(account.balance);
+}
+
+/**
+ * Model C (SPEC core 9): the shop's prepaid balance after this order's fee stays at or above the
+ * Fixed Reserve. True for every other model.
+ */
+async function reserveHolds(
+  executor: Reader,
+  shop: { readonly settlement_model: SettlementModel; readonly wallet_balance_npr: number },
+  feePaisa: number,
+): Promise<boolean> {
+  if (shop.settlement_model !== 'DIRECT_PREPAID') return true;
+  const [settings] = await executor
+    .select({ reserve: platformSettings.prepaid_reserve_npr })
+    .from(platformSettings);
+  if (settings === undefined) throw new Error('platform_settings row is missing');
+  return toPaisa(shop.wallet_balance_npr) - feePaisa >= toPaisa(settings.reserve);
 }
 
 /**

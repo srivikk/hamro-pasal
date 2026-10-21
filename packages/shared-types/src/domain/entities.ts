@@ -6,6 +6,7 @@ import {
   NEPAL_PHONE_REGEX,
   NEPAL_PROVINCE_ID_MAX,
   NEPAL_PROVINCE_ID_MIN,
+  PREPAID_FIXED_RESERVE_NPR,
   VENDOR_CODE_PATTERN,
   VENDOR_WALLET_HARD_FLOOR_NPR,
 } from './constants';
@@ -24,6 +25,7 @@ import {
   paymentStatusSchema,
   pricingModelSchema,
   settlementModelSchema,
+  shopPaymentMethodSchema,
   reviewDirectionSchema,
   userRoleSchema,
   vendorFulfillmentModeSchema,
@@ -167,7 +169,7 @@ export const vendorSchema = z.strictObject({
   free_delivery_above_npr: nprAmountSchema.positive().nullable(),
   /** Phase 25, Billing Cycle Lock: the active plan and methods are constant for a whole cycle. */
   pricing_plan_id: z.uuid().nullable(),
-  accepted_payment_methods: z.array(paymentMethodSchema).min(1),
+  accepted_payment_methods: z.array(shopPaymentMethodSchema).min(1),
   /** How the shop's money is settled (SPEC core 5). PLATFORM_ESCROW (Model B) by default. */
   settlement_model: settlementModelSchema,
   /** Null until LIVE. The cycle ends at the first instant of the next BS month (Nepal Time). */
@@ -180,6 +182,14 @@ export const vendorSchema = z.strictObject({
   /** Set by Auto-Pause; cleared when the vendor resumes. */
   auto_paused_at: z.date().nullable(),
   consecutive_missed_orders: z.number().int().min(0),
+  /**
+   * 2026-10-21 (SPEC core 4, "Cycle dues"): a Billing Cycle that ended with the wallet below 0
+   * opened a notice. The dues (the balance then, as a positive amount) must be cleared by
+   * `dues_due_at` (7 days later) or the shop is suspended for debt. All three set, or none.
+   */
+  dues_notice_opened_at: z.date().nullable(),
+  dues_due_at: z.date().nullable(),
+  dues_amount_npr: nprAmountSchema.positive().nullable(),
   created_at: z.date(),
   updated_at: z.date(),
 });
@@ -361,6 +371,8 @@ export const ledgerAccountSchema = z.strictObject({
   gateway: paymentMethodSchema.nullable(),
   /** Step 7.3: owner of a VENDOR_DISPUTE_HOLD account, otherwise null. */
   hold_vendor_id: z.uuid().nullable(),
+  /** 2026-10-21: owner of a CUSTOMER_WALLET account, otherwise null. */
+  customer_user_id: z.uuid().nullable(),
   balance_npr: nprAmountSchema,
   created_at: z.date(),
   updated_at: z.date(),
@@ -466,6 +478,8 @@ export const platformSettingsSchema = z.strictObject({
   last_order_minutes_before_close: z.number().int().min(0).max(120),
   /** Step 7.3: consecutive missed or rejected orders that pause a shop. */
   auto_pause_threshold: z.number().int().min(1).max(20),
+  /** 2026-10-21, Model C: the Fixed Reserve a prepaid balance may not fall below (min 5000). */
+  prepaid_reserve_npr: nprAmountSchema.min(PREPAID_FIXED_RESERVE_NPR),
   updated_at: z.date(),
 });
 export type PlatformSettings = z.infer<typeof platformSettingsSchema>;

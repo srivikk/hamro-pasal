@@ -1,4 +1,5 @@
 import type { BillingCycleRenewalService } from '../billing/billing-cycle-renewal';
+import type { CycleDuesSweepService } from '../billing/cycle-dues-sweep';
 import type { ComplianceSweepService } from '../compliance/compliance-sweep';
 import type { SettlementPayoutRunService } from '../finance/settlement-payout-run';
 import type { MarketingStatusSweepService } from '../marketing/marketing-status-sweep';
@@ -154,6 +155,8 @@ export function createTimerHandlers(deps: {
   /** Phase 25. Optional so a worker built without them logs the task instead of failing it. */
   readonly complianceSweep?: Pick<ComplianceSweepService, 'suspendUnverifiedVendors'>;
   readonly billingRenewal?: Pick<BillingCycleRenewalService, 'renewDueCycles'>;
+  /** 2026-10-21 (SPEC core 4, "Cycle dues"). Optional like the two above. */
+  readonly cycleDues?: Pick<CycleDuesSweepService, 'run'>;
   /** Phase 28. Optional like the two above. */
   readonly marketingSweep?: Pick<MarketingStatusSweepService, 'run'>;
   /** Phase 29. Optional like those above. */
@@ -240,6 +243,16 @@ export function createTimerHandlers(deps: {
           const summary = await deps.billingRenewal.renewDueCycles();
           console.info(
             `[worker] billing cycles: ${String(summary.started)} started, ${String(summary.renewed)} renewed, ${String(summary.applied)} queued change(s) applied`,
+          );
+          return;
+        }
+        case 'CYCLE_DUES_SWEEP': {
+          if (deps.cycleDues === undefined) {
+            return pendingImplementationHandlers.runMidnightTask(task);
+          }
+          const summary = await deps.cycleDues.run();
+          console.info(
+            `[worker] cycle dues: ${String(summary.suspended.length)} shop(s) suspended, ${String(summary.closed)} notice(s) closed`,
           );
           return;
         }

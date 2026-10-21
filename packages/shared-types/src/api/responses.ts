@@ -580,6 +580,10 @@ export const walletEntryTypes = [
   'PAYOUT_REVERSAL',
   'AD_CHARGE',
   'AD_REFUND',
+  /** 2026-10-21, Model C: the commission debited from the prepaid balance as an order is placed. */
+  'ORDER_FEE',
+  /** 2026-10-21: a cancelled order's money moving back (its fee to the shop, a payment to the customer). */
+  'ORDER_REFUND',
 ] as const;
 export const walletEntryTypeSchema = z.enum(walletEntryTypes);
 export type WalletEntryType = z.infer<typeof walletEntryTypeSchema>;
@@ -678,6 +682,12 @@ export const cartQuoteResponseSchema = z.strictObject({
           'DELIVERY_UNAVAILABLE',
           // The shop's settlement model does not take this method (Model A is cash only).
           'SETTLEMENT_MODEL',
+          // 2026-10-21, Model C: the shop's own merchant account for this gateway is not verified.
+          'GATEWAY_NOT_VERIFIED',
+          // 2026-10-21, Model C: the order's fee would take the prepaid balance below the reserve.
+          'BELOW_PREPAID_RESERVE',
+          // 2026-10-21: the customer's wallet does not hold the order's total.
+          'INSUFFICIENT_WALLET_BALANCE',
         ])
         .optional(),
     }),
@@ -703,6 +713,11 @@ export type QuoteChangedDetails = z.infer<typeof quoteChangedDetailsSchema>;
 /** `details` of 422 PAYMENT_METHOD_UNAVAILABLE: what the shop does take. */
 export const paymentMethodUnavailableDetailsSchema = z.object({
   accepted: z.array(paymentMethodSchema),
-  reason: z.enum(['NOT_ACCEPTED_BY_SHOP', 'SETTLEMENT_MODEL']),
+  reason: z.enum([
+    'NOT_ACCEPTED_BY_SHOP',
+    'SETTLEMENT_MODEL',
+    'GATEWAY_NOT_VERIFIED',
+    'BELOW_PREPAID_RESERVE',
+  ]),
 });
 export type PaymentMethodUnavailableDetails = z.infer<typeof paymentMethodUnavailableDetailsSchema>;

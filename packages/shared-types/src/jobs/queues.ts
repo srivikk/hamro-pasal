@@ -53,6 +53,11 @@ export const midnightTasks = [
   'BILLING_CYCLE_RENEWAL',
   /** Step 7.6: deletes queued export files whose 7-day link has expired. */
   'EXPORT_FILE_SWEEP',
+  /**
+   * 2026-10-21 (SPEC core 4, "Cycle dues"): a shop whose cycle's dues are past their 7-day grace
+   * with the wallet still below 0 is suspended for debt; a notice whose dues were cleared closes.
+   */
+  'CYCLE_DUES_SWEEP',
 ] as const;
 /**
  * Runs every hour on the maintenance queue (Phase 28, SPEC core 8): ends ad purchases whose paid

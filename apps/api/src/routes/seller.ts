@@ -52,7 +52,10 @@ export function sellerRouter(
     const body: SellerSignupOptionsResponseBody = {
       self_delivery_enabled: options.selfDeliveryEnabled,
       platform_fleet_enabled: options.platformFleetEnabled,
-      signups_open: options.selfDeliveryEnabled || options.platformFleetEnabled,
+      signups_open:
+        (options.selfDeliveryEnabled || options.platformFleetEnabled) &&
+        options.subscriptionPlans.length > 0,
+      subscription_plans: [...options.subscriptionPlans],
     };
     res.json(body);
   });

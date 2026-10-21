@@ -83,6 +83,8 @@ describe('POST /api/cart/quote', () => {
         { method: 'ESEWA', available: true },
         { method: 'KHALTI', available: true },
         { method: 'COD', available: true },
+        // 2026-10-21: the customer's wallet, empty for a customer who never recharged.
+        { method: 'WALLET', available: false, reason: 'INSUFFICIENT_WALLET_BALANCE' },
       ],
     });
     expect(body.distance_km).toBeGreaterThan(0.1);
@@ -166,6 +168,8 @@ describe('POST /api/cart/quote', () => {
       { method: 'ESEWA', available: false, reason: 'NOT_ACCEPTED_BY_SHOP' },
       { method: 'KHALTI', available: false, reason: 'NOT_ACCEPTED_BY_SHOP' },
       { method: 'COD', available: true },
+      // The wallet follows eSewa / Khalti: a cash-only shop does not take it either.
+      { method: 'WALLET', available: false, reason: 'NOT_ACCEPTED_BY_SHOP' },
     ]);
 
     const refused = await request(t.app)
@@ -229,6 +233,7 @@ describe('POST /api/cart/quote', () => {
         { method: 'ESEWA', available: false, reason: 'DELIVERY_UNAVAILABLE' },
         { method: 'KHALTI', available: false, reason: 'DELIVERY_UNAVAILABLE' },
         { method: 'COD', available: false, reason: 'DELIVERY_UNAVAILABLE' },
+        { method: 'WALLET', available: false, reason: 'DELIVERY_UNAVAILABLE' },
       ],
     });
     // Checkout is the rule: it refuses the order.

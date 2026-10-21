@@ -53,6 +53,8 @@ function blockerText(
       return `ledger at ${formatNpr(request.ledger_balance_npr)} (must be 0 or above)`;
     case 'ACTIVE_AD':
       return `${String(request.active_ad_count)} ad${request.active_ad_count === 1 ? '' : 's'} running`;
+    case 'BELOW_PREPAID_RESERVE':
+      return `prepaid balance at ${formatNpr(request.ledger_balance_npr)} (Model C needs the Fixed Reserve first)`;
   }
 }
 
@@ -68,12 +70,6 @@ export interface ApproveButton {
  */
 export function approveButton(request: ModelChangeRequestView): ApproveButton {
   if (request.status !== 'PENDING') return { enabled: false, note: null };
-  if (request.requested_model === 'DIRECT_PREPAID') {
-    return {
-      enabled: false,
-      note: 'Model C (direct prepaid) cannot be selected before Phase 3. Reject the request.',
-    };
-  }
   const blockers = blockersOf(request);
   if (blockers.length > 0) {
     return {
@@ -83,7 +79,10 @@ export function approveButton(request: ModelChangeRequestView): ApproveButton {
   }
   return {
     enabled: true,
-    note: 'Applies to new orders at once. Orders already placed settle under the model they were placed with.',
+    note:
+      request.requested_model === 'DIRECT_PREPAID'
+        ? 'Model C: customers pay the shop directly, fees leave its prepaid balance at each order. Verify its eSewa / Khalti account separately.'
+        : 'Applies to new orders at once. Orders already placed settle under the model they were placed with.',
   };
 }
 
@@ -141,6 +140,7 @@ const BLOCKER_WORDS: Readonly<Record<ModelChangeBlocker, string>> = {
   OPEN_ORDERS: 'open orders',
   NEGATIVE_BALANCE: 'a ledger below 0',
   ACTIVE_AD: 'an ad running',
+  BELOW_PREPAID_RESERVE: 'a prepaid balance below the Fixed Reserve',
 };
 
 /**

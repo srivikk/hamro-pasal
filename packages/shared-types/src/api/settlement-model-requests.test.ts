@@ -81,11 +81,24 @@ describe('settlement model change requests', () => {
     expect(modelChangeBlockersOf({ ...request, ledger_balance_npr: 0.01 })).toEqual([]);
     expect(
       modelChangeBlockersOf({
+        requested_model: 'PLATFORM_ESCROW',
         open_order_count: 2,
         ledger_balance_npr: -0.01,
         active_ad_count: 1,
       }),
     ).toEqual(['OPEN_ORDERS', 'NEGATIVE_BALANCE', 'ACTIVE_AD']);
+  });
+
+  it('asks a move to Model C for the Fixed Reserve, and no other model', () => {
+    const prepaid = { ...request, requested_model: 'DIRECT_PREPAID' as const };
+    expect(modelChangeBlockersOf({ ...prepaid, ledger_balance_npr: 4999.99 })).toEqual([
+      'BELOW_PREPAID_RESERVE',
+    ]);
+    expect(modelChangeBlockersOf({ ...prepaid, ledger_balance_npr: 5000 })).toEqual([]);
+    expect(modelChangeBlockersOf({ ...prepaid, ledger_balance_npr: 7000 }, 8000)).toEqual([
+      'BELOW_PREPAID_RESERVE',
+    ]);
+    expect(modelChangeBlockersOf({ ...request, ledger_balance_npr: 10 })).toEqual([]);
   });
 
   it('lets a rejection carry a reason and no decision carry a model', () => {

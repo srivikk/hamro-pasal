@@ -57,7 +57,11 @@ export class KhaltiClient {
     this.timeoutMs = config.timeoutMs ?? 10_000;
   }
 
-  initiate(input: KhaltiInitiateInput): Promise<KhaltiInitiateResponse> {
+  /**
+   * `secretKey` (2026-10-21, Model C): the shop's own merchant secret, when the payment goes to
+   * its account rather than the platform's.
+   */
+  initiate(input: KhaltiInitiateInput, secretKey?: string): Promise<KhaltiInitiateResponse> {
     if (!Number.isSafeInteger(input.amountPaisa) || input.amountPaisa <= 0) {
       throw new RangeError('Khalti amount must be a positive whole number of paisa');
     }
@@ -65,7 +69,7 @@ export class KhaltiClient {
       gateway: 'KHALTI',
       fetch: this.fetchImpl,
       url: this.endpoint('epayment/initiate/'),
-      headers: this.authHeaders(),
+      headers: this.authHeaders(secretKey),
       body: {
         return_url: this.config.returnUrl,
         website_url: this.config.websiteUrl,
@@ -78,12 +82,12 @@ export class KhaltiClient {
     });
   }
 
-  lookup(pidx: string): Promise<KhaltiLookupResponse> {
+  lookup(pidx: string, secretKey?: string): Promise<KhaltiLookupResponse> {
     return postJson({
       gateway: 'KHALTI',
       fetch: this.fetchImpl,
       url: this.endpoint('epayment/lookup/'),
-      headers: this.authHeaders(),
+      headers: this.authHeaders(secretKey),
       body: { pidx },
       responseSchema: lookupResponseSchema,
       timeoutMs: this.timeoutMs,
@@ -94,7 +98,7 @@ export class KhaltiClient {
     return `${this.config.baseUrl.replace(/\/+$/, '')}/${path}`;
   }
 
-  private authHeaders(): Record<string, string> {
-    return { authorization: `Key ${this.config.secretKey}` };
+  private authHeaders(secretKey = this.config.secretKey): Record<string, string> {
+    return { authorization: `Key ${secretKey}` };
   }
 }

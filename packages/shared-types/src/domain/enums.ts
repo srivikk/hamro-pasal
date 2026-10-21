@@ -58,9 +58,29 @@ export const orderStates = [
 export const orderStateSchema = z.enum(orderStates);
 export type OrderState = z.infer<typeof orderStateSchema>;
 
-export const paymentMethods = ['ESEWA', 'KHALTI', 'COD'] as const;
+/**
+ * How a customer pays an order. WALLET (2026-10-21, SPEC core 12) is the customer's own stored
+ * value on the platform: it routes exactly like a gateway payment (into escrow for a Model B shop,
+ * straight to the shop's prepaid balance for a Model C one). A shop accepts it wherever it accepts
+ * eSewa or Khalti; it is never stored in `vendors.accepted_payment_methods`.
+ */
+export const paymentMethods = ['ESEWA', 'KHALTI', 'COD', 'WALLET'] as const;
 export const paymentMethodSchema = z.enum(paymentMethods);
 export type PaymentMethod = z.infer<typeof paymentMethodSchema>;
+
+/** The external gateways: they have a clearing account and (Model C) a vendor merchant account. */
+export const gatewayPaymentMethods = ['ESEWA', 'KHALTI'] as const;
+export const gatewayPaymentMethodSchema = z.enum(gatewayPaymentMethods);
+export type GatewayPaymentMethod = z.infer<typeof gatewayPaymentMethodSchema>;
+
+/** What a shop itself may accept (its `accepted_payment_methods`): never WALLET, which follows. */
+export const shopPaymentMethods = ['ESEWA', 'KHALTI', 'COD'] as const;
+export const shopPaymentMethodSchema = z.enum(shopPaymentMethods);
+export type ShopPaymentMethod = z.infer<typeof shopPaymentMethodSchema>;
+
+export function isGatewayPaymentMethod(method: PaymentMethod): method is GatewayPaymentMethod {
+  return method === 'ESEWA' || method === 'KHALTI';
+}
 
 export const paymentStatuses = ['PENDING', 'PAID', 'FAILED'] as const;
 export const paymentStatusSchema = z.enum(paymentStatuses);
@@ -102,6 +122,11 @@ export const ledgerAccountTypes = [
    * the eSewa / Khalti merchant dashboards (decided 2026-10-15).
    */
   'REFUND_CLEARING',
+  /**
+   * 2026-10-21 (SPEC core 12): a customer's stored value, one per customer (owner
+   * `customer_user_id`), opened by the first recharge. Never negative.
+   */
+  'CUSTOMER_WALLET',
 ] as const;
 export const ledgerAccountTypeSchema = z.enum(ledgerAccountTypes);
 export type LedgerAccountType = z.infer<typeof ledgerAccountTypeSchema>;
@@ -133,6 +158,21 @@ export const ledgerTransactionKinds = [
   'DISPUTE_HOLD_RELEASE',
   /** Step 7.3: a resolution's refund: hold (and / or wallet) to REFUND_CLEARING. */
   'DISPUTE_REFUND',
+  /** 2026-10-21: a customer recharged its wallet through a gateway. GATEWAY_CLEARING to CUSTOMER_WALLET. */
+  'CUSTOMER_WALLET_RECHARGE',
+  /**
+   * 2026-10-21: an order paid from the customer's wallet. CUSTOMER_WALLET to SYSTEM_ESCROW (Model B)
+   * or straight to the shop's VENDOR_WALLET (Model C: the platform holds none of it).
+   */
+  'WALLET_PAYMENT',
+  /** 2026-10-21, Model C: the platform's commission debited from the prepaid balance at PLACED. */
+  'ORDER_FEE_DEBIT',
+  /**
+   * 2026-10-21: a cancelled order's money going back: escrow or a Model C shop's balance to the
+   * customer's wallet (a wallet order) or to REFUND_CLEARING (a gateway order), and a Model C fee
+   * back to the shop.
+   */
+  'ORDER_REFUND',
 ] as const;
 export const ledgerTransactionKindSchema = z.enum(ledgerTransactionKinds);
 export type LedgerTransactionKind = z.infer<typeof ledgerTransactionKindSchema>;
@@ -267,7 +307,7 @@ export type AdBillingModel = z.infer<typeof adBillingModelSchema>;
 
 /**
  * How a vendor's money is settled (SPEC core 5). Model A COD_CREDIT, Model B PLATFORM_ESCROW (the
- * default, and the only one that runs today), Model C DIRECT_PREPAID (Phase 3, not selectable).
+ * default, and the only one that runs today), Model C DIRECT_PREPAID (activated 2026-10-21).
  */
 export const settlementModels = ['COD_CREDIT', 'PLATFORM_ESCROW', 'DIRECT_PREPAID'] as const;
 export const settlementModelSchema = z.enum(settlementModels);
@@ -275,16 +315,17 @@ export type SettlementModel = z.infer<typeof settlementModelSchema>;
 
 /**
  * Payment routing (SPEC core 9): the methods a shop's settlement model allows. Model A is cash
- * only; Model B takes all three. Model C is Phase 3: it needs the vendor's own gateway
- * credentials and the Fixed Reserve check, neither of which exists, so it allows nothing.
- * A shop's `accepted_payment_methods` can only narrow this list.
+ * only; Model B takes every method. Model C (activated 2026-10-21) takes every method too, but a
+ * gateway only through the shop's own verified merchant account, and nothing at all while its
+ * prepaid balance after the order's fee would fall below the Fixed Reserve (checked at checkout).
+ * A shop's `accepted_payment_methods` can only narrow this list (WALLET follows eSewa / Khalti).
  */
 export const SETTLEMENT_MODEL_PAYMENT_METHODS: Readonly<
   Record<SettlementModel, readonly PaymentMethod[]>
 > = {
   COD_CREDIT: ['COD'],
-  PLATFORM_ESCROW: ['ESEWA', 'KHALTI', 'COD'],
-  DIRECT_PREPAID: [],
+  PLATFORM_ESCROW: ['ESEWA', 'KHALTI', 'COD', 'WALLET'],
+  DIRECT_PREPAID: ['ESEWA', 'KHALTI', 'COD', 'WALLET'],
 };
 
 /** Where a Home promotion shows: the banner carousel, or a Featured Offers tile. */

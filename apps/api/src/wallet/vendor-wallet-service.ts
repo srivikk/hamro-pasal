@@ -302,6 +302,8 @@ export async function pendingEscrowOf(
       and(
         eq(orders.vendor_id, vendorId),
         ne(orders.payment_method, 'COD'),
+        // A Model C payment never reached the platform: nothing of it is in escrow (2026-10-21).
+        ne(orders.settlement_model_locked, 'DIRECT_PREPAID'),
         eq(orders.payment_status, 'PAID'),
         inArray(orders.state, [...ESCROW_HELD_STATES]),
       ),
@@ -329,6 +331,8 @@ export async function pendingEscrowByVendor(
       and(
         inArray(orders.vendor_id, [...vendorIds]),
         ne(orders.payment_method, 'COD'),
+        // A Model C payment never reached the platform: nothing of it is in escrow (2026-10-21).
+        ne(orders.settlement_model_locked, 'DIRECT_PREPAID'),
         eq(orders.payment_status, 'PAID'),
         inArray(orders.state, [...ESCROW_HELD_STATES]),
       ),
@@ -363,6 +367,15 @@ export function entryTypeOf(kind: LedgerTransactionKind, amountNpr: number): Wal
       return 'ORDER_PAYOUT';
     // A refund the hold could not cover, debited by Hamro Pasal's resolution.
     case 'DISPUTE_REFUND':
+      return 'ADJUSTMENT';
+    // 2026-10-21: a Model C shop receives a wallet payment for an order; pays its fee at placement.
+    case 'WALLET_PAYMENT':
+      return 'ORDER_PAYOUT';
+    case 'ORDER_FEE_DEBIT':
+      return 'ORDER_FEE';
+    case 'ORDER_REFUND':
+      return 'ORDER_REFUND';
+    case 'CUSTOMER_WALLET_RECHARGE':
       return 'ADJUSTMENT';
   }
 }

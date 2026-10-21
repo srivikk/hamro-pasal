@@ -4,6 +4,7 @@ import {
   NEPAL_PHONE_PATTERN,
   VENDOR_WALLET_HARD_FLOOR_NPR,
   type JsonValue,
+  type ShopPaymentMethod,
   type VendorFulfillmentMode,
   type VendorStatus,
 } from '@hamro-pasal/shared-types';
@@ -104,8 +105,10 @@ export const vendors = pgTable(
     // Phase 25, Billing Cycle Lock (SPEC core 4). No FK on the plan here: billing.ts imports
     // this file. The renewal job is the only writer and takes the id from pricing_plans.
     pricing_plan_id: uuid(),
+    // Never WALLET (2026-10-21): a shop takes the customer wallet wherever it takes eSewa / Khalti.
     accepted_payment_methods: paymentMethodEnum()
       .array()
+      .$type<ShopPaymentMethod[]>()
       .notNull()
       .default(sql`'{ESEWA,KHALTI,COD}'::payment_method[]`),
     // Phase 26 (SPEC core 5): Model A COD_CREDIT, Model B PLATFORM_ESCROW, Model C DIRECT_PREPAID.
@@ -119,6 +122,11 @@ export const vendors = pgTable(
     availability_override_until: timestamp({ withTimezone: true, mode: 'date' }),
     auto_paused_at: timestamp({ withTimezone: true, mode: 'date' }),
     consecutive_missed_orders: integer().notNull().default(0),
+    // 2026-10-21 (SPEC core 4, "Cycle dues"): opened by the renewal of a cycle that ended below
+    // 0; the shop is suspended for debt if the wallet is still below 0 at dues_due_at.
+    dues_notice_opened_at: timestamp({ withTimezone: true, mode: 'date' }),
+    dues_due_at: timestamp({ withTimezone: true, mode: 'date' }),
+    dues_amount_npr: npr(),
     created_at: createdAt(),
     updated_at: updatedAt(),
   },
@@ -228,6 +236,16 @@ export const vendors = pgTable(
       'vendors_free_delivery_above_check',
       sql`${t.free_delivery_above_npr} IS NULL OR ${t.free_delivery_above_npr} > 0`,
     ),
+    check(
+      'vendors_dues_notice_check',
+      sql`(${t.dues_notice_opened_at} IS NULL) = (${t.dues_due_at} IS NULL)
+        AND (${t.dues_due_at} IS NULL) = (${t.dues_amount_npr} IS NULL)
+        AND (${t.dues_amount_npr} IS NULL OR ${t.dues_amount_npr} > 0)
+        AND (${t.dues_due_at} IS NULL OR ${t.dues_due_at} > ${t.dues_notice_opened_at})`,
+    ),
+    index('vendors_dues_due_at_idx')
+      .on(t.dues_due_at)
+      .where(sql`${t.dues_due_at} IS NOT NULL`),
     check(
       'vendors_wallet_balance_floor_check',
       sql`${t.wallet_balance_npr} >= ${hardFloor} OR ${t.status} = 'SUSPENDED'`,

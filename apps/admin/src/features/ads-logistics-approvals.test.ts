@@ -667,14 +667,17 @@ describe('approving a settlement model change', () => {
     );
   });
 
-  it('never approves a move to Model C while it is deferred', () => {
+  it('approves a move to Model C only with the prepaid balance at the Fixed Reserve (2026-10-21)', () => {
     const toPrepaid = { ...clean, requested_model: 'DIRECT_PREPAID' as const };
-    expect(approveButton(toPrepaid)).toEqual({
+    expect(approveButton({ ...toPrepaid, ledger_balance_npr: 4999.99 })).toEqual({
       enabled: false,
-      note: 'Model C (direct prepaid) cannot be selected before Phase 3. Reject the request.',
+      note: 'Cannot take effect yet: prepaid balance at Rs. 4,999.99 (Model C needs the Fixed Reserve first).',
     });
-    expect(validateDecision(toPrepaid, 'APPROVE', '').ok).toBe(false);
+    expect(validateDecision({ ...toPrepaid, ledger_balance_npr: 0 }, 'APPROVE', '').ok).toBe(false);
     expect(validateDecision(toPrepaid, 'REJECT', '').ok).toBe(true);
+    const funded = { ...toPrepaid, ledger_balance_npr: 5000 };
+    expect(approveButton(funded).enabled).toBe(true);
+    expect(validateDecision(funded, 'APPROVE', '').ok).toBe(true);
   });
 
   it('sends an approval with no reason, whatever was typed', () => {

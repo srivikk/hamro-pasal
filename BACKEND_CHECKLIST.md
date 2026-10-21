@@ -602,6 +602,19 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 8. The discount engine (section 5 step 2) is **done 2026-10-09 (§8Z.34)**: vendor offers stack with campaigns in the quote and checkout, on the order, in settlement and on the invoice, and both apps are wired. Left of step 2: `payment_session` in the checkout response. Fiscal invoicing (6.4): the waiting invoices, the list, the PDF and its Devanagari font are done; left are the detail read, the customer's and admin's reads and Credit / Debit Notes.
 9. **A device run of the new screens**, after rebuilding the development client (expo-file-system, expo-sharing): the cart on a real quote, the two refusal dialogs, the invoice download and share sheet.
 
+## Wallets, Model C, plans and cycle dues (2026-10-21, STATE_HANDOFF.md §8Z.43)
+
+- [x] **Customer wallet** (SPEC core 12, migration 0047 `wallet_recharges`, `CUSTOMER_WALLET` ledger account): eSewa recharge (`/api/wallet/recharge/esewa/initiate|confirm`), `GET /api/wallet`, `WALLET` at checkout and quote, refund to the wallet on cancellation.
+  - [ ] Customer app UI (balance, recharge, `WALLET` in the cart's payment picker): backend only so far.
+  - [ ] Legal: Nepal Rastra Bank position on a stored-value wallet.
+- [x] **Model C `DIRECT_PREPAID`** active: verified merchant accounts (`vendor_gateway_accounts`, AES-256-GCM under `VENDOR_CREDENTIALS_KEY`), per-vendor eSewa / Khalti credentials, fee at placement, reserve from `platform_settings.prepaid_reserve_npr`, vendor eSewa recharge (`/api/vendors/wallet/recharge/esewa/*`), admin verify route.
+  - [ ] Set `VENDOR_CREDENTIALS_KEY` in every environment (without it saving a merchant account answers 503).
+  - [ ] Admin UI for verifying merchant accounts and setting the reserve (API only).
+  - [ ] Ad purchases still use the constant reserve; dispute refunds of wallet orders still go to refund clearing; the Model C per-order ad premium is still charged at delivery; the payout run is Model B only.
+- [x] **Plans:** Subscription-only self-signup and self-change; `PUT /api/admin/vendors/:id/pricing-plan`. [ ] Admin UI for it.
+- [x] **Cycle dues:** notice at renewal, 7-day grace, `CYCLE_DUES_SWEEP` midnight task, SMS / push templates.
+- [x] **Seller App:** Payments screen (plan, COD / Prepayment switches queued for the next cycle, merchant accounts, bank accounts, dues banner); plan picker at signup. [ ] eSewa recharge from the Ledger (the existing top-up remains).
+
 ## Automated IRD KYC verification (2026-10-21, STATE_HANDOFF.md §8Z.42)
 
 - [x] **MOD 11-2 PAN pre-validation** on `PUT /api/vendor/tax-identity` (`422 PAN_CHECKSUM_INVALID`), behind `PAN_CHECKSUM_ENFORCED`, **off by default**: the IRD has published no check-digit rule.

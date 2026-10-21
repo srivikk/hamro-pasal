@@ -330,6 +330,13 @@
       "when": 1792527283055,
       "tag": "0046_ird_pan_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1792556221103,
+      "tag": "0047_wallets_model_c_cycle_dues",
+      "breakpoints": true
     }
   ]
 }

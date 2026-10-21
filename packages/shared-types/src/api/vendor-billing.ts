@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { paymentMethodSchema } from '../domain/enums';
+import { shopPaymentMethodSchema } from '../domain/enums';
 
 /** What a vendor may queue for its next Billing Cycle (SPEC core 4, "Billing Cycle Lock"). */
 export const vendorSettings = ['PRICING_PLAN', 'PAYMENT_METHODS'] as const;
@@ -14,7 +14,7 @@ export type SettingChangeStatus = z.infer<typeof settingChangeStatusSchema>;
 const pricingPlanValue = z.strictObject({ pricing_plan_id: z.uuid() });
 const paymentMethodsValue = z.strictObject({
   methods: z
-    .array(paymentMethodSchema)
+    .array(shopPaymentMethodSchema)
     .min(1)
     .refine((methods) => new Set(methods).size === methods.length, 'A method is listed once'),
 });

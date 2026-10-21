@@ -13,6 +13,8 @@ import {
 } from '@hamro-pasal/db';
 import { and, eq, sql } from 'drizzle-orm';
 
+import { LedgerService, WalletService } from '@hamro-pasal/ledger';
+
 import { VendorAcceptanceExpiryService } from '../src/sla/vendor-acceptance-expiry';
 
 /**
@@ -25,7 +27,7 @@ describe('vendor acceptance expiry and Auto-Pause (real PostgreSQL)', () => {
 
   beforeAll(() => {
     db = createDatabase(process.env.TEST_DATABASE_URL ?? '', { max: 10 });
-    expiry = new VendorAcceptanceExpiryService(db);
+    expiry = new VendorAcceptanceExpiryService(db, new LedgerService(new WalletService()));
   });
 
   afterAll(async () => {

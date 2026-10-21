@@ -10,6 +10,7 @@ import {
   type ConfirmedPayment,
   type PaymentConfirmationService,
 } from '../payment-confirmation';
+import type { VendorGatewayAccountService } from '../gateway-accounts';
 import { KHALTI_COMPLETED, type KhaltiClient } from './khalti-client';
 
 export interface KhaltiPaymentRequest {
@@ -35,17 +36,30 @@ export class KhaltiService {
     private readonly checkout: CheckoutService,
     private readonly confirmation: PaymentConfirmationService,
     private readonly client: KhaltiClient,
+    private readonly gatewayAccounts: VendorGatewayAccountService,
   ) {}
+
+  /** A Model C order is paid into the shop's own Khalti account, with its own secret. */
+  private async secretFor(order: {
+    readonly vendor_id: string;
+    readonly settlement_model_locked: string;
+  }): Promise<string | undefined> {
+    if (order.settlement_model_locked !== 'DIRECT_PREPAID') return undefined;
+    return (await this.gatewayAccounts.credentialsFor(order.vendor_id, 'KHALTI')).secret;
+  }
 
   async initiate(customerId: string, orderId: string): Promise<KhaltiPaymentRequest> {
     const { order, lock } = await this.checkout.getOrderLockStatus(customerId, orderId);
     assertPayable(order, lock, 'KHALTI');
 
-    const response = await this.client.initiate({
-      amountPaisa: orderTotalPaisa(order),
-      purchaseOrderId: order.id,
-      purchaseOrderName: `Hamro Pasal order ${order.id.slice(0, 8)}`,
-    });
+    const response = await this.client.initiate(
+      {
+        amountPaisa: orderTotalPaisa(order),
+        purchaseOrderId: order.id,
+        purchaseOrderName: `Hamro Pasal order ${order.id.slice(0, 8)}`,
+      },
+      await this.secretFor(order),
+    );
     await this.db
       .update(orders)
       .set({ payment_gateway_ref: response.pidx })
@@ -61,7 +75,11 @@ export class KhaltiService {
   /** POST /api/payments/khalti/lookup: verify with Khalti, credit escrow only when Completed. */
   async lookup(customerId: string, pidx: string): Promise<KhaltiLookupResult> {
     const [order] = await this.db
-      .select({ id: orders.id })
+      .select({
+        id: orders.id,
+        vendor_id: orders.vendor_id,
+        settlement_model_locked: orders.settlement_model_locked,
+      })
       .from(orders)
       .where(
         and(
@@ -74,7 +92,7 @@ export class KhaltiService {
       throw new PaymentNotFoundError('KHALTI', pidx);
     }
 
-    const result = await this.client.lookup(pidx);
+    const result = await this.client.lookup(pidx, await this.secretFor(order));
     if (result.pidx !== pidx) {
       throw new PaymentGatewayError('KHALTI', 'lookup returned a different pidx');
     }

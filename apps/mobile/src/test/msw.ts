@@ -43,6 +43,26 @@ function availabilityAnswer(mode: 'AUTO' | 'OPEN' | 'CLOSED') {
   };
 }
 
+/** The Subscription plans a new shop may choose (2026-10-21), cheapest first. */
+export const SIGNUP_SUBSCRIPTION_PLANS = [
+  {
+    id: '7a1e2c3d-0000-4000-8000-000000000001',
+    name: 'Starter',
+    model: 'SUBSCRIPTION',
+    commission_rate: 0,
+    monthly_fee_npr: 999,
+    duration_cycles: null,
+  },
+  {
+    id: '7a1e2c3d-0000-4000-8000-000000000002',
+    name: 'Growth',
+    model: 'SUBSCRIPTION',
+    commission_rate: 0,
+    monthly_fee_npr: 2499,
+    duration_cycles: null,
+  },
+] as const;
+
 export const server = setupServer(
   http.get(apiUrl('/api/categories'), () => HttpResponse.json({ categories: [] })),
   // Both delivery modes on: a new shop may choose either (GET /api/seller/signup-options).
@@ -51,6 +71,7 @@ export const server = setupServer(
       self_delivery_enabled: true,
       platform_fleet_enabled: true,
       signups_open: true,
+      subscription_plans: SIGNUP_SUBSCRIPTION_PLANS,
     }),
   ),
   // The Seller dashboard's summary card asks for today's figures; an empty day by default.

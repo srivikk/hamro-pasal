@@ -84,6 +84,8 @@ import { EsewaService, type EsewaConfig } from './payments/esewa/esewa-service';
 import type { FetchLike } from './payments/gateway-http';
 import { KhaltiClient, type KhaltiConfig } from './payments/khalti/khalti-client';
 import { KhaltiService } from './payments/khalti/khalti-service';
+import { CredentialCipher, VendorGatewayAccountService } from './payments/gateway-accounts';
+import { CustomerWalletService } from './wallet/customer-wallet-service';
 import { MockPaymentService } from './payments/mock-payment-service';
 import { PaymentConfirmationService } from './payments/payment-confirmation';
 import { ReviewService } from './reviews/review-service';
@@ -107,6 +109,8 @@ export interface ApiConfig {
   readonly sellerAppUrl?: string;
   /** PAN_CHECKSUM_ENFORCED (2026-10-21): the MOD 11-2 check digit on a saved PAN. */
   readonly panChecksumEnforced?: boolean;
+  /** VENDOR_CREDENTIALS_KEY (2026-10-21): seals Model C shops' own merchant secrets. */
+  readonly vendorCredentialsKey?: string;
 }
 
 export interface Infrastructure {
@@ -172,6 +176,9 @@ export function apiConfigFromEnv(env: ServerEnv): ApiConfig {
     mockServices: mockServicesEnabled(env),
     sellerAppUrl: env.SELLER_APP_URL,
     panChecksumEnforced: env.PAN_CHECKSUM_ENFORCED,
+    ...(env.VENDOR_CREDENTIALS_KEY === undefined
+      ? {}
+      : { vendorCredentialsKey: env.VENDOR_CREDENTIALS_KEY }),
   };
 }
 
@@ -188,11 +195,23 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     new DrizzleStockReader(infra.db),
     infra.lockOptions,
   );
-  const checkout = new CheckoutService(infra.db, locks, new RedisKeyedMutex(infra.redisPool));
   // The one WalletService: journals (suspend/restore for debt) and the admin overrides share it.
   const wallet = new WalletService();
   const ledger = new LedgerService(wallet);
   const settlement = new SettlementService(infra.db, ledger);
+  const gatewayAccounts = new VendorGatewayAccountService(
+    infra.db,
+    config.vendorCredentialsKey === undefined
+      ? null
+      : new CredentialCipher(config.vendorCredentialsKey),
+  );
+  const checkout = new CheckoutService(
+    infra.db,
+    locks,
+    new RedisKeyedMutex(infra.redisPool),
+    settlement,
+    gatewayAccounts,
+  );
   const confirmation = new PaymentConfirmationService(infra.db, settlement, checkout);
   const khaltiClient = new KhaltiClient(config.khalti, infra.fetch);
   // One handoff (and one Redis counter per order) for the rider's and the vendor's deliveries.
@@ -202,7 +221,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     ledger,
   );
   const otps = new OtpStore(infra.redisPool, otpPepper(config.accessTokenSecret), infra.otpOptions);
-  const esewa = new EsewaService(infra.db, checkout, confirmation, config.esewa);
+  const esewa = new EsewaService(infra.db, checkout, confirmation, config.esewa, gatewayAccounts);
   const auth = new OtpAuthService(infra.db, otps, infra.sms, {
     accessTokenSecret: config.accessTokenSecret,
     refreshTokenSecret: config.refreshTokenSecret,
@@ -229,15 +248,17 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     tutorials: new TutorialService(infra.db),
     catalog: new CatalogService(infra.db),
     checkout,
-    orders: new OrderService(infra.db, locks),
-    vendorOrders: new VendorOrderService(infra.db, locks, handoff),
+    orders: new OrderService(infra.db, locks, ledger),
+    vendorOrders: new VendorOrderService(infra.db, locks, handoff, ledger),
     vendorWallet: new VendorWalletService(infra.db),
     vendorTopUps: new VendorTopUpService(infra.db, ledger, config.walletTopUpMode),
     deliveries: new DeliveryService(infra.db, handoff),
     riderLocations: new RiderLocationStore(infra.redisPool, infra.riderLocationOptions),
     esewa,
     ...(mockPayments === undefined ? {} : { mockPayments }),
-    khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient),
+    khalti: new KhaltiService(infra.db, checkout, confirmation, khaltiClient, gatewayAccounts),
+    customerWallet: new CustomerWalletService(infra.db, ledger, config.esewa),
+    gatewayAccounts,
     reviews: new ReviewService(infra.db),
     disputes: new DisputeService(infra.db),
     adminDisputes: new AdminDisputeService(infra.db, ledger),

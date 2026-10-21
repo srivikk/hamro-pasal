@@ -213,6 +213,15 @@ export const serverEnvSchema = z
     // until it is confirmed; when on, PUT /api/vendor/tax-identity refuses a PAN that fails it.
     PAN_CHECKSUM_ENFORCED: z.stringbool().default(false),
 
+    // Model C (2026-10-21): the AES-256-GCM key that encrypts shops' own eSewa / Khalti secrets,
+    // as 32 bytes in base64. Without it a shop cannot save a merchant account (503). Keep it in a
+    // managed secret store; rotating it means re-entering every stored secret.
+    // 32 bytes in base64 is 43 characters and one '=' (a regex: shared-types also runs in React
+    // Native, which has no Buffer).
+    VENDOR_CREDENTIALS_KEY: nonEmpty
+      .regex(/^[A-Za-z0-9+/]{43}=$/, 'Must be 32 bytes, base64-encoded')
+      .optional(),
+
     // Vendor wallet top-ups (Phase 12.5).
     WALLET_TOP_UP_MODE: z.enum(walletTopUpModes).default('DISABLED'),
 

@@ -165,10 +165,15 @@ describe('vendor.suspended_for_debt', () => {
     expect(DOMAIN_EVENT_TOPICS['vendor.suspended_for_debt']).toBe('notifications.broadcast');
   });
 
+  it('takes a Model C suspension below the Fixed Reserve (2026-10-21)', () => {
+    expect(
+      parse({ wallet_balance_npr: 4000, suspension_limit_npr: 5000, restore_at_npr: 5000 }),
+    ).toBe(true);
+  });
+
   it('describes a real debt suspension of a vendor that was not suspended yet', () => {
     expect(parse({ previous_status: 'SUSPENDED' })).toBe(false);
-    expect(parse({ wallet_balance_npr: 0 })).toBe(false);
-    expect(parse({ suspension_limit_npr: 100 })).toBe(false);
+    expect(parse({ restore_at_npr: -1 })).toBe(false);
     expect(parse({ vendor_phone: '9800000011' })).toBe(false);
     expect(parse({ is_suspended: true })).toBe(false);
   });

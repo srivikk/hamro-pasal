@@ -14,6 +14,7 @@ import {
 
 const vendorId = randomUUID();
 const driverId = randomUUID();
+const customerId = randomUUID();
 
 type PlanOrder = Parameters<typeof planSettlement>[0];
 
@@ -21,6 +22,7 @@ function order(overrides: Partial<Order> = {}): PlanOrder {
   return {
     id: randomUUID(),
     vendor_id: vendorId,
+    customer_id: customerId,
     driver_user_id: null,
     subtotal: 1000,
     delivery_fee: 50,

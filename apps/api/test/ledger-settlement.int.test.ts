@@ -95,6 +95,7 @@ describe('double-entry settlement', () => {
       });
 
       expect(first.status).toBe('posted');
+      if (first.status !== 'posted') throw new Error('not posted');
       expect(second).toEqual({ status: 'duplicate', transactionId: first.transactionId });
       expect(moved).toEqual({ SYSTEM_ESCROW: 0 });
     });

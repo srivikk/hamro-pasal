@@ -119,9 +119,15 @@ export const vendorSuspendedForDebtPayloadSchema = z.strictObject({
   vendor_phone: nepalPhoneSchema,
   /** The status before suspension: what an admin restores once the dues are paid. */
   previous_status: vendorStatusSchema.exclude(['SUSPENDED']),
-  wallet_balance_npr: z.number().negative(),
-  /** platform_settings.vendor_wallet_suspension_limit_npr at the time of the suspension. */
-  suspension_limit_npr: z.number().max(0),
+  /** Negative for Models A / B; for Model C, the prepaid balance below its Fixed Reserve. */
+  wallet_balance_npr: z.number(),
+  /**
+   * platform_settings.vendor_wallet_suspension_limit_npr at the time of the suspension; for a
+   * Model C shop (2026-10-21), the Fixed Reserve it fell below.
+   */
+  suspension_limit_npr: z.number(),
+  /** The balance that lifts the suspension: 0, or the Fixed Reserve for a Model C shop. */
+  restore_at_npr: z.number().min(0).optional(),
   suspended_at: z.iso.datetime(),
 });
 
@@ -219,6 +225,28 @@ export const vendorAutoPausedPayloadSchema = z.strictObject({
   vendor_phone: nepalPhoneSchema,
   missed_orders: z.number().int().positive(),
   paused_at: z.iso.datetime(),
+});
+
+/**
+ * 2026-10-21 (SPEC core 4, "Cycle dues"): a Billing Cycle ended with the shop's wallet below 0.
+ * The dues must be cleared by `due_at` (7 days) or the shop is suspended for debt.
+ */
+export const vendorDuesNoticeOpenedPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  vendor_phone: nepalPhoneSchema,
+  dues_amount_npr: z.number().positive(),
+  due_at: z.iso.datetime(),
+  opened_at: z.iso.datetime(),
+});
+
+/** 2026-10-21: the dues of a cycle were not cleared in time; the shop is suspended for debt. */
+export const vendorSuspendedForDuesPayloadSchema = z.strictObject({
+  vendor_id: z.uuid(),
+  vendor_phone: nepalPhoneSchema,
+  previous_status: vendorStatusSchema.exclude(['SUSPENDED']),
+  wallet_balance_npr: z.number(),
+  dues_amount_npr: z.number().positive(),
+  suspended_at: z.iso.datetime(),
 });
 
 /**
@@ -367,6 +395,8 @@ export const ledgerMutatedPayloadSchema = z.strictObject({
         gateway: paymentMethodSchema.nullable(),
         /** Step 7.3: owner of a VENDOR_DISPUTE_HOLD account. Absent from older events. */
         hold_vendor_id: z.uuid().nullable().default(null),
+        /** 2026-10-21: owner of a CUSTOMER_WALLET account. Absent from older events. */
+        customer_user_id: z.uuid().nullable().optional(),
         amount_npr: z.number(),
         balance_after_npr: z.number(),
       }),
@@ -438,6 +468,14 @@ export const vendorAutoPausedEventSchema = envelope(
   'vendor.auto_paused',
   vendorAutoPausedPayloadSchema,
 );
+export const vendorDuesNoticeOpenedEventSchema = envelope(
+  'vendor.dues_notice_opened',
+  vendorDuesNoticeOpenedPayloadSchema,
+);
+export const vendorSuspendedForDuesEventSchema = envelope(
+  'vendor.suspended_for_dues',
+  vendorSuspendedForDuesPayloadSchema,
+);
 export const productBackInStockEventSchema = envelope(
   'product.back_in_stock',
   productBackInStockPayloadSchema,
@@ -492,6 +530,8 @@ export const domainEventSchema = z.discriminatedUnion('event_type', [
   vendorDeactivatedEventSchema,
   vendorReactivatedEventSchema,
   vendorAutoPausedEventSchema,
+  vendorDuesNoticeOpenedEventSchema,
+  vendorSuspendedForDuesEventSchema,
   productBackInStockEventSchema,
   vendorOpenedEventSchema,
   disputeEscalatedEventSchema,
@@ -521,6 +561,8 @@ export type VendorComplianceRestoredEvent = z.infer<typeof vendorComplianceResto
 export type VendorDeactivatedEvent = z.infer<typeof vendorDeactivatedEventSchema>;
 export type VendorReactivatedEvent = z.infer<typeof vendorReactivatedEventSchema>;
 export type VendorAutoPausedEvent = z.infer<typeof vendorAutoPausedEventSchema>;
+export type VendorDuesNoticeOpenedEvent = z.infer<typeof vendorDuesNoticeOpenedEventSchema>;
+export type VendorSuspendedForDuesEvent = z.infer<typeof vendorSuspendedForDuesEventSchema>;
 export type ProductBackInStockEvent = z.infer<typeof productBackInStockEventSchema>;
 export type VendorOpenedEvent = z.infer<typeof vendorOpenedEventSchema>;
 export type DisputeEscalatedEvent = z.infer<typeof disputeEscalatedEventSchema>;
@@ -557,6 +599,8 @@ export const DOMAIN_EVENT_TOPICS: Readonly<Record<DomainEventType, KafkaTopic>> 
   'vendor.deactivated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.reactivated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.auto_paused': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.dues_notice_opened': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
+  'vendor.suspended_for_dues': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'product.back_in_stock': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'vendor.opened': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,
   'dispute.escalated': KAFKA_TOPICS.NOTIFICATIONS_BROADCAST,

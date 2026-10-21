@@ -22,3 +22,8 @@ function isConstraintViolation(error: unknown, sqlState: string, constraint: str
   }
   return false;
 }
+
+/** The same for a CHECK violation (SQLSTATE 23514) on the named constraint. */
+export function isCheckViolation(error: unknown, constraint: string): boolean {
+  return isConstraintViolation(error, '23514', constraint);
+}

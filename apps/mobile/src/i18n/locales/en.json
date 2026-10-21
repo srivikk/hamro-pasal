@@ -132,7 +132,8 @@
   "payment": {
     "ESEWA": "eSewa",
     "KHALTI": "Khalti",
-    "COD": "Cash on delivery"
+    "COD": "Cash on delivery",
+    "WALLET": "Hamro Pasal wallet"
   },
   "menu": {
     "add": "Add",
@@ -639,7 +640,10 @@
     "paused": "Paused",
     "availabilityFailed": "Couldn't change your shop. Check your connection and try again.",
     "verificationBanner": "Your shop is offline pending admin document verification. We will let you know as soon as it is verified.",
-    "taxSavedPendingVerification": "PAN saved. Your shop stays offline until Hamro Pasal verifies your PAN certificate."
+    "taxSavedPendingVerification": "PAN saved. Your shop stays offline until Hamro Pasal verifies your PAN certificate.",
+    "paymentsTitle": "Payments & plan",
+    "paymentsHint": "Your plan, Cash on Delivery or Prepayment, merchant and bank accounts.",
+    "paymentsOpen": "Open payment settings"
   },
   "vendorCatalogue": {
     "empty": "Your catalogue is empty. Add your first product.",
@@ -914,7 +918,9 @@
       "PAYOUT_HOLD": "Payout requested",
       "PAYOUT_REVERSAL": "Payout returned",
       "AD_CHARGE": "Ad charge",
-      "AD_REFUND": "Ad refund"
+      "AD_REFUND": "Ad refund",
+      "ORDER_FEE": "Order fee (prepaid)",
+      "ORDER_REFUND": "Order refund"
     },
     "payDues": "Pay outstanding balance (Rs. {{amount, localizedNumber}})",
     "paying": "Paying…",
@@ -1126,14 +1132,18 @@
     "hint": {
       "ESEWA": "Pay with your eSewa wallet",
       "KHALTI": "Pay with your Khalti wallet",
-      "COD": "Pay in cash when your order arrives"
+      "COD": "Pay in cash when your order arrives",
+      "WALLET": "Paid at once from your wallet balance"
     },
     "noneAvailable": "This shop can't take a payment for this order right now.",
     "reason": {
       "NOT_ACCEPTED_BY_SHOP": "This shop doesn't accept it",
       "COD_NOT_AVAILABLE": "Cash on delivery isn't available for your account",
       "DELIVERY_UNAVAILABLE": "Delivery is unavailable right now",
-      "SETTLEMENT_MODEL": "This shop takes cash on delivery only"
+      "SETTLEMENT_MODEL": "This shop takes cash on delivery only",
+      "GATEWAY_NOT_VERIFIED": "This shop cannot take this method right now",
+      "BELOW_PREPAID_RESERVE": "This shop cannot take orders right now",
+      "INSUFFICIENT_WALLET_BALANCE": "Not enough in your wallet"
     }
   },
   "favourites": {
@@ -1237,7 +1247,11 @@
     "pausedHint": "Hamro Pasal is not taking new shops at the moment. Please check back soon.",
     "modeDisabled": "That delivery option was just switched off. Choose another and try again.",
     "optionsLoading": "Loading the delivery options…",
-    "optionsFailed": "Couldn’t load the delivery options. Check your connection."
+    "optionsFailed": "Couldn’t load the delivery options. Check your connection.",
+    "plan": "Your plan",
+    "planFee": "Rs. {{amount, localizedNumber}} a month, no commission",
+    "planHint": "Commission and free plans are offered by Hamro Pasal; you can ask for one after signing up.",
+    "planChanged": "That plan is no longer on offer. Choose another and try again."
   },
   "sellerApplication": {
     "title": "Your application",
@@ -1275,5 +1289,60 @@
     "todayOrders": "Orders today",
     "ordersUnit_one": "{{count}} order",
     "ordersUnit_other": "{{count}} orders"
+  },
+  "vendorPayments": {
+    "loadFailed": "Could not load your payment settings.",
+    "duesTitle": "Cycle dues: Rs. {{amount, localizedNumber}}",
+    "duesBody": "Your last billing cycle ended below Rs. 0. Pay the dues from the Ledger by {{date}}, or the shop is suspended.",
+    "planTitle": "Plan",
+    "noPlan": "No plan yet",
+    "planHint": "You can switch between Subscription plans. Commission and Free plans are assigned by Hamro Pasal.",
+    "terms": {
+      "SUBSCRIPTION": "Rs. {{amount, localizedNumber}} a month",
+      "COMMISSION": "{{rate}}% commission per order",
+      "FREE": "Free"
+    },
+    "switchPlan": "Switch plan from the next cycle",
+    "pendingPlan": "A plan change starts on {{date}}.",
+    "methodsTitle": "How customers pay",
+    "cod": "Cash on Delivery",
+    "codHint": "The customer pays in cash when the order arrives.",
+    "prepayment": "Prepayment",
+    "prepaymentHint": "The customer pays first with eSewa, Khalti or the Hamro Pasal wallet.",
+    "methodsHint": "Changes apply from the next billing cycle, on {{date}}.",
+    "methodsHintNoCycle": "Changes apply from your first billing cycle.",
+    "pendingMethods": "New payment methods start on {{date}}.",
+    "saveMethods": "Save from the next cycle",
+    "withdraw": "Withdraw",
+    "queued": "Saved. It applies from the next billing cycle.",
+    "withdrawn": "Change withdrawn.",
+    "directTitle": "Direct payments (eSewa / Khalti)",
+    "directHint": "Customers pay your own merchant account. Keep at least Rs. {{amount, localizedNumber}} in your Ledger for commissions.",
+    "directUnavailable": "Customer payments are collected by Hamro Pasal and paid out to your bank account. Direct payments to your own eSewa or Khalti account come with the Direct Prepaid model, on request.",
+    "merchantState": {
+      "MISSING": "No merchant account yet.",
+      "AWAITING_VERIFICATION": "{{code}} (secret ending {{hint}}): waiting for verification.",
+      "VERIFIED": "{{code}} (secret ending {{hint}}): verified, offered to customers."
+    },
+    "merchantCode": "Merchant code",
+    "merchantSecret": "Secret key",
+    "saveMerchant": "Save merchant account",
+    "merchantSaved": "Saved. Hamro Pasal verifies it before customers can pay with it.",
+    "bankTitle": "Bank accounts",
+    "bankHint": "Where your payouts are sent. The first account is the primary one.",
+    "primary": "Primary",
+    "bankName": "Bank",
+    "branchName": "Branch",
+    "accountName": "Account holder name",
+    "accountNumber": "Account number",
+    "routingCode": "Routing or SWIFT code (optional)",
+    "addBank": "Add bank account",
+    "bankSaved": "Bank account added.",
+    "errors": {
+      "adminOnlyPlan": "Only Hamro Pasal can assign that plan.",
+      "merchantTaken": "That merchant code is registered to another shop.",
+      "invalid": "Please check the details and try again.",
+      "failed": "Could not save. Please try again."
+    }
   }
 }

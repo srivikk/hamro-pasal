@@ -9,6 +9,7 @@ import {
   type PricingVendor,
   type VendorOfferRule,
 } from './pricing';
+import { deliveryCharge, type DeliveryTerms } from './delivery-fee';
 
 const vendor: PricingVendor = {
   pricing_model: 'COMMISSION',
@@ -294,5 +295,98 @@ describe('stacking a vendor offer and a platform campaign (SPEC core 7 and 9)', 
       commission_rate: 0,
     });
     expect(priced).toMatchObject({ commissionPaisa: 0, totalPaisa: 86_000 });
+  });
+});
+
+describe('discounts before the delivery threshold (SPEC core 9, amended 2026-10-21)', () => {
+  const cart = new Map<string, PricingProduct>([['x', { id: 'x', name: 'X', price_npr: 500 }]]);
+  const offer: VendorOfferRule = {
+    offerId: 'offer',
+    createdAt: new Date('2026-10-01T00:00:00Z'),
+    label: 'Flat Rs. 100 OFF',
+    kind: 'FLAT',
+    value: 100,
+    maxDiscountNpr: null,
+    minCartNpr: 0,
+  };
+  const terms: DeliveryTerms = {
+    fulfillmentMode: 'PLATFORM_FLEET',
+    deliveryScope: 'RADIUS_BOUND',
+    baseFeeNpr: 0,
+    perKmFeeNpr: 0,
+    freeAboveNpr: null,
+    platformFeeNpr: 50,
+    platformFreeAboveNpr: 1000,
+  };
+  const price = (quantity: number, offers: readonly VendorOfferRule[]) =>
+    priceCart(
+      vendor,
+      cart,
+      [{ productId: 'x', quantity }],
+      (goodsPaisa) => deliveryCharge(terms, goodsPaisa, 2),
+      [],
+      offers,
+    );
+
+  it('judges the threshold on the goods after the discount, not on the subtotal', () => {
+    // Subtotal 1000 reaches the threshold, but after Rs. 100 off the goods are 900: fee charged.
+    expect(price(2, [offer])).toMatchObject({
+      subtotalPaisa: 100_000,
+      goodsPaisa: 90_000,
+      deliveryFeePaisa: 5_000,
+      deliverySubsidyPaisa: 0,
+      freeDeliveryBy: null,
+      totalPaisa: 95_000,
+    });
+  });
+
+  it('ships free the moment the discounted goods reach it, the platform paying the fee', () => {
+    expect(price(3, [offer])).toMatchObject({
+      subtotalPaisa: 150_000,
+      goodsPaisa: 140_000,
+      deliveryFeePaisa: 0,
+      deliverySubsidyPaisa: 5_000,
+      freeDeliveryBy: 'PLATFORM',
+      totalPaisa: 140_000,
+    });
+    expect(price(2, [])).toMatchObject({ goodsPaisa: 100_000, deliveryFeePaisa: 0 });
+  });
+
+  it('keeps the minimum order on the subtotal before the discount', () => {
+    expect(() =>
+      priceCart(
+        { ...vendor, min_order_value: 1000 },
+        cart,
+        [{ productId: 'x', quantity: 2 }],
+        undefined,
+        [],
+        [offer],
+      ),
+    ).not.toThrow();
+  });
+});
+
+describe('decimal cart math', () => {
+  it('takes 12.5% of Rs. 9.99 as 125 paisa (half-up), not 124', () => {
+    const tiny = new Map<string, PricingProduct>([['t', { id: 't', name: 'T', price_npr: 9.99 }]]);
+    const priced = priceCart(
+      { ...vendor, min_order_value: 0 },
+      tiny,
+      [{ productId: 't', quantity: 1 }],
+      undefined,
+      [],
+      [
+        {
+          offerId: 'o',
+          createdAt: new Date('2026-10-01T00:00:00Z'),
+          label: '12.5% OFF',
+          kind: 'PERCENTAGE',
+          value: 12.5,
+          maxDiscountNpr: null,
+          minCartNpr: 0,
+        },
+      ],
+    );
+    expect(priced.vendorOffer?.discountPaisa).toBe(125);
   });
 });

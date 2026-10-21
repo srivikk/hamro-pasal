@@ -49,6 +49,13 @@ export const orders = pgTable(
     state: orderStateEnum().notNull().default('PENDING_PAYMENT'),
     subtotal: npr().notNull(),
     delivery_fee: npr().notNull(),
+    /**
+     * 2026-10-21 (SPEC core 9): the delivery fee the platform pays instead of the customer, when
+     * its own free-delivery threshold applied (`delivery_fee` is then 0). Whoever delivers earns
+     * it at settlement, funded by PROMO_EXPENSE. 0 otherwise, also when the shop's own threshold
+     * applied (the shop forgoes its fee).
+     */
+    platform_delivery_subsidy_npr: npr().notNull().default(0),
     platform_commission_amount: npr().notNull(),
     /**
      * The vendor's own offer the order was priced with (SPEC core 7). The row is immutable (a
@@ -130,6 +137,12 @@ export const orders = pgTable(
       sql`${t.vendor_offer_discount_npr} >= 0
             AND (${t.vendor_offer_discount_npr} > 0) = (${t.vendor_offer_id} IS NOT NULL)
             AND ${t.vendor_offer_discount_npr} + ${t.platform_promo_discount_npr} <= ${t.subtotal}`,
+    ),
+    // A subsidy only ever replaces the whole fee: the customer pays none of it.
+    check(
+      'orders_delivery_subsidy_check',
+      sql`${t.platform_delivery_subsidy_npr} >= 0
+            AND (${t.platform_delivery_subsidy_npr} = 0 OR ${t.delivery_fee} = 0)`,
     ),
     // A discount never exceeds the goods, and the vendor never bears more than the discount.
     check(

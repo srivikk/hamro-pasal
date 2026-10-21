@@ -84,6 +84,8 @@ export type AdminAuditLogListResponseBody = z.infer<typeof adminAuditLogListResp
 // Logistics -------------------------------------------------------------------------------
 
 export const MAX_PLATFORM_DELIVERY_FEE_NPR = 10_000;
+/** 2026-10-21: the highest platform free-delivery threshold a Super Admin may set. */
+export const MAX_FREE_DELIVERY_THRESHOLD_NPR = 100_000;
 
 /**
  * `platform_settings` is one row keyed by a boolean; this is the id its audit entries carry as
@@ -104,6 +106,18 @@ export const logisticsSettingsWriteSchema = z.strictObject({
   platform_fleet_enabled: z.boolean(),
   /** What a customer pays for a platform fleet delivery. Shops on self delivery set their own. */
   platform_delivery_fee_npr: z.number().min(0).multipleOf(0.01).max(MAX_PLATFORM_DELIVERY_FEE_NPR),
+  /**
+   * 2026-10-21 (SPEC core 9): goods worth this much or more, after discounts, ship free for every
+   * shop, the platform paying the fee to whoever delivers. Null switches it off; absent leaves it
+   * as it is (an older dashboard never clears it).
+   */
+  free_delivery_above_npr: z
+    .number()
+    .positive()
+    .multipleOf(0.01)
+    .max(MAX_FREE_DELIVERY_THRESHOLD_NPR)
+    .nullable()
+    .optional(),
 });
 export type LogisticsSettingsWrite = z.infer<typeof logisticsSettingsWriteSchema>;
 
@@ -112,6 +126,8 @@ export const logisticsSettingsViewSchema = z.strictObject({
   self_delivery_enabled: z.boolean(),
   platform_fleet_enabled: z.boolean(),
   platform_delivery_fee_npr: z.number().min(0),
+  /** The platform's free-delivery threshold; null while switched off. */
+  free_delivery_above_npr: z.number().positive().nullable(),
   /** Shops whose `fulfillment_mode` is each one. Read only. */
   self_delivery_vendor_count: z.number().int().min(0),
   platform_fleet_vendor_count: z.number().int().min(0),

@@ -29,6 +29,7 @@ import {
   RedisOrderRoomBroadcaster,
 } from './order-state-fanout';
 import type { KafkaConsumerDefinition } from './types';
+import type { OrderInbox } from '../notifications/order-inbox';
 import { VENDOR_NOTICE_DEDUPE_PREFIX, vendorNoticeConsumer } from './vendor-notices';
 import {
   VENDOR_IVR_DEDUPE_PREFIX,
@@ -63,6 +64,8 @@ export interface ConsumerDeps {
   readonly pushSmsFallbackLog: ((line: string) => void) | null;
   /** Set when MOCK_SERVICES is on: logs "[MOCK PUSH] -> …" for each order push. */
   readonly pushMockLog?: ((line: string) => void) | null;
+  /** 2026-10-21: keeps each order alert in the notification centre. Absent: not kept. */
+  readonly orderInbox?: OrderInbox;
   /** Where compliance, account, ad and campaign notices leave the worker (SMS + push). */
   readonly notifications: NotificationAdapter;
   /** Phone numbers of the shops a campaign change names by id. */
@@ -95,6 +98,7 @@ export function buildConsumers(deps: ConsumerDeps): readonly KafkaConsumerDefini
       deduplicator: new RedisEventDeduplicator(deps.redis, ORDER_PUSH_DEDUPE_PREFIX),
       smsFallbackLog: deps.pushSmsFallbackLog,
       mockPushLog: deps.pushMockLog ?? null,
+      inbox: deps.orderInbox ?? null,
     }),
     // 1 attempt + 3 retries, then a dead_letter_events row + notifications.dlq, and the partition
     // moves on (Phases 14 and 15).

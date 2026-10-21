@@ -15,7 +15,10 @@ import {
   readPath,
   UNREAD_COUNT_PATH,
 } from './inbox-api';
+import { notificationRowStyle } from './inbox-style';
 import { NotificationBell } from './NotificationBell';
+import { appBadgeCount, useAppBadge, useInboxRefreshOnPush } from './useInboxSync';
+import { mockNotifications } from '../../test/fake-notifications';
 
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn() },
@@ -202,5 +205,94 @@ describe('tapping an admin push (step 7.5)', () => {
     ).toBe('/notifications');
     expect(adminMessageRouteOfTap(tap({ type: 'order.state_changed' }))).toBeNull();
     expect(adminMessageRouteOfTap(tap(undefined))).toBeNull();
+  });
+});
+
+describe('read and unread states (2026-10-21)', () => {
+  it('shows unread on a dark background in bold, read on a light one in regular weight', async () => {
+    server.use(
+      http.get(apiUrl(NOTIFICATIONS_PATH), () =>
+        HttpResponse.json({
+          notifications: [message(2), message(1, { read_at: '2026-10-16T09:00:00.000Z' })],
+          next_cursor: null,
+        }),
+      ),
+      http.get(apiUrl(UNREAD_COUNT_PATH), () => HttpResponse.json({ unread: 1 })),
+    );
+    renderWithProviders(<NotificationsScreen />);
+
+    const unread = await screen.findByTestId(`notification-${ID(2)}`);
+    const read = screen.getByTestId(`notification-${ID(1)}`);
+    expect(String(unread.props.className)).toContain('bg-himalaya-dark');
+    expect(String(screen.getByTestId(`notification-title-${ID(2)}`).props.className)).toContain(
+      'font-bold text-white',
+    );
+    expect(String(read.props.className)).toContain('bg-surface ');
+    expect(String(read.props.className)).not.toContain('bg-himalaya-dark');
+    expect(String(screen.getByTestId(`notification-title-${ID(1)}`).props.className)).toContain(
+      'font-normal',
+    );
+    expect(await screen.findByTestId('notifications-unread-badge')).toHaveTextContent('1');
+    expect(screen.getByText('1 unread')).toBeOnTheScreen();
+  });
+
+  it('has no badge when everything is read', async () => {
+    server.use(
+      http.get(apiUrl(NOTIFICATIONS_PATH), () =>
+        HttpResponse.json({
+          notifications: [message(1, { read_at: '2026-10-16T09:00:00.000Z' })],
+          next_cursor: null,
+        }),
+      ),
+    );
+    renderWithProviders(<NotificationsScreen />);
+
+    await screen.findByTestId(`notification-${ID(1)}`);
+    expect(screen.queryByTestId('notifications-unread-badge')).toBeNull();
+  });
+
+  it('keeps the two styles distinct in one place', () => {
+    const unread = notificationRowStyle(true);
+    const read = notificationRowStyle(false);
+    expect(unread.row).toBe('bg-himalaya-dark');
+    expect(unread.title).toContain('font-bold');
+    expect(read.row).toContain('bg-surface');
+    expect(read.title).toContain('font-normal');
+  });
+});
+
+describe('the inbox follows the pushes (2026-10-21)', () => {
+  function Harness() {
+    useAppBadge();
+    useInboxRefreshOnPush();
+    return null;
+  }
+
+  it('sets the app icon badge to the unread count, and 0 for a guest', async () => {
+    expect(appBadgeCount(true, 4)).toBe(4);
+    expect(appBadgeCount(false, 4)).toBe(0);
+    expect(appBadgeCount(true, undefined)).toBe(0);
+
+    server.use(http.get(apiUrl(UNREAD_COUNT_PATH), () => HttpResponse.json({ unread: 3 })));
+    renderWithProviders(<Harness />);
+    await waitFor(() => {
+      expect(mockNotifications.badgeCounts.at(-1)).toBe(3);
+    });
+  });
+
+  it('refetches the unread count the moment a push arrives', async () => {
+    let unread = 0;
+    server.use(http.get(apiUrl(UNREAD_COUNT_PATH), () => HttpResponse.json({ unread })));
+    renderWithProviders(<Harness />);
+    await waitFor(() => {
+      expect(mockNotifications.badgeCounts.at(-1)).toBe(0);
+    });
+
+    unread = 2;
+    for (const listener of mockNotifications.receivedListeners) listener({});
+
+    await waitFor(() => {
+      expect(mockNotifications.badgeCounts.at(-1)).toBe(2);
+    });
   });
 });

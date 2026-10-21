@@ -204,6 +204,8 @@ export const ledgerLineTypes = [
   'DISPUTE_HOLD',
   'DISPUTE_RELEASE',
   'DISPUTE_REFUND',
+  /** 2026-10-21: the delivery fee the platform pays under its own free-delivery threshold. */
+  'DELIVERY_SUBSIDY',
 ] as const;
 export const ledgerLineTypeSchema = z.enum(ledgerLineTypes);
 export type LedgerLineType = z.infer<typeof ledgerLineTypeSchema>;

@@ -218,6 +218,7 @@ export function logisticsSettingsView(logistics: LogisticsSettings): LogisticsSe
     self_delivery_enabled: logistics.settings.self_delivery_enabled,
     platform_fleet_enabled: logistics.settings.platform_fleet_enabled,
     platform_delivery_fee_npr: logistics.settings.platform_delivery_fee_npr,
+    free_delivery_above_npr: logistics.settings.free_delivery_above_npr,
     self_delivery_vendor_count: logistics.selfDeliveryVendorCount,
     platform_fleet_vendor_count: logistics.platformFleetVendorCount,
     updated_at: logistics.settings.updated_at.toISOString(),

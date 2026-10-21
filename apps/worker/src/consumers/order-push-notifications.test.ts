@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type { KafkaJS } from '@hamro-pasal/kafka';
 import type { DomainEvent, OrderState, OrderStateChangedEvent } from '@hamro-pasal/shared-types';
 
+import { orderInboxDedupeKey, orderInboxLink, type OrderInbox } from '../notifications/order-inbox';
+import type { OrderPush } from '../notifications/order-push';
 import type {
   DeviceTokenRemover,
   PushRecipient,
@@ -477,5 +479,95 @@ describe('orderPushNotificationConsumer', () => {
     expect(expo.calls).toHaveLength(1); // the push was attempted, and its failure swallowed
     expect(errors).toHaveBeenCalledTimes(1);
     errors.mockRestore();
+  });
+});
+
+describe('order alerts in the notification centre (2026-10-21)', () => {
+  class MemoryInbox implements OrderInbox {
+    readonly kept: {
+      audience: string;
+      userId: string;
+      title: string;
+      key: string;
+      link: string;
+    }[] = [];
+    failing = false;
+    record(event: OrderStateChangedEvent, push: OrderPush, userId: string): Promise<void> {
+      if (this.failing) return Promise.reject(new Error('inbox down'));
+      this.kept.push({
+        audience: push.audience,
+        userId,
+        title: push.title,
+        key: orderInboxDedupeKey(event, push),
+        link: orderInboxLink(event, push),
+      });
+      return Promise.resolve();
+    }
+  }
+
+  function withInbox() {
+    const t = setup();
+    const inbox = new MemoryInbox();
+    const consumer = orderPushNotificationConsumer({
+      recipients: t.recipients,
+      tokens: t.recipients,
+      push: new ExpoPushGateway({ fetch: t.expo.fetch }),
+      deduplicator: new MemoryDeduplicator(),
+      smsFallbackLog: null,
+      inbox,
+      onOutcome: (_event, outcome) => t.outcomes.push(outcome),
+    });
+    return { ...t, inbox, consumer };
+  }
+
+  it('keeps each alert for the account it was pushed to, with its link, before the push', async () => {
+    const t = withInbox();
+    const event = stateChanged('CANCELED');
+    t.register(event, { vendor: ['ExponentPushToken[shop]'] });
+
+    await t.consumer.handle(kafkaMessage(event));
+
+    expect(t.inbox.kept).toEqual([
+      {
+        audience: 'CUSTOMER',
+        userId: event.payload.customer_id,
+        title: 'Order cancelled',
+        key: `order:${event.event_id}:CUSTOMER`,
+        link: `/track-order?id=${event.payload.order_id}`,
+      },
+      {
+        audience: 'VENDOR',
+        userId: t.recipients.vendors.get(event.payload.vendor_id)?.userId,
+        title: 'Order cancelled',
+        key: `order:${event.event_id}:VENDOR`,
+        link: '/dashboard',
+      },
+    ]);
+    expect(t.expo.calls).toHaveLength(1);
+  });
+
+  it('keeps the alert even when no device is registered (no push is sent)', async () => {
+    const t = withInbox();
+    const event = stateChanged('PLACED', { from_state: 'PENDING_PAYMENT' });
+    t.register(event);
+
+    await t.consumer.handle(kafkaMessage(event));
+
+    expect(t.inbox.kept.map((kept) => kept.title)).toEqual(['New order']);
+    expect(t.expo.calls).toHaveLength(0);
+  });
+
+  it('still pushes when the inbox cannot be written, and reports it', async () => {
+    const t = withInbox();
+    t.inbox.failing = true;
+    const event = stateChanged('PLACED', { from_state: 'PENDING_PAYMENT' });
+    t.register(event, { vendor: ['ExponentPushToken[shop]'] });
+
+    await t.consumer.handle(kafkaMessage(event));
+
+    expect(t.outcomes).toEqual([
+      { notification: 'inbox.failed', audience: 'VENDOR', error: 'inbox down' },
+      { notification: 'push.sent', sent: 1, rejected: 0, removed_tokens: 0 },
+    ]);
   });
 });

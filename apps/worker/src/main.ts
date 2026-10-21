@@ -29,6 +29,7 @@ import { DatabaseNoticeInbox, InboxNotificationAdapter } from './notifications/n
 import { notificationAdapterFromEnv } from './notifications/production-notification-adapter';
 import { DatabaseOrderStateReader } from './notifications/order-state-reader';
 import { DatabaseVendorContacts } from './notifications/vendor-notices';
+import { DatabaseOrderInbox } from './notifications/order-inbox';
 import { DatabasePushRecipients } from './notifications/push-recipients';
 import { mockPushLogFromEnv, pushGatewayFromEnv } from './push/mock-push';
 import { OutboxRelay } from './outbox/outbox-relay';
@@ -188,6 +189,7 @@ async function main(): Promise<void> {
     push,
     pushMockLog: mockPushLogFromEnv(env),
     pushRecipients,
+    orderInbox: new DatabaseOrderInbox(db),
     // SMS_PROVIDER=MOCK also logs "[sms:mock] to +977…: <text>" beside each push attempt.
     pushSmsFallbackLog: smsFallbackLogFromEnv(env),
     // Compliance, account, ad and campaign notices: an SMS through SMS_PROVIDER, then a push to

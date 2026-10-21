@@ -954,7 +954,8 @@
     "disputeHold": "डेलिभर भएका {{count}} अर्डरको रु. {{amount}} डेलिभरीको ७ दिनसम्म रोकिन्छ, त्यसपछि ब्यालेन्समा थपिन्छ।"
   },
   "notifications": {
-    "orderChannel": "अर्डर अपडेट"
+    "orderChannel": "अर्डर अपडेट",
+    "alarmChannel": "नयाँ अर्डर (अलार्म)"
   },
   "addressBook": {
     "title": "तपाईंका ठेगानाहरू",
@@ -1221,7 +1222,10 @@
     "failed": "सूचनाहरू लोड गर्न सकिएन।",
     "retry": "फेरि प्रयास गर्नुहोस्",
     "open": "सूचनाहरू",
-    "openUnread": "सूचनाहरू, {{count}} नपढिएका"
+    "openUnread": "सूचनाहरू, {{count}} नपढिएका",
+    "unreadHint": "नपढिएको",
+    "unreadCount_one": "{{count}} नपढिएको",
+    "unreadCount_other": "{{count}} नपढिएका"
   },
   "sellerSignup": {
     "title": "आफ्नो पसल खोल्नुहोस्",

@@ -954,7 +954,8 @@
     "disputeHold": "Rs. {{amount}} from {{count}} delivered order(s) is held for 7 days after delivery, then added to your balance."
   },
   "notifications": {
-    "orderChannel": "Order updates"
+    "orderChannel": "Order updates",
+    "alarmChannel": "New orders (alarm)"
   },
   "addressBook": {
     "title": "Your addresses",
@@ -1221,7 +1222,10 @@
     "failed": "Couldn't load your notifications.",
     "retry": "Try again",
     "open": "Notifications",
-    "openUnread": "Notifications, {{count}} unread"
+    "openUnread": "Notifications, {{count}} unread",
+    "unreadHint": "Unread",
+    "unreadCount_one": "{{count}} unread",
+    "unreadCount_other": "{{count}} unread"
   },
   "sellerSignup": {
     "title": "Open your shop",

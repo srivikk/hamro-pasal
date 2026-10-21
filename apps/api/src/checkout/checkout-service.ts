@@ -31,7 +31,12 @@ import {
 } from '@hamro-pasal/shared-types';
 import { and, asc, avg, count, eq, gt, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 
-import { deliveryFeePaisa, haversineKm, type DeliveryTerms } from './delivery-fee';
+import {
+  deliveryCharge,
+  freeDeliveryThresholdNpr,
+  haversineKm,
+  type DeliveryTerms,
+} from './delivery-fee';
 import { isCheckViolation, isUniqueViolation } from '../infra/pg-errors';
 import type { SettlementService } from '../ledger/settlement-service';
 import type { VendorGatewayAccountService } from '../payments/gateway-accounts';
@@ -289,6 +294,7 @@ export class CheckoutService {
             reservation_id: reservation.id,
             subtotal: toNpr(priced.subtotalPaisa),
             delivery_fee: toNpr(priced.deliveryFeePaisa),
+            platform_delivery_subsidy_npr: toNpr(priced.deliverySubsidyPaisa),
             platform_commission_amount: toNpr(priced.commissionPaisa),
             ...(vendorOffer === null
               ? {}
@@ -429,13 +435,15 @@ export class CheckoutService {
    * "Delivery Unavailable" beside the cart. Checkout refuses such an order (422).
    */
   async quote(customerId: string, request: CartQuoteRequest): Promise<CartQuote> {
-    const { vendor, priced, distanceKm, deliveryAvailable } = await this.price(request, true);
+    const { vendor, priced, distanceKm, deliveryAvailable, terms } = await this.price(
+      request,
+      true,
+    );
     const context = await this.routingContext(customerId, vendor, priced, null);
     return {
       priced,
       distanceKm,
-      freeDeliveryThresholdNpr:
-        vendor.fulfillment_mode === 'SELF_DELIVERY' ? vendor.free_delivery_above_npr : null,
+      freeDeliveryThresholdNpr: freeDeliveryThresholdNpr(terms),
       deliveryAvailable,
       paymentOptions: paymentMethods.map((method) => {
         if (!deliveryAvailable) {
@@ -548,7 +556,10 @@ export class CheckoutService {
     assertInStock(byId, items);
 
     const [settings] = await this.db
-      .select({ platformFeeNpr: platformSettings.platform_delivery_fee_npr })
+      .select({
+        platformFeeNpr: platformSettings.platform_delivery_fee_npr,
+        platformFreeAboveNpr: platformSettings.free_delivery_above_npr,
+      })
       .from(platformSettings);
     if (settings === undefined) throw new Error('platform_settings row is missing');
     const distanceKm = haversineKm(vendor.location, { x: address.exact_lng, y: address.exact_lat });
@@ -559,16 +570,17 @@ export class CheckoutService {
       perKmFeeNpr: vendor.delivery_fee_per_km_npr,
       freeAboveNpr: vendor.free_delivery_above_npr,
       platformFeeNpr: settings.platformFeeNpr,
+      platformFreeAboveNpr: settings.platformFreeAboveNpr,
     };
     const priced = priceCart(
       vendor,
       byId,
       items,
-      (subtotalPaisa) => deliveryFeePaisa(terms, subtotalPaisa, distanceKm),
+      (goodsPaisa) => deliveryCharge(terms, goodsPaisa, distanceKm),
       await this.runningCampaigns(vendor.id),
       await this.runningVendorOffers(vendor.id),
     );
-    return { vendor, items, priced, distanceKm, deliveryAvailable };
+    return { vendor, items, priced, distanceKm, deliveryAvailable, terms };
   }
 
   /**

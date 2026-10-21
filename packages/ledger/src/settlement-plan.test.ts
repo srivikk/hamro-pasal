@@ -331,3 +331,67 @@ describe('settlement with a vendor offer stacked on a campaign (SPEC verificatio
     );
   });
 });
+
+describe('settlement with a platform delivery subsidy (SPEC core 9, 2026-10-21)', () => {
+  const subsidised = (overrides: Partial<Order> = {}) =>
+    order({ delivery_fee: 0, platform_delivery_subsidy_npr: 50, ...overrides });
+
+  it('prepaid self-delivery: the shop is paid its fee by the platform, outside the dispute hold', () => {
+    const postings = planSettlement(subsidised());
+    expect(describePostings(postings)).toEqual([
+      'SYSTEM_ESCROW: -1000',
+      'VENDOR_DISPUTE_HOLD: 900',
+      'PLATFORM_REVENUE: 100',
+      'VENDOR_WALLET: 50',
+      'PROMO_EXPENSE: -50',
+    ]);
+    expect(postings.slice(-2).map((p) => p.lineType)).toEqual([
+      'DELIVERY_SUBSIDY',
+      'DELIVERY_SUBSIDY',
+    ]);
+    expect(sum(postings)).toBe(0);
+  });
+
+  it('prepaid fleet: the rider earns the fee the customer did not pay', () => {
+    const postings = planSettlement(
+      subsidised({ fulfillment_locked: 'PLATFORM_FLEET', driver_user_id: driverId }),
+    );
+    expect(describePostings(postings)).toEqual([
+      'SYSTEM_ESCROW: -1000',
+      'VENDOR_DISPUTE_HOLD: 900',
+      'PLATFORM_REVENUE: 100',
+      'DRIVER_WALLET: 50',
+      'PROMO_EXPENSE: -50',
+    ]);
+  });
+
+  it('COD fleet: the rider hands over the goods money and still earns the fee', () => {
+    const postings = planSettlement(
+      subsidised({
+        fulfillment_locked: 'PLATFORM_FLEET',
+        driver_user_id: driverId,
+        payment_method: 'COD',
+      }),
+    );
+    expect(describePostings(postings)).toEqual([
+      'DRIVER_WALLET: -1000',
+      'VENDOR_WALLET: 900',
+      'PLATFORM_REVENUE: 100',
+      'DRIVER_WALLET: 50',
+      'PROMO_EXPENSE: -50',
+    ]);
+    expect(sum(postings)).toBe(0);
+  });
+
+  it('Model C self-delivery with nothing else to settle still pays the shop its fee', () => {
+    const postings = planSettlement(subsidised({ settlement_model_locked: 'DIRECT_PREPAID' }));
+    expect(describePostings(postings)).toEqual(['VENDOR_WALLET: 50', 'PROMO_EXPENSE: -50']);
+  });
+
+  it('refuses a subsidy beside a fee the customer paid, and a negative one', () => {
+    expect(() => planSettlement(subsidised({ delivery_fee: 50 }))).toThrow(SettlementPlanError);
+    expect(() => planSettlement(subsidised({ platform_delivery_subsidy_npr: -1 }))).toThrow(
+      SettlementPlanError,
+    );
+  });
+});

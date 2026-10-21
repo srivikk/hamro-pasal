@@ -1100,6 +1100,73 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.44 Zero-error cart math, platform free-delivery threshold, ringing order alerts, order alerts in the inbox (2026-10-21)
+
+Branch `epic/master-completion`. `packages/shared-types`, `packages/db` (migration **0048**),
+`packages/ledger`, `apps/api`, `apps/worker`, `apps/admin`, `apps/mobile`. New direct dependency:
+**decimal.js 10.6.0** (`apps/api`; it was already in the tree transitively). **SPEC.md amended**
+(core 9 three bullets; Seller/customer app addition 3; implicit requirement 1; verification 36–37).
+
+### Decisions (user, 2026-10-21, asked before building)
+
+| Question                                         | Decision                                                         |
+| ------------------------------------------------ | ---------------------------------------------------------------- |
+| What the "Rs. 100" free-delivery example becomes | A platform threshold (Super Admin setting) beside the shop's own |
+| decimal.js in the cart engine                    | Yes, for every multiplication, division and rounding             |
+
+### Asked vs built
+
+| Asked                                         | Built                                                                                                                                                               | Why                                                                                                                                 |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Strict decimal cart math                      | `checkout/decimal-money.ts` (decimal.js, ROUND_HALF_UP); `pricing.ts` and `delivery-fee.ts` use it; amounts stay integer paisa between steps                        | Integer addition is exact; every product, quotient and rounding is decimal                                                          |
+| Delivery fee zeroed above Rs. 100             | `platform_settings.free_delivery_above_npr` (off by default), set in the dashboard's Logistics panel                                                                | User's choice; the amount is the admin's                                                                                            |
+| Discounts before tax and delivery thresholds  | Threshold judged on subtotal − vendor offer − campaign; VAT was already on discounted amounts                                                                       | Minimum order value stays before discounts (SPEC core 9)                                                                            |
+| (not asked) who pays for the free delivery    | The platform: `orders.platform_delivery_subsidy_npr`, `DELIVERY_SUBSIDY` lines rider / shop +W, PROMO_EXPENSE −W at settlement                                      | Zeroing the fee would leave the rider unpaid and charge self-delivering shops for a discount they never set (SPEC core 7 Principle) |
+| FCM or Expo push, backend dispatcher          | Existing Expo dispatcher (FCM underneath on Android) kept; a new order now rings: `order-alarm` channel, MAX importance, bundled `vendor-alarm.wav` as an alarm     | The dispatcher already existed (Phase 20)                                                                                           |
+| Rings customer phones                         | Customer alerts keep sounding on the `orders` channel (HIGH, default sound)                                                                                         | An alarm for "order accepted" would be hostile; say if wanted                                                                       |
+| Inbox tray in both apps                       | Existing `app/notifications.tsx` (both builds) restyled; order alerts now stored there (`DatabaseOrderInbox`)                                                       | The screen existed (step 7.5); order alerts were never kept                                                                         |
+| Read light / Unread dark + bold + badge count | `inbox-style.ts`: unread `bg-himalaya-dark` + bold white + marigold dot; read plain surface; unread badge heading the list; app icon badge follows the unread count | Works in dark mode too                                                                                                              |
+
+### Changes
+
+- **API:** `deliveryCharge(terms, goodsPaisa, km)` returns `{ feePaisa, subsidyPaisa, freeBy }`;
+  `freeDeliveryThresholdNpr` (lowest that applies) feeds the quote's
+  `free_delivery_threshold_npr` / `free_delivery_remaining_npr` (now on the discounted goods) and
+  the shop page's `free_delivery_above_npr`. `PricedCart` gains `goodsPaisa`,
+  `deliverySubsidyPaisa`, `freeDeliveryBy`. `PUT /api/admin/settings/logistics` takes optional
+  `free_delivery_above_npr` (absent = unchanged, null = off, ≤ 100 000), audited.
+- **DB (0048):** `ledger_line_type` + `DELIVERY_SUBSIDY`; `orders.platform_delivery_subsidy_npr`
+  (CHECK ≥ 0 and only with `delivery_fee = 0`); `platform_settings.free_delivery_above_npr`
+  (CHECK null or > 0).
+- **Ledger:** `planSettlement` appends the subsidy lines in every model and payment method.
+- **Worker:** `notifications/order-inbox.ts` (`order:<event_id>:<audience>` dedupe, deep link
+  `/track-order?id=` or `/dashboard`), wired into the order-push consumer before the push;
+  a failure is reported as `inbox.failed` and the push still goes.
+- **Mobile:** `ORDER_ALARM_CHANNEL_ID`, `ORDER_ALARM_SOUND`, `orderPushRings` (shared-types);
+  app.config bundles the sound (**needs a new dev / store build**); `useAppBadge`,
+  `useInboxRefreshOnPush`.
+- **Admin:** "Free delivery above (NPR)" in Logistics with a note on who pays.
+
+### Known gaps
+
+- iOS: a data-only push does not wake a force-quit app, so a new order there arrives silently
+  until the app is opened (unchanged from Phase 20). A visible iOS push with the alarm sound needs
+  the token's platform at send time.
+- The alarm channel only exists after the new build is installed; on an old build a new order
+  falls back to the `orders` channel's default sound.
+- No platform-wide report of what the subsidy costs yet (it is in PROMO_EXPENSE, line type
+  DELIVERY_SUBSIDY).
+
+### Tests
+
+Run one Jest process at a time, each with `--testTimeout=10000` under a watchdog that kills the
+process tree (see the 8Z.43 incident). The full worker and db integration suites were not run.
+
+- Unit: shared-types 398 (the one failure, a logistics view fixture without the new field, fixed and rerun), ledger 66, db 7, api 206, worker 211, admin 343; mobile: inbox, notifications, i18n, checkout and cart folders 173.
+- New: `decimal-money.test.ts`, delivery-fee and pricing cases, ledger subsidy cases, worker inbox cases (consumer unit + `test/order-inbox.int.test.ts` on PostgreSQL), mobile alarm channel / ringing / read-unread / badge cases.
+- API integration, file by file: cart-quote-api 11, admin-governance-api 29, ledger-settlement 14, cart-api 20, discount-stacking 14, discounts-and-invoicing 11, e2e-lifecycle 8, fiscal-invoice 22, orders-api 12, vendor-finance-api 15, vendor-pricing-api 9, vendor-settings-api 24, vendor-wallet-api 21, billing-and-delivery-rules 14. All passed and exited on their own.
+- Typecheck clean in every package touched; lint clean in shared-types, ledger, db, api, worker, admin, mobile.
+
 ## 8Z.43 Wallets & settlements: customer wallet, Model C activated, Subscription-only self-signup, cycle dues, Seller App Payments (2026-10-21)
 
 Branch `epic/master-completion`. `packages/shared-types`, `packages/db` (migration **0047**),

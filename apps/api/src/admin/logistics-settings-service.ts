@@ -23,7 +23,8 @@ export interface LogisticsSettings {
 }
 
 /**
- * The platform's delivery switches and its fleet delivery charge (SPEC Super Admin flow step 4).
+ * The platform's delivery switches, its fleet delivery charge (SPEC Super Admin flow step 4) and
+ * its free-delivery threshold (2026-10-21, SPEC core 9).
  *
  * Both modes may be off: the global Emergency Stop. Nothing is written per vendor for a
  * switched-off mode; the feed, the menu and checkout read these three columns (CatalogService
@@ -54,7 +55,9 @@ export class LogisticsSettingsService {
       if (
         before.self_delivery_enabled === input.self_delivery_enabled &&
         before.platform_fleet_enabled === input.platform_fleet_enabled &&
-        before.platform_delivery_fee_npr === input.platform_delivery_fee_npr
+        before.platform_delivery_fee_npr === input.platform_delivery_fee_npr &&
+        (input.free_delivery_above_npr === undefined ||
+          before.free_delivery_above_npr === input.free_delivery_above_npr)
       ) {
         return withCounts(tx, before);
       }
@@ -65,6 +68,9 @@ export class LogisticsSettingsService {
           self_delivery_enabled: input.self_delivery_enabled,
           platform_fleet_enabled: input.platform_fleet_enabled,
           platform_delivery_fee_npr: input.platform_delivery_fee_npr,
+          ...(input.free_delivery_above_npr === undefined
+            ? {}
+            : { free_delivery_above_npr: input.free_delivery_above_npr }),
           updated_at: sql`now()`,
         })
         .where(eq(platformSettings.id, true))
@@ -115,5 +121,6 @@ function logisticsState(settings: PlatformSettingsRow) {
     self_delivery_enabled: settings.self_delivery_enabled,
     platform_fleet_enabled: settings.platform_fleet_enabled,
     platform_delivery_fee_npr: settings.platform_delivery_fee_npr,
+    free_delivery_above_npr: settings.free_delivery_above_npr,
   };
 }

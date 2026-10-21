@@ -337,6 +337,13 @@
       "when": 1792556221103,
       "tag": "0047_wallets_model_c_cycle_dues",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792602574463,
+      "tag": "0048_free_delivery_subsidy",
+      "breakpoints": true
     }
   ]
 }

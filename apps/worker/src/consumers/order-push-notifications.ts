@@ -5,6 +5,7 @@ import {
 } from '@hamro-pasal/shared-types';
 import { mockSmsLogLine } from '@hamro-pasal/sms';
 
+import type { OrderInbox } from '../notifications/order-inbox';
 import {
   expoMessagePayload,
   expoMessages,
@@ -53,7 +54,13 @@ export type OrderPushOutcome =
       /** Tokens deleted because Expo reported DeviceNotRegistered. */
       readonly removed_tokens: number;
     }
-  | { readonly notification: 'push.failed'; readonly error: string };
+  | { readonly notification: 'push.failed'; readonly error: string }
+  /** 2026-10-21: the alert could not be kept in the notification centre; the push still went. */
+  | {
+      readonly notification: 'inbox.failed';
+      readonly audience: OrderPush['audience'];
+      readonly error: string;
+    };
 
 export interface OrderPushNotificationDeps {
   readonly recipients: PushRecipientReader;
@@ -65,6 +72,11 @@ export interface OrderPushNotificationDeps {
    * next to the push attempt. null for a real provider: order pushes never send a billed SMS.
    */
   readonly smsFallbackLog: ((line: string) => void) | null;
+  /**
+   * 2026-10-21: keeps every alert in the recipient's notification centre, before its push is
+   * sent and whether or not a device is registered. Absent: nothing is kept (tests of the push).
+   */
+  readonly inbox?: OrderInbox | null;
   /**
    * MOCK_SERVICES: prints `[MOCK PUSH] -> Vendor/User <id>: <payload>` for every push, whether or
    * not the recipient has a device registered. Absent or null otherwise.
@@ -97,7 +109,7 @@ export function orderPushNotificationConsumer(
         aggregate_id: event.aggregate_id,
         to_state: event.payload.to_state,
       });
-      if (outcome.notification === 'push.failed') console.error(line);
+      if (outcome.notification !== 'push.sent') console.error(line);
       else console.info(line);
     });
 
@@ -115,6 +127,17 @@ export function orderPushNotificationConsumer(
     for (const push of pushes) {
       const recipient = await recipientOf(event, push);
       if (recipient === null) continue;
+      if (deps.inbox != null) {
+        try {
+          await deps.inbox.record(event, push, recipient.userId);
+        } catch (error: unknown) {
+          onOutcome(event, {
+            notification: 'inbox.failed',
+            audience: push.audience,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       deps.smsFallbackLog?.(
         mockSmsLogLine({ to: recipient.phone, text: orderPushFallbackSms(push) }),
       );

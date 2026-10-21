@@ -19,6 +19,8 @@ import {
 } from '@hamro-pasal/shared-types';
 import { and, asc, eq, gt, inArray, lte, sql, type SQL } from 'drizzle-orm';
 
+import { freeDeliveryThresholdNpr } from '../checkout/delivery-fee';
+
 /**
  * Upper bound per feed section. A NATION_WIDE catalogue can grow without limit, and the mobile
  * feed has no pagination yet, so each section returns at most this many vendors, nearest first.
@@ -101,7 +103,8 @@ export class CatalogService {
       .where(eq(vendors.status, 'LIVE'))
       .orderBy(sql`distance_m`, asc(vendors.id));
 
-    const all = rows.map(toCatalogVendor);
+    const platformFreeAbove = await platformFreeDeliveryAbove(this.db);
+    const all = rows.map((row) => toCatalogVendor(row, platformFreeAbove));
     const advertisers = await this.feedAdvertisers();
     return {
       serviceable: withSponsoredFirst(
@@ -143,7 +146,7 @@ export class CatalogService {
       .orderBy(asc(products.name));
 
     return {
-      vendor: toCatalogVendor(row),
+      vendor: toCatalogVendor(row, await platformFreeDeliveryAbove(this.db)),
       products: catalogue.map((p) => ({
         id: p.id,
         name: p.name,
@@ -278,22 +281,34 @@ export async function enabledModes(db: Executor): Promise<VendorFulfillmentMode[
   ];
 }
 
-function toCatalogVendor(row: {
-  id: string;
-  business_name: string;
-  delivery_scope: CatalogVendor['deliveryScope'];
-  radius_km: number;
-  municipality_palika_string: string;
-  min_order_value: number;
-  base_delivery_fee_npr: number;
-  free_delivery_above_npr: number | null;
-  fulfillment_mode: VendorFulfillmentMode;
-  location: GeoPoint;
-  distance_m: number;
-  serviceable: boolean;
-  delivery_available: boolean;
-  closed_reason: ShopClosedReason | null;
-}): CatalogVendor {
+/** The platform's free-delivery threshold (2026-10-21), in NPR; null while it is switched off. */
+export async function platformFreeDeliveryAbove(db: Executor): Promise<number | null> {
+  const [settings] = await db
+    .select({ freeAbove: platformSettings.free_delivery_above_npr })
+    .from(platformSettings);
+  if (settings === undefined) throw new Error('platform_settings row is missing');
+  return settings.freeAbove;
+}
+
+function toCatalogVendor(
+  row: {
+    id: string;
+    business_name: string;
+    delivery_scope: CatalogVendor['deliveryScope'];
+    radius_km: number;
+    municipality_palika_string: string;
+    min_order_value: number;
+    base_delivery_fee_npr: number;
+    free_delivery_above_npr: number | null;
+    fulfillment_mode: VendorFulfillmentMode;
+    location: GeoPoint;
+    distance_m: number;
+    serviceable: boolean;
+    delivery_available: boolean;
+    closed_reason: ShopClosedReason | null;
+  },
+  platformFreeAboveNpr: number | null,
+): CatalogVendor {
   return {
     id: row.id,
     businessName: row.business_name,
@@ -302,9 +317,13 @@ function toCatalogVendor(row: {
     municipalityPalika: row.municipality_palika_string,
     minOrderValue: row.min_order_value,
     baseDeliveryFee: row.base_delivery_fee_npr,
-    // The platform's charge has no threshold: a fleet shop's stored one (always null) is not shown.
-    freeDeliveryAboveNpr:
-      row.fulfillment_mode === 'SELF_DELIVERY' ? row.free_delivery_above_npr : null,
+    // The lowest threshold that applies: the shop's own (self delivery only) or the platform's
+    // (every shop, 2026-10-21), judged on the goods after discounts like the charge itself.
+    freeDeliveryAboveNpr: freeDeliveryThresholdNpr({
+      fulfillmentMode: row.fulfillment_mode,
+      freeAboveNpr: row.free_delivery_above_npr,
+      platformFreeAboveNpr,
+    }),
     fulfillmentMode: row.fulfillment_mode,
     location: row.location,
     distanceM: row.distance_m,

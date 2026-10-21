@@ -1,6 +1,9 @@
 import {
+  ORDER_ALARM_CHANNEL_ID,
+  ORDER_ALARM_SOUND,
   ORDER_PUSH_CHANNEL_ID,
   orderPushDataSchema,
+  orderPushRings,
   type OrderPushData,
 } from '@hamro-pasal/shared-types';
 import * as Notifications from 'expo-notifications';
@@ -44,6 +47,18 @@ export function orderPushFromTaskPayload(payload: unknown): OrderPushData | null
 }
 
 /**
+ * How the notification sounds (2026-10-21): a new order for the shop rings with the bundled alarm
+ * at the highest priority; every other alert plays the default sound once.
+ */
+export function alertOf(
+  data: Pick<OrderPushData, 'audience' | 'state'>,
+): Pick<Notifications.NotificationContentInput, 'sound' | 'priority'> {
+  return orderPushRings(data)
+    ? { sound: ORDER_ALARM_SOUND, priority: Notifications.AndroidNotificationPriority.MAX }
+    : { sound: 'default', priority: Notifications.AndroidNotificationPriority.HIGH };
+}
+
+/**
  * Posts the visible notification of a data-only push. The identifier is the event's id, so a
  * push delivered twice replaces its own notification instead of stacking a second one. The copy
  * is marked `data_only: false`: it is a finished notification, never to be posted again.
@@ -54,10 +69,13 @@ export async function presentOrderPush(data: OrderPushData): Promise<void> {
     content: {
       title: data.title,
       body: data.body,
-      sound: 'default',
+      ...alertOf(data),
       data: { ...data, data_only: false },
     },
-    trigger: Platform.OS === 'android' ? { channelId: ORDER_PUSH_CHANNEL_ID } : null,
+    trigger:
+      Platform.OS === 'android'
+        ? { channelId: orderPushRings(data) ? ORDER_ALARM_CHANNEL_ID : ORDER_PUSH_CHANNEL_ID }
+        : null,
   });
 }
 

@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import { orders, platformSettings, vendors, type Database } from '@hamro-pasal/db';
-import { cartQuoteResponseSchema, checkoutResponseSchema } from '@hamro-pasal/shared-types';
+import {
+  cartQuoteResponseSchema,
+  checkoutResponseSchema,
+  vendorMenuSchema,
+} from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
 import request from 'supertest';
 
@@ -33,6 +37,7 @@ describe('POST /api/cart/quote', () => {
       self_delivery_enabled: true,
       platform_fleet_enabled: true,
       platform_delivery_fee_npr: 50,
+      free_delivery_above_npr: null,
     });
   });
 
@@ -130,6 +135,44 @@ describe('POST /api/cart/quote', () => {
     );
 
     expect(body).toMatchObject({ delivery_fee_npr: 80, total_npr: 580 });
+  });
+
+  it('ships free from the platform threshold, the platform paying the fee (2026-10-21)', async () => {
+    const customerId = await createUser(db);
+    const fleetShop = await createVendor(db, { fulfillmentMode: 'PLATFORM_FLEET' });
+    await db.update(platformSettings).set({ free_delivery_above_npr: 100 });
+
+    const below = bodyOf(
+      cartQuoteResponseSchema,
+      await quote(customerId, await cart(fleetShop, 99.99, 1)),
+    );
+    expect(below).toMatchObject({
+      delivery_fee_npr: 50,
+      total_npr: 149.99,
+      free_delivery_threshold_npr: 100,
+      free_delivery_remaining_npr: 0.01,
+    });
+
+    const body = await cart(fleetShop, 100, 1);
+    expect(bodyOf(cartQuoteResponseSchema, await quote(customerId, body))).toMatchObject({
+      delivery_fee_npr: 0,
+      total_npr: 100,
+      free_delivery_remaining_npr: 0,
+    });
+    const placed = await request(t.app)
+      .post('/api/cart/checkout')
+      .set('authorization', bearer(customerId))
+      .send({ ...body, idempotency_key: randomUUID(), payment_method: 'COD' });
+    expect(placed.status).toBe(201);
+    const { order } = bodyOf(checkoutResponseSchema, placed);
+    const [row] = await db.select().from(orders).where(eq(orders.id, order.id));
+    expect(row).toMatchObject({ delivery_fee: 0, platform_delivery_subsidy_npr: 50 });
+
+    // The shop page shows the lowest threshold that applies.
+    const menu = await request(t.app)
+      .get(`/api/vendors/${fleetShop}/products`)
+      .query({ lat: DELIVERY_ADDRESS.exact_lat, lng: DELIVERY_ADDRESS.exact_lng });
+    expect(bodyOf(vendorMenuSchema, menu).vendor.free_delivery_above_npr).toBe(100);
   });
 
   it('is what checkout charges: the order carries the quoted fee and total', async () => {

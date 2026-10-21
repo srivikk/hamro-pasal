@@ -7,6 +7,7 @@ import {
   complianceVendorViewSchema,
   logisticsSettingsViewSchema,
   logisticsSettingsWriteSchema,
+  MAX_FREE_DELIVERY_THRESHOLD_NPR,
   MAX_PLATFORM_DELIVERY_FEE_NPR,
   PLATFORM_SETTINGS_ENTITY_ID,
 } from './admin-governance';
@@ -113,6 +114,18 @@ describe('logistics settings', () => {
     platform_delivery_fee_npr: 50,
   };
 
+  it('takes an optional platform free-delivery threshold: absent, null, or above 0 in whole paisa', () => {
+    const parse = (value: unknown) =>
+      logisticsSettingsWriteSchema.safeParse({ ...write, free_delivery_above_npr: value });
+    expect(logisticsSettingsWriteSchema.safeParse(write).success).toBe(true);
+    expect(parse(null).success).toBe(true);
+    expect(parse(100).success).toBe(true);
+    expect(parse(MAX_FREE_DELIVERY_THRESHOLD_NPR).success).toBe(true);
+    for (const bad of [0, -1, 10.005, MAX_FREE_DELIVERY_THRESHOLD_NPR + 1, '100']) {
+      expect(parse(bad).success).toBe(false);
+    }
+  });
+
   it('takes a fee from 0 to the maximum in whole paisa', () => {
     for (const fee of [0, 0.01, 49.5, MAX_PLATFORM_DELIVERY_FEE_NPR]) {
       expect(
@@ -148,6 +161,7 @@ describe('logistics settings', () => {
   it('views the settings with the read-only mode counts', () => {
     const view = {
       ...write,
+      free_delivery_above_npr: null,
       self_delivery_vendor_count: 5,
       platform_fleet_vendor_count: 4,
       updated_at: '2026-10-08T06:00:00.000Z',

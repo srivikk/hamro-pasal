@@ -150,9 +150,10 @@ export const feedVendorSchema = z.strictObject({
   min_order_value: z.number().nonnegative(),
   base_delivery_fee_npr: z.number().nonnegative(),
   /**
-   * Step 7.2: "Free delivery on orders over Rs. X" on the shop page and its card. Null when the
-   * shop has none, or under platform delivery (the platform's charge has no threshold). Defaults
-   * to null so an app build reads an older API as "no offer".
+   * Step 7.2: "Free delivery on orders over Rs. X" on the shop page and its card. Since
+   * 2026-10-21 the lowest threshold that applies: the shop's own (self delivery only) or the
+   * platform's (every shop), judged on the goods after discounts. Null when none applies.
+   * Defaults to null so an app build reads an older API as "no offer".
    */
   free_delivery_above_npr: z.number().positive().nullable().default(null),
   fulfillment_mode: vendorFulfillmentModeSchema,

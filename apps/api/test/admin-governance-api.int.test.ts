@@ -37,6 +37,7 @@ describe('Admin governance API', () => {
     self_delivery_enabled: true,
     platform_fleet_enabled: true,
     platform_delivery_fee_npr: 50,
+    free_delivery_above_npr: null,
   };
 
   const resetLogistics = () => db.update(platformSettings).set(DEFAULT_LOGISTICS);
@@ -333,6 +334,31 @@ describe('Admin governance API', () => {
       expect(after.self_delivery_vendor_count - before.self_delivery_vendor_count).toBe(1);
       expect(after.platform_fleet_vendor_count - before.platform_fleet_vendor_count).toBe(2);
       expect(after.updated_at).toBe((await settingsRow()).updated_at.toISOString());
+    });
+
+    it('sets the platform free-delivery threshold, keeps it when absent, and clears it with null', async () => {
+      const set = await put({ ...DEFAULT_LOGISTICS, free_delivery_above_npr: 100 });
+      expect(set.status).toBe(200);
+      expect(bodyOf(logisticsSettingsViewSchema, set).free_delivery_above_npr).toBe(100);
+      expect((await logisticsEntries()).at(-1)?.after_state).toMatchObject({
+        free_delivery_above_npr: 100,
+      });
+
+      // An older dashboard sends the three settings only: the threshold stays.
+      const { free_delivery_above_npr: _omitted, ...withoutThreshold } = DEFAULT_LOGISTICS;
+      await put({ ...withoutThreshold, platform_delivery_fee_npr: 60 });
+      expect(await settingsRow()).toMatchObject({
+        platform_delivery_fee_npr: 60,
+        free_delivery_above_npr: 100,
+      });
+
+      await put({ ...DEFAULT_LOGISTICS, free_delivery_above_npr: null });
+      expect((await settingsRow()).free_delivery_above_npr).toBeNull();
+
+      for (const bad of [0, -5, 10.005, 100_001]) {
+        const res = await put({ ...DEFAULT_LOGISTICS, free_delivery_above_npr: bad });
+        expect([res.status, errorOf(res).code]).toEqual([400, 'VALIDATION_FAILED']);
+      }
     });
 
     it('saves the three settings and audits them in the same transaction', async () => {

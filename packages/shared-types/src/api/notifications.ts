@@ -68,3 +68,18 @@ export const orderPushDataSchema = z.object({
   body: z.string().min(1),
 });
 export type OrderPushData = z.infer<typeof orderPushDataSchema>;
+
+/**
+ * 2026-10-21 (Task 4): the Android channel a new order rings on, for the shop. Separate from
+ * `ORDER_PUSH_CHANNEL_ID` because a channel's sound and importance can never change once the
+ * phone has created it. Maximum importance, alarm audio, the Seller app's own alarm sound.
+ */
+export const ORDER_ALARM_CHANNEL_ID = 'order-alarm';
+
+/** The alarm sound bundled with the app (assets/sounds), by its file name as the OS looks it up. */
+export const ORDER_ALARM_SOUND = 'vendor-alarm.wav';
+
+/** Whether a push rings the alarm: a new order for the shop. Every other alert sounds once. */
+export function orderPushRings(data: Pick<OrderPushData, 'audience' | 'state'>): boolean {
+  return data.audience === 'VENDOR' && data.state === 'PLACED';
+}

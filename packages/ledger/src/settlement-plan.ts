@@ -55,6 +55,7 @@ type SettlementOrder = Pick<
       | 'vendor_offer_discount_npr'
       | 'platform_promo_discount_npr'
       | 'platform_promo_vendor_share_npr'
+      | 'platform_delivery_subsidy_npr'
     >
   >;
 
@@ -227,10 +228,42 @@ export function planCancellationRefund(
  *   COD self:     the vendor holds S-Dv-Dp+F in cash and is owed S-Dv-Dpv-C+F -> vendor +(Dpp-C)
  *   COD fleet:    driver -(S-Dv-Dp+F), vendor +(S-Dv-Dpv-C), platform +C, driver +F, promo -Dpp
  *
+ * With a platform delivery subsidy W (2026-10-21, SPEC core 9: the platform's own free-delivery
+ * threshold made the customer's fee 0): whoever delivered earns W all the same, paid by the
+ * platform, in every model and for every payment method. Two more lines:
+ *
+ *   rider +W (fleet) or vendor wallet +W (self delivery), PROMO_EXPENSE -W (DELIVERY_SUBSIDY)
+ *
  * Zero-amount lines are dropped (e.g. 0% subscription commission). An empty plan means nothing
  * moves.
  */
 export function planSettlement(order: SettlementOrder): PlannedPosting[] {
+  const postings = planGoodsAndFee(order);
+  const subsidy = toPaisa(order.platform_delivery_subsidy_npr ?? 0);
+  if (subsidy === 0) return postings;
+  if (subsidy < 0 || toPaisa(order.delivery_fee) !== 0) {
+    throw new SettlementPlanError(`Order ${order.id} has an impossible delivery subsidy`);
+  }
+  const earner: AccountRef =
+    order.fulfillment_locked === 'SELF_DELIVERY'
+      ? { type: 'VENDOR_WALLET', vendorId: order.vendor_id }
+      : { type: 'DRIVER_WALLET', driverUserId: requireDriver(order) };
+  return balanced([
+    ...postings,
+    { account: earner, amountPaisa: subsidy, lineType: 'DELIVERY_SUBSIDY' },
+    { account: PROMO, amountPaisa: -subsidy, lineType: 'DELIVERY_SUBSIDY' },
+  ]);
+}
+
+function requireDriver(order: SettlementOrder): string {
+  if (order.driver_user_id === null) {
+    throw new SettlementPlanError(`Fleet order ${order.id} has no driver to pay`);
+  }
+  return order.driver_user_id;
+}
+
+/** The settlement of the goods and of the fee the customer paid (everything but a subsidy). */
+function planGoodsAndFee(order: SettlementOrder): PlannedPosting[] {
   const subtotal = toPaisa(order.subtotal);
   const fee = toPaisa(order.delivery_fee);
   const commission = toPaisa(order.platform_commission_amount);
@@ -258,13 +291,9 @@ export function planSettlement(order: SettlementOrder): PlannedPosting[] {
 
   const vendor: AccountRef = { type: 'VENDOR_WALLET', vendorId: order.vendor_id };
   const selfDelivered = order.fulfillment_locked === 'SELF_DELIVERY';
-  let driver: AccountRef | null = null;
-  if (!selfDelivered) {
-    if (order.driver_user_id === null) {
-      throw new SettlementPlanError(`Fleet order ${order.id} has no driver to pay`);
-    }
-    driver = { type: 'DRIVER_WALLET', driverUserId: order.driver_user_id };
-  }
+  const driver: AccountRef | null = selfDelivered
+    ? null
+    : { type: 'DRIVER_WALLET', driverUserId: requireDriver(order) };
   const vendorShare = subtotal - offerDiscount - vendorDiscount - commission;
   const paid = subtotal - offerDiscount - discount + fee;
 

@@ -1,6 +1,8 @@
 import type { PricingModel } from '@hamro-pasal/shared-types';
 
-import { toNpr, toPaisa } from '../ledger/money';
+import { toNpr } from '../ledger/money';
+import { paisaOf, percentOfPaisa, rateOfPaisa } from './decimal-money';
+import type { DeliveryCharge } from './delivery-fee';
 
 /** Checkout was refused for a business reason (HTTP 422 unless stated otherwise). */
 export class CheckoutRejectedError extends Error {
@@ -82,7 +84,14 @@ export interface AppliedPromo {
 export interface PricedCart {
   readonly lines: readonly PricedLine[];
   readonly subtotalPaisa: number;
+  /** What the customer pays for delivery. */
   readonly deliveryFeePaisa: number;
+  /** What the platform pays for delivery instead of the customer (its own threshold), else 0. */
+  readonly deliverySubsidyPaisa: number;
+  /** Why delivery is free for the customer; null when they pay the fee. */
+  readonly freeDeliveryBy: DeliveryCharge['freeBy'];
+  /** subtotal − vendor offer − campaign discount: what the customer pays for the goods. */
+  readonly goodsPaisa: number;
   readonly commissionPaisa: number;
   /** The vendor's own offer, applied to the subtotal first; null when none applies. */
   readonly vendorOffer: AppliedVendorOffer | null;
@@ -117,9 +126,6 @@ export function pricedCartView(priced: PricedCart) {
   };
 }
 
-/** A percentage with two decimals, as whole hundredths of a percent: 12.5% is 1250. */
-const hundredths = (percent: number): number => Math.round(percent * 100);
-
 /** The four numbers of a discount rule, the same for a vendor offer and a campaign. */
 type DiscountRule = Pick<CampaignOffer, 'kind' | 'value' | 'maxDiscountNpr' | 'minCartNpr'>;
 
@@ -129,11 +135,11 @@ type DiscountRule = Pick<CampaignOffer, 'kind' | 'value' | 'maxDiscountNpr' | 'm
  * amount itself.
  */
 export function campaignDiscountPaisa(offer: DiscountRule, subtotalPaisa: number): number {
-  if (subtotalPaisa < toPaisa(offer.minCartNpr)) return 0;
-  if (offer.kind === 'FLAT') return Math.min(toPaisa(offer.value), subtotalPaisa);
-  const share = Math.round((subtotalPaisa * hundredths(offer.value)) / 10_000);
+  if (subtotalPaisa < paisaOf(offer.minCartNpr)) return 0;
+  if (offer.kind === 'FLAT') return Math.min(paisaOf(offer.value), subtotalPaisa);
+  const share = percentOfPaisa(subtotalPaisa, offer.value);
   const capped =
-    offer.maxDiscountNpr === null ? share : Math.min(share, toPaisa(offer.maxDiscountNpr));
+    offer.maxDiscountNpr === null ? share : Math.min(share, paisaOf(offer.maxDiscountNpr));
   return Math.min(capped, subtotalPaisa);
 }
 
@@ -175,25 +181,29 @@ export function bestCampaign(
     best = {
       offer,
       discountPaisa,
-      vendorSharePaisa: Math.round((discountPaisa * hundredths(offer.vendorSharePercent)) / 10_000),
+      vendorSharePaisa: percentOfPaisa(discountPaisa, offer.vendorSharePercent),
     };
   }
   return best;
 }
 
 /**
- * Prices a cart from database prices only; client-sent prices are never trusted.
+ * Prices a cart from database prices only; client-sent prices are never trusted. Every
+ * percentage, rate and rounding is decimal (`decimal-money`), half-up to the paisa.
  *   subtotal   = sum(unit price x qty)
- *   delivery   = vendor base delivery fee
  *   Dv         = the shop's best own offer, on the subtotal S (SPEC core 7 and 9)
  *   Dp         = the best platform campaign the shop opted in to, on S − Dv: its minimum cart and
  *                its percentage are both judged on what is left after the vendor offer
  *   Dpv        = the vendor's share of Dp; the platform funds the rest
  *   commission = (S − Dv − Dpv) x vendor rate (0 on SUBSCRIPTION, SPEC §4), rounded to the paisa:
  *                the vendor pays commission on what it sells for, never on the platform's subsidy
- *   total      = S − Dv − Dp + delivery
- * The minimum order value and the free-delivery threshold are judged on the subtotal before any
- * discount, and a discount never reduces the delivery fee.
+ *   goods      = S − Dv − Dp: what the customer pays for the goods
+ *   delivery   = `deliveryCharge` on the goods: the fee, or 0 once the goods reach the shop's or
+ *                the platform's free-delivery threshold (decided 2026-10-21: discounts apply before
+ *                the threshold is judged)
+ *   total      = goods + delivery
+ * The minimum order value is judged on the subtotal before any discount (SPEC core 9), and a
+ * discount never reduces the delivery fee itself.
  * A subtotal below the vendor's MOV is rejected (SPEC journey step 5). SPEC names a "Small Cart
  * Surcharge" for that case but does not define its amount, so none is invented here.
  */
@@ -201,8 +211,11 @@ export function priceCart(
   vendor: PricingVendor,
   products: ReadonlyMap<string, PricingProduct>,
   items: readonly { readonly productId: string; readonly quantity: number }[],
-  /** The delivery charge for this subtotal (`deliveryFeePaisa`); the base fee when not given. */
-  deliveryFee?: (subtotalPaisa: number) => number,
+  /**
+   * The delivery charge for what the customer pays for the goods, after both discounts
+   * (`deliveryCharge`); the base fee, paid by the customer, when not given.
+   */
+  deliveryFee?: (goodsPaisa: number) => DeliveryCharge,
   /** The campaigns the shop is opted in to that run now; none by default. */
   campaigns: readonly CampaignOffer[] = [],
   /** The shop's own offers that run now; none by default. */
@@ -216,13 +229,13 @@ export function priceCart(
     return {
       productId: product.id,
       productName: product.name,
-      unitPricePaisa: toPaisa(product.price_npr),
+      unitPricePaisa: paisaOf(product.price_npr),
       quantity: item.quantity,
     };
   });
 
   const subtotalPaisa = lines.reduce((sum, line) => sum + line.unitPricePaisa * line.quantity, 0);
-  const minimumPaisa = toPaisa(vendor.min_order_value);
+  const minimumPaisa = paisaOf(vendor.min_order_value);
   if (subtotalPaisa < minimumPaisa) {
     throw new CheckoutRejectedError(
       'BELOW_MINIMUM_ORDER_VALUE',
@@ -231,23 +244,33 @@ export function priceCart(
     );
   }
 
-  // Rate as integer basis points keeps the product exact; the result rounds half-up to the paisa.
-  const rateBasisPoints =
-    vendor.pricing_model === 'SUBSCRIPTION' ? 0 : Math.round(vendor.commission_rate * 10_000);
+  // Discounts first (SPEC core 9, amended 2026-10-21): the delivery threshold is judged on what
+  // the customer pays for the goods, never on the subtotal before the discounts.
   const vendorOffer = bestVendorOffer(vendorOffers, subtotalPaisa);
   const afterOfferPaisa = subtotalPaisa - (vendorOffer?.discountPaisa ?? 0);
   const promo = bestCampaign(campaigns, afterOfferPaisa);
+  const goodsPaisa = afterOfferPaisa - (promo?.discountPaisa ?? 0);
   const commissionBasePaisa = afterOfferPaisa - (promo?.vendorSharePaisa ?? 0);
-  const commissionPaisa = Math.round((commissionBasePaisa * rateBasisPoints) / 10_000);
-  const deliveryFeePaisa = deliveryFee?.(subtotalPaisa) ?? toPaisa(vendor.base_delivery_fee_npr);
+  const commissionPaisa =
+    vendor.pricing_model === 'SUBSCRIPTION'
+      ? 0
+      : rateOfPaisa(commissionBasePaisa, vendor.commission_rate);
+  const delivery: DeliveryCharge = deliveryFee?.(goodsPaisa) ?? {
+    feePaisa: paisaOf(vendor.base_delivery_fee_npr),
+    subsidyPaisa: 0,
+    freeBy: null,
+  };
 
   return {
     lines,
     subtotalPaisa,
-    deliveryFeePaisa,
+    deliveryFeePaisa: delivery.feePaisa,
+    deliverySubsidyPaisa: delivery.subsidyPaisa,
+    freeDeliveryBy: delivery.freeBy,
+    goodsPaisa,
     commissionPaisa,
     vendorOffer,
     promo,
-    totalPaisa: afterOfferPaisa - (promo?.discountPaisa ?? 0) + deliveryFeePaisa,
+    totalPaisa: goodsPaisa + delivery.feePaisa,
   };
 }

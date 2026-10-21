@@ -75,21 +75,34 @@ describe('foreground notification handler', () => {
 });
 
 describe('ensureOrderNotificationChannel', () => {
-  it('creates the high-importance "orders" channel on Android, named in the app language', async () => {
-    await ensureOrderNotificationChannel('अर्डर अपडेट');
+  it('creates the "orders" and the "order-alarm" channels on Android, named in the app language', async () => {
+    await ensureOrderNotificationChannel('अर्डर अपडेट', 'नयाँ अर्डर (अलार्म)');
 
     expect(mockNotifications.channels).toEqual([
       // The literal id: it must equal the channelId the worker sends.
       // No `sound` key: Android then uses the system default. A 'default' string is looked up
       // as a bundled file and logged as "Custom sound 'default' not found in native app".
       { id: 'orders', input: { name: 'अर्डर अपडेट', importance: 6 } },
+      // 2026-10-21: a new order rings: max importance, the bundled alarm, played as an alarm.
+      {
+        id: 'order-alarm',
+        input: {
+          name: 'नयाँ अर्डर (अलार्म)',
+          importance: 7,
+          sound: 'vendor-alarm.wav',
+          vibrationPattern: [0, 800, 400, 800, 400, 800],
+          enableVibrate: true,
+          lockscreenVisibility: 1,
+          audioAttributes: { usage: 4, contentType: 4 },
+        },
+      },
     ]);
   });
 
   it('does nothing on iOS', async () => {
     jest.replaceProperty(Platform, 'OS', 'ios');
 
-    await ensureOrderNotificationChannel('Order updates');
+    await ensureOrderNotificationChannel('Order updates', 'New orders (alarm)');
 
     expect(mockNotifications.channels).toEqual([]);
   });
@@ -129,9 +142,29 @@ describe('handleOrderPushTask', () => {
           title: 'Your order is on its way',
           body: 'Order #1F8A11 has left the shop. Keep your 4-digit delivery code ready.',
           sound: 'default',
+          priority: 'high',
           data: { ...DATA, data_only: false },
         },
         trigger: { channelId: 'orders' },
+      },
+    ]);
+  });
+
+  it('rings the alarm for a new order to the shop: alarm channel, bundled sound, max priority', async () => {
+    const newOrder = {
+      ...DATA,
+      state: 'PLACED',
+      audience: 'VENDOR',
+      title: 'New order',
+      body: 'Order #1F8A11 is waiting. Open the app to accept or reject it.',
+    } as const;
+
+    await handleOrderPushTask({ data: { dataString: JSON.stringify(newOrder) } });
+
+    expect(mockNotifications.scheduled).toMatchObject([
+      {
+        content: { sound: 'vendor-alarm.wav', priority: 'max' },
+        trigger: { channelId: 'order-alarm' },
       },
     ]);
   });

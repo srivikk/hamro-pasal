@@ -4,33 +4,42 @@ import { ActivityIndicator, FlatList, Pressable, Text, View } from 'react-native
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '../src/components/Button';
-import { deepLinkOf } from '../src/features/inbox/inbox-api';
-import { useInbox, useMarkAllRead, useMarkRead } from '../src/features/inbox/useInbox';
+import { badgeText, deepLinkOf } from '../src/features/inbox/inbox-api';
+import { notificationRowStyle } from '../src/features/inbox/inbox-style';
+import {
+  useInbox,
+  useMarkAllRead,
+  useMarkRead,
+  useUnreadCount,
+} from '../src/features/inbox/useInbox';
 import { colors } from '../src/theme/colors';
 
 function Row({ notification, onPress }: { notification: NotificationView; onPress: () => void }) {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const unread = notification.read_at === null;
+  const style = notificationRowStyle(unread);
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ selected: unread }}
+      accessibilityHint={unread ? t('inbox.unreadHint') : undefined}
       testID={`notification-${notification.id}`}
-      className={`mx-4 mb-2 flex-row gap-3 rounded-2xl p-4 active:opacity-70 ${
-        unread ? 'bg-white' : 'bg-gray-100'
-      }`}
+      className={`mx-4 mb-2 flex-row gap-3 rounded-2xl p-4 active:opacity-70 ${style.row}`}
       onPress={onPress}
     >
       <View
         testID={unread ? `notification-unread-${notification.id}` : undefined}
-        className={`mt-1.5 h-2.5 w-2.5 rounded-full ${unread ? 'bg-brand' : 'bg-transparent'}`}
+        className={`mt-1.5 h-2.5 w-2.5 rounded-full ${style.dot}`}
       />
       <View className="flex-1">
-        <Text className={`text-base ${unread ? 'font-bold' : 'font-semibold'} text-gray-900`}>
+        <Text
+          testID={`notification-title-${notification.id}`}
+          className={`text-base ${style.title}`}
+        >
           {notification.title}
         </Text>
-        <Text className="mt-1 text-sm text-gray-700">{notification.body}</Text>
-        <Text className="mt-1 text-xs text-gray-500">
+        <Text className={`mt-1 text-sm ${style.body}`}>{notification.body}</Text>
+        <Text className={`mt-1 text-xs ${style.time}`}>
           {new Date(notification.created_at).toLocaleString(
             i18n.language === 'ne' ? 'ne-NP' : 'en-GB',
             { dateStyle: 'medium', timeStyle: 'short' },
@@ -43,7 +52,9 @@ function Row({ notification, onPress }: { notification: NotificationView; onPres
 
 /**
  * Step 7.5 (SPEC core 11, customer and Seller app addition 3): every message kept for the
- * account, newest first, unread ones marked. Tapping one marks it read and opens its link when
+ * account, newest first. Since 2026-10-21 (Task 4) order alerts are kept here too, and the two
+ * states are strict: unread on a dark background in bold with a dot, read on a light one
+ * (`notificationRowStyle`); the unread count heads the list as a badge. Tapping one marks it read and opens its link when
  * the Super Admin gave one. The same screen serves both builds.
  */
 export default function NotificationsScreen() {
@@ -51,6 +62,8 @@ export default function NotificationsScreen() {
   const inbox = useInbox();
   const markRead = useMarkRead();
   const markAll = useMarkAllRead();
+  const unreadCount = useUnreadCount();
+  const badge = badgeText(unreadCount.data ?? 0);
   const notifications = inbox.data?.pages.flatMap((page) => page.notifications) ?? [];
   const anyUnread = notifications.some((n) => n.read_at === null);
 
@@ -96,6 +109,21 @@ export default function NotificationsScreen() {
           data={notifications}
           keyExtractor={(n) => n.id}
           contentContainerStyle={{ paddingVertical: 12, flexGrow: 1 }}
+          ListHeaderComponent={
+            badge === null ? null : (
+              <View className="mx-4 mb-3 flex-row items-center gap-2">
+                <View
+                  testID="notifications-unread-badge"
+                  className="min-w-6 items-center rounded-full bg-brand px-2 py-0.5"
+                >
+                  <Text className="text-xs font-bold text-white">{badge}</Text>
+                </View>
+                <Text className="text-sm font-semibold text-ink dark:text-ink-dark">
+                  {t('inbox.unreadCount', { count: unreadCount.data ?? 0 })}
+                </Text>
+              </View>
+            )
+          }
           renderItem={({ item }) => (
             <Row
               notification={item}

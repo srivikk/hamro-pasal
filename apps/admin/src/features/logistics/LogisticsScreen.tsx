@@ -7,6 +7,7 @@ import { formatDateTime } from '../../lib/format';
 import {
   EMERGENCY_STOP_WARNING,
   feeChangeNote,
+  freeDeliveryChangeNote,
   formFromLogistics,
   isEmergencyStop,
   logisticsChanged,
@@ -77,6 +78,7 @@ function LogisticsPanel({ settings }: { readonly settings: LogisticsSettingsView
   const result = validateLogisticsForm(values);
   const dirty = !result.ok || logisticsChanged(settings, result.request);
   const feeNote = result.ok ? feeChangeNote(settings, result.request) : null;
+  const freeNote = result.ok ? freeDeliveryChangeNote(settings, result.request) : null;
 
   const submit = (event: SyntheticEvent) => {
     event.preventDefault();
@@ -178,6 +180,28 @@ function LogisticsPanel({ settings }: { readonly settings: LogisticsSettingsView
           </p>
           {errorOf('platformDeliveryFee')}
           {feeNote !== null && <p className="muted small setting-help">{feeNote}</p>}
+        </div>
+
+        <div className="setting">
+          <label htmlFor={`${formId}-free-above`}>Free delivery above (NPR)</label>
+          <input
+            id={`${formId}-free-above`}
+            className="stock-input"
+            inputMode="decimal"
+            placeholder="Off"
+            value={values.freeDeliveryAbove}
+            aria-invalid={fieldErrors.freeDeliveryAbove !== undefined}
+            disabled={save.isPending}
+            onChange={(event) => {
+              change({ freeDeliveryAbove: event.target.value });
+            }}
+          />
+          <p className="muted small setting-help">
+            Orders whose goods reach this amount after discounts ship free at every shop. Hamro
+            Pasal pays the fee to whoever delivers. Leave empty to switch it off.
+          </p>
+          {errorOf('freeDeliveryAbove')}
+          {freeNote !== null && <p className="muted small setting-help">{freeNote}</p>}
         </div>
 
         {warned !== null && (

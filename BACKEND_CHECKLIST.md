@@ -602,6 +602,15 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 8. The discount engine (section 5 step 2) is **done 2026-10-09 (§8Z.34)**: vendor offers stack with campaigns in the quote and checkout, on the order, in settlement and on the invoice, and both apps are wired. Left of step 2: `payment_session` in the checkout response. Fiscal invoicing (6.4): the waiting invoices, the list, the PDF and its Devanagari font are done; left are the detail read, the customer's and admin's reads and Credit / Debit Notes.
 9. **A device run of the new screens**, after rebuilding the development client (expo-file-system, expo-sharing): the cart on a real quote, the two refusal dialogs, the invoice download and share sheet.
 
+## Cart math, free delivery and order alerts (2026-10-21, STATE_HANDOFF.md §8Z.44)
+
+- [x] Decimal cart math (decimal.js, half-up to the paisa) in pricing and the delivery charge.
+- [x] Discounts before the free-delivery threshold; platform threshold `platform_settings.free_delivery_above_npr` (migration 0048), platform-funded (`DELIVERY_SUBSIDY`, PROMO_EXPENSE), Logistics panel field.
+- [x] New orders ring the shop (`order-alarm` channel, bundled alarm); order alerts kept in the notification centre; read / unread styles, unread badge, app icon badge.
+  - [ ] Build and install a new development / store build (the alarm sound is native), then test a real new order on an Android phone with the screen off and in Do Not Disturb.
+  - [ ] iOS: a visible push with the alarm sound for new orders (data-only does not wake a force-quit app).
+  - [ ] A report of the delivery subsidy cost for the Super Admin.
+
 ## Wallets, Model C, plans and cycle dues (2026-10-21, STATE_HANDOFF.md §8Z.43)
 
 - [x] **Customer wallet** (SPEC core 12, migration 0047 `wallet_recharges`, `CUSTOMER_WALLET` ledger account): eSewa recharge (`/api/wallet/recharge/esewa/initiate|confirm`), `GET /api/wallet`, `WALLET` at checkout and quote, refund to the wallet on cancellation.

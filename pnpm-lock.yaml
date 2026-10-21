@@ -280,6 +280,9 @@ importers:
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3
+      decimal.js:
+        specifier: 10.6.0
+        version: 10.6.0
       drizzle-orm:
         specifier: ^0.45.3
         version: 0.45.3(@types/pg@8.23.1)(pg@8.23.0)

@@ -25,14 +25,13 @@ export function cartRouter(checkout: CheckoutService): Router {
     const quote = await checkout.quote(authOf(req).userId, request);
     const body: CartQuoteResponseBody = {
       ...pricedCartView(quote.priced),
-      // Judged on the subtotal before discounts, as the delivery charge is (SPEC core 2).
+      // The lowest threshold that applies (the shop's or the platform's), judged like the
+      // delivery charge on the goods after both discounts (SPEC core 9, amended 2026-10-21).
       free_delivery_threshold_npr: quote.freeDeliveryThresholdNpr,
       free_delivery_remaining_npr:
         quote.freeDeliveryThresholdNpr === null
           ? null
-          : toNpr(
-              Math.max(0, toPaisa(quote.freeDeliveryThresholdNpr) - quote.priced.subtotalPaisa),
-            ),
+          : toNpr(Math.max(0, toPaisa(quote.freeDeliveryThresholdNpr) - quote.priced.goodsPaisa)),
       distance_km: Math.round(quote.distanceKm * 1000) / 1000,
       delivery_available: quote.deliveryAvailable,
       payment_options: [...quote.paymentOptions],

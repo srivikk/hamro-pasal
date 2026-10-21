@@ -85,6 +85,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           color: palette.brand.DEFAULT,
           defaultChannel: 'orders',
           enableBackgroundRemoteNotifications: true,
+          // 2026-10-21: bundled so a new order can ring the shop's phone (ORDER_ALARM_SOUND).
+          // Takes effect in a new development or store build, not over the air.
+          sounds: ['./assets/sounds/vendor-alarm.wav'],
         },
       ],
       [

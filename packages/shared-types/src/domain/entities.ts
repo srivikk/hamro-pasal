@@ -272,6 +272,11 @@ export const orderSchema = z.strictObject({
   state: orderStateSchema,
   subtotal: nonNegativeNprSchema,
   delivery_fee: nonNegativeNprSchema,
+  /**
+   * 2026-10-21 (SPEC core 9): the fee the platform pays instead of the customer under its own
+   * free-delivery threshold (`delivery_fee` is then 0); whoever delivers earns it. 0 otherwise.
+   */
+  platform_delivery_subsidy_npr: nonNegativeNprSchema,
   platform_commission_amount: nonNegativeNprSchema,
   /** The vendor's own offer the order was priced with (SPEC core 7); null without one. */
   vendor_offer_id: z.uuid().nullable(),
@@ -480,6 +485,11 @@ export const platformSettingsSchema = z.strictObject({
   auto_pause_threshold: z.number().int().min(1).max(20),
   /** 2026-10-21, Model C: the Fixed Reserve a prepaid balance may not fall below (min 5000). */
   prepaid_reserve_npr: nprAmountSchema.min(PREPAID_FIXED_RESERVE_NPR),
+  /**
+   * 2026-10-21 (SPEC core 9): goods worth this much or more, after discounts, ship free for every
+   * shop, funded by the platform. Null: switched off.
+   */
+  free_delivery_above_npr: nprAmountSchema.positive().nullable(),
   updated_at: z.date(),
 });
 export type PlatformSettings = z.infer<typeof platformSettingsSchema>;

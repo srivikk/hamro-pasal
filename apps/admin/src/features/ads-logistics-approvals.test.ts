@@ -36,6 +36,7 @@ import {
 import {
   EMERGENCY_STOP_WARNING,
   feeChangeNote,
+  freeDeliveryChangeNote,
   formFromLogistics,
   isEmergencyStop,
   logisticsChanged,
@@ -86,6 +87,7 @@ const settings: LogisticsSettingsView = {
   self_delivery_enabled: true,
   platform_fleet_enabled: true,
   platform_delivery_fee_npr: 50,
+  free_delivery_above_npr: null,
   self_delivery_vendor_count: 5,
   platform_fleet_vendor_count: 4,
   updated_at: '2026-10-01T06:00:00.000Z',
@@ -95,6 +97,7 @@ const unchanged: LogisticsSettingsWrite = {
   self_delivery_enabled: true,
   platform_fleet_enabled: true,
   platform_delivery_fee_npr: 50,
+  free_delivery_above_npr: null,
 };
 
 const clean: ModelChangeRequestView = {
@@ -399,6 +402,7 @@ describe('logistics panel', () => {
         selfDeliveryEnabled: false,
         platformFleetEnabled: true,
         platformDeliveryFee: ' 75.50 ',
+        freeDeliveryAbove: '',
       }),
     ).toEqual({
       ok: true,
@@ -406,6 +410,7 @@ describe('logistics panel', () => {
         self_delivery_enabled: false,
         platform_fleet_enabled: true,
         platform_delivery_fee_npr: 75.5,
+        free_delivery_above_npr: null,
       },
     });
   });
@@ -424,6 +429,7 @@ describe('logistics panel', () => {
         selfDeliveryEnabled: false,
         platformFleetEnabled: false,
         platformDeliveryFee: '50',
+        freeDeliveryAbove: '',
       }).ok,
     ).toBe(true);
   });
@@ -482,6 +488,31 @@ describe('logistics panel', () => {
       'Platform fleet orders placed from now on are charged Rs. 80 (was Rs. 50). Orders already placed keep their fee.',
     );
     expect(feeChangeNote(settings, unchanged)).toBeNull();
+  });
+
+  it('reads the platform free-delivery threshold: empty is off, else an amount above 0', () => {
+    const form = formFromLogistics({ ...settings, free_delivery_above_npr: 100 });
+    expect(form.freeDeliveryAbove).toBe('100');
+    expect(validateLogisticsForm(form)).toMatchObject({
+      ok: true,
+      request: { free_delivery_above_npr: 100 },
+    });
+    expect(validateLogisticsForm({ ...form, freeDeliveryAbove: ' ' })).toMatchObject({
+      ok: true,
+      request: { free_delivery_above_npr: null },
+    });
+    for (const bad of ['0', 'abc', '10.005', '100001']) {
+      const result = validateLogisticsForm({ ...form, freeDeliveryAbove: bad });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(Object.keys(result.errors)).toEqual(['freeDeliveryAbove']);
+    }
+    const on = { ...unchanged, free_delivery_above_npr: 100 };
+    expect(logisticsChanged(settings, on)).toBe(true);
+    expect(freeDeliveryChangeNote(settings, on)).toContain('Hamro Pasal pays the delivery fee');
+    expect(
+      freeDeliveryChangeNote({ ...settings, free_delivery_above_npr: 100 }, unchanged),
+    ).toContain('stops');
+    expect(freeDeliveryChangeNote(settings, unchanged)).toBeNull();
   });
 
   it('explains a save that failed', () => {

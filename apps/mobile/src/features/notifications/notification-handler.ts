@@ -1,4 +1,8 @@
-import { ORDER_PUSH_CHANNEL_ID } from '@hamro-pasal/shared-types';
+import {
+  ORDER_ALARM_CHANNEL_ID,
+  ORDER_ALARM_SOUND,
+  ORDER_PUSH_CHANNEL_ID,
+} from '@hamro-pasal/shared-types';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
@@ -46,10 +50,36 @@ export function configureForegroundNotifications(): void {
  * On Android any string there, 'default' included, is looked up as a bundled sound file and
  * logged as "Custom sound 'default' not found in native app".
  */
-export async function ensureOrderNotificationChannel(name: string): Promise<void> {
+export async function ensureOrderNotificationChannel(
+  name: string,
+  alarmName: string,
+): Promise<void> {
   if (Platform.OS !== 'android') return;
   await Notifications.setNotificationChannelAsync(ORDER_PUSH_CHANNEL_ID, {
     name,
     importance: Notifications.AndroidImportance.HIGH,
   });
+  await Notifications.setNotificationChannelAsync(ORDER_ALARM_CHANNEL_ID, {
+    ...ORDER_ALARM_CHANNEL,
+    name: alarmName,
+  });
 }
+
+/**
+ * 2026-10-21 (Task 4): the channel a new order rings on (`orderPushRings`). Maximum importance
+ * (heads-up, sound even when another app is in front), the bundled alarm sound played as an
+ * alarm, a long vibration and the full notification on the lock screen. Android fixes a
+ * channel's sound and importance when it is first created; only its name may change later.
+ */
+export const ORDER_ALARM_CHANNEL: Notifications.NotificationChannelInput = {
+  name: 'New orders',
+  importance: Notifications.AndroidImportance.MAX,
+  sound: ORDER_ALARM_SOUND,
+  vibrationPattern: [0, 800, 400, 800, 400, 800],
+  enableVibrate: true,
+  lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+  audioAttributes: {
+    usage: Notifications.AndroidAudioUsage.ALARM,
+    contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+  },
+};

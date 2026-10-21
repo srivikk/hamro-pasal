@@ -158,6 +158,42 @@ describe('double-entry settlement', () => {
       expect(await balanceOf(db, { driverUserId: driverId })).toBe(50);
     });
 
+    it('pays the rider a platform-subsidised fee the customer did not pay (2026-10-21)', async () => {
+      const vendorId = await createVendor(db);
+      const driverId = await createUser(db, 'DRIVER');
+      const order = await createOrder(db, {
+        vendorId,
+        customerId,
+        paymentMethod: 'KHALTI',
+        fulfillment: 'PLATFORM_FLEET',
+      });
+      // The platform's free-delivery threshold applied at checkout: fee 0, subsidy 50.
+      await db
+        .update(orders)
+        .set({ delivery_fee: 0, platform_delivery_subsidy_npr: 50 })
+        .where(eq(orders.id, order.id));
+      const captured = await deltas(['SYSTEM_ESCROW'], () => settlement.capturePayment(order.id));
+      expect(captured).toEqual({ SYSTEM_ESCROW: 1000 });
+      await markDelivered(db, order.id, driverId);
+
+      await settlement.settleOrder(order.id);
+
+      expect(await balanceOf(db, { holdVendorId: vendorId })).toBe(900);
+      expect(await balanceOf(db, { driverUserId: driverId })).toBe(50);
+      const settled = (await outboxFor(db, order.id))
+        .map((e) => ledgerMutatedPayloadSchema.parse(e.payload))
+        .find((p) => p.kind === 'ORDER_SETTLEMENT');
+      expect(settled?.entries.reduce((t, e) => t + Math.round(e.amount_npr * 100), 0)).toBe(0);
+    });
+
+    it('refuses an order that carries a subsidy beside a fee the customer paid', async () => {
+      const vendorId = await createVendor(db);
+      const order = await createOrder(db, { vendorId, customerId, paymentMethod: 'COD' });
+      await expect(
+        db.update(orders).set({ platform_delivery_subsidy_npr: 50 }).where(eq(orders.id, order.id)),
+      ).rejects.toThrow();
+    });
+
     it('refuses to settle a prepaid order whose payment was never captured', async () => {
       const vendorId = await createVendor(db);
       const order = await createOrder(db, { vendorId, customerId, paymentMethod: 'ESEWA' });

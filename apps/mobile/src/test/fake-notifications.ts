@@ -29,6 +29,10 @@ export const mockNotifications: {
   responseListeners: ((response: unknown) => void)[];
   /** What getLastNotificationResponseAsync answers (the tap that started the app), or null. */
   lastResponse: unknown;
+  /** Listeners added with addNotificationReceivedListener (a push arriving while open). */
+  receivedListeners: ((notification: unknown) => void)[];
+  /** Every count passed to setBadgeCountAsync, in order. */
+  badgeCounts: number[];
 } = {
   permission: { granted: false, canAskAgain: true },
   requested: { granted: true, canAskAgain: true },
@@ -39,6 +43,8 @@ export const mockNotifications: {
   registeredTasks: [],
   responseListeners: [],
   lastResponse: null,
+  receivedListeners: [],
+  badgeCounts: [],
 };
 
 export function resetMockNotifications(): void {
@@ -51,6 +57,8 @@ export function resetMockNotifications(): void {
   mockNotifications.registeredTasks = [];
   mockNotifications.responseListeners = [];
   mockNotifications.lastResponse = null;
+  mockNotifications.receivedListeners = [];
+  mockNotifications.badgeCounts = [];
   for (const mock of [
     getPermissionsAsync,
     requestPermissionsAsync,
@@ -74,11 +82,42 @@ export function addNotificationResponseReceivedListener(listener: (response: unk
   };
 }
 
+export function addNotificationReceivedListener(listener: (notification: unknown) => void): {
+  remove: () => void;
+} {
+  mockNotifications.receivedListeners.push(listener);
+  return {
+    remove: () => {
+      mockNotifications.receivedListeners = mockNotifications.receivedListeners.filter(
+        (registered) => registered !== listener,
+      );
+    },
+  };
+}
+
+export function setBadgeCountAsync(count: number): Promise<boolean> {
+  mockNotifications.badgeCounts.push(count);
+  return Promise.resolve(true);
+}
+
 export function getLastNotificationResponse(): unknown {
   return mockNotifications.lastResponse;
 }
 
 export const AndroidImportance = { DEFAULT: 5, HIGH: 6, MAX: 7 } as const;
+export const AndroidNotificationVisibility = {
+  UNKNOWN: 0,
+  PUBLIC: 1,
+  PRIVATE: 2,
+  SECRET: 3,
+} as const;
+export const AndroidAudioUsage = { NOTIFICATION: 5, ALARM: 4 } as const;
+export const AndroidAudioContentType = { UNKNOWN: 0, SONIFICATION: 4 } as const;
+export const AndroidNotificationPriority = {
+  DEFAULT: 'default',
+  HIGH: 'high',
+  MAX: 'max',
+} as const;
 
 export const BackgroundNotificationTaskResult = { NewData: 0, NoData: 1, Failed: 2 } as const;
 

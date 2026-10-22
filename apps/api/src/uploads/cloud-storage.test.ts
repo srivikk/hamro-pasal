@@ -376,6 +376,13 @@ describe('fileStorageFromEnv', () => {
       SMS_PROVIDER: 'AAKASH',
       AAKASH_SMS_AUTH_TOKEN: 't',
       AAKASH_SMS_API_URL: 'https://sms.test',
+      // Phase 7: the other keys a production server must have (server-env.test.ts).
+      VENDOR_CREDENTIALS_KEY: 'A'.repeat(43) + '=',
+      PUBLIC_API_BASE_URL: 'https://api.hamropasal.test',
+      ESEWA_SUCCESS_URL: 'https://api.hamropasal.test/payments/esewa/success',
+      ESEWA_FAILURE_URL: 'https://api.hamropasal.test/payments/esewa/failure',
+      KHALTI_RETURN_URL: 'https://api.hamropasal.test/payments/khalti/return',
+      KHALTI_WEBSITE_URL: 'https://hamropasal.test',
     };
 
     expect(() => parseServerEnv(production)).toThrow(/STORAGE_DRIVER/);

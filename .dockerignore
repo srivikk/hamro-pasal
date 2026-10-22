@@ -1,0 +1,22 @@
+# Phase 7 (2026-10-22): the build context of apps/{api,worker,admin}/Dockerfile is the repo root.
+# Keep it small and free of secrets: the images install their own dependencies.
+**/node_modules
+**/dist
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+**/*.log
+.git
+.husky
+.expo
+.env
+.env.*
+!.env.example
+
+# The mobile app is not built here; only its manifest is needed for pnpm's frozen lockfile.
+apps/mobile/*
+!apps/mobile/package.json
+
+# Local uploads (development stand-in for the bucket).
+apps/api/uploads
+apps/api/uploads-private

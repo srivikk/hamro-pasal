@@ -1,5 +1,5 @@
 import { runMigrations } from '../migrator';
-import { describeDatabaseUrl, requireDatabaseUrl } from './database-url';
+import { describeDatabaseUrl, requireDatabaseUrl } from '../database-url';
 
 async function main(): Promise<void> {
   const url = requireDatabaseUrl();

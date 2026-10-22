@@ -602,6 +602,18 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 8. The discount engine (section 5 step 2) is **done 2026-10-09 (§8Z.34)**: vendor offers stack with campaigns in the quote and checkout, on the order, in settlement and on the invoice, and both apps are wired. Left of step 2: `payment_session` in the checkout response. Fiscal invoicing (6.4): the waiting invoices, the list, the PDF and its Devanagari font are done; left are the detail read, the customer's and admin's reads and Credit / Debit Notes.
 9. **A device run of the new screens**, after rebuilding the development client (expo-file-system, expo-sharing): the cart on a real quote, the two refusal dialogs, the invoice download and share sheet.
 
+## Production readiness (2026-10-22, STATE_HANDOFF.md §8Z.47, infra/deploy/README.md)
+
+- [x] Multi-stage, non-root images for the API, worker (Chromium optional) and admin; `.dockerignore`.
+- [x] Boot-time env gate with production rules; `node dist/check-env.js` for the pipeline.
+- [x] Compiled, advisory-locked migration runner; CI guard for expand-only migrations.
+- [x] `.github/workflows/production.yml`: verify, unit and integration tests (sequential watchdog), images, gated ECS deploy.
+- [x] EAS store profiles (app bundles, EAS environments, internal-track submit) and production app config for both apps.
+- [ ] AWS resources (VPC, ALB with /api routed to the API, ECS services, RDS, ElastiCache, MSK, ECR, Secrets Manager) and the GitHub variables / OIDC role.
+- [ ] `expo-updates` for EAS Update (OTA), then runtime version and channels.
+- [ ] EAS: production environment variables (`EXPO_PUBLIC_API_URL`, `GOOGLE_SERVICES_JSON`), FCM V1 and APNs credentials, iOS submit settings.
+- [ ] A health signal for the worker.
+
 ## Grievance desk, guarded OTP reveal, stock vs moderation, product reviews (2026-10-22, STATE_HANDOFF.md §8Z.45)
 
 - [x] **Grievance chat:** `POST /api/orders/:id/chat` (same rules and broadcast as `/chat`), the admin Disputes tab, the Seller app's order conversation. Escalated prepaid money stays in the dispute hold until the admin resolves it (never paid out, never released on day 8).

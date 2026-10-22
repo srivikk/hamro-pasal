@@ -1100,6 +1100,101 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.47 Phase 7: containers, boot-time env gate, CI/CD, EAS store builds, zero-downtime migrations (2026-10-22)
+
+Branch `epic/master-completion`. Infrastructure and configuration only; no feature or schema
+change. SPEC.md was not changed (it already names Docker on ECS Fargate / Cloud Run behind an ALB,
+GitHub Actions, ECR and EAS: infrastructure §3–4). **Nothing was run against AWS, GitHub Actions or
+EAS**: the images were built and run locally, the workflow was parsed, the deploy script was only
+syntax-checked. The full operator guide is `infra/deploy/README.md`.
+
+### Asked vs built
+
+| Asked                                                            | Built                                                                                                                                                                                                                   | Why                                                                                                                                       |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| PM2 or direct Node                                               | direct `node` under **tini**                                                                                                                                                                                            | The orchestrator restarts and scales containers; PM2 inside a container duplicates that and hides crashes from it                         |
+| "minimal images"                                                 | `node:24-bookworm-slim` runtime + `pnpm deploy --prod` output only: **API 493 MB, worker 1.41 GB with Chromium / 513 MB without, admin 75 MB**                                                                          | Alpine was not used: the sharp, Kafka (librdkafka) and Chromium binaries are glibc builds                                                 |
+| `.env.example` with 2Captcha, S3/Supabase, OTP_ADMIN_REVEAL, FCM | every server key was already there (68, checked against the schema); added the production rules, `MIGRATION_LOCK_TIMEOUT_MS`, and where the Expo / FCM / APNs values live (EAS, not a file)                             | Supabase is not used: storage is S3-compatible (R2 / S3, §8Z.35). FCM is not a server key: Expo's push service holds it (EAS credentials) |
+| crash on boot if production vars are missing                     | the shared schema already refused much; added production rules and a clean exit (`loadEnvOrExit`), plus `node dist/check-env.js` for the pipeline                                                                       | One schema for API, worker and the deploy check                                                                                           |
+| `app.json`                                                       | `app.config.ts` (the project has no app.json: two variants are computed)                                                                                                                                                | §8Z.40 / step 7.7                                                                                                                         |
+| "run pnpm db:migrate before containers accept traffic"           | a compiled runner (`node node_modules/@hamro-pasal/db/dist/bin/migrate.js`) run as a one-off task from the new image, behind an advisory lock, before the rolling update; CI refuses non-backward-compatible migrations | `pnpm db:migrate` needs tsx and the source tree, which a production image does not have                                                   |
+
+### What was added
+
+- **Images** (`apps/api/Dockerfile`, `apps/worker/Dockerfile`, `apps/admin/Dockerfile`,
+  `.dockerignore`; build context = repo root). Build stage installs only the service's workspace
+  graph (`--filter "@hamro-pasal/api..."`), builds it with Turbo, and `pnpm deploy --prod --legacy
+--config.node-linker=isolated` (the repo's `hoisted` linker made `pnpm deploy` write an empty
+  node_modules). Runtime: non-root (`node`; nginx uid 101). API `HEALTHCHECK` on `/health`; admin
+  nginx serves the SPA (`/assets/` immutable, `index.html` no-cache, security headers, `/healthz`)
+  and can forward `/api`, `/socket.io`, `/uploads` to `API_UPSTREAM`. Worker `WITH_CHROMIUM`
+  (default true) installs Playwright's **headless shell** only (the full Chromium was 597 MB of the
+  first 2.22 GB image and is never launched: `headless: true`).
+  - `apps/api` and `apps/worker` `package.json` gained `files` (`dist`, `assets`), so the deployed
+    copy carries the invoice fonts and no sources or tests.
+- **Boot gate.** `serverEnvSchema` (production only): `VENDOR_CREDENTIALS_KEY` and
+  `PUBLIC_API_BASE_URL` required; `PUBLIC_API_BASE_URL`, `ESEWA_SUCCESS_URL`, `ESEWA_FAILURE_URL`,
+  `KHALTI_RETURN_URL`, `KHALTI_WEBSITE_URL` must be https. `loadEnvOrExit(service)` (API and
+  worker `config/env.ts`) prints `[api] refusing to start. Invalid environment configuration: …`
+  (keys and rules, never values) and exits 1. `apps/api/src/check-env.ts` → `dist/check-env.js`.
+- **Migrations.** `runMigrations` takes `pg_advisory_lock(MIGRATION_LOCK_KEY)` first (also for
+  `pnpm db:migrate`), optional `lockTimeoutMs`. `packages/db/src/bin/migrate.ts` → `dist/bin/migrate.js`
+  (`MIGRATION_LOCK_TIMEOUT_MS`), `db:migrate:prod`. `database-url.ts` moved out of `src/scripts`
+  so the compiled runner can import it.
+- **CI tools.** `infra/ci/run-jest-files.mjs` (the safe watchdog, committed: one Jest process per
+  file, `--testTimeout`, a per-file wall clock that kills the process tree on Windows and Linux;
+  `pnpm test:files <dir> [--config …] [--only …]`). `infra/ci/check-migrations.mjs`
+  (`pnpm migrations:check [base]`): new migrations since the base ref must be expand-only;
+  `-- deploy: contract` opts a file out; 0042 is on a reviewed list (its enum rebuild keeps every old
+  value); `SET NOT NULL` on a column the same file added is allowed (0039).
+- **Workflow** `.github/workflows/production.yml`: verify (build, lint, typecheck, migration guard)
+  → unit (13 packages, watchdog) and integration (docker-compose services, db / kafka / api /
+  worker, watchdog) → images (buildx + GitHub cache; pushed to ECR only on `main` with AWS
+  configured) → deploy (`main`, `production` environment with reviewers, OIDC role) running
+  `infra/deploy/deploy-ecs.sh`: new task-definition revisions, one-off `check-env`, one-off
+  `migrate`, rolling update with circuit breaker, `services-stable`.
+- **EAS.** `eas.json`: a `base` profile pinning Node 24.18.1 / pnpm 12.6.0; every profile names
+  its EAS environment (`development` / `preview` / `production`); store profiles build app
+  bundles; Android submit to the internal track as drafts. `app.config.ts`: version from
+  `src/features/settings/app-version.json` (shared with the app's About), `googleServicesFile`
+  from the EAS file variable `GOOGLE_SERVICES_JSON`, explicit `POST_NOTIFICATIONS` / `VIBRATE`,
+  `RECORD_AUDIO` blocked, `ITSAppUsesNonExemptEncryption: false`, and **a store profile without an
+  https `EXPO_PUBLIC_API_URL` fails at config time**. The alarm sound stays bundled through the
+  expo-notifications plugin; the `orders` and `order-alarm` channels are created by the app at start
+  (Android fixes a channel's sound when it is first created).
+
+### Found while doing it
+
+- Expo's config loader cannot import a `.ts` module from `app.config.ts` (Jest can): importing
+  `app-version.ts` passed the tests and broke `expo config`. The version is now JSON.
+
+### Not done / to decide
+
+- **OTA updates (SPEC infrastructure §4, EAS Update) need `expo-updates`**, a native module not
+  installed (it requires rebuilding the development clients). Then add `runtimeVersion` and
+  `updates.url` to app.config.ts and a `channel` per profile.
+- No AWS resources exist in the repo (VPC, ALB, ECS services, RDS, ElastiCache, MSK, ECR,
+  Secrets Manager). The deploy script assumes the services exist and only swaps images.
+- iOS submit (`ascAppId` per app) and the Play service-account key are not configured.
+- The admin dashboard and `/api` must share one https origin (the refresh cookie is
+  SameSite=Strict); route `/api`, `/socket.io`, `/uploads` to the API at the load balancer.
+- A worker health signal for the orchestrator (it has no port) is not built.
+
+### Tests (2026-10-22, one Jest process at a time)
+
+- `pnpm build`, `turbo run typecheck lint`: 35 of 35.
+- Unit, every file: shared-types 29 files, api 22, worker 20, db 1. Integration: db migrator (new:
+  three concurrent runs apply each migration once; lock timeout), foreign-key indexes, contract;
+  api KYC and storage, mock payment, auth, e2e lifecycle. Mobile: app config (new), branding,
+  notifications (5 files). All passing.
+- Images: API built and run (non-root, fonts present, `check-env` exits 1 on a bad environment,
+  migrations applied to the dev database from the container, booted against local services:
+  healthy, `/api/categories` 200, exit 0 on SIGTERM). Worker built with and without Chromium;
+  Chromium launched inside it as `node`; boot gate refuses a bad environment. Admin built and served
+  (immutable assets, SPA fallback, `/api` proxied to the dev API, uid 101).
+- `expo config` resolved for both variants with a production profile, and refused one without an
+  https API URL.
+
 ## 8Z.46 Task 6: product review moderation, "See all reviews", Authentication Log retention (2026-10-22)
 
 Branch `epic/master-completion`. `packages/shared-types`, `packages/db` (migration **0052**),

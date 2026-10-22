@@ -25,6 +25,16 @@ const validEnv: Record<string, string> = {
   SPARROW_SMS_API_URL: 'https://api.sparrowsms.com/v2/sms/',
 };
 
+/** Phase 7: what every production environment needs besides validEnv and a bucket. */
+const PRODUCTION_KEYS: Record<string, string> = {
+  VENDOR_CREDENTIALS_KEY: 'A'.repeat(43) + '=',
+  PUBLIC_API_BASE_URL: 'https://api.hamropasal.np',
+  ESEWA_SUCCESS_URL: 'https://api.hamropasal.np/payments/esewa/success',
+  ESEWA_FAILURE_URL: 'https://api.hamropasal.np/payments/esewa/failure',
+  KHALTI_RETURN_URL: 'https://api.hamropasal.np/payments/khalti/return',
+  KHALTI_WEBSITE_URL: 'https://hamropasal.np',
+};
+
 const expectInvalid = (env: Record<string, string>, fragment: string): void => {
   expect(() => parseServerEnv(env)).toThrow(InvalidEnvError);
   expect(() => parseServerEnv(env)).toThrow(fragment);
@@ -84,6 +94,7 @@ describe('parseServerEnv', () => {
       S3_PUBLIC_BUCKET: 'hp-public',
       S3_PRIVATE_BUCKET: 'hp-private',
       S3_PUBLIC_BASE_URL: 'https://cdn.hamropasal.np',
+      ...PRODUCTION_KEYS,
     };
     expect(
       parseServerEnv({ ...production, CORS_ALLOWED_ORIGINS: 'https://admin.hamropasal.np' })
@@ -234,5 +245,27 @@ describe('mail settings (step 7.1)', () => {
     expect(parseServerEnv({ ...validEnv, ...ses, MOCK_SERVICES: 'true' }).MAIL_PROVIDER).toBe(
       'MOCK',
     );
+  });
+
+  it('refuses to boot in production without the keys a live server needs (Phase 7)', () => {
+    const production: Record<string, string> = {
+      ...validEnv,
+      NODE_ENV: 'production',
+      STORAGE_DRIVER: 'S3',
+      S3_PUBLIC_BUCKET: 'hp-public',
+      S3_PRIVATE_BUCKET: 'hp-private',
+      S3_PUBLIC_BASE_URL: 'https://cdn.hamropasal.np',
+      ...PRODUCTION_KEYS,
+    };
+    expect(parseServerEnv(production).NODE_ENV).toBe('production');
+    for (const key of ['VENDOR_CREDENTIALS_KEY', 'PUBLIC_API_BASE_URL']) {
+      const { [key]: _dropped, ...without } = production;
+      expectInvalid(without, key);
+    }
+    for (const key of ['ESEWA_SUCCESS_URL', 'KHALTI_RETURN_URL', 'PUBLIC_API_BASE_URL']) {
+      expectInvalid({ ...production, [key]: 'http://api.hamropasal.np/x' }, 'Must be https');
+    }
+    // The same keys are optional and may be http outside production.
+    expect(parseServerEnv(validEnv).PUBLIC_API_BASE_URL).toBeUndefined();
   });
 });

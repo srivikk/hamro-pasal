@@ -1,5 +1,6 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
+import appVersion from './src/features/settings/app-version.json';
 import palette from './src/theme/palette.json';
 
 /*
@@ -45,6 +46,24 @@ const VARIANTS: Readonly<
   },
 };
 
+/** The EAS build profiles that produce store binaries (eas.json). */
+const STORE_PROFILES = new Set(['production', 'seller-production']);
+
+/**
+ * Phase 7 (2026-10-22): a store build without a reachable API would install and then fail at the
+ * first screen (src/config/api.ts). Refuse it while it is built instead: a production profile
+ * needs EXPO_PUBLIC_API_URL over https (set in the EAS "production" environment).
+ */
+export function assertStoreBuildEnv(env: Readonly<Record<string, string | undefined>>): void {
+  if (!STORE_PROFILES.has(env.EAS_BUILD_PROFILE ?? '')) return;
+  const api = env.EXPO_PUBLIC_API_URL ?? '';
+  if (!/^https:\/\/[^\s/]+/.test(api)) {
+    throw new Error(
+      `EAS profile "${env.EAS_BUILD_PROFILE ?? ''}" needs EXPO_PUBLIC_API_URL set to the https API (got "${api}")`,
+    );
+  }
+}
+
 function variantOf(value: string | undefined): Variant {
   if (value === undefined || value === '' || value === 'customer') return 'customer';
   if (value === 'seller') return 'seller';
@@ -52,6 +71,7 @@ function variantOf(value: string | undefined): Variant {
 }
 
 export default ({ config }: ConfigContext): ExpoConfig => {
+  assertStoreBuildEnv(process.env);
   const variant = variantOf(process.env.APP_VARIANT);
   const app = VARIANTS[variant];
   const assets = `./assets/branding/${variant}`;
@@ -60,7 +80,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     name: app.name,
     slug: 'hamro-pasal',
     scheme: app.scheme,
-    version: '0.0.0',
+    // The version users see (Profile, About) and the stores' version name; build numbers are
+    // EAS's (appVersionSource remote, autoIncrement in eas.json).
+    version: appVersion.version,
     orientation: 'portrait',
     userInterfaceStyle: 'automatic',
     icon: `${assets}/icon.png`,
@@ -122,6 +144,18 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     android: {
       package: app.bundleId,
+      // FCM V1 credentials for Android push (Expo's push service delivers through FCM). The file
+      // holds a client for both packages; EAS provides it as the file environment variable
+      // GOOGLE_SERVICES_JSON. Absent locally: the build still works, it just gets no push token.
+      ...(process.env.GOOGLE_SERVICES_JSON === undefined || process.env.GOOGLE_SERVICES_JSON === ''
+        ? {}
+        : { googleServicesFile: process.env.GOOGLE_SERVICES_JSON }),
+      // POST_NOTIFICATIONS (Android 13+) and VIBRATE for the order alarm channel; the channels
+      // themselves ("orders", "order-alarm" with the bundled vendor-alarm sound) are created by
+      // the app at start (src/features/notifications/notification-handler.ts).
+      permissions: ['android.permission.POST_NOTIFICATIONS', 'android.permission.VIBRATE'],
+      // Nothing records audio (voice search is a placeholder): keep the store listing honest.
+      blockedPermissions: ['android.permission.RECORD_AUDIO'],
       adaptiveIcon: {
         foregroundImage: `${assets}/adaptive-icon.png`,
         backgroundColor: app.accent,
@@ -129,6 +163,9 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     },
     ios: {
       bundleIdentifier: app.bundleId,
+      supportsTablet: false,
+      // Only standard HTTPS / TLS: no export-compliance documents for App Store submission.
+      infoPlist: { ITSAppUsesNonExemptEncryption: false },
     },
   };
 };

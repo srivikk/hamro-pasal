@@ -1,0 +1,203 @@
+# Phase 7 (2026-10-22): CI/CD for Hamro Pasal.
+#
+#   verify       lint, typecheck, build, zero-downtime migration guard
+#   unit         every package's unit tests, one Jest file at a time (infra/ci/run-jest-files.mjs)
+#   integration  PostgreSQL + PostGIS, Redis and Kafka from docker-compose.yml; db, api, worker and
+#                kafka integration tests, one file at a time
+#   images       the api, worker and admin images (buildx, layer cache); pushed to ECR on main only
+#   deploy       main only, behind the `production` environment (required reviewers): env check,
+#                migrations, then a rolling ECS update (infra/deploy/deploy-ecs.sh)
+#
+# Repository configuration the push and deploy steps need (Settings → Secrets and variables):
+#   vars:    AWS_REGION, ECR_REGISTRY (e.g. 123456789012.dkr.ecr.ap-south-1.amazonaws.com),
+#            ECS_CLUSTER, ECS_API_SERVICE, ECS_WORKER_SERVICE, ECS_ADMIN_SERVICE,
+#            ECS_SUBNETS, ECS_SECURITY_GROUPS
+#   secrets: AWS_DEPLOY_ROLE_ARN (an IAM role trusted for this repository through GitHub OIDC)
+# Without AWS_REGION the images are built and checked but not pushed, and nothing is deployed.
+
+name: production
+
+on:
+  push:
+    branches: [main, 'epic/**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: '0'
+  TURBO_TELEMETRY_DISABLED: '1'
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the migration guard compares with origin/main
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: corepack enable
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm build
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Migrations are expand-only (zero-downtime deploys)
+        run: node infra/ci/check-migrations.mjs origin/main
+
+  unit:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Unit tests, one file at a time (10 s per test, 10 min per file)
+        run: |
+          status=0
+          for dir in packages/shared-types packages/db packages/ledger packages/sms packages/ivr \
+                     packages/kafka packages/mail packages/storage packages/exports \
+                     apps/api apps/worker apps/admin apps/mobile; do
+            echo "::group::$dir"
+            node infra/ci/run-jest-files.mjs "$dir" --test-timeout 10000 --file-timeout 600 || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+  integration:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Local services (docker-compose.yml)
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_PASSWORD=ci-only-password
+          DATABASE_URL=postgresql://hamro_pasal:ci-only-password@127.0.0.1:5432/hamro_pasal
+          REDIS_URL=redis://127.0.0.1:6379
+          KAFKA_BROKERS=127.0.0.1:9092
+          TEST_KAFKA_BROKERS=127.0.0.1:9094
+          EOF
+          pnpm infra:up
+      - name: Integration tests, one file at a time (10 s per test, 10 min per file)
+        run: |
+          status=0
+          for dir in packages/db packages/kafka apps/api apps/worker; do
+            echo "::group::$dir"
+            node infra/ci/run-jest-files.mjs "$dir" --config jest.integration.config.js \
+              --test-timeout 10000 --file-timeout 600 || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+      - name: Service logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+
+  images:
+    needs: [unit, integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write # GitHub OIDC → AWS (only used when pushing)
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    env:
+      PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_REGION != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - name: AWS credentials
+        if: env.PUSH == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: ECR login
+        if: env.PUSH == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ vars.ECR_REGISTRY || 'local' }}/hamro-pasal-api:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+      - name: worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/worker/Dockerfile
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ vars.ECR_REGISTRY || 'local' }}/hamro-pasal-worker:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,scope=worker,mode=max
+      - name: admin
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/admin/Dockerfile
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ vars.ECR_REGISTRY || 'local' }}/hamro-pasal-admin:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=admin
+          cache-to: type=gha,scope=admin,mode=max
+
+  deploy:
+    needs: images
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_REGION != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: production # add required reviewers to this environment
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false # never stop a deploy halfway
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Check env, migrate, roll out
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          API_SERVICE: ${{ vars.ECS_API_SERVICE }}
+          WORKER_SERVICE: ${{ vars.ECS_WORKER_SERVICE }}
+          ADMIN_SERVICE: ${{ vars.ECS_ADMIN_SERVICE }}
+          ECS_SUBNETS: ${{ vars.ECS_SUBNETS }}
+          ECS_SECURITY_GROUPS: ${{ vars.ECS_SECURITY_GROUPS }}
+          API_IMAGE: ${{ vars.ECR_REGISTRY }}/hamro-pasal-api:${{ needs.images.outputs.tag }}
+          WORKER_IMAGE: ${{ vars.ECR_REGISTRY }}/hamro-pasal-worker:${{ needs.images.outputs.tag }}
+          ADMIN_IMAGE: ${{ vars.ECR_REGISTRY }}/hamro-pasal-admin:${{ needs.images.outputs.tag }}
+        run: bash infra/deploy/deploy-ecs.sh

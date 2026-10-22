@@ -408,6 +408,26 @@ export const serverEnvSchema = z
         }
         break;
     }
+
+    // Phase 7 (2026-10-22): what a production server must have before it accepts traffic. Each
+    // one would otherwise fail later, at the first request that needs it, instead of at boot.
+    if (env.NODE_ENV === 'production') {
+      requireKeys(['VENDOR_CREDENTIALS_KEY'], 'NODE_ENV=production (Model C merchant secrets)');
+      requireKeys(['PUBLIC_API_BASE_URL'], 'NODE_ENV=production (links in queued export emails)');
+      const httpsOnly = [
+        'PUBLIC_API_BASE_URL',
+        'ESEWA_SUCCESS_URL',
+        'ESEWA_FAILURE_URL',
+        'KHALTI_RETURN_URL',
+        'KHALTI_WEBSITE_URL',
+      ] as const;
+      for (const key of httpsOnly) {
+        const value = env[key];
+        if (value !== undefined && !value.startsWith('https://')) {
+          ctx.addIssue({ code: 'custom', path: [key], message: 'Must be https in production' });
+        }
+      }
+    }
   });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

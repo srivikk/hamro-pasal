@@ -30,7 +30,8 @@
     "db:generate:custom": "drizzle-kit generate --custom",
     "db:migrate": "tsx --env-file-if-exists=../../.env src/scripts/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=../../.env src/scripts/seed.ts",
-    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "db:migrate:prod": "node dist/bin/migrate.js"
   },
   "dependencies": {
     "@hamro-pasal/shared-types": "workspace:*",

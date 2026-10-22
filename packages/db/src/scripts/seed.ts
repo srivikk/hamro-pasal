@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { createDatabase, type Database } from '../client';
 import { categories, customerAddresses, products, users, vendors } from '../schema';
-import { describeDatabaseUrl, requireDatabaseUrl } from './database-url';
+import { describeDatabaseUrl, requireDatabaseUrl } from '../database-url';
 import { seedShowcase } from './seed-showcase';
 
 /*

@@ -3,11 +3,11 @@ import { createServer } from 'node:http';
 import { Redis } from 'ioredis';
 
 import { createApp } from './app';
-import { loadEnv } from './config/env';
+import { loadEnvOrExit } from './config/env';
 import { buildContainerFromEnv } from './container';
 import { attachRealtime } from './realtime/orders-namespace';
 
-const env = loadEnv();
+const env = loadEnvOrExit('api');
 const container = buildContainerFromEnv(env);
 const httpServer = createServer(
   createApp(container, { corsAllowedOrigins: env.CORS_ALLOWED_ORIGINS }),

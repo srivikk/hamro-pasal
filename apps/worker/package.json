@@ -4,6 +4,9 @@
   "private": true,
   "description": "Hamro Pasal background worker: outbox relay to Kafka, Kafka consumers, BullMQ delayed jobs and crons.",
   "main": "./dist/main.js",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx watch --env-file-if-exists=../../.env src/main.ts",

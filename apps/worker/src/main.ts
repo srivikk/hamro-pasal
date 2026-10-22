@@ -15,7 +15,7 @@ import { smsGatewayFromEnv } from '@hamro-pasal/sms';
 import { Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 
-import { loadEnv } from './config/env';
+import { loadEnvOrExit } from './config/env';
 import { buildConsumers, routeByTopic } from './consumers';
 import { KafkaDeadLetterPublisher } from './consumers/dead-letter';
 import { smsFallbackLogFromEnv } from './consumers/order-push-notifications';
@@ -60,7 +60,7 @@ import { VendorEscalationService } from './sla/vendor-escalation';
 import { VendorDebtReconciliationService } from './wallet/vendor-debt-reconciliation';
 
 async function main(): Promise<void> {
-  const env = loadEnv();
+  const env = loadEnvOrExit('worker');
   const lifecycle = new Lifecycle();
 
   // PostgreSQL (outbox) -> Kafka (idempotent producer)

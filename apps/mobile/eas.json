@@ -4,9 +4,15 @@
     "appVersionSource": "remote"
   },
   "build": {
+    "base": {
+      "node": "24.18.1",
+      "pnpm": "12.6.0"
+    },
     "development": {
+      "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
+      "environment": "development",
       "android": {
         "buildType": "apk"
       },
@@ -15,13 +21,23 @@
       }
     },
     "preview": {
+      "extends": "base",
       "distribution": "internal",
+      "environment": "preview",
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
         "APP_VARIANT": "customer"
       }
     },
     "production": {
+      "extends": "base",
+      "environment": "production",
       "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
       "env": {
         "APP_VARIANT": "customer"
       }
@@ -46,7 +62,17 @@
     }
   },
   "submit": {
-    "production": {},
-    "seller-production": {}
+    "production": {
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
+      }
+    },
+    "seller-production": {
+      "android": {
+        "track": "internal",
+        "releaseStatus": "draft"
+      }
+    }
   }
 }

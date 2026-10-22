@@ -1,0 +1,63 @@
+# Phase 7 (2026-10-22): the Super Admin dashboard, a static single-page app.
+#
+# The dashboard calls the API on its own origin (/api/...), and its refresh token is a
+# SameSite=Strict, Secure cookie scoped to /api/auth: the API must be reached through this origin.
+# Either the load balancer routes /api, /socket.io and /uploads to the API service (preferred),
+# or this server forwards them to ${API_UPSTREAM} (the default below, for a compose / single host).
+# Envsubst fills ${API_UPSTREAM} when the container starts (nginx image entrypoint).
+
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    server_tokens off;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
+    # Hashed build assets never change under their name.
+    location /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    location /api/ {
+        proxy_pass ${API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 50m;
+    }
+
+    location /socket.io/ {
+        proxy_pass ${API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 120s;
+    }
+
+    location /uploads/ {
+        proxy_pass ${API_UPSTREAM};
+    }
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Every other path is the app (hash routes; index.html is never cached).
+    location / {
+        try_files $uri /index.html;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+    }
+}

@@ -56,6 +56,8 @@ jobs:
         run: pnpm typecheck
       - name: Migrations are expand-only (zero-downtime deploys)
         run: node infra/ci/check-migrations.mjs origin/main
+      - name: The apps boot on Hermes (no missing global constructed at module load)
+        run: node infra/ci/check-hermes-startup.mjs --variant customer
 
   unit:
     needs: verify

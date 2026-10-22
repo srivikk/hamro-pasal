@@ -7,6 +7,7 @@ import {
   levenshtein,
   normaliseBusinessName,
 } from './name-match';
+import type * as NameMatch from './name-match';
 import { isPanChecksumValid, mod11_2CheckCharacter, mod11_2CheckValue } from './pan-checksum';
 
 describe('ISO/IEC 7064 MOD 11-2', () => {
@@ -90,6 +91,64 @@ describe('business name matching', () => {
     ['Kirana', ''],
   ])('does not match "%s" with "%s"', (ird, vendor) => {
     expect(businessNameSimilarity(ird, vendor)).toBeLessThan(IRD_NAME_MATCH_THRESHOLD);
+  });
+
+  describe('without Intl.Segmenter, as on Hermes (2026-10-22)', () => {
+    const original = Intl.Segmenter;
+
+    /** Loads a fresh copy of `path` while Intl has no Segmenter (the mobile apps' runtime). */
+    function loadWithoutSegmenter(path: string): object {
+      Reflect.deleteProperty(Intl, 'Segmenter');
+      try {
+        let loaded: object | undefined;
+        jest.isolateModules(() => {
+          loaded = jest.requireActual<object>(path);
+        });
+        if (loaded === undefined) throw new Error(`${path} did not load`);
+        return loaded;
+      } finally {
+        Object.defineProperty(Intl, 'Segmenter', {
+          value: original,
+          configurable: true,
+          writable: true,
+        });
+      }
+    }
+
+    it('loads the whole package: nothing constructs a missing global at import', () => {
+      // The crash: shared-types' index loaded name-match, which ran `new Intl.Segmenter(...)`.
+      expect(() => loadWithoutSegmenter('../index')).not.toThrow();
+    });
+
+    it('splits graphemes and scores names as the native segmenter does', () => {
+      Reflect.deleteProperty(Intl, 'Segmenter');
+      let fallback: typeof NameMatch | undefined;
+      try {
+        jest.isolateModules(() => {
+          fallback = jest.requireActual<typeof NameMatch>('./name-match');
+        });
+        if (fallback === undefined) throw new Error('name-match did not load');
+        expect(fallback.graphemes('का')).toEqual(['का']);
+        expect(fallback.graphemes('Pasal')).toEqual(['P', 'a', 's', 'a', 'l']);
+        expect(fallback.levenshtein('काम', 'किम')).toBe(1);
+        for (const [ird, vendor] of [
+          ['THAMEL KIRANA PASAL PVT. LTD.', 'Thamel Kirana Pasal'],
+          ['Thamel Kirana Pasal', 'Boudha Fresh Mart'],
+          ['हाम्रो पसल प्रा.लि.', 'हाम्रो पसल'],
+        ] as const) {
+          expect(fallback.businessNameSimilarity(ird, vendor)).toBeCloseTo(
+            businessNameSimilarity(ird, vendor),
+            6,
+          );
+        }
+      } finally {
+        Object.defineProperty(Intl, 'Segmenter', {
+          value: original,
+          configurable: true,
+          writable: true,
+        });
+      }
+    });
   });
 
   it('takes the best of the legal and the business name, ignoring empty ones', () => {

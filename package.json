@@ -16,6 +16,7 @@
     "test:integration": "turbo run test:integration",
     "test:files": "node infra/ci/run-jest-files.mjs",
     "migrations:check": "node infra/ci/check-migrations.mjs",
+    "hermes:check": "node infra/ci/check-hermes-startup.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "clean": "turbo run clean",

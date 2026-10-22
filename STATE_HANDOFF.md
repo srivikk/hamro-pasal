@@ -1100,6 +1100,40 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.50 Boot crash on Hermes: module-level Intl.Segmenter (2026-10-22)
+
+**Symptom.** Both EAS development builds crashed at start, connected to Metro: `[runtime not
+ready]: TypeError: undefined cannot be used as a constructor`, with only Metro frames in the stack.
+
+**Cause.** `packages/shared-types/src/kyc/name-match.ts` (the IRD PAN name matching of §8Z.42) ran
+`new Intl.Segmenter('en', { granularity: 'grapheme' })` when the module loaded. shared-types' index
+re-exports it, so every app that imports `@hamro-pasal/shared-types` evaluates it at start, and
+**Hermes has no `Intl.Segmenter`**. Node (the worker, Jest) has it, which is why no test saw it.
+It was not decimal.js (API only), the API client, or the notification channels.
+
+Found by exporting the Android development bundle (`expo export --platform android --dev`) and
+listing every module-level `new` of a global Hermes lacks: this was the only one in our code.
+
+**Fix.** The segmenter is created on first use, where `Intl.Segmenter` exists (Node: the IRD worker,
+same scores as before). Elsewhere graphemes come from a regular expression: a base character with
+its combining marks, and in Devanagari a consonant + virama + consonant joined (Unicode's Indic
+conjunct rule, as ICU does), so the fallback gives the same scores as ICU on the tested names.
+
+**Guard.** `infra/ci/check-hermes-startup.mjs` (`pnpm hermes:check`, a step of the CI verify job):
+exports the Android development bundle, parses every module, and fails when our code
+(apps/mobile, packages/*) constructs a global Hermes lacks (`Intl.Segmenter`, `EventTarget`,
+`Event`, `BroadcastChannel`, `MessageChannel`, `DOMException`, `FinalizationRegistry`, the stream
+classes, `Worker`, …) outside a function. Checked against the old code: it names
+`packages/shared-types/dist/kyc/name-match.js` and exits 1. Third-party modules are not judged
+(Expo's URL polyfill, expo-router's web paths, MSW behind its flag: all present before and fine).
+
+Tests: `kyc.test.ts` loads the whole package with `Intl.Segmenter` removed (fails on the old code,
+mutation-checked) and compares fallback scores with the native ones; shared-types 29 files, worker
+unit 21 files, the IRD verification integration test (15) pass.
+
+**On the phone:** no rebuild needed; reload the JavaScript from Metro (restart both bundlers with
+`--clear`), since only JavaScript changed.
+
 ## 8Z.49 Alarm sound renamed: vendor_alarm (2026-10-22)
 
 EAS prebuild refused the expo-notifications plugin: Android resource names must start with a letter

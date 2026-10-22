@@ -39,11 +39,38 @@ export function normaliseBusinessName(name: string): string[] {
     .filter((word) => word !== '' && !LEGAL_FORM_WORDS.has(word));
 }
 
-const GRAPHEMES = new Intl.Segmenter('en', { granularity: 'grapheme' });
+/*
+ * 2026-10-22: never construct Intl.Segmenter when this module loads. shared-types is imported by
+ * the mobile apps too (its index re-exports this file), and Hermes has no Intl.Segmenter: a
+ * module-level `new Intl.Segmenter(...)` crashed both apps at boot with "undefined cannot be used
+ * as a constructor". The segmenter is made on first use, where it exists (Node: the IRD worker);
+ * elsewhere a base character and the combining marks after it count as one character.
+ */
+let segmenter: Intl.Segmenter | null | undefined;
+
+function graphemeSegmenter(): Intl.Segmenter | null {
+  if (segmenter === undefined) {
+    segmenter =
+      typeof Intl === 'object' && typeof Intl.Segmenter === 'function'
+        ? new Intl.Segmenter('en', { granularity: 'grapheme' })
+        : null;
+  }
+  return segmenter;
+}
+
+/**
+ * A base character with its combining marks (vowel signs, nukta, …); in Devanagari a consonant +
+ * virama + consonant joins into one (प्र, म्र: Unicode's Indic conjunct rule, as ICU segments);
+ * or stray marks.
+ */
+const BASE_AND_MARKS = /(?:\P{M}[^\P{M}्]*्(?=[क-हक़-य़]))*\P{M}\p{M}*|\p{M}+/gu;
 
 /** User-perceived characters: a Devanagari consonant with its vowel sign is one, not two. */
 export function graphemes(text: string): string[] {
-  return Array.from(GRAPHEMES.segment(text), (part) => part.segment);
+  const native = graphemeSegmenter();
+  return native === null
+    ? (text.match(BASE_AND_MARKS) ?? [])
+    : Array.from(native.segment(text), (part) => part.segment);
 }
 
 /** Levenshtein distance by grapheme cluster, two rows of memory. */

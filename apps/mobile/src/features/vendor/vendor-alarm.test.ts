@@ -4,7 +4,7 @@ import { createAudioPlayer, mockAudio, onlyPlayer, resetMockAudio } from '../../
 import { createVendorAlarm, useVendorAlarm } from './vendor-alarm';
 
 // Metro bundles the sound as an asset id; a named stand-in proves which file the player loads.
-jest.mock('../../../assets/sounds/vendor-alarm.wav', () => 'assets/sounds/vendor-alarm.wav');
+jest.mock('../../../assets/sounds/vendor_alarm.wav', () => 'assets/sounds/vendor_alarm.wav');
 
 beforeEach(() => {
   resetMockAudio();
@@ -29,7 +29,7 @@ describe('createVendorAlarm (expo-audio)', () => {
     alarm.start();
 
     const player = onlyPlayer();
-    expect(player.source).toBe('assets/sounds/vendor-alarm.wav');
+    expect(player.source).toBe('assets/sounds/vendor_alarm.wav');
     expect(player.loop).toBe(true);
     expect(player.volume).toBe(1);
     expect(player.play).toHaveBeenCalledTimes(1);

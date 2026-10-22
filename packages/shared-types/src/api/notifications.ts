@@ -74,10 +74,28 @@ export type OrderPushData = z.infer<typeof orderPushDataSchema>;
  * `ORDER_PUSH_CHANNEL_ID` because a channel's sound and importance can never change once the
  * phone has created it. Maximum importance, alarm audio, the Seller app's own alarm sound.
  */
-export const ORDER_ALARM_CHANNEL_ID = 'order-alarm';
+export const ORDER_ALARM_CHANNEL_ID = 'order-alarm-v2';
 
-/** The alarm sound bundled with the app (assets/sounds), by its file name as the OS looks it up. */
-export const ORDER_ALARM_SOUND = 'vendor-alarm.wav';
+/**
+ * 2026-10-22: channels the app deletes at start. `order-alarm` was created with the sound
+ * "vendor-alarm", which is not a valid Android resource name (EAS prebuild refused it), and a
+ * channel's sound can never be changed: the alarm moved to a new channel id instead.
+ */
+export const LEGACY_ORDER_ALARM_CHANNEL_IDS: readonly string[] = ['order-alarm'];
+
+/**
+ * The alarm sound's resource name: Android's `res/raw/vendor_alarm`. Android resource names must
+ * start with a letter and hold only a-z, 0-9 and underscores.
+ */
+export const ORDER_ALARM_SOUND_RESOURCE = 'vendor_alarm';
+
+/**
+ * The alarm sound by its file name (apps/mobile/assets/sounds/vendor_alarm.wav, bundled by the
+ * expo-notifications plugin into res/raw on Android and the app bundle on iOS). expo-notifications
+ * takes this name for channels and local notifications (it drops the extension on Android), and an
+ * APNs payload's `sound` must name the bundled file exactly, extension included.
+ */
+export const ORDER_ALARM_SOUND = `${ORDER_ALARM_SOUND_RESOURCE}.wav`;
 
 /** Whether a push rings the alarm: a new order for the shop. Every other alert sounds once. */
 export function orderPushRings(data: Pick<OrderPushData, 'audience' | 'state'>): boolean {

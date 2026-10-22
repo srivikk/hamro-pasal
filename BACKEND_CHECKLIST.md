@@ -633,7 +633,7 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 - [x] Discounts before the free-delivery threshold; platform threshold `platform_settings.free_delivery_above_npr` (migration 0048), platform-funded (`DELIVERY_SUBSIDY`, PROMO_EXPENSE), Logistics panel field.
 - [x] New orders ring the shop (`order-alarm` channel, bundled alarm); order alerts kept in the notification centre; read / unread styles, unread badge, app icon badge.
   - [ ] Build and install a new development / store build (the alarm sound is native), then test a real new order on an Android phone with the screen off and in Do Not Disturb.
-  - [ ] iOS: a visible push with the alarm sound for new orders (data-only does not wake a force-quit app).
+  - [x] iOS: a visible push with the alarm sound for new orders (2026-10-22, §8Z.49: vendor_alarm.wav; the sound was renamed from vendor-alarm, which EAS prebuild refused).
   - [ ] A report of the delivery subsidy cost for the Super Admin.
 
 ## Wallets, Model C, plans and cycle dues (2026-10-21, STATE_HANDOFF.md §8Z.43)

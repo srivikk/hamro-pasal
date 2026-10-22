@@ -207,6 +207,47 @@ describe('expoMessages', () => {
 
     expect(expoMessages(event, push, [])).toEqual([]);
   });
+
+  describe('the new-order alarm per platform (2026-10-22)', () => {
+    const android = 'ExponentPushToken[android]';
+    const iphone = 'ExponentPushToken[iphone]';
+
+    it('rings an iPhone with the bundled vendor_alarm.wav, and wakes Android data-only', () => {
+      const event = stateChanged('PLACED');
+      const [push] = orderPushes(event);
+      if (push?.audience !== 'VENDOR') throw new Error('no vendor push');
+
+      const [toAndroid, toIphone] = expoMessages(event, push, [android, iphone], new Set([iphone]));
+
+      // Android: unchanged (SPEC: data-only); the app posts it on the order-alarm-v2 channel.
+      expect(toAndroid).toMatchObject({ to: android, _contentAvailable: true });
+      expect(toAndroid).not.toHaveProperty('sound');
+      expect(toAndroid?.data).toMatchObject({ data_only: true });
+      // iOS: APNs plays only the payload's own sound, named exactly with its extension.
+      const { data, ...message } = toIphone ?? { data: {} };
+      expect(message).toEqual({
+        to: iphone,
+        title: 'New order',
+        body: push.body,
+        sound: 'vendor_alarm.wav',
+        priority: 'high',
+      });
+      expect(data).toMatchObject({ state: 'PLACED', audience: 'VENDOR', data_only: false });
+      expect(orderPushDataSchema.safeParse(toIphone?.data).success).toBe(true);
+    });
+
+    it('sends an iPhone every other push exactly as before', () => {
+      for (const state of ['PREPARING', 'OUT_FOR_DELIVERY', 'CANCELED'] as const) {
+        const event = stateChanged(state);
+        for (const push of orderPushes(event)) {
+          const [toIphone] = expoMessages(event, push, [iphone], new Set([iphone]));
+          const [plain] = expoMessages(event, push, [iphone]);
+          expect(toIphone).toEqual(plain);
+          expect(toIphone?.sound).not.toBe('vendor_alarm.wav');
+        }
+      }
+    });
+  });
 });
 
 describe('orderPushFallbackSms', () => {

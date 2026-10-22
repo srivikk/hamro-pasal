@@ -148,7 +148,9 @@ export function orderPushNotificationConsumer(
           expoMessagePayload(event, push),
         ),
       );
-      messages.push(...expoMessages(event, push, recipient.tokens));
+      messages.push(
+        ...expoMessages(event, push, recipient.tokens, new Set(recipient.iosTokens ?? [])),
+      );
     }
     // Nobody has a device registered: no request is made.
     if (messages.length === 0) return;

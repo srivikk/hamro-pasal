@@ -8,6 +8,8 @@ export interface PushRecipient {
   readonly phone: string;
   /** Expo push tokens of every device the account is signed in on; may be empty. */
   readonly tokens: readonly string[];
+  /** 2026-10-22: those of `tokens` registered from an iPhone (they get the alarm as a visible push). */
+  readonly iosTokens?: readonly string[];
 }
 
 export interface PushRecipientReader {
@@ -32,7 +34,7 @@ export class DatabasePushRecipients implements PushRecipientReader, DeviceTokenR
       .where(eq(users.id, userId))
       .limit(1);
     if (user === undefined) return null;
-    return { userId, phone: user.phone, tokens: await this.tokensOf(userId) };
+    return { userId, phone: user.phone, ...(await this.devicesOf(userId)) };
   }
 
   async vendor(vendorId: string): Promise<PushRecipient | null> {
@@ -45,7 +47,7 @@ export class DatabasePushRecipients implements PushRecipientReader, DeviceTokenR
     return {
       userId: vendor.userId,
       phone: vendor.phone,
-      tokens: await this.tokensOf(vendor.userId),
+      ...(await this.devicesOf(vendor.userId)),
     };
   }
 
@@ -54,12 +56,15 @@ export class DatabasePushRecipients implements PushRecipientReader, DeviceTokenR
     await this.db.delete(deviceTokens).where(inArray(deviceTokens.token, [...tokens]));
   }
 
-  private async tokensOf(userId: string): Promise<string[]> {
+  private async devicesOf(userId: string): Promise<{ tokens: string[]; iosTokens: string[] }> {
     const rows = await this.db
-      .select({ token: deviceTokens.token })
+      .select({ token: deviceTokens.token, platform: deviceTokens.platform })
       .from(deviceTokens)
       .where(eq(deviceTokens.user_id, userId))
       .orderBy(deviceTokens.created_at, deviceTokens.id);
-    return rows.map((row) => row.token);
+    return {
+      tokens: rows.map((row) => row.token),
+      iosTokens: rows.filter((row) => row.platform === 'IOS').map((row) => row.token),
+    };
   }
 }

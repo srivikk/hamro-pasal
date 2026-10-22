@@ -1,6 +1,8 @@
 import {
+  ORDER_ALARM_SOUND,
   ORDER_PUSH_CHANNEL_ID,
   ORDER_PUSH_TYPE,
+  orderPushRings,
   type OrderPushData,
   type OrderStateChangedEvent,
   type PushAudience,
@@ -135,14 +137,47 @@ export function expoMessagePayload(
       };
 }
 
-/** One Expo message per device. */
+/**
+ * 2026-10-22: what an iPhone is sent for a push that rings the shop's alarm (a new order). The
+ * data-only message Android gets (SPEC implicit requirement 1) cannot ring on iOS: iOS does not
+ * wake a force-quit app for it, and only the APNs payload's own `sound` plays a custom sound
+ * there, named by its exact file in the app bundle (`vendor_alarm.wav`, bundled by the
+ * expo-notifications plugin). So the iPhone gets a visible notification with that sound; the app
+ * then has nothing to post itself (`data_only: false`). On Android the sound is the
+ * `order-alarm-v2` channel's, which the app creates with the same file.
+ */
+export function iosAlarmPayload(
+  event: OrderStateChangedEvent,
+  push: OrderPush,
+): Omit<ExpoPushMessage, 'to'> {
+  return {
+    title: push.title,
+    body: push.body,
+    sound: ORDER_ALARM_SOUND,
+    priority: 'high',
+    data: { ...orderPushData(event, push), data_only: false },
+  };
+}
+
+/**
+ * One Expo message per device. `iosTokens` names the devices registered as iOS: they get the visible
+ * alarm for a push that rings (iosAlarmPayload); every other device, and every other push, gets
+ * expoMessagePayload. Without it every device is treated as Android (the behaviour before
+ * 2026-10-22).
+ */
 export function expoMessages(
   event: OrderStateChangedEvent,
   push: OrderPush,
   tokens: readonly string[],
+  iosTokens: ReadonlySet<string> = new Set(),
 ): ExpoPushMessage[] {
   const payload = expoMessagePayload(event, push);
-  return tokens.map((to): ExpoPushMessage => ({ to, ...payload }));
+  const rings = orderPushRings({ audience: push.audience, state: event.payload.to_state });
+  const iosPayload = rings ? iosAlarmPayload(event, push) : payload;
+  return tokens.map((to): ExpoPushMessage => ({
+    to,
+    ...(iosTokens.has(to) ? iosPayload : payload),
+  }));
 }
 
 /** The SMS a push stands in for, logged when SMS_PROVIDER=MOCK (no SMS is sent for order pushes). */

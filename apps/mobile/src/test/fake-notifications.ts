@@ -23,6 +23,8 @@ export const mockNotifications: {
   pushToken: string | null;
   handler: FakeNotificationHandler | null;
   channels: { id: string; input: unknown }[];
+  /** Channel ids passed to deleteNotificationChannelAsync, in order. */
+  deletedChannels: string[];
   scheduled: unknown[];
   registeredTasks: string[];
   /** Listeners added with addNotificationResponseReceivedListener (a tap on a notification). */
@@ -39,6 +41,7 @@ export const mockNotifications: {
   pushToken: 'ExponentPushToken[test-device]',
   handler: null,
   channels: [],
+  deletedChannels: [],
   scheduled: [],
   registeredTasks: [],
   responseListeners: [],
@@ -53,6 +56,7 @@ export function resetMockNotifications(): void {
   mockNotifications.pushToken = 'ExponentPushToken[test-device]';
   mockNotifications.handler = null;
   mockNotifications.channels = [];
+  mockNotifications.deletedChannels = [];
   mockNotifications.scheduled = [];
   mockNotifications.registeredTasks = [];
   mockNotifications.responseListeners = [];
@@ -141,6 +145,11 @@ export function setNotificationHandler(handler: FakeNotificationHandler | null):
 export function setNotificationChannelAsync(id: string, input: unknown): Promise<null> {
   mockNotifications.channels.push({ id, input });
   return Promise.resolve(null);
+}
+
+export function deleteNotificationChannelAsync(id: string): Promise<void> {
+  mockNotifications.deletedChannels.push(id);
+  return Promise.resolve();
 }
 
 export const scheduleNotificationAsync = jest.fn((request: unknown) => {

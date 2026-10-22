@@ -75,7 +75,7 @@ describe('foreground notification handler', () => {
 });
 
 describe('ensureOrderNotificationChannel', () => {
-  it('creates the "orders" and the "order-alarm" channels on Android, named in the app language', async () => {
+  it('creates the "orders" and the "order-alarm-v2" channels on Android, named in the app language', async () => {
     await ensureOrderNotificationChannel('अर्डर अपडेट', 'नयाँ अर्डर (अलार्म)');
 
     expect(mockNotifications.channels).toEqual([
@@ -85,11 +85,11 @@ describe('ensureOrderNotificationChannel', () => {
       { id: 'orders', input: { name: 'अर्डर अपडेट', importance: 6 } },
       // 2026-10-21: a new order rings: max importance, the bundled alarm, played as an alarm.
       {
-        id: 'order-alarm',
+        id: 'order-alarm-v2',
         input: {
           name: 'नयाँ अर्डर (अलार्म)',
           importance: 7,
-          sound: 'vendor-alarm.wav',
+          sound: 'vendor_alarm.wav',
           vibrationPattern: [0, 800, 400, 800, 400, 800],
           enableVibrate: true,
           lockscreenVisibility: 1,
@@ -97,6 +97,8 @@ describe('ensureOrderNotificationChannel', () => {
         },
       },
     ]);
+    // 2026-10-22: the first alarm channel (an invalid sound name, fixed for ever) is removed.
+    expect(mockNotifications.deletedChannels).toEqual(['order-alarm']);
   });
 
   it('does nothing on iOS', async () => {
@@ -105,6 +107,7 @@ describe('ensureOrderNotificationChannel', () => {
     await ensureOrderNotificationChannel('Order updates', 'New orders (alarm)');
 
     expect(mockNotifications.channels).toEqual([]);
+    expect(mockNotifications.deletedChannels).toEqual([]);
   });
 });
 
@@ -163,8 +166,8 @@ describe('handleOrderPushTask', () => {
 
     expect(mockNotifications.scheduled).toMatchObject([
       {
-        content: { sound: 'vendor-alarm.wav', priority: 'max' },
-        trigger: { channelId: 'order-alarm' },
+        content: { sound: 'vendor_alarm.wav', priority: 'max' },
+        trigger: { channelId: 'order-alarm-v2' },
       },
     ]);
   });

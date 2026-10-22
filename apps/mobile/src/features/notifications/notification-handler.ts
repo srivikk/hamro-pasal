@@ -1,4 +1,5 @@
 import {
+  LEGACY_ORDER_ALARM_CHANNEL_IDS,
   ORDER_ALARM_CHANNEL_ID,
   ORDER_ALARM_SOUND,
   ORDER_PUSH_CHANNEL_ID,
@@ -63,6 +64,11 @@ export async function ensureOrderNotificationChannel(
     ...ORDER_ALARM_CHANNEL,
     name: alarmName,
   });
+  // 2026-10-22: the first alarm channel named a sound Android cannot resolve ("vendor-alarm"), and
+  // a channel keeps its sound for ever: remove it so the shop sees one "New orders" setting.
+  for (const legacy of LEGACY_ORDER_ALARM_CHANNEL_IDS) {
+    await Notifications.deleteNotificationChannelAsync(legacy).catch(() => undefined);
+  }
 }
 
 /**

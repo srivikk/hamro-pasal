@@ -109,7 +109,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           enableBackgroundRemoteNotifications: true,
           // 2026-10-21: bundled so a new order can ring the shop's phone (ORDER_ALARM_SOUND).
           // Takes effect in a new development or store build, not over the air.
-          sounds: ['./assets/sounds/vendor-alarm.wav'],
+          sounds: ['./assets/sounds/vendor_alarm.wav'],
         },
       ],
       [
@@ -151,7 +151,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         ? {}
         : { googleServicesFile: process.env.GOOGLE_SERVICES_JSON }),
       // POST_NOTIFICATIONS (Android 13+) and VIBRATE for the order alarm channel; the channels
-      // themselves ("orders", "order-alarm" with the bundled vendor-alarm sound) are created by
+      // themselves ("orders", "order-alarm-v2" with the bundled vendor_alarm sound) are created by
       // the app at start (src/features/notifications/notification-handler.ts).
       permissions: ['android.permission.POST_NOTIFICATIONS', 'android.permission.VIBRATE'],
       // Nothing records audio (voice search is a placeholder): keep the store listing honest.

@@ -1,7 +1,7 @@
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 import { useEffect, useRef } from 'react';
 
-import alarmSound from '../../../assets/sounds/vendor-alarm.wav';
+import alarmSound from '../../../assets/sounds/vendor_alarm.wav';
 
 /** Full volume: the alarm has to be heard across a busy shop (SPEC: "high-priority audio alarm"). */
 export const VENDOR_ALARM_VOLUME = 1;

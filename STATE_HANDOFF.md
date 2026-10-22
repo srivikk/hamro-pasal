@@ -1100,6 +1100,42 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.49 Alarm sound renamed: vendor_alarm (2026-10-22)
+
+EAS prebuild refused the expo-notifications plugin: Android resource names must start with a letter
+and hold only lowercase a-z, 0-9 and underscores, and `vendor-alarm` has a hyphen.
+
+- **Asset:** `apps/mobile/assets/sounds/vendor-alarm.wav` → `vendor_alarm.wav` (git mv). The plugin's
+  `sounds` entry, the in-app alarm player (`src/features/vendor/vendor-alarm.ts`) and the tests
+  follow.
+- **Shared names** (`packages/shared-types/src/api/notifications.ts`): `ORDER_ALARM_SOUND_RESOURCE`
+  = `vendor_alarm` (Android's `res/raw` name) and `ORDER_ALARM_SOUND` = `vendor_alarm.wav` (what
+  expo-notifications takes for channels and local notifications, and what APNs needs: the exact
+  bundled file name, extension included).
+- **New Android channel id `order-alarm-v2`.** A channel's sound can never change after a phone
+  creates it, and the old `order-alarm` channel named the old sound. The app creates the new one
+  at start and deletes the ids in `LEGACY_ORDER_ALARM_CHANNEL_IDS` (`order-alarm`).
+- **Push payloads (worker):** Expo's `sound` field is iOS-only; on Android the channel decides. So:
+  - Android shop devices: unchanged, a data-only message (SPEC implicit requirement 1); the app
+    posts the notification on `order-alarm-v2`, which rings `vendor_alarm`.
+  - **iOS shop devices (new):** a visible push with `sound: "vendor_alarm.wav"`, title and body,
+    `data_only: false`. This also closes the gap noted in §8Z.44: a data-only push never woke a
+    force-quit iPhone, so a new order arrived silently there.
+  - The worker now reads each device's platform (`device_tokens.platform`): `PushRecipient` gained
+    `iosTokens`, and `expoMessages(event, push, tokens, iosTokens)` picks the payload per device.
+    Every other push is sent exactly as before on both platforms.
+
+Tests: shared-types (the resource name is valid; the new channel is not a legacy one), mobile app
+config (every bundled sound is a valid resource name and exists), notifications (channel ids, the
+legacy channel deleted, the sound name), vendor alarm, vendor dashboard and fulfilment; worker unit
+(iPhone gets the alarm, Android stays data-only, other pushes unchanged on iOS) and the
+`order-push` integration test (a shop with an Android phone and an iPad, through exp.host).
+`expo prebuild --platform android` of the Seller variant, on a throwaway copy of the app, succeeds
+and writes `res/raw/vendor_alarm.wav`.
+
+**Needs a new build** of both apps (the sound is a native asset); installs that created
+`order-alarm` drop it at the next start.
+
 ## 8Z.48 Task 8: worker health check (2026-10-22)
 
 The worker had no port, so ECS could only see whether its process existed. It now serves

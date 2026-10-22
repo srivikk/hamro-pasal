@@ -2,6 +2,10 @@ import {
   deviceTokenRegisterRequestSchema,
   deviceTokenRegisterResponseSchema,
   expoPushTokenSchema,
+  LEGACY_ORDER_ALARM_CHANNEL_IDS,
+  ORDER_ALARM_CHANNEL_ID,
+  ORDER_ALARM_SOUND,
+  ORDER_ALARM_SOUND_RESOURCE,
   orderPushDataSchema,
 } from './notifications';
 
@@ -87,5 +91,19 @@ describe('orderPushDataSchema', () => {
     expect(orderPushDataSchema.safeParse({ ...data, type: 'chat' }).success).toBe(false);
     expect(orderPushDataSchema.safeParse({ ...data, state: 'ARRIVED' }).success).toBe(false);
     expect(orderPushDataSchema.safeParse({ ...data, title: '' }).success).toBe(false);
+  });
+});
+
+describe('the order alarm sound (2026-10-22)', () => {
+  it('has a valid Android resource name and is its .wav file', () => {
+    // Android: start with a letter; only lowercase a-z, 0-9 and underscores (EAS prebuild refuses
+    // anything else).
+    expect(ORDER_ALARM_SOUND_RESOURCE).toMatch(/^[a-z][a-z0-9_]*$/);
+    expect(ORDER_ALARM_SOUND).toBe('vendor_alarm.wav');
+  });
+
+  it('rings on a channel that never carried the old, invalid sound name', () => {
+    expect(LEGACY_ORDER_ALARM_CHANNEL_IDS).toContain('order-alarm');
+    expect(LEGACY_ORDER_ALARM_CHANNEL_IDS).not.toContain(ORDER_ALARM_CHANNEL_ID);
   });
 });

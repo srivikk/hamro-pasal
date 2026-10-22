@@ -238,7 +238,7 @@ describe('order push notifications (Kafka → device_tokens → Expo push API)',
 
   const codeOf = (orderId: string) => orderId.replace(/-/g, '').slice(-6).toUpperCase();
 
-  it('pushes a new order to every device of the vendor, data-only, through exp.host', async () => {
+  it('pushes a new order to every device of the vendor through exp.host: data-only to Android, the alarm sound to iOS', async () => {
     const parties = await order();
     const shopPhone = await device(parties.vendorUserId);
     const shopTablet = await device(parties.vendorUserId, 'IOS');
@@ -260,8 +260,17 @@ describe('order push notifications (Kafka → device_tokens → Expo push API)',
       body: `Order #${codeOf(parties.orderId)} is waiting. Open the app to accept or reject it.`,
     };
     expect(request?.messages).toEqual([
+      // Android: data-only (SPEC); the app rings it on the order-alarm-v2 channel.
       { to: shopPhone, priority: 'high', _contentAvailable: true, data },
-      { to: shopTablet, priority: 'high', _contentAvailable: true, data },
+      // iOS (2026-10-22): a visible push playing the bundled alarm, named exactly as APNs needs.
+      {
+        to: shopTablet,
+        title: data.title,
+        body: data.body,
+        sound: 'vendor_alarm.wav',
+        priority: 'high',
+        data: { ...data, data_only: false },
+      },
     ]);
     expect(orderPushDataSchema.safeParse(request?.messages[0]?.data).success).toBe(true);
     // The customer placed it: nothing is sent to them.

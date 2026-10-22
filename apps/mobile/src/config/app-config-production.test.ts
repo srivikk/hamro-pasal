@@ -1,3 +1,4 @@
+import { ORDER_ALARM_SOUND } from '@hamro-pasal/shared-types';
 import type { ExpoConfig } from 'expo/config';
 
 import appConfig, { assertStoreBuildEnv } from '../../app.config';
@@ -54,12 +55,25 @@ describe('production app config (Phase 7)', () => {
       expect(config.ios).toMatchObject({ infoPlist: { ITSAppUsesNonExemptEncryption: false } });
       // The new-order alarm rings with the bundled sound on the order-alarm channel.
       expect(pluginOptions(config, 'expo-notifications')).toMatchObject({
-        sounds: ['./assets/sounds/vendor-alarm.wav'],
+        sounds: ['./assets/sounds/vendor_alarm.wav'],
         defaultChannel: 'orders',
         enableBackgroundRemoteNotifications: true,
       });
     },
   );
+
+  it('bundles only sounds Android accepts as resources, and they exist (2026-10-22)', () => {
+    const fs = jest.requireActual<{ existsSync: (path: string) => boolean }>('node:fs');
+    const sounds = pluginOptions(configWith({}), 'expo-notifications').sounds as string[];
+    expect(sounds).toEqual([`./assets/sounds/${ORDER_ALARM_SOUND}`]);
+    for (const sound of sounds) {
+      // EAS prebuild: "Resource name … must start with a letter and contain only lowercase a-z,
+      // 0-9, or underscore". The file name, less its extension, becomes res/raw/<name>.
+      const file = sound.split('/').pop() ?? '';
+      expect(file.replace(/\.[a-z0-9]+$/, '')).toMatch(/^[a-z][a-z0-9_]*$/);
+      expect(fs.existsSync(`${__dirname}/../../${sound}`)).toBe(true);
+    }
+  });
 
   it('builds locally without a Firebase file (no push token, nothing else lost)', () => {
     expect(configWith({}).android?.googleServicesFile).toBeUndefined();

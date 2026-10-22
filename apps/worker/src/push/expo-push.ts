@@ -1,3 +1,4 @@
+import type { ORDER_ALARM_SOUND } from '@hamro-pasal/shared-types';
 import { z } from 'zod';
 
 /** Expo's push service (SPEC implicit requirement 1). One POST takes up to 100 messages. */
@@ -15,7 +16,11 @@ export interface ExpoPushMessage {
   /** Absent on a data-only message: the app builds the notification from `data`. */
   readonly title?: string;
   readonly body?: string;
-  readonly sound?: 'default';
+  /**
+   * iOS only (Expo): 'default', or a sound file bundled with the app, named exactly with its
+   * extension (ORDER_ALARM_SOUND). On Android the notification channel decides the sound.
+   */
+  readonly sound?: 'default' | typeof ORDER_ALARM_SOUND;
   readonly priority: 'default' | 'normal' | 'high';
   /** Android notification channel. */
   readonly channelId?: string;

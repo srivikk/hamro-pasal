@@ -10,6 +10,8 @@ export const TABS = [
   { id: 'onboarding', label: 'Onboarding', group: 'Shops', icon: '＋' },
   { id: 'compliance', label: 'Compliance', group: 'Shops', icon: '✓' },
   { id: 'approvals', label: 'Vendor requests', group: 'Shops', icon: '⇄' },
+  // 2026-10-21 (Task 5): escalated order conversations and their resolution.
+  { id: 'disputes', label: 'Disputes', group: 'Shops', icon: '⚖' },
   { id: 'categories', label: 'Categories', group: 'Catalogue', icon: '☰' },
   { id: 'products', label: 'Products', group: 'Catalogue', icon: '▣' },
   { id: 'campaigns', label: 'Campaigns', group: 'Marketing', icon: '✦' },
@@ -27,6 +29,8 @@ export const TABS = [
   // Step 7.6: CSV data exports.
   { id: 'exports', label: 'Exports', group: 'Platform', icon: '⇩' },
   { id: 'dlq', label: 'Dead letters', group: 'Platform', icon: '⚠' },
+  // 2026-10-21 (Task 5): login-code sends and checks, and the guarded reveal.
+  { id: 'auth-logs', label: 'Authentication logs', group: 'Platform', icon: '⚿' },
   { id: 'audit-log', label: 'Audit log', group: 'Platform', icon: '⌕' },
 ] as const;
 

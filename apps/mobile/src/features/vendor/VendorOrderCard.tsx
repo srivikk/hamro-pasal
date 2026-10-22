@@ -7,6 +7,7 @@ import Animated, {
   withRepeat,
   withTiming,
 } from 'react-native-reanimated';
+import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '../../components/Button';
@@ -238,6 +239,19 @@ export function VendorOrderCard({
           {t('vendorDashboard.delivered')}
         </Text>
       ) : null}
+      {/* 2026-10-21: the order's conversation with its customer (and Hamro Pasal, if escalated). */}
+      <Button
+        label={t('vendorDashboard.chat')}
+        variant="secondary"
+        size="sm"
+        testID={`order-chat-${order.id}`}
+        onPress={() => {
+          router.push({
+            pathname: '/order-chat',
+            params: { id: order.id, escalated: order.state === 'DISPUTED' ? '1' : '0' },
+          });
+        }}
+      />
     </View>
   );
 }

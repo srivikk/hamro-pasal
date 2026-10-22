@@ -1,5 +1,6 @@
 export * from './alerts';
 export * from './audit';
+export * from './auth-events';
 export * from './banking';
 export * from './billing';
 export * from './categories';
@@ -18,6 +19,7 @@ export * from './notification-centre';
 export * from './orders';
 export * from './outbox';
 export * from './payouts';
+export * from './product-reviews';
 export * from './promotions';
 export * from './settlement-requests';
 export * from './roles-and-tutorials';

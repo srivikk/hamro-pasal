@@ -150,12 +150,19 @@ describe('feed and menu schemas', () => {
       delivery_available: true,
     };
 
-    // Step 7.3: an older server's entries read as open (open_now true, no closed reason).
+    // Step 7.3: an older server's entries read as open (open_now true, no closed reason), and
+    // (2026-10-21) its shops as not rated yet.
     const open = { open_now: true, closed_reason: null };
+    const unrated = { rating_average: null, rating_count: 0 };
+    const read = (entry: (typeof body.serviceable)[number]) => ({
+      ...entry,
+      ...open,
+      vendor: { ...entry.vendor, ...unrated },
+    });
     expect(feedResponseSchema.parse(body)).toEqual({
       ...body,
-      serviceable: body.serviceable.map((entry) => ({ ...entry, ...open })),
-      explore_further: body.explore_further.map((entry) => ({ ...entry, ...open })),
+      serviceable: body.serviceable.map(read),
+      explore_further: body.explore_further.map(read),
     });
   });
 

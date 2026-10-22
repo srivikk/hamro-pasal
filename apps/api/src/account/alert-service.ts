@@ -1,4 +1,5 @@
 import {
+  productListed,
   products,
   shopOpenAlerts,
   stockAlerts,
@@ -42,9 +43,7 @@ export class AlertService {
         .select({ stock: products.stock_quantity })
         .from(products)
         .innerJoin(vendors, eq(vendors.id, products.vendor_id))
-        .where(
-          and(eq(products.id, productId), eq(products.is_active, true), eq(vendors.status, 'LIVE')),
-        );
+        .where(and(eq(products.id, productId), productListed(), eq(vendors.status, 'LIVE')));
       if (product === undefined) throw new ProductNotFoundError(productId);
       const [existing] = await tx
         .select({ id: stockAlerts.product_id })

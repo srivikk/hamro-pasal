@@ -218,6 +218,24 @@ export default function VendorLayout() {
         }}
       />
       <Tabs.Screen
+        name="order-chat"
+        options={{
+          href: null,
+          title: t('dispute.title'),
+          headerLeft: () => (
+            <HeaderIcon
+              testID="vendor-order-chat-back"
+              icon="arrow-back"
+              label={t('common.back')}
+              side="left"
+              onPress={() => {
+                router.back();
+              }}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="payments"
         options={{
           href: null,

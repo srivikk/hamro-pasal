@@ -188,7 +188,11 @@ const vendorProductFields = {
     .max(MAX_PRODUCT_PRICE_NPR)
     .refine(wholePaisa, 'price_npr must be a whole number of paisa'),
   unit: z.string().trim().min(1).max(MAX_PRODUCT_UNIT_LENGTH).default(DEFAULT_PRODUCT_UNIT),
-  is_active: z.boolean().default(true),
+  /**
+   * Decided 2026-10-21: accepted from older Seller app builds and ignored. Showing and hiding a
+   * product is the Super Admin's moderation; the vendor's switch is `in_stock`.
+   */
+  is_active: z.boolean().optional(),
   metadata: z
     .record(z.string().min(1).max(60), jsonValueSchema)
     .refine(
@@ -206,14 +210,18 @@ export const vendorProductCreateRequestSchema = z.strictObject({
   ...vendorProductFields,
   stock_quantity: z.number().int().min(0).max(MAX_PRODUCT_STOCK_QUANTITY).default(0),
   image_urls: z.array(imageUrlSchema).max(MAX_PRODUCT_IMAGES).default([]),
+  /** 2026-10-21: whether customers may order it now; a new product is in stock by default. */
+  in_stock: z.boolean().default(true),
 });
 export type VendorProductCreateRequest = z.input<typeof vendorProductCreateRequestSchema>;
 export type VendorProductCreate = z.output<typeof vendorProductCreateRequestSchema>;
 
 /**
  * PUT /api/vendor/products/:id (VENDOR, Phase 19): replaces the details of the caller's own
- * product; an omitted optional field takes its default (`is_active: true` shows a hidden product
- * again). Two things are deliberately not replaced by default:
+ * product; an omitted optional field takes its default. Since 2026-10-21 a vendor can neither
+ * hide nor show a product (`is_active` is ignored): the Super Admin moderates. Three things are
+ * deliberately not replaced by default:
+ *  - `in_stock`, kept when omitted (its switch is PATCH /api/vendor/products/:id/availability);
  *  - the stock, which has its own endpoint (a `stock_quantity` here is refused);
  *  - the photos: `image_urls` is kept when omitted; when given it becomes the list (to remove or
  *    reorder photos). New photos are added with POST /api/vendor/products/:id/images.
@@ -221,9 +229,19 @@ export type VendorProductCreate = z.output<typeof vendorProductCreateRequestSche
 export const vendorProductUpdateRequestSchema = z.strictObject({
   ...vendorProductFields,
   image_urls: z.array(imageUrlSchema).max(MAX_PRODUCT_IMAGES).optional(),
+  in_stock: z.boolean().optional(),
 });
 export type VendorProductUpdateRequest = z.input<typeof vendorProductUpdateRequestSchema>;
 export type VendorProductUpdate = z.output<typeof vendorProductUpdateRequestSchema>;
+
+/**
+ * PATCH /api/vendor/products/:id/availability (VENDOR, 2026-10-21): the Seller app's In Stock /
+ * Out of Stock switch. It never changes `stock_quantity`, and never hides the product.
+ */
+export const vendorProductAvailabilityRequestSchema = z.strictObject({ in_stock: z.boolean() });
+export type VendorProductAvailabilityRequest = z.infer<
+  typeof vendorProductAvailabilityRequestSchema
+>;
 
 /**
  * PATCH /api/vendor/products/:id/stock (VENDOR): the on-hand quantity the vendor counted. It
@@ -257,7 +275,10 @@ export const vendorProductViewSchema = z.strictObject({
   unit: z.string().min(1),
   stock_quantity: z.number().int().nonnegative(),
   image_urls: z.array(z.string().min(1)),
+  /** False: hidden by the Super Admin (moderation). The vendor sees it, cannot change it. */
   is_active: z.boolean(),
+  /** The vendor's In Stock / Out of Stock switch. */
+  in_stock: z.boolean(),
   metadata: z.record(z.string(), jsonValueSchema),
   created_at: z.iso.datetime(),
   updated_at: z.iso.datetime(),

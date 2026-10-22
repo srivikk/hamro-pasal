@@ -24,7 +24,7 @@ import {
   formFromProduct,
   parseStock,
   replaceOwnProduct,
-  showRequest,
+  availabilityOf,
   uploadProblem,
   validateProductForm,
   vendorProductErrorMessage,
@@ -94,13 +94,13 @@ export function VendorProductScreen() {
   });
 
   const hide = useMutation({
-    mutationFn: (product: VendorProductView) => api.hideOwnProduct(product.id),
+    mutationFn: (product: VendorProductView) => api.setOwnProductAvailability(product.id, false),
     onMutate: (product) => {
       setConfirming(null);
       clearError(product.id);
     },
-    onSuccess: (_nothing, product) => {
-      putInCache(queryClient, { ...product, is_active: false });
+    onSuccess: ({ product }) => {
+      putInCache(queryClient, product);
     },
     onError: (error, product) => {
       onRowError(error, product.id);
@@ -108,8 +108,7 @@ export function VendorProductScreen() {
   });
 
   const show = useMutation({
-    mutationFn: ({ id, request }: { readonly id: string; readonly request: VendorProductUpdate }) =>
-      api.updateOwnProduct(id, request),
+    mutationFn: ({ id }: { readonly id: string }) => api.setOwnProductAvailability(id, true),
     onMutate: ({ id }) => {
       clearError(id);
     },
@@ -124,7 +123,7 @@ export function VendorProductScreen() {
   const products = query.data?.pages.flatMap((page) => page.products) ?? [];
   const editing = products.find((product) => product.id === editingId) ?? null;
   const taxonomy = categories.data?.categories ?? [];
-  const hidden = products.filter((product) => !product.is_active).length;
+  const hidden = products.filter((product) => availabilityOf(product) !== 'IN_STOCK').length;
 
   return (
     <section>
@@ -133,10 +132,11 @@ export function VendorProductScreen() {
           <h2>My products</h2>
           <p className="muted">
             {query.isSuccess
-              ? `${String(products.length)}${query.hasNextPage ? '+' : ''} products · ${String(hidden)} hidden. `
+              ? `${String(products.length)}${query.hasNextPage ? '+' : ''} products · ${String(hidden)} not orderable. `
               : ''}
-            Customers see the visible ones, with the stock you set here. Hiding a product takes it
-            off customers' lists and out of checkout; it can be shown again.
+            Customers see your products with the stock you set here. Marking one out of stock keeps
+            it listed but stops orders, without changing its count. Hamro Pasal may hide a product;
+            that is shown here and only Hamro Pasal can undo it.
           </p>
         </div>
         <button
@@ -208,10 +208,7 @@ export function VendorProductScreen() {
                       hide.mutate(product);
                     }}
                     onShow={() => {
-                      const request = showRequest(product);
-                      // No category yet: it has to be chosen in the editor before it can be shown.
-                      if (request === null) setEditingId(product.id);
-                      else show.mutate({ id: product.id, request });
+                      show.mutate({ id: product.id });
                     }}
                     onEdit={() => {
                       setEditingId(product.id);
@@ -280,6 +277,7 @@ function ProductRow({
   const quantity = parseStock(typed);
   const changed = quantity !== product.stock_quantity;
   const [thumbnail] = product.image_urls;
+  const availability = availabilityOf(product);
 
   return (
     <tr>
@@ -345,23 +343,29 @@ function ProductRow({
       </td>
       <td>
         <div className="confirm">
-          <span className={`badge ${product.is_active ? 'status-replayed' : 'status-pending'}`}>
-            {product.is_active ? 'Visible' : 'Hidden'}
+          <span
+            className={`badge ${availability === 'IN_STOCK' ? 'status-replayed' : 'status-pending'}`}
+          >
+            {availability === 'HIDDEN_BY_ADMIN'
+              ? 'Hidden by Hamro Pasal'
+              : availability === 'IN_STOCK'
+                ? 'In stock'
+                : 'Out of stock'}
           </span>
-          {!product.is_active ? (
+          {availability === 'HIDDEN_BY_ADMIN' ? null : availability === 'OUT_OF_STOCK' ? (
             <button
               type="button"
               className="button primary"
               disabled={toggling}
-              aria-label={`Show ${product.name}`}
+              aria-label={`Mark ${product.name} in stock`}
               onClick={onShow}
             >
-              {toggling ? 'Saving…' : 'Show'}
+              {toggling ? 'Saving…' : 'Mark in stock'}
             </button>
           ) : confirming ? (
             <>
               <button type="button" className="button danger" onClick={onConfirmHide}>
-                Confirm hide
+                Confirm out of stock
               </button>
               <button type="button" className="button ghost" onClick={onCancelHide}>
                 Cancel
@@ -372,10 +376,10 @@ function ProductRow({
               type="button"
               className="button danger-outline"
               disabled={toggling}
-              aria-label={`Hide ${product.name}`}
+              aria-label={`Mark ${product.name} out of stock`}
               onClick={onAskHide}
             >
-              {toggling ? 'Saving…' : 'Hide'}
+              {toggling ? 'Saving…' : 'Out of stock'}
             </button>
           )}
         </div>
@@ -553,17 +557,6 @@ function ProductModal({
             {errorOf('unit')}
           </div>
         </div>
-
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={values.isActive}
-            onChange={(event) => {
-              setValues((current) => ({ ...current, isActive: event.target.checked }));
-            }}
-          />
-          Visible to customers
-        </label>
 
         <fieldset className="photos">
           <legend>

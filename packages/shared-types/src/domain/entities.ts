@@ -250,7 +250,12 @@ export const productSchema = z.strictObject({
   unit: nonEmptyTextSchema,
   stock_quantity: z.number().int().nonnegative(),
   image_urls: z.array(z.string().min(1)).max(MAX_PRODUCT_IMAGES),
+  /** Decided 2026-10-21: Super Admin moderation only (hide / show). */
   is_active: z.boolean(),
+  /** 2026-10-21: the vendor's In Stock / Out of Stock switch; stock_quantity is untouched. */
+  in_stock: z.boolean(),
+  /** 2026-10-21: the vendor removed the product from its catalogue; never shown again. */
+  archived_at: z.date().nullable(),
   /** Vendor-defined attributes (brand, weight, ...), a JSON object. */
   metadata: z.record(z.string(), jsonValueSchema),
   created_at: z.date(),

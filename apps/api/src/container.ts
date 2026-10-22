@@ -16,6 +16,10 @@ import { AuditLogService } from './admin/audit-log-service';
 import { DeadLetterService } from './admin/dead-letter-service';
 import { LogisticsSettingsService } from './admin/logistics-settings-service';
 import { PricingPlanService } from './admin/pricing-plan-service';
+import { DatabaseAuthEventLog } from './auth/auth-event-log';
+import { AuthLogService } from './auth/auth-log-service';
+import { ProductReviewService } from './reviews/product-review-service';
+import { LateChatBroadcaster } from './realtime/chat-broadcaster';
 import type { ApiServices } from './app';
 import { OtpAuthService } from './auth/otp-auth-service';
 import { OtpStore, type OtpStoreOptions } from './auth/otp-store';
@@ -111,6 +115,8 @@ export interface ApiConfig {
   readonly panChecksumEnforced?: boolean;
   /** VENDOR_CREDENTIALS_KEY (2026-10-21): seals Model C shops' own merchant secrets. */
   readonly vendorCredentialsKey?: string;
+  /** 2026-10-21 (OTP_ADMIN_REVEAL): live login codes are kept revealable by a Super Admin. */
+  readonly otpAdminReveal?: boolean;
 }
 
 export interface Infrastructure {
@@ -145,6 +151,8 @@ export interface Infrastructure {
 }
 
 export interface ApiContainer extends ApiServices {
+  /** server.ts attaches the /chat namespace to it once Socket.io is up. */
+  readonly chatBroadcaster: LateChatBroadcaster;
   readonly db: Database;
   readonly redisPool: RedisConnectionPool;
   readonly settlement: SettlementService;
@@ -176,6 +184,7 @@ export function apiConfigFromEnv(env: ServerEnv): ApiConfig {
     mockServices: mockServicesEnabled(env),
     sellerAppUrl: env.SELLER_APP_URL,
     panChecksumEnforced: env.PAN_CHECKSUM_ENFORCED,
+    otpAdminReveal: env.OTP_ADMIN_REVEAL,
     ...(env.VENDOR_CREDENTIALS_KEY === undefined
       ? {}
       : { vendorCredentialsKey: env.VENDOR_CREDENTIALS_KEY }),
@@ -220,12 +229,24 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     new DeliveryOtpAttempts(infra.redisPool, infra.deliveryOtpOptions),
     ledger,
   );
-  const otps = new OtpStore(infra.redisPool, otpPepper(config.accessTokenSecret), infra.otpOptions);
-  const esewa = new EsewaService(infra.db, checkout, confirmation, config.esewa, gatewayAccounts);
-  const auth = new OtpAuthService(infra.db, otps, infra.sms, {
-    accessTokenSecret: config.accessTokenSecret,
-    refreshTokenSecret: config.refreshTokenSecret,
+  const otps = new OtpStore(infra.redisPool, otpPepper(config.accessTokenSecret), {
+    ...infra.otpOptions,
+    revealCipher:
+      config.otpAdminReveal === true
+        ? new CredentialCipher(otpRevealKey(config.accessTokenSecret).toString('base64'))
+        : null,
   });
+  const esewa = new EsewaService(infra.db, checkout, confirmation, config.esewa, gatewayAccounts);
+  const auth = new OtpAuthService(
+    infra.db,
+    otps,
+    infra.sms,
+    {
+      accessTokenSecret: config.accessTokenSecret,
+      refreshTokenSecret: config.refreshTokenSecret,
+    },
+    new DatabaseAuthEventLog(infra.db),
+  );
   // Mock branches never exist in a production process, even if the config asks for them.
   const mockPayments =
     config.mockServices === true && process.env.NODE_ENV !== 'production'
@@ -265,6 +286,9 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     adminNotifications: new AdminNotificationService(infra.db),
     exports: new ExportService(infra.db, infra.exportFiles),
     evidence: infra.evidence,
+    chatBroadcaster: new LateChatBroadcaster(),
+    authLogs: new AuthLogService(infra.db, otps),
+    productReviews: new ProductReviewService(infra.db),
     adminDeadLetters: new DeadLetterService(infra.db),
     adminVendors: new AdminVendorService(infra.db, wallet),
     categories: new CategoryService(infra.db),
@@ -313,6 +337,11 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
  * HMAC key for stored OTP digests, derived from the access secret with a fixed label (domain
  * separation), so no extra secret has to be provisioned and the JWT key itself is never reused.
  */
+/** 2026-10-21: the key that seals live login codes for the guarded reveal (never the pepper). */
+function otpRevealKey(accessTokenSecret: string): Buffer {
+  return createHmac('sha256', accessTokenSecret).update('hamro-pasal:otp-reveal:v1').digest();
+}
+
 function otpPepper(accessTokenSecret: string): Buffer {
   return createHmac('sha256', accessTokenSecret).update('hamro-pasal:otp-digest:v1').digest();
 }

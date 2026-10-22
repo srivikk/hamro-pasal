@@ -37,6 +37,8 @@ export const auditEntityTypes = [
   'app_tutorial',
   /** 2026-10-21: an automated IRD lookup of a vendor's PAN (ird_pan_checks). */
   'ird_pan_check',
+  /** 2026-10-21: a login-code send in the Authentication Logs (auth_events). */
+  'auth_event',
 ] as const;
 export const auditEntityTypeSchema = z.enum(auditEntityTypes);
 export type AuditEntityType = z.infer<typeof auditEntityTypeSchema>;
@@ -136,6 +138,8 @@ export const AUDIT_ACTION_ENTITY_TYPES = {
   PRICING_PLAN_ASSIGNED: 'vendor',
   CYCLE_DUES_NOTICE_OPENED: 'vendor',
   VENDOR_SUSPENDED_FOR_DUES: 'vendor',
+  // 2026-10-21: a Super Admin read a live login code (masked number and reason; never the code).
+  LOGIN_CODE_REVEALED: 'auth_event',
   // Platform settings (Super Admin flow 4)
   LOGISTICS_SETTINGS_CHANGED: 'platform_settings',
 } as const satisfies Readonly<Record<string, AuditEntityType>>;

@@ -80,6 +80,8 @@ export function buildTestApp(
     mockServices?: boolean;
     /** PAN_CHECKSUM_ENFORCED: the MOD 11-2 check digit on a saved PAN. */
     panChecksumEnforced?: boolean;
+    /** OTP_ADMIN_REVEAL: live login codes revealable by a Super Admin. */
+    otpAdminReveal?: boolean;
   } = {},
 ): TestApp {
   const sms = options.sms ?? new MockSmsGateway();
@@ -106,6 +108,7 @@ export function buildTestApp(
       ...(options.panChecksumEnforced === undefined
         ? {}
         : { panChecksumEnforced: options.panChecksumEnforced }),
+      ...(options.otpAdminReveal === undefined ? {} : { otpAdminReveal: options.otpAdminReveal }),
     },
     {
       db: testDatabase(),

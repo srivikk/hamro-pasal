@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react-native';
+import { launchImageLibraryAsync } from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { http, HttpResponse } from 'msw';
 import type { CategoryView, VendorProductView } from '@hamro-pasal/shared-types';
@@ -27,6 +28,9 @@ import {
   validateProductForm,
   type ProductForm,
 } from './product-form';
+
+jest.mock('expo-image-picker', () => ({ launchImageLibraryAsync: jest.fn() }));
+const mockPick = jest.mocked(launchImageLibraryAsync);
 
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), navigate: jest.fn() },
@@ -89,6 +93,7 @@ function product(overrides: Partial<VendorProductView> = {}): VendorProductView 
     stock_quantity: 12,
     image_urls: [],
     is_active: true,
+    in_stock: true,
     metadata: { origin: 'Terai' },
     created_at: '2026-10-01T00:00:00.000Z',
     updated_at: '2026-10-01T00:00:00.000Z',
@@ -154,11 +159,13 @@ function serveProducts(): void {
       current.stock_quantity = (sent.body as { stock_quantity: number }).stock_quantity;
       return HttpResponse.json({ product: current });
     }),
-    http.delete(apiUrl('/api/vendor/products/:id'), async ({ request, params }) => {
-      requests.push(await capture(request));
+    http.patch(apiUrl('/api/vendor/products/:id/availability'), async ({ request, params }) => {
+      const sent = await capture(request);
+      requests.push(sent);
       const current = storedProduct(String(params.id));
-      if (current !== undefined) current.is_active = false;
-      return new HttpResponse(null, { status: 204 });
+      if (current === undefined) return new HttpResponse(null, { status: 404 });
+      current.in_stock = (sent.body as { in_stock: boolean }).in_stock;
+      return HttpResponse.json({ product: current });
     }),
   );
 }
@@ -301,7 +308,7 @@ describe('Catalogue tab (GET /api/vendor/products)', () => {
     expect(row.getByText('Rice, Flour & Pulses')).toBeOnTheScreen();
     expect(row.getByText('Rs. 1150')).toBeOnTheScreen();
     expect(screen.getByTestId(`product-stock-${RICE_ID}`)).toHaveTextContent('In stock: 12');
-    expect(screen.getByTestId(`product-listed-switch-${RICE_ID}`).props.value).toBe(true);
+    expect(screen.getByTestId(`product-stock-switch-${RICE_ID}`).props.value).toBe(true);
     // Nothing on the device invents products.
     expect(screen.queryByText(/sample/i)).not.toBeOnTheScreen();
   });
@@ -332,64 +339,44 @@ describe('Catalogue tab (GET /api/vendor/products)', () => {
     expect(await screen.findByTestId('catalogue-list')).toBeOnTheScreen();
   });
 
-  it('marks a hidden product and one with no stock left', async () => {
+  it('marks a product the Super Admin hid, one switched off and one with no stock left', async () => {
+    stored.push(product({ id: productId(8), name: 'Mustard Oil 1L', in_stock: false }));
     await renderCatalogue();
 
     expect(screen.getByTestId(`product-stock-${GHEE_ID}`)).toHaveTextContent(
-      'Hidden from customers',
+      'Hidden by Hamro Pasal',
     );
-    expect(screen.getByTestId(`product-listed-switch-${GHEE_ID}`).props.value).toBe(false);
+    // Moderation is not the vendor's: the switch of a hidden product waits.
+    expect(screen.getByTestId(`product-stock-switch-${GHEE_ID}`).props.disabled).toBe(true);
+    expect(screen.getByTestId(`product-stock-${productId(8)}`)).toHaveTextContent('Out of stock');
+    expect(screen.getByTestId(`product-stock-switch-${productId(8)}`).props.value).toBe(false);
     expect(screen.getByTestId(`product-stock-${productId(4)}`)).toHaveTextContent('No stock left');
   });
 
-  it('hides a product with DELETE and shows it again with a PUT that keeps its details', async () => {
+  it('switches a product out of stock and back with PATCH …/availability alone (2026-10-21)', async () => {
     await renderCatalogue();
 
-    fireEvent(screen.getByTestId(`product-listed-switch-${RICE_ID}`), 'valueChange', false);
+    fireEvent(screen.getByTestId(`product-stock-switch-${RICE_ID}`), 'valueChange', false);
     await waitFor(() => {
-      expect(screen.getByTestId(`product-stock-${RICE_ID}`)).toHaveTextContent(
-        'Hidden from customers',
-      );
+      expect(screen.getByTestId(`product-stock-${RICE_ID}`)).toHaveTextContent('Out of stock');
     });
-    expect(requests.find((each) => each.method === 'DELETE')?.url.pathname).toBe(
-      `/api/vendor/products/${RICE_ID}`,
-    );
-    expect(storedProduct(RICE_ID)?.stock_quantity).toBe(12); // the count is kept
+    const writes = requests.filter((each) => each.method !== 'GET');
+    expect(writes.map((each) => [each.method, each.url.pathname, each.body])).toEqual([
+      ['PATCH', `/api/vendor/products/${RICE_ID}/availability`, { in_stock: false }],
+    ]);
+    // The count and the visibility are untouched.
+    expect(storedProduct(RICE_ID)).toMatchObject({ stock_quantity: 12, is_active: true });
 
-    fireEvent(screen.getByTestId(`product-listed-switch-${RICE_ID}`), 'valueChange', true);
+    fireEvent(screen.getByTestId(`product-stock-switch-${RICE_ID}`), 'valueChange', true);
     await waitFor(() => {
       expect(screen.getByTestId(`product-stock-${RICE_ID}`)).toHaveTextContent('In stock: 12');
     });
-    // The PUT replaces every detail: what the app does not edit is sent back as it was.
-    expect(requests.find((each) => each.method === 'PUT')?.body).toEqual({
-      category_id: RICE,
-      name: 'Basmati Rice 5kg',
-      description: 'Long grain',
-      price_npr: 1150,
-      unit: 'bag',
-      is_active: true,
-      metadata: { origin: 'Terai' },
-    });
-  });
-
-  it('opens the editor instead of showing a product that has no category yet', async () => {
-    stored.push(
-      product({ id: productId(9), name: 'Old Product', category_id: null, is_active: false }),
-    );
-    await renderCatalogue();
-
-    fireEvent(screen.getByTestId(`product-listed-switch-${productId(9)}`), 'valueChange', true);
-
-    expect(router.push).toHaveBeenLastCalledWith({
-      pathname: '/product',
-      params: { id: productId(9) },
-    });
-    expect(requests.some((each) => each.method === 'PUT')).toBe(false);
+    expect(requests.some((each) => each.method === 'PUT' || each.method === 'DELETE')).toBe(false);
   });
 
   it('says so when the switch could not be changed', async () => {
     server.use(
-      http.delete(apiUrl('/api/vendor/products/:id'), () =>
+      http.patch(apiUrl('/api/vendor/products/:id/availability'), () =>
         HttpResponse.json(
           { error: { code: 'INTERNAL_SERVER_ERROR', message: 'x' } },
           { status: 500 },
@@ -398,7 +385,7 @@ describe('Catalogue tab (GET /api/vendor/products)', () => {
     );
     await renderCatalogue();
 
-    fireEvent(screen.getByTestId(`product-listed-switch-${RICE_ID}`), 'valueChange', false);
+    fireEvent(screen.getByTestId(`product-stock-switch-${RICE_ID}`), 'valueChange', false);
 
     await waitFor(() => {
       expect(toast()).toMatchObject({
@@ -406,7 +393,7 @@ describe('Catalogue tab (GET /api/vendor/products)', () => {
         tone: 'error',
       });
     });
-    expect(screen.getByTestId(`product-listed-switch-${RICE_ID}`).props.value).toBe(true);
+    expect(screen.getByTestId(`product-stock-switch-${RICE_ID}`).props.value).toBe(true);
   });
 
   it('opens a new product from the Add button and an existing one from its row', async () => {
@@ -532,12 +519,132 @@ describe('product form screen', () => {
     expect(screen.getByTestId('product-form-title')).toHaveTextContent('New product');
   });
 
-  it('has a placeholder for photos that says upload is coming', () => {
-    renderSeller(<VendorProductScreen />);
+  describe('photos (2026-10-21)', () => {
+    /** Every multipart upload the server received: the number of `images` parts. */
+    let uploads: { path: string; parts: number }[] = [];
+    const picked = (...files: { uri: string; mimeType?: string; fileSize?: number }[]): void => {
+      mockPick.mockResolvedValueOnce({
+        canceled: false,
+        assets: files.map((file) => ({
+          mimeType: 'image/jpeg',
+          fileSize: 200_000,
+          width: 800,
+          height: 600,
+          ...file,
+        })),
+      });
+    };
 
-    press('product-image-upload');
+    beforeEach(() => {
+      mockPick.mockReset();
+      uploads = [];
+      server.use(
+        http.post(apiUrl('/api/vendor/products/:id/images'), async ({ request, params }) => {
+          const raw = await request.text();
+          uploads.push({
+            path: new URL(request.url).pathname,
+            parts: raw.split('name="images"').length - 1,
+          });
+          const current = storedProduct(String(params.id));
+          if (current === undefined) return new HttpResponse(null, { status: 404 });
+          current.image_urls = [
+            ...current.image_urls,
+            ...Array.from(
+              { length: uploads.at(-1)?.parts ?? 0 },
+              (_, n) => `https://cdn.hamropasal.test/p/${String(params.id)}-${String(n)}.webp`,
+            ),
+          ];
+          return HttpResponse.json({ product: current }, { status: 201 });
+        }),
+      );
+    });
 
-    expect(toast()?.message).toBe('Photo upload is coming soon.');
+    it('uploads the picked photos with Save, as one multipart request of `images` parts', async () => {
+      const view = await renderCatalogue();
+      openProduct(TEA_ID);
+      view.rerender(<VendorProductScreen />);
+      picked({ uri: 'file:///tea-1.jpg' }, { uri: 'file:///tea-2.jpg' });
+
+      press('product-image-upload');
+      await screen.findByTestId('product-pending-photo-1');
+      press('product-save');
+
+      await waitFor(() => {
+        expect(toast()?.message).toBe('Product updated.');
+      });
+      expect(uploads).toEqual([{ path: `/api/vendor/products/${TEA_ID}/images`, parts: 2 }]);
+      expect(storedProduct(TEA_ID)?.image_urls).toHaveLength(2);
+    });
+
+    it('saves a new product first, then uploads its photos to the new id', async () => {
+      renderSeller(<VendorProductScreen />);
+      type('product-name', 'Local Honey 500g');
+      type('product-price', '900');
+      press('product-category');
+      press(`product-category-option-${HONEY}`);
+      type('product-stock', '8');
+      picked({ uri: 'file:///honey.jpg' });
+      press('product-image-upload');
+      await screen.findByTestId('product-pending-photo-0');
+
+      press('product-save');
+
+      await waitFor(() => {
+        expect(toast()?.message).toBe('Product added.');
+      });
+      const created = stored.find((each) => each.name === 'Local Honey 500g');
+      expect(uploads).toEqual([
+        { path: `/api/vendor/products/${created?.id ?? ''}/images`, parts: 1 },
+      ]);
+      expect(requests.map((each) => each.method)).toContain('POST');
+    });
+
+    it('leaves out a photo over 5 MB or not an image, before any upload', async () => {
+      renderSeller(<VendorProductScreen />);
+      picked(
+        { uri: 'file:///huge.jpg', fileSize: 6 * 1024 * 1024 },
+        { uri: 'file:///scan.heic', mimeType: 'image/heic' },
+        { uri: 'file:///ok.jpg' },
+      );
+
+      press('product-image-upload');
+
+      expect(await screen.findByTestId('product-photo-error')).toHaveTextContent(
+        'A photo is larger than 5 MB and was left out.',
+      );
+      expect(screen.getByTestId('product-pending-photo-0')).toBeOnTheScreen();
+      expect(screen.queryByTestId('product-pending-photo-1')).toBeNull();
+      expect(uploads).toEqual([]);
+    });
+
+    it('keeps the product and the picked photos when only the upload fails', async () => {
+      server.use(
+        http.post(apiUrl('/api/vendor/products/:id/images'), () =>
+          HttpResponse.json(
+            { error: { code: 'STORAGE_UNAVAILABLE', message: 'x' } },
+            { status: 503 },
+          ),
+        ),
+      );
+      const view = await renderCatalogue();
+      openProduct(TEA_ID);
+      view.rerender(<VendorProductScreen />);
+      picked({ uri: 'file:///tea-1.jpg' });
+      press('product-image-upload');
+      await screen.findByTestId('product-pending-photo-0');
+
+      press('product-save');
+
+      await waitFor(() => {
+        expect(toast()?.message).toBe(
+          'Product saved, but its photos could not be uploaded. Tap Save to try again.',
+        );
+      });
+      expect(screen.getByTestId('product-pending-photo-0')).toBeOnTheScreen();
+      expect(screen.getByTestId('product-photo-error')).toHaveTextContent(
+        'These photos are not uploaded yet.',
+      );
+    });
   });
 });
 

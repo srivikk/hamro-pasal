@@ -7,6 +7,8 @@ import { useAdminApi, useSession, useSessionStore } from './app-context';
 import { AdProductScreen } from './features/ads/AdProductScreen';
 import { ApprovalScreen } from './features/approvals/ApprovalScreen';
 import { AuditLogScreen } from './features/audit/AuditLogScreen';
+import { AuthLogScreen } from './features/auth-logs/AuthLogScreen';
+import { DisputeScreen } from './features/disputes/DisputeScreen';
 import { LoginScreen } from './features/auth/LoginScreen';
 import { portalOf } from './features/auth/login-rules';
 import { CampaignScreen } from './features/campaigns/CampaignScreen';
@@ -76,6 +78,10 @@ function Screen({ tab }: { readonly tab: Tab }) {
       return <TutorialScreen />;
     case 'audit-log':
       return <AuditLogScreen />;
+    case 'disputes':
+      return <DisputeScreen />;
+    case 'auth-logs':
+      return <AuthLogScreen />;
   }
 }
 

@@ -11,9 +11,11 @@ import { retryTransientFailures } from '../../api/query-client';
 import {
   createOwnProduct,
   fetchOwnProducts,
-  hideOwnProduct,
+  setOwnProductAvailability,
   replaceOwnProduct,
   setOwnProductStock,
+  uploadOwnProductImages,
+  type LocalPhoto,
   type ProductDraft,
 } from '../../api/vendor-products';
 
@@ -60,13 +62,59 @@ function patchCachedProduct(queryClient: QueryClient, product: VendorProductView
  * delete). Never retried automatically. The answer is written into the list at once, then the
  * list is refetched.
  */
-export function useSetProductListed() {
+/**
+ * The Catalogue row's In Stock / Out of Stock switch (2026-10-21): only `in_stock`, never the
+ * count and never whether customers see the product (the Super Admin's moderation).
+ */
+export function useSetProductInStock() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ product, listed }: { product: VendorProductView; listed: boolean }) => {
-      if (listed) return replaceOwnProduct(product, { is_active: true });
-      await hideOwnProduct(product.id);
-      return { ...product, is_active: false };
+    mutationFn: ({ product, inStock }: { product: VendorProductView; inStock: boolean }) =>
+      setOwnProductAvailability(product.id, inStock),
+    retry: false,
+    onSuccess: (product) => {
+      patchCachedProduct(queryClient, product);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: OWN_PRODUCTS_QUERY_KEY }),
+  });
+}
+
+/** The details were saved but the photos were not: the form says so and keeps them. */
+export class PhotoUploadError extends Error {
+  constructor(
+    readonly product: VendorProductView,
+    override readonly cause: unknown,
+  ) {
+    super('Product saved; its photos were not uploaded');
+    this.name = 'PhotoUploadError';
+  }
+}
+
+/**
+ * The product form's Save: POST for a new product (with its starting stock), or PUT of the
+ * details and, when the count changed, PATCH …/stock; then (2026-10-21) the photos picked
+ * since, as one multipart upload. Never retried automatically.
+ */
+export function useSaveProduct() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      current,
+      draft,
+      photos = [],
+    }: {
+      current: VendorProductView | null;
+      draft: ProductDraft;
+      photos?: readonly LocalPhoto[];
+    }): Promise<VendorProductView> => {
+      const saved = await saveDetails(current, draft);
+      if (photos.length === 0) return saved;
+      try {
+        return await uploadOwnProductImages(saved.id, photos);
+      } catch (error) {
+        patchCachedProduct(queryClient, saved);
+        throw new PhotoUploadError(saved, error);
+      }
     },
     retry: false,
     onSuccess: (product) => {
@@ -76,33 +124,16 @@ export function useSetProductListed() {
   });
 }
 
-/**
- * The product form's Save: POST for a new product (with its starting stock), or PUT of the
- * details and, when the count changed, PATCH …/stock. Never retried automatically.
- */
-export function useSaveProduct() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({
-      current,
-      draft,
-    }: {
-      current: VendorProductView | null;
-      draft: ProductDraft;
-    }): Promise<VendorProductView> => {
-      if (current === null) return createOwnProduct(draft);
-      const saved = await replaceOwnProduct(current, {
-        category_id: draft.categoryId,
-        name: draft.name,
-        price_npr: draft.priceNpr,
-      });
-      if (draft.stockQuantity === saved.stock_quantity) return saved;
-      return setOwnProductStock(saved.id, draft.stockQuantity);
-    },
-    retry: false,
-    onSuccess: (product) => {
-      patchCachedProduct(queryClient, product);
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: OWN_PRODUCTS_QUERY_KEY }),
+async function saveDetails(
+  current: VendorProductView | null,
+  draft: ProductDraft,
+): Promise<VendorProductView> {
+  if (current === null) return createOwnProduct(draft);
+  const saved = await replaceOwnProduct(current, {
+    category_id: draft.categoryId,
+    name: draft.name,
+    price_npr: draft.priceNpr,
   });
+  if (draft.stockQuantity === saved.stock_quantity) return saved;
+  return setOwnProductStock(saved.id, draft.stockQuantity);
 }

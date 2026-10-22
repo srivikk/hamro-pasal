@@ -143,8 +143,8 @@ describe('vendorProductCreateRequestSchema', () => {
       unit: 'piece',
       stock_quantity: 0,
       image_urls: [],
-      is_active: true,
       metadata: {},
+      in_stock: true,
     });
   });
 
@@ -204,7 +204,6 @@ describe('vendorProductUpdateRequestSchema', () => {
       description: null,
       price_npr: 450,
       unit: 'piece',
-      is_active: true,
       metadata: {},
     });
   });
@@ -313,6 +312,7 @@ describe('product views', () => {
       ...view,
       stock_quantity: 60,
       is_active: false,
+      in_stock: true,
       created_at: '2026-10-03T06:00:00.000Z',
       updated_at: '2026-10-03T06:00:00.000Z',
       vendor: { id: randomUUID(), business_name: 'Thamel Kirana Pasal', status: 'SUSPENDED' },
@@ -353,6 +353,8 @@ describe('catalog entities', () => {
       stock_quantity: 60,
       image_urls: [],
       is_active: true,
+      in_stock: true,
+      archived_at: null,
       metadata: {},
       created_at: new Date(),
       updated_at: new Date(),

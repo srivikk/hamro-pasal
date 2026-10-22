@@ -84,6 +84,7 @@ const product: AdminProductView = {
   stock_quantity: 1200,
   image_urls: [],
   is_active: true,
+  in_stock: true,
   metadata: {},
   created_at: '2026-10-03T06:00:00.000Z',
   updated_at: '2026-10-03T06:00:00.000Z',

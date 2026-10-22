@@ -2,7 +2,9 @@ import {
   categories,
   enqueueDomainEvent,
   inVisibleCategory,
+  isProductOrderable,
   isVisibleCategory,
+  productListed,
   products,
   productSearchDocument,
   vendors,
@@ -20,7 +22,7 @@ import {
   type VendorProductUpdate,
   type VendorStatus,
 } from '@hamro-pasal/shared-types';
-import { and, asc, eq, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 
 import { isForeignKeyViolation, isUniqueViolation } from '../infra/pg-errors';
 import { VendorAccountNotFoundError } from '../orders/vendor-order-service';
@@ -140,9 +142,11 @@ export class ProductService {
     const vendorId = await this.vendorIdOf(vendorUserId);
     await this.assertCategoryActive(input.category_id);
     try {
+      // `is_active` is moderation (2026-10-21): an older app's value is ignored.
+      const { is_active: _ignored, ...fields } = input;
       const [created] = await this.db
         .insert(products)
-        .values({ ...input, vendor_id: vendorId })
+        .values({ ...fields, vendor_id: vendorId })
         .returning();
       if (created === undefined) throw new Error('Product insert returned no row');
       return created;
@@ -205,7 +209,10 @@ export class ProductService {
     if (input.category_id !== current.category_id) {
       await this.assertCategoryActive(input.category_id);
     }
-    const { image_urls: imageUrls, ...fields } = input;
+    // `is_active` is moderation (2026-10-21): an older app's value is ignored; `in_stock` is
+    // kept when omitted.
+    const { image_urls: imageUrls, is_active: _ignored, in_stock: inStock, ...rest } = input;
+    const fields = inStock === undefined ? rest : { ...rest, in_stock: inStock };
     let updated: ProductRow | undefined;
     try {
       updated = await this.db.transaction(async (tx) => {
@@ -241,18 +248,49 @@ export class ProductService {
   }
 
   /**
-   * DELETE /api/vendor/products/:id (Phase 19): a soft delete. The row stays (order history and
-   * `order_items` point at it) with `is_active = false`: gone from customers' lists, menus and
-   * checkout. Repeating it changes nothing; PUT with `is_active: true` shows the product again.
+   * DELETE /api/vendor/products/:id (Phase 19, amended 2026-10-21): the vendor removes the
+   * product. The row stays (order history and `order_items` point at it) with `archived_at`
+   * set: gone from customers' lists, menus and checkout, and from the vendor's own catalogue.
+   * Repeating it changes nothing. `is_active` (moderation) is never touched.
    */
-  async hide(vendorUserId: string, productId: string): Promise<void> {
+  async archive(vendorUserId: string, productId: string): Promise<void> {
     const vendorId = await this.vendorIdOf(vendorUserId);
-    const [hidden] = await this.db
+    const [archived] = await this.db
       .update(products)
-      .set({ is_active: false })
+      .set({ archived_at: sql`coalesce(${products.archived_at}, now())` })
       .where(and(eq(products.id, productId), eq(products.vendor_id, vendorId)))
       .returning({ id: products.id });
-    if (hidden === undefined) throw new ProductNotFoundError(productId);
+    if (archived === undefined) throw new ProductNotFoundError(productId);
+  }
+
+  /**
+   * PATCH /api/vendor/products/:id/availability (2026-10-21): the In Stock / Out of Stock switch
+   * of the caller's own (not removed) product. The count is untouched; switching an orderable
+   * product back on is a restock for whoever waits for it (Notify Me).
+   */
+  async setAvailability(
+    vendorUserId: string,
+    productId: string,
+    inStock: boolean,
+  ): Promise<ProductRow> {
+    const vendorId = await this.vendorIdOf(vendorUserId);
+    const scope = and(
+      eq(products.id, productId),
+      eq(products.vendor_id, vendorId),
+      isNull(products.archived_at),
+    );
+    return this.db.transaction(async (tx) => {
+      const before = await orderableBefore(tx, scope);
+      if (before === undefined) throw new ProductNotFoundError(productId);
+      const [updated] = await tx
+        .update(products)
+        .set({ in_stock: inStock })
+        .where(scope)
+        .returning();
+      if (updated === undefined) throw new ProductNotFoundError(productId);
+      await announceIfBackInStock(tx, before, updated);
+      return updated;
+    });
   }
 
   /**
@@ -321,13 +359,16 @@ export class ProductService {
     if (category === undefined) throw new CategoryUnavailableError(categoryId);
   }
 
-  /** GET /api/vendor/products: the caller's own products, inactive included, by name. */
+  /**
+   * GET /api/vendor/products: the caller's own products by name, hidden (moderated) and out of
+   * stock included; removed (archived) ones left out.
+   */
   async listForVendor(
     vendorUserId: string,
     { limit = PRODUCT_LIST_DEFAULT_LIMIT, cursor }: VendorProductListQuery,
   ): Promise<ProductPage<ProductRow>> {
     const vendorId = await this.vendorIdOf(vendorUserId);
-    const scope = eq(products.vendor_id, vendorId);
+    const scope = and(eq(products.vendor_id, vendorId), isNull(products.archived_at));
     if (cursor !== undefined) await this.assertCursor(cursor, scope);
     const rows = await this.db
       .select()
@@ -371,7 +412,7 @@ export class ProductService {
       .innerJoin(vendors, eq(vendors.id, products.vendor_id))
       .where(
         and(
-          eq(products.is_active, true),
+          productListed(),
           eq(vendors.status, 'LIVE'),
           inVisibleCategory(products.category_id),
           vendorId === undefined ? undefined : eq(products.vendor_id, vendorId),
@@ -488,10 +529,8 @@ function inActiveSubtree(categoryId: string): SQL {
   )`;
 }
 
-/** Whether a product can be ordered: shown, with stock (Notify Me waits for exactly this). */
-function isOrderable(product: { is_active: boolean; stock_quantity: number }): boolean {
-  return product.is_active && product.stock_quantity > 0;
-}
+/** Whether a product can be ordered (Notify Me waits for exactly this). */
+const isOrderable = isProductOrderable;
 
 /** The product's standing before a change, its row locked so two changes cannot both announce. */
 async function orderableBefore(
@@ -499,7 +538,12 @@ async function orderableBefore(
   scope: SQL | undefined,
 ): Promise<boolean | undefined> {
   const [row] = await tx
-    .select({ is_active: products.is_active, stock_quantity: products.stock_quantity })
+    .select({
+      is_active: products.is_active,
+      archived_at: products.archived_at,
+      in_stock: products.in_stock,
+      stock_quantity: products.stock_quantity,
+    })
     .from(products)
     .where(scope)
     .for('update');

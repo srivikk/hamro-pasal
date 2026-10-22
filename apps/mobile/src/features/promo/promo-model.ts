@@ -108,6 +108,9 @@ export function ratingCountDisplay(count: number): { shown: number; plus: boolea
 export interface ExtrasSubject {
   id: string;
   business_name: string;
+  /** 2026-10-21: the server's rating of the shop, when the caller has it (feed, menu). */
+  rating_average?: number | null;
+  rating_count?: number;
 }
 
 /** Labels are compared without regard to case or surrounding spaces ("10% off" = "10% OFF"). */

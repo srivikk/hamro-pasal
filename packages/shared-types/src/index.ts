@@ -39,6 +39,8 @@ export * from './api/vendor-analytics';
 export * from './api/vendor-banking';
 export * from './api/vendor-billing';
 export * from './api/vendor-payments';
+export * from './api/auth-logs';
+export * from './api/product-reviews';
 export * from './api/customer-wallet';
 export * from './api/vendor-invoices';
 export * from './api/vendor-offers';

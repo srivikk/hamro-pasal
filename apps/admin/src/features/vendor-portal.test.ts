@@ -11,7 +11,7 @@ import {
   formFromProduct,
   parseStock,
   replaceOwnProduct,
-  showRequest,
+  availabilityOf,
   uploadProblem,
   validateProductForm,
   vendorProductErrorMessage,
@@ -52,6 +52,7 @@ const product: VendorProductView = {
   stock_quantity: 12,
   image_urls: [PHOTO(1), PHOTO(2)],
   is_active: true,
+  in_stock: true,
   metadata: { brand: 'Ilam' },
   created_at: '2026-10-03T06:00:00.000Z',
   updated_at: '2026-10-03T06:00:00.000Z',
@@ -78,7 +79,6 @@ describe('product form', () => {
       description: 'Orthodox black tea.',
       price: '450.5',
       unit: 'pack',
-      isActive: true,
       imageUrls: [PHOTO(1), PHOTO(2)],
     });
     expect(formFromProduct({ ...product, category_id: null, description: null })).toMatchObject({
@@ -101,7 +101,6 @@ describe('product form', () => {
         description: null,
         price_npr: 475,
         unit: 'pack',
-        is_active: true,
         metadata: { brand: 'Ilam' },
       },
     });
@@ -132,20 +131,13 @@ describe('product form', () => {
     expect(errorsFor({ name: '', price: 'x' }).sort()).toEqual(['name', 'price']);
   });
 
-  it('shows a hidden product again with everything else unchanged', () => {
-    expect(showRequest({ ...product, is_active: false })).toEqual({
-      category_id: ID.tea,
-      name: 'Ilam Tea 500g',
-      description: 'Orthodox black tea.',
-      price_npr: 450.5,
-      unit: 'pack',
-      is_active: true,
-      metadata: { brand: 'Ilam' },
-    });
-  });
-
-  it('cannot show a product that has no category yet (it must be chosen in Edit)', () => {
-    expect(showRequest({ ...product, is_active: false, category_id: null })).toBeNull();
+  it('says whether a product is in stock, out of stock, or hidden by Hamro Pasal (2026-10-21)', () => {
+    expect(availabilityOf(product)).toBe('IN_STOCK');
+    expect(availabilityOf({ ...product, in_stock: false })).toBe('OUT_OF_STOCK');
+    // Moderation wins: the vendor's switch does not show a hidden product.
+    expect(availabilityOf({ ...product, is_active: false, in_stock: true })).toBe(
+      'HIDDEN_BY_ADMIN',
+    );
   });
 });
 
@@ -304,14 +296,14 @@ describe('createAdminApi (Vendor Portal endpoints)', () => {
     await api.listOwnProducts({ cursor: ID.product });
     await api.updateOwnProduct(ID.product, request);
     await api.setOwnProductStock(ID.product, 30);
-    await expect(api.hideOwnProduct(ID.product)).resolves.toBeUndefined();
+    await api.setOwnProductAvailability(ID.product, false);
 
     expect(calls.map(({ call, body }) => ({ call, body }))).toEqual([
       { call: 'GET /api/vendor/products', body: undefined },
       { call: `GET /api/vendor/products?cursor=${ID.product}`, body: undefined },
       { call: `PUT /api/vendor/products/${ID.product}`, body: request },
       { call: `PATCH /api/vendor/products/${ID.product}/stock`, body: { stock_quantity: 30 } },
-      { call: `DELETE /api/vendor/products/${ID.product}`, body: undefined },
+      { call: `PATCH /api/vendor/products/${ID.product}/availability`, body: { in_stock: false } },
     ]);
     expect(calls.every((call) => call.authorization === 'Bearer access-1')).toBe(true);
     expect(calls[2]?.contentType).toBe('application/json');

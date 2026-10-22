@@ -21,7 +21,6 @@ export interface ProductFormValues {
   readonly description: string;
   readonly price: string;
   readonly unit: string;
-  readonly isActive: boolean;
   /** The photos to keep, in order. Uploading adds to it; "Remove" takes one out until Save. */
   readonly imageUrls: readonly string[];
 }
@@ -35,7 +34,6 @@ export function formFromProduct(product: VendorProductView): ProductFormValues {
     description: product.description ?? '',
     price: String(product.price_npr),
     unit: product.unit,
-    isActive: product.is_active,
     imageUrls: product.image_urls,
   };
 }
@@ -82,7 +80,6 @@ export function validateProductForm(
     // Not a plain decimal: NaN fails the schema's number check.
     price_npr: /^\d+(\.\d{1,2})?$/.test(price) ? Number(price) : Number.NaN,
     unit: values.unit,
-    is_active: values.isActive,
     metadata: product.metadata,
     ...(sameList(values.imageUrls, product.image_urls) ? {} : { image_urls: values.imageUrls }),
   });
@@ -96,12 +93,14 @@ export function validateProductForm(
 }
 
 /**
- * The PUT body that shows a hidden product again with everything else as it is, or null when the
- * product has no category yet (older than the taxonomy): the vendor must then choose one in Edit.
+ * Decided 2026-10-21: what the availability column says. Whether customers see a product is the
+ * Super Admin's moderation (read only here); the vendor switches it in or out of stock.
  */
-export function showRequest(product: VendorProductView): VendorProductUpdate | null {
-  const result = validateProductForm({ ...formFromProduct(product), isActive: true }, product);
-  return result.ok ? result.request : null;
+export function availabilityOf(
+  product: VendorProductView,
+): 'HIDDEN_BY_ADMIN' | 'IN_STOCK' | 'OUT_OF_STOCK' {
+  if (!product.is_active) return 'HIDDEN_BY_ADMIN';
+  return product.in_stock ? 'IN_STOCK' : 'OUT_OF_STOCK';
 }
 
 /** The typed stock as the whole number the API accepts (0 to 1,000,000), or null. */

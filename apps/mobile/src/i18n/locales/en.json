@@ -467,7 +467,8 @@
     "awaitingRider": "Riders have been told. Waiting for one to collect it.",
     "dispatchIn": "Ready for Pickup in {{seconds, localizedNumber}} s",
     "dispatchWait": "The customer can still cancel this order.",
-    "complianceSuspended": "Your shop is offline until your PAN is verified, so it cannot accept orders."
+    "complianceSuspended": "Your shop is offline until your PAN is verified, so it cannot accept orders.",
+    "chat": "Chat with customer"
   },
   "vendorTabs": {
     "orders": "Live Orders",
@@ -660,7 +661,6 @@
     "categoryNone": "No category matches.",
     "stock": "Stock quantity",
     "addPhoto": "Add photos",
-    "photoSoon": "Photo upload is coming soon.",
     "save": "Save product",
     "added": "Product added.",
     "updated": "Product updated.",
@@ -673,12 +673,22 @@
     },
     "noStockLeft": "No stock left",
     "categoryHidden": "Category hidden by Hamro Pasal",
-    "listedSwitch": "Show {{name}} to customers",
-    "hidden": "Hidden from customers",
+    "hidden": "Hidden by Hamro Pasal",
     "noCategory": "No category yet",
     "loadError": "Couldn't load your products.",
     "saveError": "Couldn't save the product. Try again.",
-    "toggleError": "Couldn't change this product. Try again."
+    "toggleError": "Couldn't change this product. Try again.",
+    "stockSwitch": "{{name}} in stock",
+    "outOfStock": "Out of stock",
+    "photos": "Photos ({{count}} of 8)",
+    "removePhoto": "Remove this photo",
+    "photoUploadFailed": "Product saved, but its photos could not be uploaded. Tap Save to try again.",
+    "photoErrors": {
+      "too_large": "A photo is larger than 5 MB and was left out.",
+      "not_an_image": "Only JPEG, PNG or WebP photos can be added.",
+      "limit": "A product has at most {{count}} photos.",
+      "failed": "These photos are not uploaded yet."
+    }
   },
   "vendorMarketing": {
     "section": {

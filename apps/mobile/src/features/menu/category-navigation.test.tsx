@@ -305,16 +305,23 @@ describe('Shop page: subcategory sections and the ITEMS menu', () => {
   it('suggests the shop’s own subcategories in the empty search field, one after another', async () => {
     renderWithProviders(<VendorMenuScreen />);
     await screen.findByTestId(`menu-section-${TEA_COFFEE_ID}`);
-    expect(screen.getByTestId('menu-search-hint')).toHaveTextContent('Search for groceries...');
 
-    // Two seconds later (real time here: the page's requests run on real timers).
+    // The hints rotate every two seconds on real timers (the page's requests need them), from
+    // when the field appears. On a loaded machine the menu can take longer than that to load, so
+    // the rotation may already be past the first hint here (the race behind this case's earlier
+    // failures). Waiting for each hint in turn holds whatever the phase: the two alternate.
+    const hint = () => screen.getByTestId('menu-search-hint');
     await waitFor(
       () => {
-        expect(screen.getByTestId('menu-search-hint')).toHaveTextContent(
-          'Search for tea & coffee...',
-        );
+        expect(hint()).toHaveTextContent('Search for groceries...');
       },
-      { timeout: 4000 },
+      { timeout: 4500 },
+    );
+    await waitFor(
+      () => {
+        expect(hint()).toHaveTextContent('Search for tea & coffee...');
+      },
+      { timeout: 4500 },
     );
 
     // Typing puts the suggestion away.

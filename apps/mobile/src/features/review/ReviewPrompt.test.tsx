@@ -75,6 +75,14 @@ function submit(): void {
 
 const toastMessage = () => useToastStore.getState().toast?.message;
 
+/*
+ * Stabilised 2026-10-22: these tests used to wait for the modal itself to disappear. Polling the
+ * rendered tree that way took 2 to 4 s per case even alone (the submit settled only between
+ * checks), and over 10 s under a full parallel run: the "known flake". They now wait for what
+ * the component does when the submit settles (the review store), then check the modal at once:
+ * the store update and the unmount happen in the same synchronous callback.
+ */
+
 beforeEach(() => {
   useOrderStore.setState({ orders: {} });
   useReviewStore.setState({ submitted: {}, snoozed: {} });
@@ -118,8 +126,9 @@ describe('post-delivery review lifecycle', () => {
     submit();
 
     await waitFor(() => {
-      expect(screen.queryByTestId('review-modal')).toBeNull();
+      expect(useReviewStore.getState().submitted[ORDER_ID]).toBeDefined();
     });
+    expect(screen.queryByTestId('review-modal')).toBeNull();
     expect(requests).toHaveLength(1);
     expect(requests[0]?.headers.get('authorization')).toBe(`Bearer ${TEST_ACCESS_TOKEN}`);
     expect(requests[0]?.body).toEqual({
@@ -223,9 +232,9 @@ describe('post-delivery review lifecycle', () => {
     submit();
 
     await waitFor(() => {
-      expect(screen.queryByTestId('review-modal')).toBeNull();
+      expect(useReviewStore.getState().submitted[ORDER_ID]?.reviewId).toBe(existing);
     });
-    expect(useReviewStore.getState().submitted[ORDER_ID]?.reviewId).toBe(existing);
+    expect(screen.queryByTestId('review-modal')).toBeNull();
     expect(toastMessage()).toBe("You've already reviewed this order.");
   });
 
@@ -241,10 +250,10 @@ describe('post-delivery review lifecycle', () => {
     submit();
 
     await waitFor(() => {
-      expect(screen.queryByTestId('review-modal')).toBeNull();
+      expect(useReviewStore.getState().snoozed[ORDER_ID]).toBe(true);
     });
+    expect(screen.queryByTestId('review-modal')).toBeNull();
     expect(useReviewStore.getState().submitted[ORDER_ID]).toBeUndefined();
-    expect(useReviewStore.getState().snoozed[ORDER_ID]).toBe(true);
     expect(toastMessage()).toBe('This order can no longer be reviewed.');
   });
 

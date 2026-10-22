@@ -158,6 +158,8 @@ export function feedVendor(overrides: Partial<FeedVendor> = {}): FeedVendor {
     base_delivery_fee_npr: 50,
     free_delivery_above_npr: null,
     fulfillment_mode: 'SELF_DELIVERY',
+    rating_average: null,
+    rating_count: 0,
     location: { x: 85.3123, y: 27.7154 },
     ...overrides,
   };

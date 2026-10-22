@@ -158,6 +158,13 @@ export const feedVendorSchema = z.strictObject({
   free_delivery_above_npr: z.number().positive().nullable().default(null),
   fulfillment_mode: vendorFulfillmentModeSchema,
   location: geoPointSchema,
+  /**
+   * 2026-10-21 (Task 5): the average of the shop's published customer ratings, 1 to 5 with one
+   * decimal, and how many there are; null and 0 before the first. Defaults keep an app that
+   * reads an older API working.
+   */
+  rating_average: z.number().min(1).max(5).nullable().default(null),
+  rating_count: z.number().int().nonnegative().default(0),
 });
 export type FeedVendor = z.infer<typeof feedVendorSchema>;
 

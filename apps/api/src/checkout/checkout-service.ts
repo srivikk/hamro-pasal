@@ -8,6 +8,8 @@ import {
   orders,
   platformCampaigns,
   platformSettings,
+  orderableStock,
+  productListed,
   products,
   reviews,
   vendorClosedReason,
@@ -518,13 +520,15 @@ export class CheckoutService {
         id: products.id,
         name: products.name,
         price_npr: products.price_npr,
-        stock_quantity: products.stock_quantity,
+        // 2026-10-21: 0 while the vendor's switch says out of stock, so the line is refused
+        // with 409 INSUFFICIENT_STOCK; the stored count is untouched.
+        stock_quantity: orderableStock(),
       })
       .from(products)
       .where(
         and(
           eq(products.vendor_id, vendor.id),
-          eq(products.is_active, true),
+          productListed(),
           inArray(
             products.id,
             items.map((i) => i.productId),

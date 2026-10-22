@@ -134,6 +134,7 @@ describe('tabs', () => {
       'onboarding',
       'compliance',
       'approvals',
+      'disputes',
       'categories',
       'products',
       'campaigns',
@@ -147,6 +148,7 @@ describe('tabs', () => {
       'tutorials',
       'exports',
       'dlq',
+      'auth-logs',
       'audit-log',
     ]);
   });

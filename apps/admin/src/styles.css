@@ -1377,3 +1377,83 @@ select.search {
 .success {
   color: var(--primary);
 }
+
+/* 2026-10-21 (Task 5): Authentication logs and Disputes */
+.tone-ok,
+.status-escalated {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+}
+
+.tone-ok {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+}
+
+.tone-warn {
+  background: var(--pending-bg);
+  color: var(--pending-text);
+}
+
+.tone-bad {
+  background: var(--danger);
+  color: var(--surface);
+}
+
+.otp-code {
+  font-size: 2.2rem;
+  letter-spacing: 0.3em;
+  text-align: center;
+  margin: 16px 0 8px;
+}
+
+.dispute-detail {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.chat {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.chat-message {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  background: var(--surface);
+}
+
+.chat-message p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+
+.chat-message.from-super_admin {
+  background: var(--surface-2);
+}
+
+.chat-compose,
+.resolution {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-compose textarea,
+.resolution textarea {
+  min-height: 72px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}

@@ -344,6 +344,27 @@
       "when": 1792602574463,
       "tag": "0048_free_delivery_subsidy",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1792605416062,
+      "tag": "0049_product_in_stock_archive",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792606020660,
+      "tag": "0050_auth_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792606969033,
+      "tag": "0051_product_reviews",
+      "breakpoints": true
     }
   ]
 }

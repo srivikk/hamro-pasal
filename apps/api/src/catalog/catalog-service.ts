@@ -3,6 +3,8 @@ import {
   adPurchases,
   inVisibleCategory,
   platformSettings,
+  orderableStock,
+  productListed,
   products,
   vendorClosedReason,
   vendors,
@@ -55,6 +57,12 @@ export interface CatalogVendor {
   readonly sponsored?: boolean;
   /** Step 7.3: why the shop takes no order now (hours, its switch, Auto-Pause); null when open. */
   readonly closedReason: ShopClosedReason | null;
+  /**
+   * 2026-10-21 (Task 5): the average of the shop's published customer ratings (1 decimal), and
+   * how many there are. Null and 0 before its first published rating.
+   */
+  readonly ratingAverage: number | null;
+  readonly ratingCount: number;
 }
 
 /** SPEC core 8, "Sponsored feed listings": at most this many lead the feed. */
@@ -134,12 +142,14 @@ export class CatalogService {
         name: products.name,
         price_npr: products.price_npr,
         stock_quantity: products.stock_quantity,
+        // 2026-10-21: the count while the vendor says it is in stock, else 0.
+        orderable: orderableStock(),
       })
       .from(products)
       .where(
         and(
           eq(products.vendor_id, vendorId),
-          eq(products.is_active, true),
+          productListed(),
           inVisibleCategory(products.category_id),
         ),
       )
@@ -153,8 +163,8 @@ export class CatalogService {
         priceNpr: p.price_npr,
         // Stock held by other customers' 600 s locks is not subtracted here: checkout re-checks
         // availability under the lock and answers INSUFFICIENT_STOCK precisely.
-        inStock: p.stock_quantity > 0,
-        stockQuantity: p.stock_quantity,
+        inStock: p.orderable > 0,
+        stockQuantity: p.orderable,
       })),
     };
   }
@@ -195,6 +205,24 @@ export class CatalogService {
       serviceable: deliversTo(customer, modes).mapWith(Boolean).as('serviceable'),
       delivery_available: modeEnabled(modes).mapWith(Boolean).as('delivery_available'),
       closed_reason: vendorClosedReason().as('closed_reason'),
+      // vendors.id is written out: drizzle renders an unqualified column in a single-table
+      // select, which the subquery's own tables would make ambiguous.
+      // 2026-10-21: published CUSTOMER_TO_VENDOR reviews only; a quarantined one (SPEC core 6,
+      // double-blind) counts once it is published.
+      rating_average: sql<number | null>`(
+        SELECT round(avg(r.rating)::numeric, 1)
+          FROM reviews r JOIN orders o ON o.id = r.order_id
+         WHERE o.vendor_id = vendors.id AND r.direction = 'CUSTOMER_TO_VENDOR' AND r.is_published
+      )`
+        .mapWith((value: unknown) => (value === null ? null : Number(value)))
+        .as('rating_average'),
+      rating_count: sql<number>`(
+        SELECT count(*)::int
+          FROM reviews r JOIN orders o ON o.id = r.order_id
+         WHERE o.vendor_id = vendors.id AND r.direction = 'CUSTOMER_TO_VENDOR' AND r.is_published
+      )`
+        .mapWith(Number)
+        .as('rating_count'),
     };
   }
 }
@@ -306,6 +334,8 @@ function toCatalogVendor(
     serviceable: boolean;
     delivery_available: boolean;
     closed_reason: ShopClosedReason | null;
+    rating_average: number | null;
+    rating_count: number;
   },
   platformFreeAboveNpr: number | null,
 ): CatalogVendor {
@@ -330,5 +360,7 @@ function toCatalogVendor(
     serviceable: row.serviceable,
     deliveryAvailable: row.delivery_available,
     closedReason: row.closed_reason,
+    ratingAverage: row.rating_average,
+    ratingCount: row.rating_count,
   };
 }

@@ -271,7 +271,15 @@ export const products = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    // Decided 2026-10-21 (Task 5): Super Admin moderation only. A vendor never writes it.
     is_active: boolean().notNull().default(true),
+    // 2026-10-21: the vendor's own In Stock / Out of Stock switch. Out of stock keeps the product
+    // listed (shown out of stock, not orderable) and never changes stock_quantity (SPEC vendor
+    // flow 19, verification 16).
+    in_stock: boolean().notNull().default(true),
+    // 2026-10-21: the vendor removed the product from its catalogue (DELETE). The row stays for
+    // order history; no customer list, menu or checkout shows it again.
+    archived_at: timestamp({ withTimezone: true, mode: 'date' }),
     metadata: jsonb()
       .$type<Record<string, JsonValue>>()
       .notNull()

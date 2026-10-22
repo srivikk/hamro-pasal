@@ -13,6 +13,24 @@ export interface OtpStoreOptions {
   /** Tests only: shorter windows. Production uses the shared-types constants. */
   readonly ttlMs?: number;
   readonly cooldownMs?: number;
+  /**
+   * 2026-10-21 (OTP_ADMIN_REVEAL): seals each code beside its digest so a Super Admin can reveal
+   * it while it is live. Absent: only the digest is stored and no code can ever be read back.
+   */
+  readonly revealCipher?: OtpRevealCipher | null;
+}
+
+/** Seals and opens a code (AES-256-GCM; CredentialCipher fits). */
+export interface OtpRevealCipher {
+  seal(secret: string): Buffer;
+  open(sealed: Buffer): string;
+}
+
+/** A live code as the Authentication Logs reveal it. */
+export interface LiveOtp {
+  readonly code: string;
+  readonly expiresInMs: number;
+  readonly attemptsUsed: number;
 }
 
 export type OtpCheck =
@@ -62,6 +80,7 @@ export function generateOtpCode(): string {
 export class OtpStore {
   readonly ttlMs: number;
   readonly cooldownMs: number;
+  private readonly revealCipher: OtpRevealCipher | null;
 
   constructor(
     private readonly pool: RedisConnectionPool,
@@ -70,6 +89,12 @@ export class OtpStore {
   ) {
     this.ttlMs = options.ttlMs ?? OTP_TTL_SECONDS * 1000;
     this.cooldownMs = options.cooldownMs ?? OTP_RESEND_COOLDOWN_SECONDS * 1000;
+    this.revealCipher = options.revealCipher ?? null;
+  }
+
+  /** Whether codes are kept revealable (OTP_ADMIN_REVEAL). */
+  get revealEnabled(): boolean {
+    return this.revealCipher !== null;
   }
 
   digest(phone: string, code: string): string {
@@ -95,7 +120,13 @@ export class OtpStore {
       await redis
         .multi()
         .del(key)
-        .hset(key, { digest: this.digest(phone, code), attempts: 0 })
+        .hset(key, {
+          digest: this.digest(phone, code),
+          attempts: 0,
+          ...(this.revealCipher === null
+            ? {}
+            : { sealed: this.revealCipher.seal(code).toString('base64') }),
+        })
         .pexpire(key, this.ttlMs)
         .exec();
     });
@@ -106,6 +137,35 @@ export class OtpStore {
     await this.pool.withConnection(async (redis) => {
       await redis.del(otpKeys.code(phone), otpKeys.cooldown(phone));
     });
+  }
+
+  /**
+   * 2026-10-21: the live code of a number, for the Authentication Logs. Reads only: no attempt is
+   * counted and the code stays usable. Null when reveal is off, or no code is live.
+   */
+  async peek(phone: string): Promise<LiveOtp | null> {
+    const cipher = this.revealCipher;
+    if (cipher === null) return null;
+    return this.pool.withConnection(async (redis) => {
+      const key = otpKeys.code(phone);
+      const [fields, ttl] = await Promise.all([redis.hgetall(key), redis.pttl(key)]);
+      const sealed = fields.sealed;
+      if (sealed === undefined || ttl <= 0) return null;
+      return {
+        code: cipher.open(Buffer.from(sealed, 'base64')),
+        expiresInMs: ttl,
+        attemptsUsed: Number(fields.attempts ?? 0),
+      };
+    });
+  }
+
+  /** Whether a revealable code is live for each number (one round trip). */
+  async revealable(phones: readonly string[]): Promise<Set<string>> {
+    if (this.revealCipher === null || phones.length === 0) return new Set();
+    const live = await this.pool.withConnection((redis) =>
+      Promise.all(phones.map((phone) => redis.hexists(otpKeys.code(phone), 'sealed'))),
+    );
+    return new Set(phones.filter((_phone, index) => live[index] === 1));
   }
 
   async checkAndConsume(phone: string, code: string): Promise<OtpCheck> {

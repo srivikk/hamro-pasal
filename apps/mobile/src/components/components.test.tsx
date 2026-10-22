@@ -18,6 +18,8 @@ const vendor: FeedEntry['vendor'] = {
   free_delivery_above_npr: null,
   fulfillment_mode: 'SELF_DELIVERY',
   location: { x: 85.3123, y: 27.7154 },
+  rating_average: null,
+  rating_count: 0,
 };
 
 describe('Button', () => {
@@ -48,6 +50,28 @@ describe('Button', () => {
 });
 
 describe('VendorCard', () => {
+  const entry = (rating: Partial<FeedEntry['vendor']>): FeedEntry => ({
+    vendor: { ...vendor, ...rating },
+    distance_km: 1.26,
+    serviceable: true,
+    delivery_available: true,
+    is_sponsored: false,
+    open_now: true,
+    closed_reason: null,
+  });
+
+  it("shows the server's rating of the shop, and none before its first (2026-10-21)", () => {
+    const view = renderWithProviders(
+      <VendorCard entry={entry({ rating_average: 4.5, rating_count: 12 })} />,
+    );
+    expect(screen.getByTestId('vendor-rating-vendor-1')).toHaveTextContent(/4\.5/);
+    // The count is shown rounded down to a round figure (12 -> "(10+)").
+    expect(screen.getByTestId('vendor-rating-vendor-1-count')).toHaveTextContent('(10+)');
+
+    view.rerender(<VendorCard entry={entry({ rating_average: null, rating_count: 0 })} />);
+    expect(screen.queryByTestId('vendor-rating-vendor-1')).toBeNull();
+  });
+
   it('shows vendor details and responds to taps when serviceable', () => {
     const onPress = jest.fn();
     renderWithProviders(

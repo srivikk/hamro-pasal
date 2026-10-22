@@ -13,6 +13,7 @@ import { ACCESS_TOKEN, signAccessToken } from './access-token';
 import { generateOtpCode, type OtpStore } from './otp-store';
 import { InvalidRefreshTokenError, signRefreshToken, verifyRefreshToken } from './refresh-token';
 import { SELLER_SIGNUP_TOKEN, signSellerSignupToken } from './seller-signup-token';
+import { NO_AUTH_EVENT_LOG, type AuthEventLog } from './auth-event-log';
 
 /**
  * Step 7.7: the Seller app signed in a number that has no shop. The code was right, so the error
@@ -123,6 +124,8 @@ export class OtpAuthService {
     private readonly otps: OtpStore,
     private readonly sms: SmsGateway,
     private readonly secrets: AuthSecrets,
+    /** 2026-10-21: the Authentication Logs (sends and checks, never the code). */
+    private readonly events: AuthEventLog = NO_AUTH_EVENT_LOG,
   ) {}
 
   /** True when the account is a vendor whose shop was deactivated. */
@@ -141,6 +144,7 @@ export class OtpAuthService {
     if (await this.isDeactivated(eq(users.phone, phone))) throw new AccountDeactivatedError();
     const cooldownLeftMs = await this.otps.claimCooldown(phone);
     if (cooldownLeftMs !== null) {
+      await this.events.record(phone, 'OTP_COOLDOWN');
       throw new OtpCooldownError(Math.max(1, Math.ceil(cooldownLeftMs / 1000)));
     }
 
@@ -151,8 +155,14 @@ export class OtpAuthService {
       await this.sms.send({ to: phone, text: otpSmsText(code, this.otps.ttlMs / 1000) });
     } catch (error: unknown) {
       await this.otps.discard(phone);
+      await this.events.record(
+        phone,
+        'OTP_SEND_FAILED',
+        error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+      );
       throw error;
     }
+    await this.events.record(phone, 'OTP_SENT');
     return {
       phone,
       expiresInSeconds: Math.round(this.otps.ttlMs / 1000),
@@ -164,12 +174,20 @@ export class OtpAuthService {
     const check = await this.otps.checkAndConsume(phone, code);
     switch (check.outcome) {
       case 'VALID':
+        await this.events.record(phone, 'OTP_VERIFIED');
         break;
       case 'WRONG':
+        await this.events.record(
+          phone,
+          'OTP_WRONG',
+          `${String(check.attemptsRemaining)} attempts left`,
+        );
         throw new OtpInvalidError(check.attemptsRemaining);
       case 'ATTEMPTS_EXCEEDED':
+        await this.events.record(phone, 'OTP_LOCKED');
         throw new OtpAttemptsExceededError();
       case 'MISSING':
+        await this.events.record(phone, 'OTP_EXPIRED');
         throw new OtpExpiredError();
     }
 

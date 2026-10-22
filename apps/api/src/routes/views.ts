@@ -85,6 +85,8 @@ export function feedVendorView(vendor: CatalogVendor): FeedVendor {
     free_delivery_above_npr: vendor.freeDeliveryAboveNpr,
     fulfillment_mode: vendor.fulfillmentMode,
     location: vendor.location,
+    rating_average: vendor.ratingAverage,
+    rating_count: vendor.ratingCount,
   };
 }
 

@@ -130,3 +130,17 @@ export function validateProductForm(
   if (Object.keys(errors).length > 0 || categoryId === null) return { ok: false, errors };
   return { ok: true, details: { name, priceNpr: price, categoryId, stockQuantity: stock } };
 }
+
+/**
+ * What a Catalogue row says about a product (2026-10-21), most decisive first: hidden by the
+ * Super Admin (moderation), switched out of stock by the vendor, no stock left, or orderable.
+ */
+export type ProductStatus = 'HIDDEN_BY_ADMIN' | 'SWITCHED_OFF' | 'NO_STOCK' | 'ORDERABLE';
+
+export function productStatusOf(
+  product: Pick<VendorProductView, 'is_active' | 'in_stock' | 'stock_quantity'>,
+): ProductStatus {
+  if (!product.is_active) return 'HIDDEN_BY_ADMIN';
+  if (!product.in_stock) return 'SWITCHED_OFF';
+  return product.stock_quantity > 0 ? 'ORDERABLE' : 'NO_STOCK';
+}

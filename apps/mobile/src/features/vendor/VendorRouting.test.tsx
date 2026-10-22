@@ -124,11 +124,12 @@ describe('vendor-only route group app/(vendor)', () => {
       'tab-product',
       'tab-offer',
       'tab-analytics',
+      'tab-order-chat',
       'tab-payments',
       'tab-settings',
     ]);
     expect(screen.getByTestId('tab-invoices')).toHaveTextContent('hidden');
-    for (const name of ['product', 'offer', 'analytics', 'payments']) {
+    for (const name of ['product', 'offer', 'analytics', 'order-chat', 'payments']) {
       expect(screen.getByTestId(`tab-${name}`)).toHaveTextContent('hidden');
     }
     expect(screen.getByTestId('tab-settings')).toHaveTextContent('hidden');

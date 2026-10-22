@@ -26,6 +26,9 @@ const realtime = attachRealtime(httpServer, {
   riders: { locations: container.riderLocations, deliveries: container.deliveries },
 });
 
+// 2026-10-21: messages sent over HTTP (the admin dashboard) reach the same /chat rooms.
+container.chatBroadcaster.attach(realtime.chat);
+
 httpServer.listen(env.API_PORT, () => {
   console.info(`[api] listening on :${String(env.API_PORT)} (${env.NODE_ENV})`);
   if (container.mockPayments !== undefined) {

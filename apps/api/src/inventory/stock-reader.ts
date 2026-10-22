@@ -1,9 +1,12 @@
-import { products, type Executor } from '@hamro-pasal/db';
+import { orderableStock, productListed, products, type Executor } from '@hamro-pasal/db';
 import { and, eq, inArray } from 'drizzle-orm';
 
 /** Source of truth for on-hand quantities: products.stock_quantity in PostgreSQL. */
 export interface StockReader {
-  /** On-hand stock of the vendor's active products; unknown/inactive ids are absent. */
+  /**
+   * Orderable stock of the vendor's listed products (2026-10-21: 0 while switched out of stock);
+   * unknown, hidden or removed ids are absent.
+   */
   getStock(vendorId: string, productIds: readonly string[]): Promise<Map<string, number>>;
 }
 
@@ -12,12 +15,12 @@ export class DrizzleStockReader implements StockReader {
 
   async getStock(vendorId: string, productIds: readonly string[]): Promise<Map<string, number>> {
     const rows = await this.db
-      .select({ id: products.id, stock: products.stock_quantity })
+      .select({ id: products.id, stock: orderableStock() })
       .from(products)
       .where(
         and(
           eq(products.vendor_id, vendorId),
-          eq(products.is_active, true),
+          productListed(),
           inArray(products.id, [...productIds]),
         ),
       );

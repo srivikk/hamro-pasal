@@ -8,6 +8,7 @@ import {
   MAX_PRODUCT_IMAGES,
   productListResponseSchema,
   vendorMenuSchema,
+  vendorProductListResponseSchema,
   vendorProductResponseSchema,
 } from '@hamro-pasal/shared-types';
 import { eq } from 'drizzle-orm';
@@ -160,6 +161,7 @@ describe('Vendor product lifecycle API', () => {
         unit: 'pack',
         metadata: { brand: 'Ilam' },
         is_active: true,
+        in_stock: true,
         // Not part of an edit: the stock, and photos the request did not list.
         stock_quantity: 7,
         image_urls: ['https://cdn.hamropasal.test/p/old.webp'],
@@ -304,8 +306,8 @@ describe('Vendor product lifecycle API', () => {
     });
   });
 
-  describe('DELETE /api/vendor/products/:id', () => {
-    it('hides the product (soft delete): the row stays, customers no longer see it', async () => {
+  describe('DELETE /api/vendor/products/:id (amended 2026-10-21: archive)', () => {
+    it('removes the product: the row stays, customers and the vendor no longer see it', async () => {
       const { vendorId, token } = await vendor();
       const productId = await createProduct(db, vendorId, 4, 250, { category_id: categoryId });
       const customerId = await createUser(db);
@@ -315,7 +317,10 @@ describe('Vendor product lifecycle API', () => {
 
       expect(res.status).toBe(204);
       expect(res.body).toEqual({});
-      expect(await rowOf(productId)).toMatchObject({ is_active: false, stock_quantity: 4 });
+      // Moderation is untouched: is_active stays true; archived_at marks the removal.
+      const row = await rowOf(productId);
+      expect(row).toMatchObject({ is_active: true, stock_quantity: 4 });
+      expect(row.archived_at).not.toBeNull();
       expect(await publicSearch(vendorId)).toEqual([]);
       const menu = await request(testApp.app)
         .get(`/api/vendors/${vendorId}/products`)
@@ -334,31 +339,23 @@ describe('Vendor product lifecycle API', () => {
         });
       expect(checkout.status).toBe(422);
       expect(errorOf(checkout).code).toBe('PRODUCT_UNAVAILABLE');
-      // The vendor still lists it, as hidden.
       const mine = await request(testApp.app)
         .get('/api/vendor/products')
         .set('Authorization', token);
-      expect((mine.body as { products: { id: string; is_active: boolean }[] }).products).toEqual([
-        expect.objectContaining({ id: productId, is_active: false }),
-      ]);
+      expect(bodyOf(vendorProductListResponseSchema, mine).products).toEqual([]);
     });
 
-    it('is idempotent, and PUT with is_active shows the product again', async () => {
+    it('is idempotent, and keeps the first removal time', async () => {
       const { vendorId, token } = await vendor();
       const productId = await createProduct(db, vendorId, 4, 250, { category_id: categoryId });
 
       expect((await remove(token, productId)).status).toBe(204);
+      const first = (await rowOf(productId)).archived_at;
       expect((await remove(token, productId)).status).toBe(204);
-      expect((await rowOf(productId)).is_active).toBe(false);
-
-      const hiddenEdit = await put(token, productId, details({ is_active: false }));
-      expect(bodyOf(vendorProductResponseSchema, hiddenEdit).product.is_active).toBe(false);
-      const shown = await put(token, productId, details());
-      expect(bodyOf(vendorProductResponseSchema, shown).product.is_active).toBe(true);
-      expect(await publicSearch(vendorId)).toEqual([productId]);
+      expect((await rowOf(productId)).archived_at).toEqual(first);
     });
 
-    it("Vendor A cannot hide Vendor B's product", async () => {
+    it("Vendor A cannot remove Vendor B's product", async () => {
       const a = await vendor();
       const b = await vendor();
       const theirs = await createProduct(db, b.vendorId, 3);
@@ -367,9 +364,89 @@ describe('Vendor product lifecycle API', () => {
 
       expect(res.status).toBe(404);
       expect(errorOf(res).code).toBe('PRODUCT_NOT_FOUND');
-      expect((await rowOf(theirs)).is_active).toBe(true);
+      expect((await rowOf(theirs)).archived_at).toBeNull();
       expect((await remove(a.token, randomUUID())).status).toBe(404);
       expect((await remove(a.token, 'not-a-uuid')).status).toBe(400);
+    });
+  });
+
+  describe('PATCH /api/vendor/products/:id/availability (2026-10-21)', () => {
+    const availability = (token: string, id: string, body: unknown) =>
+      request(testApp.app)
+        .patch(`/api/vendor/products/${id}/availability`)
+        .set('Authorization', token)
+        .send(body as object);
+
+    it('switches a product out of stock: still listed, not orderable, count untouched', async () => {
+      const { vendorId, token } = await vendor();
+      const productId = await createProduct(db, vendorId, 4, 250, { category_id: categoryId });
+      const customerId = await createUser(db);
+
+      const res = await availability(token, productId, { in_stock: false });
+
+      expect(res.status).toBe(200);
+      expect(bodyOf(vendorProductResponseSchema, res).product).toMatchObject({
+        in_stock: false,
+        is_active: true,
+        stock_quantity: 4,
+      });
+      expect(await publicSearch(vendorId)).toEqual([productId]);
+      const menu = await request(testApp.app)
+        .get(`/api/vendors/${vendorId}/products`)
+        .query({ lat: '27.7154', lng: '85.3123' })
+        .set('Authorization', bearer(customerId));
+      expect(bodyOf(vendorMenuSchema, menu).products).toEqual([
+        expect.objectContaining({ id: productId, in_stock: false }),
+      ]);
+      const checkout = await request(testApp.app)
+        .post('/api/cart/checkout')
+        .set('Authorization', bearer(customerId))
+        .send({
+          idempotency_key: randomUUID(),
+          vendor_id: vendorId,
+          payment_method: 'COD',
+          items: [{ product_id: productId, quantity: 1 }],
+          delivery_address: DELIVERY_ADDRESS,
+        });
+      expect(checkout.status).toBe(409);
+      expect(errorOf(checkout).code).toBe('INSUFFICIENT_STOCK');
+
+      const back = await availability(token, productId, { in_stock: true });
+      expect(bodyOf(vendorProductResponseSchema, back).product).toMatchObject({
+        in_stock: true,
+        stock_quantity: 4,
+      });
+    });
+
+    it("refuses another shop's product, a removed one and a malformed body", async () => {
+      const a = await vendor();
+      const b = await vendor();
+      const theirs = await createProduct(db, b.vendorId, 3);
+      expect((await availability(a.token, theirs, { in_stock: false })).status).toBe(404);
+      expect((await rowOf(theirs)).in_stock).toBe(true);
+
+      const mine = await createProduct(db, a.vendorId, 3);
+      await remove(a.token, mine);
+      expect((await availability(a.token, mine, { in_stock: true })).status).toBe(404);
+      for (const bad of [{}, { in_stock: 'no' }, { in_stock: true, is_active: true }]) {
+        expect((await availability(a.token, mine, bad)).status).toBe(400);
+      }
+    });
+
+    it('cannot undo a Super Admin hide: is_active is moderation only', async () => {
+      const { vendorId, token } = await vendor();
+      const productId = await createProduct(db, vendorId, 4, 250, {
+        category_id: categoryId,
+        is_active: false,
+      });
+
+      // An older app build still sends is_active: it is ignored.
+      const edited = await put(token, productId, details({ is_active: true }));
+      expect(edited.status).toBe(200);
+      expect(bodyOf(vendorProductResponseSchema, edited).product.is_active).toBe(false);
+      await availability(token, productId, { in_stock: true });
+      expect((await rowOf(productId)).is_active).toBe(false);
+      expect(await publicSearch(vendorId)).toEqual([]);
     });
   });
 

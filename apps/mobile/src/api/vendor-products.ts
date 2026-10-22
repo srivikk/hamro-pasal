@@ -1,4 +1,7 @@
 import {
+  MAX_PRODUCT_IMAGE_BYTES,
+  PRODUCT_IMAGE_CONTENT_TYPES,
+  PRODUCT_IMAGE_FILE_FIELD,
   PRODUCT_LIST_MAX_LIMIT,
   vendorProductCreateRequestSchema,
   vendorProductListResponseSchema,
@@ -7,8 +10,9 @@ import {
   type VendorProductListResponseBody,
   type VendorProductView,
 } from '@hamro-pasal/shared-types';
-import { z } from 'zod';
+import type { z } from 'zod';
 
+import { localFilePart } from './file-part';
 import { ApiError, apiRequest } from './http';
 
 export const VENDOR_PRODUCTS_PATH = '/api/vendor/products';
@@ -67,12 +71,13 @@ export async function createOwnProduct(draft: ProductDraft): Promise<VendorProdu
 
 /**
  * PUT /api/vendor/products/:id. The PUT replaces every detail, so the ones the app does not edit
- * (description, unit, metadata, whether it is listed) are sent back as they are; the photos are
- * kept by leaving `image_urls` out. The stock is not part of a PUT.
+ * (description, unit, metadata) are sent back as they are; the photos are kept by leaving
+ * `image_urls` out, the In Stock switch by leaving `in_stock` out. The stock count is not part of
+ * a PUT, and since 2026-10-21 neither is whether customers see it (the Super Admin moderates).
  */
 export async function replaceOwnProduct(
   current: VendorProductView,
-  changes: Partial<Pick<VendorProductView, 'category_id' | 'name' | 'price_npr' | 'is_active'>>,
+  changes: Partial<Pick<VendorProductView, 'category_id' | 'name' | 'price_npr'>>,
 ): Promise<VendorProductView> {
   const next = { ...current, ...changes };
   const { product } = await apiRequest({
@@ -84,7 +89,6 @@ export async function replaceOwnProduct(
       description: next.description,
       price_npr: next.price_npr,
       unit: next.unit,
-      is_active: next.is_active,
       metadata: next.metadata,
     }),
     schema: vendorProductResponseSchema,
@@ -106,11 +110,57 @@ export async function setOwnProductStock(
   return product;
 }
 
-/** DELETE /api/vendor/products/:id: hides the product from customers (204, a soft delete). */
-export async function hideOwnProduct(id: string): Promise<void> {
-  await apiRequest({
-    method: 'DELETE',
-    path: `${VENDOR_PRODUCTS_PATH}/${id}`,
-    schema: z.undefined(),
+/**
+ * PATCH /api/vendor/products/:id/availability (2026-10-21): the In Stock / Out of Stock switch.
+ * The count is untouched, and the product stays listed (shown out of stock).
+ */
+export async function setOwnProductAvailability(
+  id: string,
+  inStock: boolean,
+): Promise<VendorProductView> {
+  const { product } = await apiRequest({
+    method: 'PATCH',
+    path: `${VENDOR_PRODUCTS_PATH}/${id}/availability`,
+    body: { in_stock: inStock },
+    schema: vendorProductResponseSchema,
   });
+  return product;
+}
+
+/** A photo picked on the device, before it is uploaded. */
+export interface LocalPhoto {
+  readonly uri: string;
+  readonly mimeType: string | null;
+  readonly fileSize: number | null;
+}
+
+/** Why a photo is refused on the device, before any upload (the server checks again). */
+export type PhotoProblem = 'too_large' | 'not_an_image';
+
+export function photoProblem(photo: LocalPhoto): PhotoProblem | null {
+  const type = photo.mimeType ?? 'image/jpeg';
+  if (!(PRODUCT_IMAGE_CONTENT_TYPES as readonly string[]).includes(type)) return 'not_an_image';
+  if (photo.fileSize !== null && photo.fileSize > MAX_PRODUCT_IMAGE_BYTES) return 'too_large';
+  return null;
+}
+
+/**
+ * POST /api/vendor/products/:id/images (2026-10-21, Task 5): the picked photos as one
+ * multipart/form-data request, each an `images` part. The server checks each file's own bytes,
+ * re-encodes it (WebP, 1200 px) into object storage (S3-compatible: AWS S3, Cloudflare R2 or
+ * Supabase Storage) and appends its URL; the answer is the product with every photo.
+ */
+export async function uploadOwnProductImages(
+  id: string,
+  photos: readonly LocalPhoto[],
+): Promise<VendorProductView> {
+  const form = new FormData();
+  for (const photo of photos) form.append(PRODUCT_IMAGE_FILE_FIELD, localFilePart(photo.uri));
+  const { product } = await apiRequest({
+    method: 'POST',
+    path: `${VENDOR_PRODUCTS_PATH}/${encodeURIComponent(id)}/images`,
+    body: form,
+    schema: vendorProductResponseSchema,
+  });
+  return product;
 }

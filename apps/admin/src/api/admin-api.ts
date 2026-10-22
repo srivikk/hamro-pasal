@@ -1,4 +1,17 @@
 import {
+  adminAuthLogListResponseSchema,
+  adminDisputeListResponseSchema,
+  adminDisputeResponseSchema,
+  adminOtpRevealResponseSchema,
+  chatHistoryResponseSchema,
+  chatHttpSendResponseSchema,
+  type AdminAuthLogListResponseBody,
+  type AdminDisputeListResponseBody,
+  type AdminDisputeResponseBody,
+  type AdminOtpRevealResponseBody,
+  type ChatHistoryResponseBody,
+  type ChatHttpSendResponseBody,
+  type ResolutionRequest,
   adminIrdCheckRetryResponseSchema,
   adminIrdManualReviewListResponseSchema,
   type AdminIrdCheckRetryResponse,
@@ -279,7 +292,8 @@ export interface AdminApi {
     input: VendorProductUpdateRequest,
   ): Promise<VendorProductResponseBody>;
   /** DELETE: hides the product from customers (a soft delete). */
-  hideOwnProduct(id: string): Promise<void>;
+  /** 2026-10-21: the In stock / Out of stock switch (PATCH …/availability). */
+  setOwnProductAvailability(id: string, inStock: boolean): Promise<VendorProductResponseBody>;
   setOwnProductStock(id: string, stockQuantity: number): Promise<VendorProductResponseBody>;
   /** multipart/form-data: every file as one `images` part. */
   uploadOwnProductImages(id: string, files: readonly File[]): Promise<VendorProductResponseBody>;
@@ -287,6 +301,29 @@ export interface AdminApi {
   getOwnFinanceLedger(): Promise<VendorFinanceLedgerResponseBody>;
   /** `idempotencyKey` is one per withdrawal: resending it never holds the amount twice. */
   requestOwnPayout(amountNpr: number, idempotencyKey: string): Promise<PayoutRequestResponseBody>;
+
+  /** Step 7.3 / 2026-10-21: escalated order conversations, oldest escalation first. */
+  listDisputes(query: {
+    status: 'ESCALATED' | 'RESOLVED';
+    cursor?: string | undefined;
+  }): Promise<AdminDisputeListResponseBody>;
+  /** The whole conversation of an escalated order (GET /api/orders/:id/chat). */
+  disputeTranscript(orderId: string): Promise<ChatHistoryResponseBody>;
+  /** 2026-10-21: the Super Admin writes in the conversation (POST /api/orders/:id/chat). */
+  sendDisputeMessage(
+    orderId: string,
+    clientId: string,
+    body: string,
+  ): Promise<ChatHttpSendResponseBody>;
+  resolveDispute(disputeId: string, request: ResolutionRequest): Promise<AdminDisputeResponseBody>;
+
+  /** 2026-10-21: the Authentication Logs, newest first, optionally for one number. */
+  listAuthLogs(query: {
+    phone?: string | undefined;
+    cursor?: string | undefined;
+  }): Promise<AdminAuthLogListResponseBody>;
+  /** The guarded reveal of a live login code: audited with the reason. */
+  revealOtp(phone: string, reason: string): Promise<AdminOtpRevealResponseBody>;
 }
 
 export function createAdminApi(client: ApiClient): AdminApi {
@@ -714,14 +751,13 @@ export function createAdminApi(client: ApiClient): AdminApi {
         schema: vendorProductResponseSchema,
         body: input,
       }),
-    hideOwnProduct: async (id) => {
-      // 204 No Content: the client reads an empty body as null.
-      await client.request({
-        method: 'DELETE',
-        path: `/api/vendor/products/${encodeURIComponent(id)}`,
-        schema: z.null(),
-      });
-    },
+    setOwnProductAvailability: (id, inStock) =>
+      client.request({
+        method: 'PATCH',
+        path: `/api/vendor/products/${encodeURIComponent(id)}/availability`,
+        schema: vendorProductResponseSchema,
+        body: { in_stock: inStock },
+      }),
     setOwnProductStock: (id, stockQuantity) =>
       client.request({
         method: 'PATCH',
@@ -752,6 +788,47 @@ export function createAdminApi(client: ApiClient): AdminApi {
         path: '/api/vendor/finance/payout',
         schema: payoutRequestResponseSchema,
         body: { idempotency_key: idempotencyKey, amount_npr: amountNpr },
+      }),
+    listDisputes: ({ status, cursor }) =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/disputes',
+        schema: adminDisputeListResponseSchema,
+        query: { status, cursor },
+      }),
+    disputeTranscript: (orderId) =>
+      client.request({
+        method: 'GET',
+        path: `/api/orders/${encodeURIComponent(orderId)}/chat`,
+        schema: chatHistoryResponseSchema,
+      }),
+    sendDisputeMessage: (orderId, clientId, body) =>
+      client.request({
+        method: 'POST',
+        path: `/api/orders/${encodeURIComponent(orderId)}/chat`,
+        schema: chatHttpSendResponseSchema,
+        body: { client_id: clientId, body },
+      }),
+    resolveDispute: (disputeId, request) =>
+      client.request({
+        method: 'POST',
+        path: `/api/admin/disputes/${encodeURIComponent(disputeId)}/resolve`,
+        schema: adminDisputeResponseSchema,
+        body: request,
+      }),
+    listAuthLogs: ({ phone, cursor }) =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/auth-logs',
+        schema: adminAuthLogListResponseSchema,
+        query: { phone, cursor },
+      }),
+    revealOtp: (phone, reason) =>
+      client.request({
+        method: 'POST',
+        path: '/api/admin/auth-logs/reveal',
+        schema: adminOtpRevealResponseSchema,
+        body: { phone, reason },
       }),
   };
 }

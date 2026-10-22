@@ -133,6 +133,12 @@ export const serverEnvSchema = z
 
     // SMS / OTP
     SMS_PROVIDER: z.enum(smsProviders),
+    /**
+     * 2026-10-21 (Task 5): keep each live login code encrypted (AES-256-GCM, for its 2-minute
+     * life) so a Super Admin can reveal it, with a reason, from the Authentication Logs. Off by
+     * default: codes are then stored as a keyed hash only and nobody can read them.
+     */
+    OTP_ADMIN_REVEAL: z.stringbool().default(false),
     SPARROW_SMS_TOKEN: optionalNonEmpty,
     SPARROW_SMS_FROM: optionalNonEmpty,
     SPARROW_SMS_API_URL: z.url().optional(),

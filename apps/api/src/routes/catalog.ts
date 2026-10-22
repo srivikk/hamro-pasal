@@ -9,6 +9,7 @@ import {
   productListQuerySchema,
   vendorProductCreateRequestSchema,
   vendorProductListQuerySchema,
+  vendorProductAvailabilityRequestSchema,
   vendorProductStockRequestSchema,
   vendorProductUpdateRequestSchema,
   type AdminCategoryListResponseBody,
@@ -25,6 +26,7 @@ import {
   type VendorProductResponseBody,
   type VendorProductView,
 } from '@hamro-pasal/shared-types';
+import { isProductOrderable } from '@hamro-pasal/db';
 import { Router } from 'express';
 import multer from 'multer';
 
@@ -73,6 +75,7 @@ export function vendorProductView(row: ProductRow): VendorProductView {
     stock_quantity: row.stock_quantity,
     image_urls: row.image_urls,
     is_active: row.is_active,
+    in_stock: row.in_stock,
     metadata: row.metadata,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
@@ -92,8 +95,9 @@ export function publicProductView({
     description: product.description,
     price_npr: product.price_npr,
     unit: product.unit,
-    // Stock held by other customers' 600 s locks is not subtracted; checkout re-checks.
-    in_stock: product.stock_quantity > 0,
+    // Orderable now (2026-10-21: the vendor's switch and the count). Stock held by other
+    // customers' 600 s locks is not subtracted; checkout re-checks.
+    in_stock: isProductOrderable(product),
     stock_quantity: product.stock_quantity,
     image_urls: product.image_urls,
     metadata: product.metadata,
@@ -178,6 +182,16 @@ export function vendorProductsRouter(products: ProductService): Router {
     res.status(201).json(body);
   });
 
+  /** 2026-10-21: the Seller app's In Stock / Out of Stock switch; the count is untouched. */
+  router.patch('/:id/availability', async (req, res) => {
+    const { id } = parseInput(idParamSchema, { ...req.params });
+    const { in_stock: inStock } = parseInput(vendorProductAvailabilityRequestSchema, req.body);
+    const body: VendorProductResponseBody = {
+      product: vendorProductView(await products.setAvailability(authOf(req).userId, id, inStock)),
+    };
+    res.json(body);
+  });
+
   router.patch('/:id/stock', async (req, res) => {
     const { id } = parseInput(idParamSchema, { ...req.params });
     const { stock_quantity: stockQuantity } = parseInput(vendorProductStockRequestSchema, req.body);
@@ -197,10 +211,14 @@ export function vendorProductsRouter(products: ProductService): Router {
     res.json(body);
   });
 
-  /** Phase 19: a soft delete (`is_active = false`); the row and its order history stay. */
+  /**
+   * Phase 19, amended 2026-10-21: the vendor removes the product from its catalogue
+   * (`archived_at`); the row and its order history stay. Moderation (`is_active`) is the
+   * Super Admin's alone.
+   */
   router.delete('/:id', async (req, res) => {
     const { id } = parseInput(idParamSchema, { ...req.params });
-    await products.hide(authOf(req).userId, id);
+    await products.archive(authOf(req).userId, id);
     res.status(204).end();
   });
 

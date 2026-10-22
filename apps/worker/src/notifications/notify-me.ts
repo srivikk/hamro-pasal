@@ -1,6 +1,8 @@
 import {
   deviceTokens,
   inVisibleCategory,
+  orderableStock,
+  productListed,
   products,
   recordNotificationMessage,
   shopOpenAlerts,
@@ -108,11 +110,7 @@ export class NotifyMeService {
       .from(stockAlerts)
       .innerJoin(products, eq(products.id, stockAlerts.product_id))
       .where(
-        and(
-          eq(products.is_active, true),
-          gt(products.stock_quantity, 0),
-          inVisibleCategory(products.category_id),
-        ),
+        and(productListed(), gt(orderableStock(), 0), inVisibleCategory(products.category_id)),
       );
     const readyShops = await this.db
       .selectDistinct({ id: shopOpenAlerts.vendor_id })

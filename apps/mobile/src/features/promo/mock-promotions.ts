@@ -134,6 +134,21 @@ function seedOf(id: string): number {
  * curated values; any other shop gets values derived from its id. All unknown outside development.
  */
 export function vendorExtras(vendor: ExtrasSubject): VendorExtras {
+  return { ...mockExtras(vendor), ...ratingOf(vendor) };
+}
+
+/**
+ * 2026-10-21 (Task 5): a shop's rating is always the server's (the average of its published
+ * customer ratings), never a mock one; a shop without one shows no rating.
+ */
+function ratingOf(vendor: ExtrasSubject): Pick<VendorExtras, 'rating_average' | 'rating_count'> {
+  const count = vendor.rating_count ?? 0;
+  return count > 0 && vendor.rating_average != null
+    ? { rating_average: vendor.rating_average, rating_count: count }
+    : { rating_average: null, rating_count: null };
+}
+
+function mockExtras(vendor: ExtrasSubject): VendorExtras {
   if (!PROMO_MOCKS_ENABLED) return NO_VENDOR_EXTRAS;
   const seed = seedOf(vendor.id);
   const cover_image_url = image(`shop-${String(seed % 50)}`, 800, 400);

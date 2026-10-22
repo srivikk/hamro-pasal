@@ -54,6 +54,11 @@ import { authRouter } from './routes/auth';
 import { cartRouter } from './routes/cart';
 import { categoriesRouter, productsRouter, vendorProductsRouter } from './routes/catalog';
 import { deliveriesRouter } from './routes/deliveries';
+import type { AuthLogService } from './auth/auth-log-service';
+import type { ChatRoomBroadcaster } from './realtime/chat-broadcaster';
+import { adminAuthLogsRouter } from './routes/admin-auth-logs';
+import { productReviewsRouter } from './routes/product-reviews';
+import type { ProductReviewService } from './reviews/product-review-service';
 import { orderChatRouter } from './routes/order-chat';
 import { alertsRouter } from './routes/alerts';
 import { adminPushRouter } from './routes/admin-push';
@@ -126,6 +131,12 @@ export interface ApiServices {
   /** Step 7.8: the in-app tutorial videos. */
   readonly tutorials: TutorialService;
   readonly evidence: EvidenceStorage;
+  /** 2026-10-21: lets the HTTP chat route reach the /chat rooms (attached by server.ts). */
+  readonly chatBroadcaster: ChatRoomBroadcaster;
+  /** 2026-10-21: the Authentication Logs and the guarded reveal of a live login code. */
+  readonly authLogs: AuthLogService;
+  /** 2026-10-21: verified-purchase product reviews. */
+  readonly productReviews: ProductReviewService;
   /** Phase 15: the Super Admin dashboard (apps/admin). */
   readonly adminDeadLetters: DeadLetterService;
   readonly adminVendors: AdminVendorService;
@@ -202,6 +213,12 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
   if (services !== undefined) {
     const customerAuth = requireAuth(services.accessTokenSecret, ['CUSTOMER']);
     app.use('/api/auth', authRouter(services.auth));
+    // 2026-10-21 (Task 5). Before the admin router, which would otherwise answer 404 here.
+    app.use(
+      '/api/admin/auth-logs',
+      requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
+      adminAuthLogsRouter(services.authLogs),
+    );
     // Step 7.3. Before the admin router, which would otherwise answer 404 for these paths.
     app.use(
       '/api/admin/disputes',
@@ -274,6 +291,14 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
     app.use('/api/categories', categoriesRouter(services.categories));
     // Phase 28. Public: the Home banners and Featured Offers running now.
     app.use('/api/home', homeRouter(services.promotions));
+    // 2026-10-21 (Task 5): verified-purchase product reviews, ahead of the product list.
+    app.use(
+      '/api/products',
+      productReviewsRouter(services.productReviews, {
+        optional: optionalAuth(services.accessTokenSecret),
+        customer: customerAuth,
+      }),
+    );
     app.use('/api/products', productsRouter(services.products));
     app.use(
       '/api/vendor/products',
@@ -382,7 +407,7 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
     app.use(
       '/api/orders',
       requireAuth(services.accessTokenSecret, ['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
-      orderChatRouter(services.disputes),
+      orderChatRouter(services.disputes, services.evidence, services.chatBroadcaster),
     );
     app.use(
       '/api/orders',

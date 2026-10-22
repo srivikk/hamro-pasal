@@ -104,6 +104,26 @@ export const chatSendRequestSchema = z
   });
 export type ChatSendRequest = z.output<typeof chatSendRequestSchema>;
 
+/**
+ * POST /api/orders/:id/chat (2026-10-21, Task 5): the same message over HTTP, for clients without
+ * a socket (the admin dashboard). The order is the path's; the stored message is broadcast to
+ * the order's room exactly as one sent over /chat, and a retry with the same `client_id` gets the
+ * stored message back.
+ */
+export const chatHttpSendRequestSchema = z
+  .strictObject({
+    client_id: z.string().min(1).max(100),
+    body: z.string().trim().max(MAX_CHAT_MESSAGE_LENGTH),
+    attachments: z.array(chatAttachmentSchema).max(MAX_CHAT_ATTACHMENTS).default([]),
+  })
+  .refine((message) => message.body !== '' || message.attachments.length > 0, {
+    message: 'A message needs text or an image',
+  });
+export type ChatHttpSendRequest = z.input<typeof chatHttpSendRequestSchema>;
+
+export const chatHttpSendResponseSchema = z.strictObject({ message: chatMessageSchema });
+export type ChatHttpSendResponseBody = z.infer<typeof chatHttpSendResponseSchema>;
+
 export const chatSendAckSchema = z.discriminatedUnion('ok', [
   z.strictObject({ ok: z.literal(true), message: chatMessageSchema }),
   z.strictObject({ ok: z.literal(false), error: chatErrorSchema }),

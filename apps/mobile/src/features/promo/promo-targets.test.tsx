@@ -234,7 +234,9 @@ describe('the mock promotions and shops', () => {
     const asan = realMocks.vendorExtras({ id: 'any-id', business_name: 'Asan Masala & Snacks' });
 
     expect(asan).toMatchObject({
-      rating_average: 4.7,
+      // 2026-10-21 (Task 5): never a mock rating: the server's, or none.
+      rating_average: null,
+      rating_count: null,
       prep_minutes: 10,
       average_cost_npr: 200,
       top_offer: '10% OFF',
@@ -246,6 +248,23 @@ describe('the mock promotions and shops', () => {
       .map(([name]) => name);
     expect(sponsored).toEqual(['New Road Electronics', 'Jawalakhel Dashain Bazaar']);
     expect(asan.cover_image_url).toMatch(/^https:\/\//);
+    // The server's rating replaces any curated one; without a published rating there is none.
+    expect(
+      realMocks.vendorExtras({
+        id: 'any-id',
+        business_name: 'Asan Masala & Snacks',
+        rating_average: 4.2,
+        rating_count: 17,
+      }),
+    ).toMatchObject({ rating_average: 4.2, rating_count: 17 });
+    expect(
+      realMocks.vendorExtras({
+        id: 'any-id',
+        business_name: 'Asan Masala & Snacks',
+        rating_average: null,
+        rating_count: 0,
+      }),
+    ).toMatchObject({ rating_average: null, rating_count: null });
     // A top offer is always one of the shop's labels.
     for (const shop of Object.values(realMocks.MOCK_SHOPS)) {
       if (shop.top_offer !== null) expect(shop.offer_tags).toContain(shop.top_offer);

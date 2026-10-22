@@ -20,12 +20,13 @@ import { useCategoriesQuery } from '../../src/features/discovery/useCategoriesQu
 import {
   categoryNameOf,
   productCategoryOptions,
+  productStatusOf,
   type ProductCategoryOption,
 } from '../../src/features/vendor/product-form';
 import {
   loadedProducts,
   useOwnProductsQuery,
-  useSetProductListed,
+  useSetProductInStock,
 } from '../../src/features/vendor/useVendorProducts';
 import { useToastStore } from '../../src/store/useToastStore';
 import { colors } from '../../src/theme/colors';
@@ -36,11 +37,11 @@ interface ProductRowProps {
   categories: readonly ProductCategoryOption[] | null;
   /** The row's switch is waiting for the server. */
   switching: boolean;
-  onToggle: (product: VendorProductView, listed: boolean) => void;
+  onToggle: (product: VendorProductView, inStock: boolean) => void;
   onEdit: (id: string) => void;
 }
 
-/** One product: what it is, what it costs, how many are left, and whether customers see it. */
+/** One product: what it is, what it costs, how many are left, and whether it is in stock. */
 const ProductRow = memo(function ProductRow({
   product,
   categories,
@@ -49,7 +50,7 @@ const ProductRow = memo(function ProductRow({
   onEdit,
 }: ProductRowProps) {
   const { t } = useTranslation();
-  const inStock = product.stock_quantity > 0;
+  const status = productStatusOf(product);
   return (
     <View
       className="flex-row items-center gap-3 rounded-2xl bg-white p-3 shadow-sm"
@@ -86,10 +87,11 @@ const ProductRow = memo(function ProductRow({
       </Pressable>
       <View className="items-end gap-1">
         <Switch
-          testID={`product-listed-switch-${product.id}`}
-          accessibilityLabel={t('vendorCatalogue.listedSwitch', { name: product.name })}
-          value={product.is_active}
-          disabled={switching}
+          testID={`product-stock-switch-${product.id}`}
+          accessibilityLabel={t('vendorCatalogue.stockSwitch', { name: product.name })}
+          value={product.in_stock}
+          // A product the Super Admin hid cannot be ordered either way; the switch waits.
+          disabled={switching || !product.is_active}
           onValueChange={(value) => {
             onToggle(product, value);
           }}
@@ -98,13 +100,15 @@ const ProductRow = memo(function ProductRow({
         />
         <Text
           testID={`product-stock-${product.id}`}
-          className={`text-xs font-semibold ${product.is_active && inStock ? 'text-emerald-700' : 'text-red-700'}`}
+          className={`text-xs font-semibold ${status === 'ORDERABLE' ? 'text-emerald-700' : 'text-red-700'}`}
         >
-          {!product.is_active
+          {status === 'HIDDEN_BY_ADMIN'
             ? t('vendorCatalogue.hidden')
-            : inStock
-              ? t('vendorCatalogue.inStock', { count: product.stock_quantity })
-              : t('vendorCatalogue.noStockLeft')}
+            : status === 'SWITCHED_OFF'
+              ? t('vendorCatalogue.outOfStock')
+              : status === 'ORDERABLE'
+                ? t('vendorCatalogue.inStock', { count: product.stock_quantity })
+                : t('vendorCatalogue.noStockLeft')}
         </Text>
       </View>
     </View>
@@ -115,17 +119,18 @@ const keyOf = (product: VendorProductView): string => product.id;
 
 /**
  * Vendor flow step 3: the shop's products as the server holds them (GET /api/vendor/products,
- * hidden ones included), each with a switch that shows it to customers or hides it, and a button
- * to add one. Tapping a product opens it for editing.
+ * hidden ones included), each with an In Stock / Out of Stock switch, and a button to add one.
+ * Tapping a product opens it for editing.
  *
- * The switch is the product's `is_active` (PUT to show, DELETE to hide): the server has no
- * separate in-stock flag yet, so a product is out of stock when its count is 0.
+ * Decided 2026-10-21: the switch is the product's `in_stock` alone (PATCH …/availability). It
+ * never changes the count, and never hides the product: whether customers see it (`is_active`)
+ * is the Super Admin's moderation, shown here and not editable.
  */
 export default function VendorCatalogueScreen() {
   const { t } = useTranslation();
   const query = useOwnProductsQuery();
   const products = useMemo(() => loadedProducts(query.data), [query.data]);
-  const listed = useSetProductListed();
+  const stock = useSetProductInStock();
   const toast = useToastStore((store) => store.show);
   const taxonomy = useCategoriesQuery().data;
   const categories = useMemo(
@@ -136,16 +141,11 @@ export default function VendorCatalogueScreen() {
   const onEdit = useCallback((id: string) => {
     router.push({ pathname: '/product', params: { id } });
   }, []);
-  const setListed = listed.mutate;
+  const setInStock = stock.mutate;
   const onToggle = useCallback(
     (product: VendorProductView, value: boolean) => {
-      // Showing a product needs a category (a PUT requires one): older products get one first.
-      if (value && product.category_id === null) {
-        onEdit(product.id);
-        return;
-      }
-      setListed(
-        { product, listed: value },
+      setInStock(
+        { product, inStock: value },
         {
           onError: () => {
             toast(t('vendorCatalogue.toggleError'), 'error');
@@ -153,9 +153,9 @@ export default function VendorCatalogueScreen() {
         },
       );
     },
-    [onEdit, setListed, t, toast],
+    [setInStock, t, toast],
   );
-  const switchingId = listed.isPending ? listed.variables.product.id : null;
+  const switchingId = stock.isPending ? stock.variables.product.id : null;
   const renderItem = useCallback<ListRenderItem<VendorProductView>>(
     ({ item }) => (
       <ProductRow

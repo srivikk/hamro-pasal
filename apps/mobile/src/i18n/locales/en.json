@@ -1358,5 +1358,23 @@
       "invalid": "Please check the details and try again.",
       "failed": "Could not save. Please try again."
     }
+  },
+  "productReviews": {
+    "title": "Reviews",
+    "none": "No reviews yet",
+    "count_one": "{{count, localizedNumber}} review",
+    "count_other": "{{count, localizedNumber}} reviews",
+    "anonymous": "Customer",
+    "verified": "Verified purchase",
+    "write": "Rate this product",
+    "edit": "Edit your review",
+    "star_one": "{{count, localizedNumber}} star",
+    "star_other": "{{count, localizedNumber}} stars",
+    "commentPlaceholder": "What did you think? (optional)",
+    "submit": "Submit review",
+    "sending": "Sending…",
+    "thanks": "Thanks for your review.",
+    "notVerified": "You can review a product once an order with it has been delivered to you.",
+    "failed": "Couldn't send your review. Try again."
   }
 }

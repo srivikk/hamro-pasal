@@ -65,6 +65,15 @@ export const SIGNUP_SUBSCRIPTION_PLANS = [
 
 export const server = setupServer(
   http.get(apiUrl('/api/categories'), () => HttpResponse.json({ categories: [] })),
+  // The item sheet reads a product's reviews (Task 5); none by default.
+  http.get(apiUrl('/api/products/:id/reviews'), () =>
+    HttpResponse.json({
+      summary: { average: null, count: 0 },
+      reviews: [],
+      next_cursor: null,
+      viewer: null,
+    }),
+  ),
   // Both delivery modes on: a new shop may choose either (GET /api/seller/signup-options).
   http.get(apiUrl('/api/seller/signup-options'), () =>
     HttpResponse.json({

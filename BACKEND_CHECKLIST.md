@@ -602,6 +602,17 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 8. The discount engine (section 5 step 2) is **done 2026-10-09 (§8Z.34)**: vendor offers stack with campaigns in the quote and checkout, on the order, in settlement and on the invoice, and both apps are wired. Left of step 2: `payment_session` in the checkout response. Fiscal invoicing (6.4): the waiting invoices, the list, the PDF and its Devanagari font are done; left are the detail read, the customer's and admin's reads and Credit / Debit Notes.
 9. **A device run of the new screens**, after rebuilding the development client (expo-file-system, expo-sharing): the cart on a real quote, the two refusal dialogs, the invoice download and share sheet.
 
+## Grievance desk, guarded OTP reveal, stock vs moderation, product reviews (2026-10-22, STATE_HANDOFF.md §8Z.45)
+
+- [x] **Grievance chat:** `POST /api/orders/:id/chat` (same rules and broadcast as `/chat`), the admin Disputes tab, the Seller app's order conversation. Escalated prepaid money stays in the dispute hold until the admin resolves it (never paid out, never released on day 8).
+- [x] **Authentication Logs:** `auth_events` (migration 0050), `GET /api/admin/auth-logs`, `POST /api/admin/auth-logs/reveal { phone, reason }` behind `OTP_ADMIN_REVEAL` (off by default; the live code is sealed AES-256-GCM in Redis beside its hash), audited `LOGIN_CODE_REVEALED` before the code is returned.
+  - [ ] Decide whether production may ever run with `OTP_ADMIN_REVEAL=true`; prune `auth_events`.
+- [x] **Stock vs moderation:** `products.in_stock` and `archived_at` (migration 0049), `PATCH /api/vendor/products/:id/availability`; `is_active` is admin-only.
+  - [ ] Products hidden before 0049 stay hidden: an admin shows the vendor-hidden ones again.
+- [x] **Product photos** uploaded from the Seller app's product form (S3-compatible storage, §8Z.35); KYC documents already were.
+- [x] **Product reviews:** `product_reviews` (migration 0051), `GET / POST /api/products/:id/reviews` (verified purchase, `403 NOT_A_VERIFIED_PURCHASE`); the customer item sheet reads and writes them. Shop ratings in the feed and menu from published customer reviews.
+  - [ ] Admin moderation of product reviews; paging past three in the app.
+
 ## Cart math, free delivery and order alerts (2026-10-21, STATE_HANDOFF.md §8Z.44)
 
 - [x] Decimal cart math (decimal.js, half-up to the paisa) in pricing and the delivery charge.

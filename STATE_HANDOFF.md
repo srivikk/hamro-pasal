@@ -1100,6 +1100,66 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.45 Phase 5 (Task 5): grievance desk, guarded OTP reveal, stock vs moderation, product photos, product reviews and shop ratings, test stabilisation (2026-10-22)
+
+Branch `epic/master-completion`. Most of this landed in `e5d8677` ("safe checkpoint before Phase 5
+new window"); the closing commit adds the customer app's product reviews, a stress-test timeout and
+this section. Migrations **0049–0051**. No new dependency. **SPEC.md amended** (core 6 "Ratings and
+product reviews"; vendor flow 19 amendment; Super Admin flow 11–12; verification 38–41).
+`OTP_ADMIN_REVEAL` in `.env.example` (default `false`). Not run on a device or in a browser.
+
+### Asked vs built
+
+| Asked                                                             | Built                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Why                                                                                                                                                                                                          |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| "when a dispute is opened, freeze that order's funds in escrow"   | the freeze is the existing dispute hold (§7.3 step 5): a prepaid order's vendor share goes to `VENDOR_DISPUTE_HOLD` at delivery, the payout run reads `VENDOR_WALLET` only, and the day-8 release skips an escalated order, so its money moves only on the admin's resolution                                                                                                                                                                                                  | SPEC core 6 (decided 2026-10-15): the hold is per order and released on day 8 unless escalated. A cash order cannot be frozen (the shop holds the cash); its refund is debited from the ledger at resolution |
+| in-app chat customer–admin–vendor                                 | the existing `/chat` conversation, plus `POST /api/orders/:id/chat` (same rules and broadcast as the socket, `ChatRoomBroadcaster`); the admin dashboard's **Disputes** tab (escalated, oldest first, where the money is, transcript, write, resolve); the Seller app opens each order's conversation from its card (`app/(vendor)/order-chat.tsx`, `DisputeChat.tsx` shared with the customer)                                                                                | An admin reads and writes only once escalated (SPEC core 6)                                                                                                                                                  |
+| "codes are AES-encrypted in the database for their 2-minute life" | the code stays where it always lived, **Redis**, beside its HMAC digest, as an AES-256-GCM `sealed` field of the same hash and expiring with it; only when `OTP_ADMIN_REVEAL=true`. PostgreSQL gets `auth_events` (sends and checks by number, never the code)                                                                                                                                                                                                                 | A copy in PostgreSQL would outlive the 2 minutes in backups and WAL. Off: Redis holds only the hash and no route can read a code                                                                             |
+| "Reveal" with a written reason, audited                           | `POST /api/admin/auth-logs/reveal { phone, reason }` (SUPER_ADMIN): `403 OTP_REVEAL_DISABLED`, `404 OTP_NOT_LIVE`, `400` for a short reason. The audit entry `LOGIN_CODE_REVEALED` (masked number, reason; never the code) is committed **before** the code is returned. Revealing counts no attempt and does not use the code up. `GET /api/admin/auth-logs?phone=&cursor=&limit=` lists the log with `revealable` on the newest live send. Admin tab **Authentication Logs** | SPEC Super Admin flow 12                                                                                                                                                                                     |
+| `in_stock` for the Seller toggle, `is_active` admin-only          | `products.in_stock` (default true) via `PATCH /api/vendor/products/:id/availability { in_stock }`; `is_active` written by no vendor route (an older app's value is ignored); vendor DELETE sets `archived_at`. One predicate set in `@hamro-pasal/db` `product-visibility.ts` used by the catalogue, menu, checkout, stock reader and Notify Me                                                                                                                                | SPEC vendor flow 19 amendment. **Products hidden before 0049 stay hidden** (vendor hides and admin hides were one column, not told apart); an admin shows a vendor-hidden one again                          |
+| uploads to Supabase / S3 for KYC and product images               | the S3-compatible storage of §8Z.35 (R2 or AWS S3; `LOCAL` in development) already served PAN and citizenship documents (private bucket) and product photos (public bucket). The Seller app's product form now uploads photos with Save (JPEG / PNG / WebP, 5 MB each, 8 per product); no "coming soon" placeholder remains on a mounted route                                                                                                                                 | Supabase Storage was not added: one storage abstraction already exists and is S3-compatible                                                                                                                  |
+| verified-purchase product reviews                                 | `product_reviews` (0051); `GET /api/products/:id/reviews` (public; a signed-in customer also gets `viewer { can_review, own_review }`), `POST` (CUSTOMER; `403 NOT_A_VERIFIED_PURCHASE`; one per customer and product, a second replaces it; first names only). **Customer app (this commit):** a Reviews section in the item sheet (average, count, newest three, "Verified purchase", and Rate / Edit with stars and a comment for a verified purchaser)                     | SPEC core 6 "Ratings and product reviews"                                                                                                                                                                    |
+| real shop ratings in the feed                                     | `rating_average` / `rating_count` on the feed and menu vendor, from **published** customer-to-vendor order reviews only (the double blind holds); the cards and shop header show them, the mock rating is gone from production data                                                                                                                                                                                                                                            | —                                                                                                                                                                                                            |
+| fix the review-lifecycle and category-navigation races            | `ReviewPrompt.test.tsx` waits for the review store (set in the same callback that closes the modal) instead of polling the modal away; `category-navigation.test.tsx` waits for each rotating hint in turn, whatever phase the 2 s rotation is in when the menu loads                                                                                                                                                                                                          | Both passed 4 of 4 runs alone on 2026-10-22                                                                                                                                                                  |
+
+### Migrations
+
+- **0049** `products.in_stock boolean NOT NULL DEFAULT true`, `products.archived_at timestamptz`.
+- **0050** `auth_events` (`phone` +977 CHECK, `user_id` → users SET NULL, `kind` CHECK of seven
+  values, `detail`), indexes `(created_at, id)` and `(phone, created_at)`.
+- **0051** `product_reviews` (unique `(product_id, customer_id)`, `order_id` = the delivered order
+  that verified it, rating 1–5, comment ≤ 500 non-blank, all FKs RESTRICT, `set_updated_at`).
+
+### Test stabilisation found in this pass
+
+`apps/api/test/inventory-stress.int.test.ts`: 100 concurrent checkouts take 10–15 s on this machine;
+the safe-run cap `--testTimeout=10000` killed both cases (they assert nothing timing-related). Each
+now passes `STRESS_TIMEOUT_MS = 60_000`, which overrides the CLI flag.
+
+### Known gaps
+
+- The customer app shows three reviews in the sheet and pages no further; no review photos, no
+  moderation of product reviews (an admin cannot hide one yet).
+- The auth log is best effort (a failed insert does not fail sign-in); it is never pruned.
+- `OTP_ADMIN_REVEAL` is not refused in production by the env schema: it is a business decision.
+- Wallet-paid dispute refunds still go to refund clearing (§8Z.43); refunds are recorded, not paid.
+
+### Tests (2026-10-22, one Jest process at a time, `--testTimeout=10000`, tree-killing watchdog)
+
+- `pnpm build`, `turbo run typecheck lint`: 35 of 35 tasks.
+- Unit: admin 350, shared-types 398, api 206, ledger 66.
+- API integration, file by file: the five Task 5 files (auth logs 4, chat HTTP send 4, product
+  reviews and ratings 5, vendor product lifecycle 26, dispute hold 13) and 20 neighbours
+  (categories, vendors, auth, cookie auth, cart, catalogue, chat history and realtime, checkout
+  claim, e2e lifecycle, inventory concurrency and stress, KYC and storage, orders, reviews, seller
+  onboarding, uploads, vendor orders, vendor products, vendors): all pass.
+- Worker integration: notify-me 9, dispute-hold-release 7, settlement-payout-run 13.
+- Mobile: `ProductReviews.test.tsx` (4, new), shop detail 43, category navigation 18, review
+  prompt 14, vendor order chat 3, dispute screen 32, vendor catalogue 35, vendor routing 19,
+  components 13, promo targets 17, vendor menu 13, i18n 17; review prompt and category navigation
+  repeated three more times each, all passing.
+- **Not run:** the full mobile, worker and db suites (by the safe-run rule), no mutation checks.
+
 ## 8Z.44 Zero-error cart math, platform free-delivery threshold, ringing order alerts, order alerts in the inbox (2026-10-21)
 
 Branch `epic/master-completion`. `packages/shared-types`, `packages/db` (migration **0048**),

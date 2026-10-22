@@ -20,6 +20,7 @@ import { useToastStore } from '../../store/useToastStore';
 import { colors } from '../../theme/colors';
 import { clampQuantity } from '../discovery/discovery-rules';
 import type { MenuProductDetail } from './menu-sections';
+import { ProductReviews } from './ProductReviews';
 
 interface DetailProps {
   product: MenuProduct;
@@ -196,6 +197,8 @@ function Detail({ product, detail, rating, cartVendor, blockedReason, onClose }:
               {detail.description}
             </Text>
           )}
+
+          <ProductReviews productId={product.id} />
         </View>
       </ScrollView>
 

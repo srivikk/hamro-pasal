@@ -26,6 +26,12 @@ export type AuthEventKind = z.infer<typeof authEventKindSchema>;
 
 export const AUTH_LOG_DEFAULT_LIMIT = 50;
 
+/**
+ * 2026-10-22 (Task 6): auth_events rows are kept this long, then deleted by the worker's nightly
+ * AUTH_EVENTS_PRUNE task. A login code itself is never in the table (it lives 2 minutes in Redis).
+ */
+export const AUTH_EVENT_RETENTION_DAYS = 30;
+
 const phoneSchema = z.string().regex(/^\+977\d{10}$/, 'A +977 number of 10 digits');
 
 /** GET /api/admin/auth-logs?phone=&cursor=&limit=, newest first. */

@@ -14,6 +14,8 @@ export const TABS = [
   { id: 'disputes', label: 'Disputes', group: 'Shops', icon: '⚖' },
   { id: 'categories', label: 'Categories', group: 'Catalogue', icon: '☰' },
   { id: 'products', label: 'Products', group: 'Catalogue', icon: '▣' },
+  // 2026-10-22 (Task 6): hide or show a customer's product review (platform policy).
+  { id: 'reviews', label: 'Product reviews', group: 'Catalogue', icon: '✎' },
   { id: 'campaigns', label: 'Campaigns', group: 'Marketing', icon: '✦' },
   { id: 'ad-products', label: 'Ad products', group: 'Marketing', icon: '◎' },
   { id: 'promotions', label: 'Promotions', group: 'Marketing', icon: '★' },

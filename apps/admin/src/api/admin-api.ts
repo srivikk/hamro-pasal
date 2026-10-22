@@ -1,5 +1,10 @@
 import {
   adminAuthLogListResponseSchema,
+  adminProductReviewListResponseSchema,
+  adminProductReviewResponseSchema,
+  type AdminProductReviewListResponseBody,
+  type AdminProductReviewModerationRequest,
+  type AdminProductReviewResponseBody,
   adminDisputeListResponseSchema,
   adminDisputeResponseSchema,
   adminOtpRevealResponseSchema,
@@ -324,6 +329,17 @@ export interface AdminApi {
   }): Promise<AdminAuthLogListResponseBody>;
   /** The guarded reveal of a live login code: audited with the reason. */
   revealOtp(phone: string, reason: string): Promise<AdminOtpRevealResponseBody>;
+
+  /** 2026-10-22 (Task 6): every product review, newest first, optionally hidden or visible only. */
+  listProductReviews(query: {
+    status?: 'VISIBLE' | 'HIDDEN' | undefined;
+    cursor?: string | undefined;
+  }): Promise<AdminProductReviewListResponseBody>;
+  /** Hides a review with a reason, or shows it again; audited. */
+  moderateProductReview(
+    reviewId: string,
+    request: AdminProductReviewModerationRequest,
+  ): Promise<AdminProductReviewResponseBody>;
 }
 
 export function createAdminApi(client: ApiClient): AdminApi {
@@ -829,6 +845,20 @@ export function createAdminApi(client: ApiClient): AdminApi {
         path: '/api/admin/auth-logs/reveal',
         schema: adminOtpRevealResponseSchema,
         body: { phone, reason },
+      }),
+    listProductReviews: ({ status, cursor }) =>
+      client.request({
+        method: 'GET',
+        path: '/api/admin/product-reviews',
+        schema: adminProductReviewListResponseSchema,
+        query: { status, cursor },
+      }),
+    moderateProductReview: (reviewId, request) =>
+      client.request({
+        method: 'PATCH',
+        path: `/api/admin/product-reviews/${encodeURIComponent(reviewId)}`,
+        schema: adminProductReviewResponseSchema,
+        body: request,
       }),
   };
 }

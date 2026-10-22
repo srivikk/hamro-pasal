@@ -138,7 +138,9 @@ describe('timer queues (real Redis)', () => {
           s.key !== 'dispute-hold-release',
       );
       expect(schedulers.map((s) => s.key).sort()).toEqual([
+        'auth-events-prune',
         'billing-cycle-renewal',
+        'cycle-dues-sweep',
         'export-file-sweep',
         'order-reconciliation',
         'subscription-downgrade',

@@ -24,6 +24,10 @@ export const authEvents = pgTable(
   (t) => [
     index('auth_events_created_at_idx').on(t.created_at, t.id),
     index('auth_events_phone_created_at_idx').on(t.phone, t.created_at),
+    // 2026-10-22: the foreign key's own index (the Phase 23 audit); most rows have no user.
+    index('auth_events_user_id_idx')
+      .on(t.user_id)
+      .where(sql`${t.user_id} IS NOT NULL`),
     check(
       'auth_events_kind_check',
       sql.raw(`kind IN (${authEventKinds.map((kind) => `'${kind}'`).join(', ')})`),

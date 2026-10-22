@@ -57,7 +57,9 @@ import { deliveriesRouter } from './routes/deliveries';
 import type { AuthLogService } from './auth/auth-log-service';
 import type { ChatRoomBroadcaster } from './realtime/chat-broadcaster';
 import { adminAuthLogsRouter } from './routes/admin-auth-logs';
+import { adminProductReviewsRouter } from './routes/admin-product-reviews';
 import { productReviewsRouter } from './routes/product-reviews';
+import type { ProductReviewModerationService } from './reviews/product-review-moderation-service';
 import type { ProductReviewService } from './reviews/product-review-service';
 import { orderChatRouter } from './routes/order-chat';
 import { alertsRouter } from './routes/alerts';
@@ -137,6 +139,8 @@ export interface ApiServices {
   readonly authLogs: AuthLogService;
   /** 2026-10-21: verified-purchase product reviews. */
   readonly productReviews: ProductReviewService;
+  /** 2026-10-22 (Task 6): the Super Admin hides or shows a product review. */
+  readonly productReviewModeration: ProductReviewModerationService;
   /** Phase 15: the Super Admin dashboard (apps/admin). */
   readonly adminDeadLetters: DeadLetterService;
   readonly adminVendors: AdminVendorService;
@@ -218,6 +222,12 @@ export function createApp(services?: ApiServices, options: AppOptions = {}): Exp
       '/api/admin/auth-logs',
       requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
       adminAuthLogsRouter(services.authLogs),
+    );
+    // 2026-10-22 (Task 6): product review moderation, also ahead of the admin router.
+    app.use(
+      '/api/admin/product-reviews',
+      requireAuth(services.accessTokenSecret, ['SUPER_ADMIN']),
+      adminProductReviewsRouter(services.productReviewModeration),
     );
     // Step 7.3. Before the admin router, which would otherwise answer 404 for these paths.
     app.use(

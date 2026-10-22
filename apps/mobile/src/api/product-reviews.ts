@@ -21,13 +21,18 @@ export const PRODUCT_REVIEW_ERROR_CODES = {
 } as const;
 
 /**
- * GET /api/products/:id/reviews: the product's summary and newest reviews. Public; a signed-in
- * customer's token is sent when one is in memory, so the answer also says whether they may review.
+ * GET /api/products/:id/reviews?cursor=: the product's summary and a page of its newest reviews.
+ * Public; a signed-in customer's token is sent when one is in memory, so the answer also says
+ * whether they may review.
  */
-export function fetchProductReviews(productId: string): Promise<ProductReviewListResponseBody> {
+export function fetchProductReviews(
+  productId: string,
+  cursor?: string,
+): Promise<ProductReviewListResponseBody> {
   return apiRequest({
     method: 'GET',
     path: productReviewsPath(productId),
+    ...(cursor === undefined ? {} : { query: { cursor } }),
     authenticated: 'optional',
     schema: productReviewListResponseSchema,
   });

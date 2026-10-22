@@ -137,4 +137,72 @@ describe('ProductReviews (item sheet)', () => {
     // The form stays open with what was typed.
     expect(screen.getByTestId('product-review-form')).toBeTruthy();
   });
+
+  it('opens every review from "See all" and pages through them as the list scrolls', async () => {
+    const page1 = Array.from({ length: 20 }, (_, n) => review(n + 1));
+    const page2 = [review(21), review(22)];
+    const cursors: (string | null)[] = [];
+    server.use(
+      http.get(apiUrl(productReviewsPath(PRODUCT_ID)), ({ request }) => {
+        const cursor = new URL(request.url).searchParams.get('cursor');
+        cursors.push(cursor);
+        return HttpResponse.json({
+          summary: { average: 4, count: 22 },
+          reviews: cursor === null ? page1 : page2,
+          next_cursor: cursor === null ? page1[19]?.id : null,
+          viewer: null,
+        });
+      }),
+    );
+    renderWithProviders(<ProductReviews productId={PRODUCT_ID} />);
+
+    const seeAll = await screen.findByTestId('product-reviews-see-all');
+    expect(seeAll).toHaveTextContent('See all 22 reviews');
+    fireEvent.press(seeAll);
+
+    const list = await screen.findByTestId('all-reviews-list');
+    // What the list holds (it renders only the rows on screen).
+    const dataOf = (): unknown[] =>
+      (screen.getByTestId('all-reviews-list').props as { data: unknown[] }).data;
+    await waitFor(() => {
+      expect(dataOf()).toHaveLength(20);
+    });
+    fireEvent(list, 'onEndReached');
+    await waitFor(() => {
+      expect(dataOf()).toHaveLength(22);
+    });
+    expect(cursors).toContain(page1[19]?.id);
+    // The last page has no cursor: scrolling further asks for nothing more.
+    const asked = cursors.length;
+    fireEvent(list, 'onEndReached');
+    expect(cursors).toHaveLength(asked);
+
+    fireEvent.press(screen.getByTestId('all-reviews-close'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('all-reviews-list')).toBeNull();
+    });
+  });
+
+  it('offers no "See all" when every review is already in the sheet', async () => {
+    serve({
+      summary: { average: 4, count: 3 },
+      reviews: [1, 2, 3].map((n) => review(n)),
+      viewer: null,
+    });
+    renderWithProviders(<ProductReviews productId={PRODUCT_ID} />);
+    await screen.findByTestId('product-reviews-count');
+    expect(screen.queryByTestId('product-reviews-see-all')).toBeNull();
+  });
+
+  it('tells the author their review was hidden by Hamro Pasal', async () => {
+    serve({
+      summary: { average: null, count: 0 },
+      reviews: [],
+      viewer: { can_review: true, own_review: review(1), own_review_hidden: true },
+    });
+    renderWithProviders(<ProductReviews productId={PRODUCT_ID} />);
+    expect(await screen.findByTestId('product-review-own-hidden')).toHaveTextContent(
+      /^Hamro Pasal has hidden your review/,
+    );
+  });
 });

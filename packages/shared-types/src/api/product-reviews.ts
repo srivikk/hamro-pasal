@@ -57,6 +57,11 @@ export const productReviewListResponseSchema = z.strictObject({
     .strictObject({
       can_review: z.boolean(),
       own_review: productReviewViewSchema.nullable(),
+      /**
+       * 2026-10-22 (Task 6): Hamro Pasal unpublished the customer's own review (it is then in
+       * neither the list nor the average). Defaults to false for an API from before the field.
+       */
+      own_review_hidden: z.boolean().default(false),
     })
     .nullable(),
 });
@@ -64,3 +69,60 @@ export type ProductReviewListResponseBody = z.infer<typeof productReviewListResp
 
 export const productReviewResponseSchema = z.strictObject({ review: productReviewViewSchema });
 export type ProductReviewResponseBody = z.infer<typeof productReviewResponseSchema>;
+
+/*
+ * 2026-10-22 (Task 6): Super Admin moderation. A review that breaks platform policy is unpublished
+ * with a written reason (audited) and can be published again. A hidden review stays hidden when its
+ * author edits it.
+ */
+
+export const PRODUCT_REVIEW_HIDE_REASON_MIN_LENGTH = 10;
+export const PRODUCT_REVIEW_HIDE_REASON_MAX_LENGTH = 300;
+export const ADMIN_PRODUCT_REVIEW_DEFAULT_LIMIT = 50;
+
+/** GET /api/admin/product-reviews?status=&cursor=&limit=: newest first. */
+export const adminProductReviewListQuerySchema = z.strictObject({
+  status: z.enum(['VISIBLE', 'HIDDEN']).optional(),
+  cursor: z.uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(ADMIN_PRODUCT_REVIEW_DEFAULT_LIMIT),
+});
+export type AdminProductReviewListQuery = z.infer<typeof adminProductReviewListQuerySchema>;
+
+export const adminProductReviewViewSchema = z.strictObject({
+  ...productReviewViewSchema.shape,
+  product_name: z.string(),
+  vendor: z.strictObject({ id: z.uuid(), business_name: z.string() }),
+  hidden: z.boolean(),
+  hidden_at: z.iso.datetime().nullable(),
+  hidden_reason: z.string().nullable(),
+});
+export type AdminProductReviewView = z.infer<typeof adminProductReviewViewSchema>;
+
+export const adminProductReviewListResponseSchema = z.strictObject({
+  reviews: z.array(adminProductReviewViewSchema),
+  next_cursor: z.uuid().nullable(),
+});
+export type AdminProductReviewListResponseBody = z.infer<
+  typeof adminProductReviewListResponseSchema
+>;
+
+/** PATCH /api/admin/product-reviews/:id: hide with a reason, or show again. */
+export const adminProductReviewModerationRequestSchema = z.discriminatedUnion('hidden', [
+  z.strictObject({
+    hidden: z.literal(true),
+    reason: z
+      .string()
+      .trim()
+      .min(PRODUCT_REVIEW_HIDE_REASON_MIN_LENGTH)
+      .max(PRODUCT_REVIEW_HIDE_REASON_MAX_LENGTH),
+  }),
+  z.strictObject({ hidden: z.literal(false) }),
+]);
+export type AdminProductReviewModerationRequest = z.input<
+  typeof adminProductReviewModerationRequestSchema
+>;
+
+export const adminProductReviewResponseSchema = z.strictObject({
+  review: adminProductReviewViewSchema,
+});
+export type AdminProductReviewResponseBody = z.infer<typeof adminProductReviewResponseSchema>;

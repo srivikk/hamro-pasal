@@ -58,6 +58,11 @@ export const midnightTasks = [
    * with the wallet still below 0 is suspended for debt; a notice whose dues were cleared closes.
    */
   'CYCLE_DUES_SWEEP',
+  /**
+   * 2026-10-22 (Task 6): deletes Authentication Log rows (auth_events) older than
+   * AUTH_EVENT_RETENTION_DAYS, so the table does not grow without bound.
+   */
+  'AUTH_EVENTS_PRUNE',
 ] as const;
 /**
  * Runs every hour on the maintenance queue (Phase 28, SPEC core 8): ends ad purchases whose paid

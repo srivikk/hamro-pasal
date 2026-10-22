@@ -1100,6 +1100,79 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.46 Task 6: product review moderation, "See all reviews", Authentication Log retention (2026-10-22)
+
+Branch `epic/master-completion`. `packages/shared-types`, `packages/db` (migration **0052**),
+`apps/api`, `apps/worker`, `apps/admin`, `apps/mobile`. No new dependency. SPEC.md was not changed.
+Not run in a browser or on a device.
+
+### Asked vs built
+
+| Asked                                                                    | Built                                                                                                                                                                                      | Why                                                                                          |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| hide / unpublish a product review, "under the Grievances or Reviews tab" | a new **Product reviews** tab (`#/reviews`, Catalogue group)                                                                                                                               | The Disputes tab is about escalated orders; reviews are catalogue content                    |
+| a toggle                                                                 | **Hide** asks for the policy broken (10–300 characters, kept in the audit log); **Show again** needs no reason                                                                             | A moderation decision without a reason cannot be checked later                               |
+| "See All Reviews" opening a flatlist / modal                             | `AllReviewsModal`: a full-screen `Modal` with a `FlatList` over `useInfiniteQuery` (20 per page, the server's cursor), shown when the product has more reviews than the three in the sheet | —                                                                                            |
+| a cron job **or** a trigger deleting OTP logs older than 30 days         | a nightly worker task, **`AUTH_EVENTS_PRUNE`** (00:00 Asia/Kathmandu with the other midnight tasks)                                                                                        | A trigger would run on sign-in writes; a job keeps sign-in fast and deletes in small batches |
+
+### Moderation
+
+- **Migration 0052:** `product_reviews.hidden_at`, `hidden_by_user_id` → users (RESTRICT, partial
+  index), `hidden_reason`; CHECK `product_reviews_hidden_check`: all three set together, reason
+  non-blank.
+- `GET /api/admin/product-reviews?status=VISIBLE|HIDDEN&cursor=&limit=` (SUPER_ADMIN, `no-store`):
+  every review, newest first, keyset on `(created_at, id)`, limit 1–100 (default 50),
+  `400 INVALID_CURSOR`. Each row: the public view plus `product_name`, `vendor { id, business_name }`,
+  `hidden`, `hidden_at`, `hidden_reason`.
+- `PATCH /api/admin/product-reviews/:id { hidden: true, reason } | { hidden: false }` → `200 { review }`.
+  One transaction under the review's row lock with its audit entry `PRODUCT_REVIEW_HIDDEN` /
+  `PRODUCT_REVIEW_SHOWN` (record type `product_review`; before and after `{ hidden, hidden_reason }`).
+  Asking for the state it already has changes and records nothing (five simultaneous hides write
+  one entry). `404 PRODUCT_REVIEW_NOT_FOUND`, `400 VALIDATION_FAILED`.
+- **Effect:** a hidden review leaves the public list and the product's average and count.
+  **Its author's edit does not bring it back** (the upsert never touches the three columns).
+- The public read's `viewer` gained `own_review_hidden` (defaults to false for an older API); the
+  app tells the author "Hamro Pasal has hidden your review … Only you can see it."
+- Contracts: shared-types `api/product-reviews.ts`. Service
+  `apps/api/src/reviews/product-review-moderation-service.ts`, route `routes/admin-product-reviews.ts`.
+
+### "See all reviews" (customer app)
+
+- `fetchProductReviews(productId, cursor?)`. The sheet shows "See all N reviews" when the first
+  page holds more than three or has a next cursor.
+- The modal's query key is `['product-reviews', id, 'all']`, enabled only while open; the next page
+  is asked when the list nears its end (`onEndReachedThreshold` 0.5), never after the last page and
+  never while a page is failing (a "Try again" footer instead).
+
+### Authentication Log retention
+
+- `AUTH_EVENT_RETENTION_DAYS = 30` (shared-types `api/auth-logs.ts`); midnight task
+  `AUTH_EVENTS_PRUNE` → `apps/worker/src/auth/auth-events-prune.ts`.
+- Deletes `auth_events` rows with `created_at < now() - 30 days` (database clock), 5000 per
+  statement (`FOR UPDATE SKIP LOCKED`), until none is left. Safe twice or concurrently.
+- Only the send / check metadata goes. The reveal's audit entry (`LOGIN_CODE_REVEALED` in
+  `audit_logs`) is kept: the audit trail is append-only by design.
+- `queues.int.test.ts` now also expects the `cycle-dues-sweep` scheduler, which it had missed since
+  §8Z.43.
+
+### Migration 0053 (found while testing)
+
+The Phase 23 index audit (`packages/db/test/foreign-key-indexes.int.test.ts`) failed on three foreign
+keys added by Task 5 without an index: `auth_events.user_id` (now a partial index, most rows have no
+user), `product_reviews.customer_id` and `product_reviews.order_id`. Migration
+`0053_task5_fk_indexes` adds them. §8Z.45 did not run the db suite, which is how they got through.
+
+### Tests (2026-10-22, one Jest process at a time, `--testTimeout=10000`)
+
+- `pnpm build` and `turbo run typecheck lint`: 35 of 35 tasks. `drizzle-kit generate`: no schema changes.
+- Unit: shared-types 398, admin 355, api 206, worker 211.
+- API integration: product review moderation 7 (new), product reviews and ratings 5, auth logs 4,
+  admin governance 29, vendor product lifecycle 26, catalogue 17.
+- Worker integration: auth log prune 3 (new), queues 6. db integration: foreign-key indexes 3, contract 3.
+- Mobile: ProductReviews 7 (3 new: paging through two pages, no "See all" when nothing more, the
+  hidden-own-review note), shop detail 43, vendor menu 13, category navigation 18, i18n 17.
+- **Not run:** the full mobile, worker, db and API integration suites (safe-run rule); no mutation checks.
+
 ## 8Z.45 Phase 5 (Task 5): grievance desk, guarded OTP reveal, stock vs moderation, product photos, product reviews and shop ratings, test stabilisation (2026-10-22)
 
 Branch `epic/master-completion`. Most of this landed in `e5d8677` ("safe checkpoint before Phase 5

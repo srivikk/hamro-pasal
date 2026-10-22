@@ -13,7 +13,7 @@ import type {
   ProductReviewRequest,
 } from '@hamro-pasal/shared-types';
 import { PRODUCT_REVIEW_PAGE_LIMIT, productReviewRequestSchema } from '@hamro-pasal/shared-types';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
 import { HttpError } from '../http/http-error';
 
@@ -26,6 +26,8 @@ export interface ProductReviewPage {
   readonly viewer: {
     readonly canReview: boolean;
     readonly ownReview: ProductReviewView | null;
+    /** 2026-10-22 (Task 6): Hamro Pasal unpublished the viewer's own review. */
+    readonly ownReviewHidden: boolean;
   } | null;
 }
 
@@ -140,7 +142,7 @@ export class ProductReviewService {
         count: sql<number>`count(*)::int`.mapWith(Number),
       })
       .from(productReviews)
-      .where(eq(productReviews.product_id, productId));
+      .where(and(eq(productReviews.product_id, productId), isNull(productReviews.hidden_at)));
 
     const rows = await this.db
       .select({ review: productReviews, firstName: users.first_name })
@@ -149,6 +151,7 @@ export class ProductReviewService {
       .where(
         and(
           eq(productReviews.product_id, productId),
+          isNull(productReviews.hidden_at),
           cursor === undefined
             ? undefined
             : sql`(${productReviews.created_at}, ${productReviews.id}) <
@@ -170,6 +173,7 @@ export class ProductReviewService {
       viewer = {
         canReview: (await this.verifyingOrder(viewerId, productId)) !== null,
         ownReview: own === undefined ? null : view(own, await this.firstNameOf(viewerId)),
+        ownReviewHidden: own?.hidden_at != null,
       };
     }
 

@@ -3,6 +3,7 @@ import type { CycleDuesSweepService } from '../billing/cycle-dues-sweep';
 import type { ComplianceSweepService } from '../compliance/compliance-sweep';
 import type { SettlementPayoutRunService } from '../finance/settlement-payout-run';
 import type { MarketingStatusSweepService } from '../marketing/marketing-status-sweep';
+import type { AuthEventsPruneService } from '../auth/auth-events-prune';
 import type { ExportJobService } from '../exports/export-job';
 import type { DisputeHoldReleaseService } from '../finance/dispute-hold-release';
 import type { NotifyMeService } from '../notifications/notify-me';
@@ -169,6 +170,8 @@ export function createTimerHandlers(deps: {
   readonly disputeHoldRelease?: Pick<DisputeHoldReleaseService, 'run'>;
   /** Step 7.6. Optional like those above. */
   readonly exports?: Pick<ExportJobService, 'sweepExpired'>;
+  /** 2026-10-22 (Task 6). Optional like those above. */
+  readonly authEventsPrune?: Pick<AuthEventsPruneService, 'run'>;
 }): TimerHandlers {
   return {
     ...pendingImplementationHandlers,
@@ -258,6 +261,16 @@ export function createTimerHandlers(deps: {
         }
         case 'SUBSCRIPTION_DOWNGRADE':
           return pendingImplementationHandlers.runMidnightTask(task);
+        case 'AUTH_EVENTS_PRUNE': {
+          if (deps.authEventsPrune === undefined) {
+            return pendingImplementationHandlers.runMidnightTask(task);
+          }
+          const pruned = await deps.authEventsPrune.run();
+          console.info(
+            `[worker] auth log prune: ${String(pruned)} row(s) older than 30 days deleted`,
+          );
+          return;
+        }
         case 'EXPORT_FILE_SWEEP': {
           if (deps.exports === undefined) {
             return pendingImplementationHandlers.runMidnightTask(task);

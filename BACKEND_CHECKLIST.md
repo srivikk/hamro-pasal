@@ -606,12 +606,13 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 
 - [x] **Grievance chat:** `POST /api/orders/:id/chat` (same rules and broadcast as `/chat`), the admin Disputes tab, the Seller app's order conversation. Escalated prepaid money stays in the dispute hold until the admin resolves it (never paid out, never released on day 8).
 - [x] **Authentication Logs:** `auth_events` (migration 0050), `GET /api/admin/auth-logs`, `POST /api/admin/auth-logs/reveal { phone, reason }` behind `OTP_ADMIN_REVEAL` (off by default; the live code is sealed AES-256-GCM in Redis beside its hash), audited `LOGIN_CODE_REVEALED` before the code is returned.
-  - [ ] Decide whether production may ever run with `OTP_ADMIN_REVEAL=true`; prune `auth_events`.
+  - [ ] Decide whether production may ever run with `OTP_ADMIN_REVEAL=true`.
+  - [x] **Pruned after 30 days (2026-10-22, §8Z.46):** the nightly `AUTH_EVENTS_PRUNE` worker task.
 - [x] **Stock vs moderation:** `products.in_stock` and `archived_at` (migration 0049), `PATCH /api/vendor/products/:id/availability`; `is_active` is admin-only.
   - [ ] Products hidden before 0049 stay hidden: an admin shows the vendor-hidden ones again.
 - [x] **Product photos** uploaded from the Seller app's product form (S3-compatible storage, §8Z.35); KYC documents already were.
 - [x] **Product reviews:** `product_reviews` (migration 0051), `GET / POST /api/products/:id/reviews` (verified purchase, `403 NOT_A_VERIFIED_PURCHASE`); the customer item sheet reads and writes them. Shop ratings in the feed and menu from published customer reviews.
-  - [ ] Admin moderation of product reviews; paging past three in the app.
+  - [x] **Moderation and paging (2026-10-22, §8Z.46):** migration 0052, `GET /api/admin/product-reviews`, `PATCH /api/admin/product-reviews/:id { hidden, reason? }` (audited), the admin Product reviews tab; the app's "See all reviews" modal.
 
 ## Cart math, free delivery and order alerts (2026-10-21, STATE_HANDOFF.md §8Z.44)
 

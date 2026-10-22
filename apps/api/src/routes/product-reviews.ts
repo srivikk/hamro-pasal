@@ -34,7 +34,11 @@ export function productReviewsRouter(
       viewer:
         page.viewer === null
           ? null
-          : { can_review: page.viewer.canReview, own_review: page.viewer.ownReview },
+          : {
+              can_review: page.viewer.canReview,
+              own_review: page.viewer.ownReview,
+              own_review_hidden: page.viewer.ownReviewHidden,
+            },
     };
     // Personal when signed in; public otherwise.
     res.set('Cache-Control', viewerId === null ? 'public, max-age=60' : 'private, no-store');

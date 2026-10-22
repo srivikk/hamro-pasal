@@ -42,6 +42,7 @@ import {
 } from './queues/definitions';
 import { createExportProcessor, createProcessors, createTimerHandlers } from './queues/processors';
 import { ExportJobService } from './exports/export-job';
+import { AuthEventsPruneService } from './auth/auth-events-prune';
 import { IrdPanVerificationService } from './kyc/ird-pan-verification';
 import {
   bullIrdCheckScheduler,
@@ -111,6 +112,8 @@ async function main(): Promise<void> {
       ),
       notifyMe,
       exports: exportJobsService,
+      // 2026-10-22 (Task 6): Authentication Log rows older than 30 days.
+      authEventsPrune: new AuthEventsPruneService(db),
       // Step 7.3: day 8, the held prepaid earnings of an order nobody escalated.
       disputeHoldRelease: new DisputeHoldReleaseService(db, new LedgerService(new WalletService())),
       debtReconciliation: new VendorDebtReconciliationService(db),

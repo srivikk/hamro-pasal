@@ -3,9 +3,9 @@ import {
   MAX_PRODUCT_REVIEW_COMMENT_LENGTH,
   type ProductReviewView,
 } from '@hamro-pasal/shared-types';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, Text, TextInput, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -135,6 +135,104 @@ function ReviewForm({
 }
 
 /**
+ * 2026-10-22 (Task 6): every published review of a product, newest first, a page of 20 at a time
+ * (the server's cursor) as the list scrolls. Opened from "See all reviews" in the item sheet.
+ */
+export function AllReviewsModal({
+  productId,
+  visible,
+  onClose,
+}: {
+  productId: string;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const query = useInfiniteQuery({
+    queryKey: [...productReviewsQueryKey(productId), 'all'],
+    queryFn: ({ pageParam }) => fetchProductReviews(productId, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    retry: retryTransientFailures,
+    enabled: visible,
+  });
+  const reviews = query.data?.pages.flatMap((page) => page.reviews) ?? [];
+  const summary = query.data?.pages[0]?.summary;
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <View className="flex-1 bg-white pt-12" testID="all-reviews">
+        <View className="flex-row items-center justify-between px-5 pb-3">
+          <View className="flex-row items-center gap-2">
+            <Text className="text-lg font-bold text-gray-900">{t('productReviews.title')}</Text>
+            {summary?.average == null ? null : <RatingPill rating={summary.average} />}
+            {summary === undefined ? null : (
+              <Text className="text-xs text-gray-500">
+                {t('productReviews.count', { count: summary.count })}
+              </Text>
+            )}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t('productReviews.close')}
+            hitSlop={8}
+            testID="all-reviews-close"
+            onPress={onClose}
+          >
+            <Ionicons name="close" size={24} color="#111827" />
+          </Pressable>
+        </View>
+        {query.isError && reviews.length === 0 ? (
+          <View className="px-5">
+            <Text className="text-sm text-gray-600">{t('productReviews.loadFailed')}</Text>
+            <View className="mt-3">
+              <Button
+                variant="secondary"
+                size="sm"
+                label={t('common.retry')}
+                testID="all-reviews-retry"
+                onPress={() => {
+                  void query.refetch();
+                }}
+              />
+            </View>
+          </View>
+        ) : (
+          <FlatList
+            data={reviews}
+            keyExtractor={(review) => review.id}
+            renderItem={({ item }) => <ReviewRow review={item} />}
+            contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 32 }}
+            onEndReachedThreshold={0.5}
+            onEndReached={() => {
+              if (query.hasNextPage && !query.isFetchingNextPage && !query.isError) {
+                void query.fetchNextPage();
+              }
+            }}
+            ListFooterComponent={
+              query.isPending || query.isFetchingNextPage ? (
+                <ActivityIndicator className="py-4" testID="all-reviews-loading" />
+              ) : query.isError ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  label={t('common.retry')}
+                  testID="all-reviews-more-retry"
+                  onPress={() => {
+                    void query.fetchNextPage();
+                  }}
+                />
+              ) : null
+            }
+            testID="all-reviews-list"
+          />
+        )}
+      </View>
+    </Modal>
+  );
+}
+
+/**
  * The reviews part of the item sheet (SPEC core 6, "Ratings and product reviews"): the product's
  * average and count, its newest reviews (first names only, all verified purchases), and, for a
  * signed-in customer whose delivered order held the product, a form to rate it. The server decides
@@ -144,6 +242,7 @@ export function ProductReviews({ productId }: { productId: string }) {
   const { t } = useTranslation();
   const signedIn = useAuthStore(selectHasSession);
   const [writing, setWriting] = useState(false);
+  const [showingAll, setShowingAll] = useState(false);
 
   const query = useQuery({
     // The viewer part differs signed in and out.
@@ -173,6 +272,35 @@ export function ProductReviews({ productId }: { productId: string }) {
       {reviews.slice(0, SHEET_REVIEW_COUNT).map((review) => (
         <ReviewRow key={review.id} review={review} />
       ))}
+
+      {reviews.length > SHEET_REVIEW_COUNT || query.data.next_cursor !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          className="py-2 active:opacity-60"
+          testID="product-reviews-see-all"
+          onPress={() => {
+            setShowingAll(true);
+          }}
+        >
+          <Text className="text-sm font-semibold text-brand">
+            {t('productReviews.seeAll', { count: summary.count })}
+          </Text>
+        </Pressable>
+      ) : null}
+
+      {viewer?.own_review_hidden === true ? (
+        <Text className="mt-2 text-xs text-amber-800" testID="product-review-own-hidden">
+          {t('productReviews.ownHidden')}
+        </Text>
+      ) : null}
+
+      <AllReviewsModal
+        productId={productId}
+        visible={showingAll}
+        onClose={() => {
+          setShowingAll(false);
+        }}
+      />
 
       {viewer?.can_review === true ? (
         writing ? (

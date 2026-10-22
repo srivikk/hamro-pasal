@@ -8,6 +8,7 @@ import { AdProductScreen } from './features/ads/AdProductScreen';
 import { ApprovalScreen } from './features/approvals/ApprovalScreen';
 import { AuditLogScreen } from './features/audit/AuditLogScreen';
 import { AuthLogScreen } from './features/auth-logs/AuthLogScreen';
+import { ProductReviewScreen } from './features/reviews/ProductReviewScreen';
 import { DisputeScreen } from './features/disputes/DisputeScreen';
 import { LoginScreen } from './features/auth/LoginScreen';
 import { portalOf } from './features/auth/login-rules';
@@ -82,6 +83,8 @@ function Screen({ tab }: { readonly tab: Tab }) {
       return <DisputeScreen />;
     case 'auth-logs':
       return <AuthLogScreen />;
+    case 'reviews':
+      return <ProductReviewScreen />;
   }
 }
 

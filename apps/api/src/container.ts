@@ -18,6 +18,7 @@ import { LogisticsSettingsService } from './admin/logistics-settings-service';
 import { PricingPlanService } from './admin/pricing-plan-service';
 import { DatabaseAuthEventLog } from './auth/auth-event-log';
 import { AuthLogService } from './auth/auth-log-service';
+import { ProductReviewModerationService } from './reviews/product-review-moderation-service';
 import { ProductReviewService } from './reviews/product-review-service';
 import { LateChatBroadcaster } from './realtime/chat-broadcaster';
 import type { ApiServices } from './app';
@@ -289,6 +290,7 @@ export function buildContainer(config: ApiConfig, infra: Infrastructure): ApiCon
     chatBroadcaster: new LateChatBroadcaster(),
     authLogs: new AuthLogService(infra.db, otps),
     productReviews: new ProductReviewService(infra.db),
+    productReviewModeration: new ProductReviewModerationService(infra.db),
     adminDeadLetters: new DeadLetterService(infra.db),
     adminVendors: new AdminVendorService(infra.db, wallet),
     categories: new CategoryService(infra.db),

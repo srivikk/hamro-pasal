@@ -137,6 +137,7 @@ describe('tabs', () => {
       'disputes',
       'categories',
       'products',
+      'reviews',
       'campaigns',
       'ad-products',
       'promotions',

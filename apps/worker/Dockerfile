@@ -9,8 +9,9 @@
 # headless Chromium shell that IRD_VERIFICATION_PROVIDER=PLAYWRIGHT launches (`headless: true`),
 # with its system libraries: about 1.4 GB in all instead of about 0.5 GB. Build with false when
 # the IRD check stays DISABLED.
-# The worker listens on no port; its liveness is the process itself (tini restarts nothing: the
-# orchestrator replaces a container whose process exited).
+# Task 8: the worker answers GET /health on WORKER_HEALTH_PORT (4001): 200 once every consumer and
+# queue is running, 503 while it shuts down. The HEALTHCHECK below (the same command serves as the
+# ECS container health check) reads it; the orchestrator replaces a container that fails it.
 
 ARG NODE_VERSION=24.18.1
 
@@ -36,7 +37,9 @@ RUN apt-get update \
  && apt-get install --yes --no-install-recommends tini ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    WORKER_HEALTH_HOST=0.0.0.0 \
+    WORKER_HEALTH_PORT=4001
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
 RUN if [ "$WITH_CHROMIUM" = "true" ]; then \
@@ -45,5 +48,9 @@ RUN if [ "$WITH_CHROMIUM" = "true" ]; then \
       && rm -rf /var/lib/apt/lists/*; \
     fi
 USER node
+EXPOSE 4001
+# start-period: the worker connects to PostgreSQL, Kafka and Redis before it starts answering.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:' + (process.env.WORKER_HEALTH_PORT ?? 4001) + '/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "--enable-source-maps", "dist/main.js"]

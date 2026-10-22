@@ -24,6 +24,7 @@ import { DatabaseDeadLetterStore } from './dead-letters/dead-letter-store';
 import { OrderReconciliationService } from './finance/order-reconciliation';
 import { BullVendorAcceptanceTimers } from './consumers/vendor-sla-scheduler';
 import { buildBullConnection } from './infra/redis';
+import { startHealthServer } from './health/health-server';
 import { Lifecycle } from './lifecycle';
 import { DatabaseNoticeInbox, InboxNotificationAdapter } from './notifications/notice-inbox';
 import { notificationAdapterFromEnv } from './notifications/production-notification-adapter';
@@ -233,15 +234,29 @@ async function main(): Promise<void> {
     `[worker] started: outbox relay, dead-letter replayer, ${String(workers.length)} BullMQ workers, ${String(consumers.length)} Kafka consumer(s)`,
   );
 
+  // Task 8: GET /health for the orchestrator, started last (200 means everything above is running).
+  // On shutdown it answers 503 at once and stays up while the consumers drain, then closes last.
+  const health = await startHealthServer({
+    port: env.WORKER_HEALTH_PORT,
+    host: env.WORKER_HEALTH_HOST,
+  });
+  console.info(
+    `[worker] health check on http://${env.WORKER_HEALTH_HOST}:${String(health.port)}/health`,
+  );
+
   const shutdown = (signal: NodeJS.Signals): void => {
     console.info(`[worker] ${signal} received, shutting down`);
-    lifecycle.close().then(
-      () => process.exit(0),
-      (error: unknown) => {
-        console.error(error);
-        process.exit(1);
-      },
-    );
+    health.markStopping();
+    lifecycle
+      .close()
+      .finally(() => health.close())
+      .then(
+        () => process.exit(0),
+        (error: unknown) => {
+          console.error(error);
+          process.exit(1);
+        },
+      );
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

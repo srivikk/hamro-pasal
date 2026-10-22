@@ -102,6 +102,10 @@ export const serverEnvSchema = z
     LOG_LEVEL: z.enum(['error', 'warn', 'info', 'http', 'debug']).default('info'),
     COUNTRY_CODE: z.literal('NP'),
     API_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
+    // Task 8 (2026-10-22): the worker's health endpoint (GET /health) for the container orchestrator.
+    // 127.0.0.1 by default (local runs); the worker image sets 0.0.0.0.
+    WORKER_HEALTH_PORT: z.coerce.number().int().min(1).max(65535).default(4001),
+    WORKER_HEALTH_HOST: nonEmpty.default('127.0.0.1'),
 
     // PostgreSQL + PostGIS
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),

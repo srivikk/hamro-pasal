@@ -2,11 +2,11 @@
 
 Three images, built from the repository root by CI (`.github/workflows/production.yml`):
 
-| Image                | Dockerfile               | Runs                                  | Port | Health                               |
-| -------------------- | ------------------------ | ------------------------------------- | ---- | ------------------------------------ |
-| `hamro-pasal-api`    | `apps/api/Dockerfile`    | `node dist/server.js` (HTTP + socket) | 4000 | `GET /health`                        |
-| `hamro-pasal-worker` | `apps/worker/Dockerfile` | `node dist/main.js`                   | none | the process (exits on a fatal error) |
-| `hamro-pasal-admin`  | `apps/admin/Dockerfile`  | nginx (unprivileged) serving the SPA  | 8080 | `GET /healthz`                       |
+| Image                | Dockerfile               | Runs                                  | Port | Health                                  |
+| -------------------- | ------------------------ | ------------------------------------- | ---- | --------------------------------------- |
+| `hamro-pasal-api`    | `apps/api/Dockerfile`    | `node dist/server.js` (HTTP + socket) | 4000 | `GET /health`                           |
+| `hamro-pasal-worker` | `apps/worker/Dockerfile` | `node dist/main.js`                   | 4001 | `GET /health` (503 while shutting down) |
+| `hamro-pasal-admin`  | `apps/admin/Dockerfile`  | nginx (unprivileged) serving the SPA  | 8080 | `GET /healthz`                          |
 
 All run as non-root users (`node`, uid 101 for nginx) under an init (tini / nginx). There is no
 PM2: the orchestrator replaces a container whose process exits and scales by containers.

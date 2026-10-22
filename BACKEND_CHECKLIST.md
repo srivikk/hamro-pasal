@@ -612,7 +612,8 @@ Every admin tab except Vendor requests now runs on its real routes. What remains
 - [ ] AWS resources (VPC, ALB with /api routed to the API, ECS services, RDS, ElastiCache, MSK, ECR, Secrets Manager) and the GitHub variables / OIDC role.
 - [ ] `expo-updates` for EAS Update (OTA), then runtime version and channels.
 - [ ] EAS: production environment variables (`EXPO_PUBLIC_API_URL`, `GOOGLE_SERVICES_JSON`), FCM V1 and APNs credentials, iOS submit settings.
-- [ ] A health signal for the worker.
+- [x] **Worker health signal (2026-10-22, Task 8):** `GET /health` on `WORKER_HEALTH_PORT` (4001), 200 once started, 503 while draining; image `HEALTHCHECK`.
+- [ ] `expo-updates` stays out for now (decided 2026-10-22: no development-client rebuild).
 
 ## Grievance desk, guarded OTP reveal, stock vs moderation, product reviews (2026-10-22, STATE_HANDOFF.md §8Z.45)
 

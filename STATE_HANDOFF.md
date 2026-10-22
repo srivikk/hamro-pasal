@@ -1100,6 +1100,31 @@ escalation's SMS is sent (Phase 13) and an IVR call is placed through the **mock
 (Phase 14; no Twilio / SIP trunk adapter); DLQ replay exists since Phase 15 (§8I); the ghost-customer and
 subscription-downgrade timers are placeholders.
 
+## 8Z.48 Task 8: worker health check (2026-10-22)
+
+The worker had no port, so ECS could only see whether its process existed. It now serves
+`GET /health` (`apps/worker/src/health/health-server.ts`, plain `node:http`, no dependency):
+
+- **200** `{"status":"ok","uptime_seconds":n}` once every consumer, queue and timer is running
+  (the server starts last in `main.ts`); **503** `{"status":"stopping"}` from the moment SIGTERM /
+  SIGINT arrives; the server stays up while the consumers drain and closes last. HEAD works; any
+  other path is 404, another method 405. `Cache-Control: no-store`.
+- It checks **no dependency** (PostgreSQL, Kafka, Redis) on purpose: an outage of one of them must
+  not make ECS restart every worker at once; the consumers retry and dead-letter on their own.
+- `WORKER_HEALTH_PORT` (default 4001) and `WORKER_HEALTH_HOST` (default 127.0.0.1) in the shared
+  env schema and `.env.example`. A port already taken stops the worker at boot (EADDRINUSE) rather
+  than letting it run without a health check.
+- Worker image: `WORKER_HEALTH_HOST=0.0.0.0`, `EXPOSE 4001`, and a `HEALTHCHECK` (start period
+  60 s) whose command also serves as the ECS container health check.
+- **Decided (user, 2026-10-22):** `expo-updates` stays out for now, to avoid rebuilding the
+  development clients.
+
+Tests: `src/health/health-server.test.ts` (6, a real socket on a free port: 200 with uptime, HEAD,
+503 when stopping, 404 / 405, closed then refused, EADDRINUSE). Worker image built and run
+isolated from the dev stack (compose network, worker test database, Redis DB 9, the kafka-test
+broker, its own consumer group): Docker reported it **healthy**, `/health` answered 200, SIGTERM
+exited 0.
+
 ## 8Z.47 Phase 7: containers, boot-time env gate, CI/CD, EAS store builds, zero-downtime migrations (2026-10-22)
 
 Branch `epic/master-completion`. Infrastructure and configuration only; no feature or schema
